@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from datetime import datetime
+from threading import Lock
 
 from ehai import ID, JsonValue, new_id, normalize_id, utc_now
 from ehai.application.checkpointing import RecoveryReport, RecoveryService
@@ -62,6 +63,7 @@ class ExecutionService:
         self._recovery_service = recovery_service
         self._clock = clock
         self._id_factory = id_factory
+        self._execution_lock = Lock()
 
     def create_project(self, command: CreateProject) -> Project:
         """Create a Project and its immutable fact Event atomically."""
@@ -293,7 +295,7 @@ class ExecutionService:
                 uow.commit()
 
         if run.status is RunStatus.PENDING:
-            return self._orchestrator.execute(run.run_id)
+            return self._execute_serially(run.run_id)
         return run
 
     def get_run(self, run_id: ID) -> Run:
@@ -330,9 +332,9 @@ class ExecutionService:
         if existing is not None:
             if existing.status is RunStatus.PAUSED and self._was_paused_by_startup(existing.run_id):
                 resumed = controller.resume(existing.run_id)
-                return self._orchestrator.execute(resumed.run_id)
+                return self._execute_serially(resumed.run_id)
             return (
-                self._orchestrator.execute(existing.run_id)
+                self._execute_serially(existing.run_id)
                 if self._is_ready_to_continue(existing)
                 else existing
             )
@@ -343,7 +345,7 @@ class ExecutionService:
             {"run_id": command.run_id},
         )
         resumed = controller.resume(command.run_id, receipt=receipt)
-        return self._orchestrator.execute(resumed.run_id)
+        return self._execute_serially(resumed.run_id)
 
     def cancel_run(self, command: CancelRun) -> Run:
         """Cancel one Run without allowing Worker or interface code to complete it."""
@@ -395,6 +397,11 @@ class ExecutionService:
         if self._recovery_service is None:
             raise ApplicationError("Checkpoint recovery is not configured")
         return self._recovery_service
+
+    def _execute_serially(self, run_id: ID) -> Run:
+        """Keep external Worker Attempts serial without blocking pause or cancel controls."""
+        with self._execution_lock:
+            return self._orchestrator.execute(run_id)
 
     def _is_ready_to_continue(self, run: Run) -> bool:
         if run.status is not RunStatus.RUNNING:

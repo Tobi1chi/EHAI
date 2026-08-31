@@ -1,0 +1,82 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.ehai.local/v1/events.schema.json",
+  "title": "EHAI P1 event contract",
+  "$defs": {
+    "EventType": {
+      "type": "string",
+      "enum": [
+        "ProjectCreated",
+        "GoalCreated",
+        "CompletionContractConfirmed",
+        "PlanRevisionProposed",
+        "PlanRevisionApproved",
+        "PlanNodeReadied",
+        "PlanNodeStarted",
+        "PlanNodeCandidateSubmitted",
+        "PlanNodeCompleted",
+        "PlanNodeFailed",
+        "PlanNodePruned",
+        "BranchSelected",
+        "BranchPruned",
+        "RunStarted",
+        "RunPaused",
+        "RunResumed",
+        "RunCompleted",
+        "RunFailed",
+        "RunCancelled",
+        "AttemptStarted",
+        "AttemptSucceeded",
+        "AttemptFailed",
+        "AttemptTimedOut",
+        "AttemptCancelled",
+        "AttemptInterrupted",
+        "ArtifactCreated",
+        "CheckStarted",
+        "CheckPassed",
+        "CheckFailed",
+        "CheckInterrupted",
+        "GatePassed",
+        "GateFailed",
+        "CheckpointCreated",
+        "CheckpointRestored"
+      ]
+    },
+    "EventEnvelope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "type",
+        "occurred_at",
+        "schema_version",
+        "run_id",
+        "correlation_id",
+        "payload"
+      ],
+      "properties": {
+        "id": {"$ref": "common.schema.json#/$defs/Id"},
+        "type": {"$ref": "#/$defs/EventType"},
+        "occurred_at": {"$ref": "common.schema.json#/$defs/UtcDateTime"},
+        "schema_version": {"const": 1},
+        "run_id": {
+          "oneOf": [
+            {"$ref": "common.schema.json#/$defs/Id"},
+            {"type": "null"}
+          ]
+        },
+        "correlation_id": {"$ref": "common.schema.json#/$defs/Id"},
+        "payload": {"type": "object"}
+      }
+    },
+    "StoredEventRecord": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["offset", "event"],
+      "properties": {
+        "offset": {"type": "integer", "minimum": 1},
+        "event": {"$ref": "#/$defs/EventEnvelope"}
+      }
+    }
+  }
+}

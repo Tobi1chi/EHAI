@@ -9,13 +9,19 @@ description = "Enhanced Human-Agent Interface execution plane"
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
 license = { file = "LICENSE" }
-dependencies = []
+dependencies = [
+    "fastapi>=0.116,<1",
+    "uvicorn>=0.35,<1",
+]
 
 [project.scripts]
 ehai = "ehai.interfaces.cli:main"
+ehai-api = "ehai.interfaces.runtime:main"
 
 [dependency-groups]
 dev = [
+    "httpx>=0.28,<1",
+    "jsonschema>=4.25,<5",
     "mypy>=1.17,<2",
     "pytest>=8.4,<9",
     "ruff>=0.12,<1",

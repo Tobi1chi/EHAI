@@ -1,0 +1,490 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "EHAI Execution Plane",
+    "version": "1"
+  },
+  "paths": {
+    "/api/v1/projects": {
+      "post": {
+        "operationId": "create_project_api_v1_projects_post",
+        "summary": "Create Project",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {"$ref": "commands.schema.json#/$defs/CreateProjectRequest"}
+            }
+          }
+        },
+        "responses": {
+          "201": {"$ref": "#/components/responses/ProjectResponse"},
+          "409": {"$ref": "#/components/responses/ErrorResponse"},
+          "422": {"$ref": "#/components/responses/ErrorResponse"},
+          "500": {"$ref": "#/components/responses/ErrorResponse"}
+        }
+      }
+    },
+    "/api/v1/goals": {
+      "post": {
+        "operationId": "create_goal_api_v1_goals_post",
+        "summary": "Create Goal",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {"$ref": "commands.schema.json#/$defs/CreateGoalRequest"}
+            }
+          }
+        },
+        "responses": {
+          "201": {"$ref": "#/components/responses/GoalResponse"},
+          "404": {"$ref": "#/components/responses/ErrorResponse"},
+          "409": {"$ref": "#/components/responses/ErrorResponse"},
+          "422": {"$ref": "#/components/responses/ErrorResponse"},
+          "500": {"$ref": "#/components/responses/ErrorResponse"}
+        }
+      }
+    },
+    "/api/v1/plans/propose": {
+      "post": {
+        "operationId": "propose_plan_api_v1_plans_propose_post",
+        "summary": "Propose Plan",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {"$ref": "commands.schema.json#/$defs/ProposePlanRequest"}
+            }
+          }
+        },
+        "responses": {
+          "201": {"$ref": "#/components/responses/CommandPlanGraphResponse"},
+          "404": {"$ref": "#/components/responses/ErrorResponse"},
+          "409": {"$ref": "#/components/responses/ErrorResponse"},
+          "422": {"$ref": "#/components/responses/ErrorResponse"},
+          "500": {"$ref": "#/components/responses/ErrorResponse"}
+        }
+      }
+    },
+    "/api/v1/plans/approve": {
+      "post": {
+        "operationId": "approve_plan_api_v1_plans_approve_post",
+        "summary": "Approve Plan",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {"$ref": "commands.schema.json#/$defs/ApprovePlanRequest"}
+            }
+          }
+        },
+        "responses": {
+          "200": {"$ref": "#/components/responses/CommandPlanGraphResponse"},
+          "404": {"$ref": "#/components/responses/ErrorResponse"},
+          "409": {"$ref": "#/components/responses/ErrorResponse"},
+          "422": {"$ref": "#/components/responses/ErrorResponse"},
+          "500": {"$ref": "#/components/responses/ErrorResponse"}
+        }
+      }
+    },
+    "/api/v1/runs/start": {
+      "post": {
+        "operationId": "start_run_api_v1_runs_start_post",
+        "summary": "Start Run",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {"$ref": "commands.schema.json#/$defs/StartRunRequest"}
+            }
+          }
+        },
+        "responses": {
+          "201": {"$ref": "#/components/responses/CommandRunResponse"},
+          "404": {"$ref": "#/components/responses/ErrorResponse"},
+          "409": {"$ref": "#/components/responses/ErrorResponse"},
+          "422": {"$ref": "#/components/responses/ErrorResponse"},
+          "500": {"$ref": "#/components/responses/ErrorResponse"}
+        }
+      }
+    },
+    "/api/v1/runs/{run_id}/pause": {
+      "post": {
+        "operationId": "pause_run_api_v1_runs__run_id__pause_post",
+        "summary": "Pause Run",
+        "parameters": [{"$ref": "#/components/parameters/RunId"}],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {"$ref": "commands.schema.json#/$defs/PauseRunRequest"}
+            }
+          }
+        },
+        "responses": {
+          "200": {"$ref": "#/components/responses/CommandRunResponse"},
+          "404": {"$ref": "#/components/responses/ErrorResponse"},
+          "409": {"$ref": "#/components/responses/ErrorResponse"},
+          "422": {"$ref": "#/components/responses/ErrorResponse"},
+          "500": {"$ref": "#/components/responses/ErrorResponse"}
+        }
+      }
+    },
+    "/api/v1/runs/{run_id}/resume": {
+      "post": {
+        "operationId": "resume_run_api_v1_runs__run_id__resume_post",
+        "summary": "Resume Run",
+        "parameters": [{"$ref": "#/components/parameters/RunId"}],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {"$ref": "commands.schema.json#/$defs/ResumeRunRequest"}
+            }
+          }
+        },
+        "responses": {
+          "200": {"$ref": "#/components/responses/CommandRunResponse"},
+          "404": {"$ref": "#/components/responses/ErrorResponse"},
+          "409": {"$ref": "#/components/responses/ErrorResponse"},
+          "422": {"$ref": "#/components/responses/ErrorResponse"},
+          "500": {"$ref": "#/components/responses/ErrorResponse"}
+        }
+      }
+    },
+    "/api/v1/runs/{run_id}/cancel": {
+      "post": {
+        "operationId": "cancel_run_api_v1_runs__run_id__cancel_post",
+        "summary": "Cancel Run",
+        "parameters": [{"$ref": "#/components/parameters/RunId"}],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {"$ref": "commands.schema.json#/$defs/CancelRunRequest"}
+            }
+          }
+        },
+        "responses": {
+          "200": {"$ref": "#/components/responses/CommandRunResponse"},
+          "404": {"$ref": "#/components/responses/ErrorResponse"},
+          "409": {"$ref": "#/components/responses/ErrorResponse"},
+          "422": {"$ref": "#/components/responses/ErrorResponse"},
+          "500": {"$ref": "#/components/responses/ErrorResponse"}
+        }
+      }
+    },
+    "/api/v1/runs/{run_id}": {
+      "get": {
+        "operationId": "get_run_api_v1_runs__run_id__get",
+        "summary": "Get Run",
+        "parameters": [{"$ref": "#/components/parameters/RunId"}],
+        "responses": {
+          "200": {"$ref": "#/components/responses/RunResponse"},
+          "404": {"$ref": "#/components/responses/ErrorResponse"},
+          "422": {"$ref": "#/components/responses/ErrorResponse"},
+          "500": {"$ref": "#/components/responses/ErrorResponse"}
+        }
+      }
+    },
+    "/api/v1/plans/{plan_revision_id}": {
+      "get": {
+        "operationId": "get_plan_graph_api_v1_plans__plan_revision_id__get",
+        "summary": "Get Plan Graph",
+        "parameters": [{"$ref": "#/components/parameters/PlanRevisionId"}],
+        "responses": {
+          "200": {"$ref": "#/components/responses/PlanGraphResponse"},
+          "404": {"$ref": "#/components/responses/ErrorResponse"},
+          "422": {"$ref": "#/components/responses/ErrorResponse"},
+          "500": {"$ref": "#/components/responses/ErrorResponse"}
+        }
+      }
+    },
+    "/api/v1/runs/{run_id}/trace": {
+      "get": {
+        "operationId": "get_execution_trace_api_v1_runs__run_id__trace_get",
+        "summary": "Get Execution Trace",
+        "parameters": [{"$ref": "#/components/parameters/RunId"}],
+        "responses": {
+          "200": {"$ref": "#/components/responses/ExecutionTraceResponse"},
+          "404": {"$ref": "#/components/responses/ErrorResponse"},
+          "422": {"$ref": "#/components/responses/ErrorResponse"},
+          "500": {"$ref": "#/components/responses/ErrorResponse"}
+        }
+      }
+    },
+    "/api/v1/plans/{plan_revision_id}/checks": {
+      "get": {
+        "operationId": "list_check_specs_api_v1_plans__plan_revision_id__checks_get",
+        "summary": "List Check Specs",
+        "parameters": [{"$ref": "#/components/parameters/PlanRevisionId"}],
+        "responses": {
+          "200": {"$ref": "#/components/responses/CheckSpecListResponse"},
+          "404": {"$ref": "#/components/responses/ErrorResponse"},
+          "422": {"$ref": "#/components/responses/ErrorResponse"},
+          "500": {"$ref": "#/components/responses/ErrorResponse"}
+        }
+      }
+    },
+    "/api/v1/runs/{run_id}/checks": {
+      "get": {
+        "operationId": "list_checks_api_v1_runs__run_id__checks_get",
+        "summary": "List Checks",
+        "parameters": [{"$ref": "#/components/parameters/RunId"}],
+        "responses": {
+          "200": {"$ref": "#/components/responses/CheckRunListResponse"},
+          "404": {"$ref": "#/components/responses/ErrorResponse"},
+          "422": {"$ref": "#/components/responses/ErrorResponse"},
+          "500": {"$ref": "#/components/responses/ErrorResponse"}
+        }
+      }
+    },
+    "/api/v1/runs/{run_id}/checkpoints": {
+      "get": {
+        "operationId": "list_checkpoints_api_v1_runs__run_id__checkpoints_get",
+        "summary": "List Checkpoints",
+        "parameters": [{"$ref": "#/components/parameters/RunId"}],
+        "responses": {
+          "200": {"$ref": "#/components/responses/CheckpointListResponse"},
+          "404": {"$ref": "#/components/responses/ErrorResponse"},
+          "422": {"$ref": "#/components/responses/ErrorResponse"},
+          "500": {"$ref": "#/components/responses/ErrorResponse"}
+        }
+      }
+    },
+    "/api/v1/runs/{run_id}/artifacts": {
+      "get": {
+        "operationId": "list_artifacts_api_v1_runs__run_id__artifacts_get",
+        "summary": "List Artifacts",
+        "parameters": [{"$ref": "#/components/parameters/RunId"}],
+        "responses": {
+          "200": {"$ref": "#/components/responses/ArtifactListResponse"},
+          "404": {"$ref": "#/components/responses/ErrorResponse"},
+          "422": {"$ref": "#/components/responses/ErrorResponse"},
+          "500": {"$ref": "#/components/responses/ErrorResponse"}
+        }
+      }
+    },
+    "/api/v1/artifacts/{artifact_id}": {
+      "get": {
+        "operationId": "get_artifact_api_v1_artifacts__artifact_id__get",
+        "summary": "Get Artifact",
+        "parameters": [{"$ref": "#/components/parameters/ArtifactId"}],
+        "responses": {
+          "200": {"$ref": "#/components/responses/ArtifactResponse"},
+          "404": {"$ref": "#/components/responses/ErrorResponse"},
+          "422": {"$ref": "#/components/responses/ErrorResponse"},
+          "500": {"$ref": "#/components/responses/ErrorResponse"}
+        }
+      }
+    },
+    "/api/v1/events": {
+      "get": {
+        "operationId": "list_events_api_v1_events_get",
+        "summary": "List Events",
+        "parameters": [
+          {"$ref": "#/components/parameters/AfterEventId"},
+          {"$ref": "#/components/parameters/EventLimit"}
+        ],
+        "responses": {
+          "200": {"$ref": "#/components/responses/EventPageResponse"},
+          "404": {"$ref": "#/components/responses/ErrorResponse"},
+          "422": {"$ref": "#/components/responses/ErrorResponse"},
+          "500": {"$ref": "#/components/responses/ErrorResponse"}
+        }
+      }
+    },
+    "/api/v1/events/stream": {
+      "get": {
+        "operationId": "event_stream_api_v1_events_stream_get",
+        "summary": "Event Stream",
+        "parameters": [
+          {"$ref": "#/components/parameters/AfterEventId"},
+          {"$ref": "#/components/parameters/LastEventId"}
+        ],
+        "responses": {
+          "200": {
+            "description": "Durable Events followed by heartbeat comments",
+            "content": {
+              "text/event-stream": {
+                "schema": {"type": "string"}
+              }
+            }
+          },
+          "400": {"$ref": "#/components/responses/ErrorResponse"},
+          "404": {"$ref": "#/components/responses/ErrorResponse"},
+          "422": {"$ref": "#/components/responses/ErrorResponse"},
+          "500": {"$ref": "#/components/responses/ErrorResponse"}
+        }
+      }
+    }
+  },
+  "components": {
+    "parameters": {
+      "RunId": {
+        "name": "run_id",
+        "in": "path",
+        "required": true,
+        "schema": {"$ref": "common.schema.json#/$defs/IdInput"}
+      },
+      "PlanRevisionId": {
+        "name": "plan_revision_id",
+        "in": "path",
+        "required": true,
+        "schema": {"$ref": "common.schema.json#/$defs/IdInput"}
+      },
+      "ArtifactId": {
+        "name": "artifact_id",
+        "in": "path",
+        "required": true,
+        "schema": {"$ref": "common.schema.json#/$defs/IdInput"}
+      },
+      "AfterEventId": {
+        "name": "after_event_id",
+        "in": "query",
+        "required": false,
+        "schema": {"$ref": "common.schema.json#/$defs/IdInput"}
+      },
+      "LastEventId": {
+        "name": "Last-Event-ID",
+        "in": "header",
+        "required": false,
+        "schema": {"$ref": "common.schema.json#/$defs/IdInput"}
+      },
+      "EventLimit": {
+        "name": "limit",
+        "in": "query",
+        "required": false,
+        "schema": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000,
+          "default": 100
+        }
+      }
+    },
+    "responses": {
+      "DataResponse": {
+        "description": "Command accepted",
+        "content": {
+          "application/json": {
+            "schema": {"$ref": "commands.schema.json#/$defs/DataResponse"}
+          }
+        }
+      },
+      "ProjectResponse": {
+        "description": "Created Project",
+        "content": {
+          "application/json": {
+            "schema": {"$ref": "commands.schema.json#/$defs/ProjectResponse"}
+          }
+        }
+      },
+      "GoalResponse": {
+        "description": "Created Goal",
+        "content": {
+          "application/json": {
+            "schema": {"$ref": "commands.schema.json#/$defs/GoalResponse"}
+          }
+        }
+      },
+      "CommandRunResponse": {
+        "description": "Command Run state",
+        "content": {
+          "application/json": {
+            "schema": {"$ref": "commands.schema.json#/$defs/RunResponse"}
+          }
+        }
+      },
+      "CommandPlanGraphResponse": {
+        "description": "Command PlanRevision state",
+        "content": {
+          "application/json": {
+            "schema": {"$ref": "commands.schema.json#/$defs/PlanGraphResponse"}
+          }
+        }
+      },
+      "RunResponse": {
+        "description": "Current Run state",
+        "content": {
+          "application/json": {
+            "schema": {"$ref": "queries.schema.json#/$defs/RunResponse"}
+          }
+        }
+      },
+      "PlanGraphResponse": {
+        "description": "Versioned plan structure",
+        "content": {
+          "application/json": {
+            "schema": {"$ref": "queries.schema.json#/$defs/PlanGraphResponse"}
+          }
+        }
+      },
+      "ExecutionTraceResponse": {
+        "description": "Actual execution facts",
+        "content": {
+          "application/json": {
+            "schema": {"$ref": "queries.schema.json#/$defs/ExecutionTraceResponse"}
+          }
+        }
+      },
+      "CheckSpecListResponse": {
+        "description": "Plan Check definitions",
+        "content": {
+          "application/json": {
+            "schema": {"$ref": "queries.schema.json#/$defs/CheckSpecListResponse"}
+          }
+        }
+      },
+      "CheckRunListResponse": {
+        "description": "Run Check executions",
+        "content": {
+          "application/json": {
+            "schema": {"$ref": "queries.schema.json#/$defs/CheckRunListResponse"}
+          }
+        }
+      },
+      "CheckpointListResponse": {
+        "description": "Run Checkpoints",
+        "content": {
+          "application/json": {
+            "schema": {"$ref": "queries.schema.json#/$defs/CheckpointListResponse"}
+          }
+        }
+      },
+      "ArtifactListResponse": {
+        "description": "Run Artifact metadata",
+        "content": {
+          "application/json": {
+            "schema": {"$ref": "queries.schema.json#/$defs/ArtifactListResponse"}
+          }
+        }
+      },
+      "ArtifactResponse": {
+        "description": "Artifact metadata",
+        "content": {
+          "application/json": {
+            "schema": {"$ref": "queries.schema.json#/$defs/ArtifactResponse"}
+          }
+        }
+      },
+      "EventPageResponse": {
+        "description": "Durable Event page",
+        "content": {
+          "application/json": {
+            "schema": {"$ref": "queries.schema.json#/$defs/EventPageResponse"}
+          }
+        }
+      },
+      "ErrorResponse": {
+        "description": "Versioned API error",
+        "content": {
+          "application/json": {
+            "schema": {"$ref": "common.schema.json#/$defs/ErrorResponse"}
+          }
+        }
+      }
+    }
+  }
+}

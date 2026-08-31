@@ -1,4 +1,4 @@
-"""SQLite connection factory and explicit BEGIN IMMEDIATE Unit of Work."""
+"""SQLite factories for explicit write transactions and short read snapshots."""
 
 from __future__ import annotations
 
@@ -44,6 +44,78 @@ class SQLiteDatabase:
     def unit_of_work(self) -> SQLiteUnitOfWork:
         """Create a fresh Unit of Work; entering it begins the write transaction."""
         return SQLiteUnitOfWork(self)
+
+    def read_session(self) -> SQLiteReadSession:
+        """Create a short-lived, query-only session with a deferred snapshot."""
+        return SQLiteReadSession(self)
+
+    def _connect_read_only(self) -> sqlite3.Connection:
+        connection = sqlite3.connect(
+            self.path,
+            timeout=5.0,
+            isolation_level=None,
+        )
+        connection.row_factory = sqlite3.Row
+        connection.execute("PRAGMA foreign_keys = ON")
+        connection.execute("PRAGMA busy_timeout = 5000")
+        connection.execute("PRAGMA query_only = ON")
+        return connection
+
+
+class SQLiteReadSession:
+    """One query-only SQLite snapshot that never takes a write transaction."""
+
+    def __init__(self, database: SQLiteDatabase) -> None:
+        self._database = database
+        self._connection: sqlite3.Connection | None = None
+        self._states: SQLiteCurrentStateRepository | None = None
+        self._events: SQLiteEventLog | None = None
+
+    @property
+    def states(self) -> SQLiteCurrentStateRepository:
+        """Return current-state readers bound to this snapshot."""
+        if self._states is None or self._connection is None:
+            raise RuntimeError("Read session is not active")
+        return self._states
+
+    @property
+    def events(self) -> SQLiteEventLog:
+        """Return the Event reader bound to this snapshot."""
+        if self._events is None or self._connection is None:
+            raise RuntimeError("Read session is not active")
+        return self._events
+
+    def __enter__(self) -> Self:
+        if self._connection is not None:
+            raise RuntimeError("Read session cannot be entered more than once")
+        connection = self._database._connect_read_only()
+        try:
+            connection.execute("BEGIN DEFERRED")
+        except BaseException:
+            connection.close()
+            raise
+        self._connection = connection
+        self._states = SQLiteCurrentStateRepository(connection)
+        self._events = SQLiteEventLog(connection)
+        return self
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> None:
+        del exc_type, exc_value, traceback
+        connection = self._connection
+        if connection is None:
+            return
+        try:
+            connection.rollback()
+        finally:
+            connection.close()
+            self._connection = None
+            self._states = None
+            self._events = None
 
 
 class SQLiteUnitOfWork:

@@ -67,6 +67,7 @@ def build_service(
     planner_kind: str = "single",
 ) -> ExecutionService:
     """Build the local P1 service from concrete infrastructure Adapters."""
+    database_path.parent.mkdir(parents=True, exist_ok=True)
     database = SQLiteDatabase(database_path)
     artifact_store = FilesystemArtifactStore(artifact_root)
     worker: WorkerAdapter

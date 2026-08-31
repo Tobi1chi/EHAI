@@ -79,17 +79,13 @@ class CommandReceipt:
 
 
 @runtime_checkable
-class CurrentStateRepository(Protocol):
-    """Typed access to P1 current state and retained version history.
+class CurrentStateReader(Protocol):
+    """Read-only access to P1 current state and retained version history.
 
     ``list_*`` methods must return deterministic oldest-first order: creation
     order for entities, version order for contracts/plans, sequence order for
     Attempts, and event-offset order for Checkpoints.
     """
-
-    def put_project(self, project: Project) -> None:
-        """Insert or replace a Project snapshot by ID."""
-        ...
 
     def get_project(self, project_id: ID) -> Project | None:
         """Return a Project by ID."""
@@ -97,10 +93,6 @@ class CurrentStateRepository(Protocol):
 
     def list_projects(self) -> tuple[Project, ...]:
         """List Projects in deterministic creation order."""
-        ...
-
-    def put_goal(self, goal: Goal) -> None:
-        """Insert or replace a Goal snapshot by ID."""
         ...
 
     def get_goal(self, goal_id: ID) -> Goal | None:
@@ -111,20 +103,12 @@ class CurrentStateRepository(Protocol):
         """List Goals owned by one Project."""
         ...
 
-    def put_completion_contract(self, contract: CompletionContract) -> None:
-        """Persist an immutable CompletionContract version."""
-        ...
-
     def get_completion_contract(self, completion_contract_id: ID) -> CompletionContract | None:
         """Return a CompletionContract by ID."""
         ...
 
     def list_completion_contracts(self, goal_id: ID) -> tuple[CompletionContract, ...]:
         """List all retained CompletionContract versions for a Goal."""
-        ...
-
-    def put_plan_revision(self, plan_revision: PlanRevision) -> None:
-        """Insert or replace a PlanRevision snapshot by ID."""
         ...
 
     def get_plan_revision(self, plan_revision_id: ID) -> PlanRevision | None:
@@ -135,20 +119,12 @@ class CurrentStateRepository(Protocol):
         """List all retained PlanRevision versions for a Goal."""
         ...
 
-    def put_run(self, run: Run) -> None:
-        """Insert or replace a Run snapshot by ID."""
-        ...
-
     def get_run(self, run_id: ID) -> Run | None:
         """Return a Run by ID."""
         ...
 
     def list_runs(self, goal_id: ID) -> tuple[Run, ...]:
         """List Runs for one Goal."""
-        ...
-
-    def put_attempt(self, attempt: Attempt) -> None:
-        """Insert or replace an Attempt snapshot by ID."""
         ...
 
     def get_attempt(self, attempt_id: ID) -> Attempt | None:
@@ -159,20 +135,12 @@ class CurrentStateRepository(Protocol):
         """List Attempts for one Run in sequence order."""
         ...
 
-    def put_check_spec(self, plan_revision_id: ID, check_spec: CheckSpec) -> None:
-        """Persist one immutable CheckSpec owned by a PlanRevision."""
-        ...
-
     def get_check_spec(self, check_id: ID) -> CheckSpec | None:
         """Return one CheckSpec by ID."""
         ...
 
     def list_check_specs(self, plan_revision_id: ID) -> tuple[CheckSpec, ...]:
         """List CheckSpecs for one PlanRevision in insertion order."""
-        ...
-
-    def put_check_run(self, check_run: CheckRun) -> None:
-        """Insert or replace a CheckRun snapshot by ID."""
         ...
 
     def get_check_run(self, check_run_id: ID) -> CheckRun | None:
@@ -183,24 +151,12 @@ class CurrentStateRepository(Protocol):
         """List CheckRuns for one Run."""
         ...
 
-    def put_checkpoint(self, checkpoint: Checkpoint) -> None:
-        """Persist an immutable Checkpoint."""
-        ...
-
     def get_checkpoint(self, checkpoint_id: ID) -> Checkpoint | None:
         """Return a Checkpoint by ID."""
         ...
 
     def list_checkpoints(self, run_id: ID) -> tuple[Checkpoint, ...]:
         """List Checkpoints for one Run in event-offset order."""
-        ...
-
-    def restore_checkpoint_state(self, checkpoint: Checkpoint, restored_run: Run) -> None:
-        """Restore only a persisted Checkpoint through the explicit recovery boundary."""
-        ...
-
-    def put_artifact(self, artifact: Artifact) -> None:
-        """Persist immutable Artifact metadata and its relative path."""
         ...
 
     def get_artifact(self, artifact_id: ID) -> Artifact | None:
@@ -213,7 +169,74 @@ class CurrentStateRepository(Protocol):
 
 
 @runtime_checkable
-class EventLog(Protocol):
+class CurrentStateRepository(CurrentStateReader, Protocol):
+    """Mutable state storage used only inside an explicit write transaction."""
+
+    def put_project(self, project: Project) -> None:
+        """Insert or replace a Project snapshot by ID."""
+        ...
+
+    def put_goal(self, goal: Goal) -> None:
+        """Insert or replace a Goal snapshot by ID."""
+        ...
+
+    def put_completion_contract(self, contract: CompletionContract) -> None:
+        """Persist an immutable CompletionContract version."""
+        ...
+
+    def put_plan_revision(self, plan_revision: PlanRevision) -> None:
+        """Insert or replace a PlanRevision snapshot by ID."""
+        ...
+
+    def put_run(self, run: Run) -> None:
+        """Insert or replace a Run snapshot by ID."""
+        ...
+
+    def put_attempt(self, attempt: Attempt) -> None:
+        """Insert or replace an Attempt snapshot by ID."""
+        ...
+
+    def put_check_spec(self, plan_revision_id: ID, check_spec: CheckSpec) -> None:
+        """Persist one immutable CheckSpec owned by a PlanRevision."""
+        ...
+
+    def put_check_run(self, check_run: CheckRun) -> None:
+        """Insert or replace a CheckRun snapshot by ID."""
+        ...
+
+    def put_checkpoint(self, checkpoint: Checkpoint) -> None:
+        """Persist an immutable Checkpoint."""
+        ...
+
+    def restore_checkpoint_state(self, checkpoint: Checkpoint, restored_run: Run) -> None:
+        """Restore only a persisted Checkpoint through the explicit recovery boundary."""
+        ...
+
+    def put_artifact(self, artifact: Artifact) -> None:
+        """Persist immutable Artifact metadata and its relative path."""
+        ...
+
+
+@runtime_checkable
+class EventReader(Protocol):
+    """Read-only access to the durable Event Log."""
+
+    def list_events(
+        self,
+        *,
+        after_event_id: ID | None = None,
+        limit: int | None = None,
+    ) -> tuple[StoredEvent, ...]:
+        """List Events strictly after an optional Event ID cursor."""
+        ...
+
+    def latest_offset(self) -> int:
+        """Return the latest committed offset, or zero for an empty log."""
+        ...
+
+
+@runtime_checkable
+class EventLog(EventReader, Protocol):
     """Append-only Event storage sharing a transaction with current state."""
 
     def append(self, event: Event) -> StoredEvent:
@@ -231,6 +254,34 @@ class EventLog(Protocol):
 
     def latest_offset(self) -> int:
         """Return the latest committed offset, or zero for an empty log."""
+        ...
+
+
+@runtime_checkable
+class ReadSession(Protocol):
+    """One short-lived, consistent, read-only persistence snapshot."""
+
+    @property
+    def states(self) -> CurrentStateReader:
+        """Return current-state readers bound to this snapshot."""
+        ...
+
+    @property
+    def events(self) -> EventReader:
+        """Return the Event reader bound to this snapshot."""
+        ...
+
+    def __enter__(self) -> Self:
+        """Open the read-only snapshot."""
+        ...
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> bool | None:
+        """Close the snapshot and its database connection."""
         ...
 
 
