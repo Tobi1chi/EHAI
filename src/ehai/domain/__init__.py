@@ -1,5 +1,6 @@
 """Public domain model for the P1 execution plane."""
 
+from ehai.domain.artifacts import Artifact, ArtifactKind
 from ehai.domain.checking import (
     CheckKind,
     Checkpoint,
@@ -44,6 +45,8 @@ from ehai.domain.planning import (
 
 __all__ = [
     "EVENT_SCHEMA_VERSION",
+    "Artifact",
+    "ArtifactKind",
     "Attempt",
     "AttemptStatus",
     "Branch",

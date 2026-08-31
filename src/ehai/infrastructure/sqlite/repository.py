@@ -1,0 +1,1189 @@
+"""SQLite repositories bound to one explicit Unit of Work transaction."""
+
+from __future__ import annotations
+
+import sqlite3
+
+from ehai import ID, format_utc_datetime, json_dumps, json_loads, parse_utc_datetime
+from ehai.application.ports import CommandReceipt, StoredEvent
+from ehai.domain.artifacts import Artifact
+from ehai.domain.checking import Checkpoint, CheckRun, CheckRunStatus
+from ehai.domain.events import Event, EventType
+from ehai.domain.execution import Attempt, AttemptStatus, Run, RunStatus
+from ehai.domain.goal import CompletionContract, Goal, Project
+from ehai.domain.planning import (
+    BranchStatus,
+    PlanNode,
+    PlanNodeStatus,
+    PlanRevision,
+    PlanRevisionStatus,
+)
+from ehai.infrastructure.sqlite.codec import (
+    decode_artifact,
+    decode_attempt,
+    decode_branch,
+    decode_check_run,
+    decode_checkpoint,
+    decode_completion_contract,
+    decode_edge,
+    decode_goal,
+    decode_plan_node,
+    decode_plan_revision,
+    decode_project,
+    decode_run,
+    encode_artifact,
+    encode_attempt,
+    encode_branch,
+    encode_check_run,
+    encode_checkpoint,
+    encode_completion_contract,
+    encode_edge,
+    encode_goal,
+    encode_plan_node,
+    encode_plan_revision,
+    encode_project,
+    encode_run,
+)
+
+
+class PersistenceConflictError(RuntimeError):
+    """Raised when immutable persisted identity is reused for different data."""
+
+
+class UnknownEventCursorError(LookupError):
+    """Raised when an Event resume cursor is not present in the Event Log."""
+
+
+class DuplicateEventError(PersistenceConflictError):
+    """Raised when an immutable Event ID is appended more than once."""
+
+
+class IdempotencyConflictError(PersistenceConflictError):
+    """Raised when an idempotency key is reused for another Command fingerprint."""
+
+    def __init__(self, key: str, stored_fingerprint: str, submitted_fingerprint: str) -> None:
+        self.key = key
+        self.stored_fingerprint = stored_fingerprint
+        self.submitted_fingerprint = submitted_fingerprint
+        super().__init__(f"idempotency key {key!r} was already used with another fingerprint")
+
+
+_PLAN_REVISION_STATUS_TRANSITIONS = {
+    PlanRevisionStatus.DRAFT: frozenset({PlanRevisionStatus.DRAFT, PlanRevisionStatus.APPROVED}),
+    PlanRevisionStatus.APPROVED: frozenset({PlanRevisionStatus.APPROVED}),
+}
+_PLAN_NODE_STATUS_TRANSITIONS = {
+    PlanNodeStatus.PENDING: frozenset(
+        {PlanNodeStatus.PENDING, PlanNodeStatus.READY, PlanNodeStatus.PRUNED}
+    ),
+    PlanNodeStatus.READY: frozenset(
+        {PlanNodeStatus.READY, PlanNodeStatus.RUNNING, PlanNodeStatus.PRUNED}
+    ),
+    PlanNodeStatus.RUNNING: frozenset(
+        {PlanNodeStatus.RUNNING, PlanNodeStatus.CANDIDATE, PlanNodeStatus.FAILED}
+    ),
+    PlanNodeStatus.CANDIDATE: frozenset(
+        {PlanNodeStatus.CANDIDATE, PlanNodeStatus.VERIFYING, PlanNodeStatus.FAILED}
+    ),
+    PlanNodeStatus.VERIFYING: frozenset(
+        {PlanNodeStatus.VERIFYING, PlanNodeStatus.COMPLETED, PlanNodeStatus.FAILED}
+    ),
+    PlanNodeStatus.FAILED: frozenset({PlanNodeStatus.FAILED, PlanNodeStatus.READY}),
+    PlanNodeStatus.COMPLETED: frozenset({PlanNodeStatus.COMPLETED}),
+    PlanNodeStatus.PRUNED: frozenset({PlanNodeStatus.PRUNED}),
+}
+_BRANCH_STATUS_TRANSITIONS = {
+    BranchStatus.ACTIVE: frozenset(
+        {BranchStatus.ACTIVE, BranchStatus.SELECTED, BranchStatus.PRUNED}
+    ),
+    BranchStatus.SELECTED: frozenset({BranchStatus.SELECTED}),
+    BranchStatus.PRUNED: frozenset({BranchStatus.PRUNED}),
+}
+_RUN_STATUS_TRANSITIONS = {
+    RunStatus.PENDING: frozenset({RunStatus.PENDING, RunStatus.RUNNING, RunStatus.CANCELLED}),
+    RunStatus.RUNNING: frozenset(
+        {
+            RunStatus.RUNNING,
+            RunStatus.PAUSED,
+            RunStatus.COMPLETED,
+            RunStatus.FAILED,
+            RunStatus.CANCELLED,
+        }
+    ),
+    RunStatus.PAUSED: frozenset(
+        {RunStatus.PAUSED, RunStatus.RUNNING, RunStatus.FAILED, RunStatus.CANCELLED}
+    ),
+    RunStatus.COMPLETED: frozenset({RunStatus.COMPLETED}),
+    RunStatus.FAILED: frozenset({RunStatus.FAILED}),
+    RunStatus.CANCELLED: frozenset({RunStatus.CANCELLED}),
+}
+_ATTEMPT_STATUS_TRANSITIONS = {
+    AttemptStatus.PENDING: frozenset(
+        {AttemptStatus.PENDING, AttemptStatus.RUNNING, AttemptStatus.CANCELLED}
+    ),
+    AttemptStatus.RUNNING: frozenset(
+        {
+            AttemptStatus.RUNNING,
+            AttemptStatus.SUCCEEDED,
+            AttemptStatus.FAILED,
+            AttemptStatus.TIMED_OUT,
+            AttemptStatus.CANCELLED,
+            AttemptStatus.INTERRUPTED,
+        }
+    ),
+    AttemptStatus.SUCCEEDED: frozenset({AttemptStatus.SUCCEEDED}),
+    AttemptStatus.FAILED: frozenset({AttemptStatus.FAILED}),
+    AttemptStatus.TIMED_OUT: frozenset({AttemptStatus.TIMED_OUT}),
+    AttemptStatus.CANCELLED: frozenset({AttemptStatus.CANCELLED}),
+    AttemptStatus.INTERRUPTED: frozenset({AttemptStatus.INTERRUPTED}),
+}
+_CHECK_RUN_STATUS_TRANSITIONS = {
+    CheckRunStatus.PENDING: frozenset(
+        {CheckRunStatus.PENDING, CheckRunStatus.RUNNING, CheckRunStatus.CANCELLED}
+    ),
+    CheckRunStatus.RUNNING: frozenset(
+        {
+            CheckRunStatus.RUNNING,
+            CheckRunStatus.COMPLETED,
+            CheckRunStatus.FAILED,
+            CheckRunStatus.TIMED_OUT,
+            CheckRunStatus.CANCELLED,
+            CheckRunStatus.INTERRUPTED,
+        }
+    ),
+    CheckRunStatus.COMPLETED: frozenset({CheckRunStatus.COMPLETED}),
+    CheckRunStatus.FAILED: frozenset({CheckRunStatus.FAILED}),
+    CheckRunStatus.TIMED_OUT: frozenset({CheckRunStatus.TIMED_OUT}),
+    CheckRunStatus.CANCELLED: frozenset({CheckRunStatus.CANCELLED}),
+    CheckRunStatus.INTERRUPTED: frozenset({CheckRunStatus.INTERRUPTED}),
+}
+
+
+class SQLiteCurrentStateRepository:
+    """Current-state snapshots and retained version history in one SQLite transaction."""
+
+    def __init__(self, connection: sqlite3.Connection) -> None:
+        self._connection = connection
+
+    def put_project(self, project: Project) -> None:
+        self._connection.execute(
+            """
+            INSERT INTO projects(project_id, created_at, snapshot_json)
+            VALUES (?, ?, ?)
+            ON CONFLICT(project_id) DO UPDATE SET
+                created_at = excluded.created_at,
+                snapshot_json = excluded.snapshot_json
+            """,
+            (
+                project.project_id,
+                format_utc_datetime(project.created_at),
+                encode_project(project),
+            ),
+        )
+
+    def get_project(self, project_id: ID) -> Project | None:
+        snapshot = self._snapshot("projects", "project_id", project_id)
+        return None if snapshot is None else decode_project(snapshot)
+
+    def list_projects(self) -> tuple[Project, ...]:
+        return tuple(
+            decode_project(snapshot)
+            for snapshot in self._snapshots(
+                "SELECT snapshot_json FROM projects ORDER BY created_at, project_id"
+            )
+        )
+
+    def put_goal(self, goal: Goal) -> None:
+        contract_id = (
+            None
+            if goal.completion_contract is None
+            else goal.completion_contract.completion_contract_id
+        )
+        self._connection.execute(
+            """
+            INSERT INTO goals(
+                goal_id, project_id, current_completion_contract_id, created_at, snapshot_json
+            ) VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(goal_id) DO UPDATE SET
+                project_id = excluded.project_id,
+                current_completion_contract_id = excluded.current_completion_contract_id,
+                created_at = excluded.created_at,
+                snapshot_json = excluded.snapshot_json
+            """,
+            (
+                goal.goal_id,
+                goal.project_id,
+                contract_id,
+                format_utc_datetime(goal.created_at),
+                encode_goal(goal),
+            ),
+        )
+
+    def get_goal(self, goal_id: ID) -> Goal | None:
+        row = self._connection.execute(
+            """
+            SELECT snapshot_json, current_completion_contract_id
+            FROM goals WHERE goal_id = ?
+            """,
+            (goal_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        contract_id = _optional_row_string(row, "current_completion_contract_id")
+        contract = None if contract_id is None else self.get_completion_contract(ID(contract_id))
+        return decode_goal(_row_string(row, "snapshot_json"), contract)
+
+    def list_goals(self, project_id: ID) -> tuple[Goal, ...]:
+        return tuple(
+            self._required_goal(ID(goal_id))
+            for goal_id in self._strings(
+                """
+                SELECT goal_id FROM goals
+                WHERE project_id = ? ORDER BY created_at, goal_id
+                """,
+                (project_id,),
+            )
+        )
+
+    def put_completion_contract(self, contract: CompletionContract) -> None:
+        existing = self.get_completion_contract(contract.completion_contract_id)
+        if existing is not None:
+            same_structure = _completion_contract_structure(existing) == (
+                _completion_contract_structure(contract)
+            )
+            valid_confirmation = (
+                same_structure
+                and existing.confirmed_at is None
+                and contract.confirmed_at is not None
+            )
+            if existing != contract and not valid_confirmation:
+                raise PersistenceConflictError(
+                    f"CompletionContract {contract.completion_contract_id} history changed"
+                )
+        self._connection.execute(
+            """
+            INSERT INTO completion_contracts(
+                completion_contract_id, goal_id, version,
+                supersedes_completion_contract_id, snapshot_json
+            ) VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(completion_contract_id) DO UPDATE SET
+                snapshot_json = excluded.snapshot_json
+            """,
+            (
+                contract.completion_contract_id,
+                contract.goal_id,
+                contract.version,
+                contract.supersedes_completion_contract_id,
+                encode_completion_contract(contract),
+            ),
+        )
+
+    def get_completion_contract(self, completion_contract_id: ID) -> CompletionContract | None:
+        snapshot = self._snapshot(
+            "completion_contracts",
+            "completion_contract_id",
+            completion_contract_id,
+        )
+        return None if snapshot is None else decode_completion_contract(snapshot)
+
+    def list_completion_contracts(self, goal_id: ID) -> tuple[CompletionContract, ...]:
+        return tuple(
+            decode_completion_contract(snapshot)
+            for snapshot in self._snapshots(
+                """
+                SELECT snapshot_json FROM completion_contracts
+                WHERE goal_id = ? ORDER BY version
+                """,
+                (goal_id,),
+            )
+        )
+
+    def put_plan_revision(self, plan_revision: PlanRevision) -> None:
+        self._validate_plan_update(plan_revision)
+        self._validate_plan_child_identity(plan_revision)
+        self._connection.execute(
+            """
+            INSERT INTO plan_revisions(
+                plan_revision_id, goal_id, completion_contract_id, version,
+                supersedes_plan_revision_id, snapshot_json
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(plan_revision_id) DO UPDATE SET
+                snapshot_json = excluded.snapshot_json
+            """,
+            (
+                plan_revision.plan_revision_id,
+                plan_revision.goal_id,
+                plan_revision.completion_contract_id,
+                plan_revision.version,
+                plan_revision.supersedes_plan_revision_id,
+                encode_plan_revision(plan_revision),
+            ),
+        )
+        for index, node in enumerate(plan_revision.nodes):
+            self._connection.execute(
+                """
+                INSERT INTO plan_nodes(
+                    plan_node_id, plan_revision_id, sort_index, snapshot_json
+                ) VALUES (?, ?, ?, ?)
+                ON CONFLICT(plan_node_id) DO UPDATE SET
+                    sort_index = excluded.sort_index,
+                    snapshot_json = excluded.snapshot_json
+                """,
+                (
+                    node.plan_node_id,
+                    plan_revision.plan_revision_id,
+                    index,
+                    encode_plan_node(node),
+                ),
+            )
+        for index, branch in enumerate(plan_revision.branches):
+            self._connection.execute(
+                """
+                INSERT INTO branches(
+                    branch_id, plan_revision_id, fork_node_id, merge_node_id,
+                    sort_index, snapshot_json
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(branch_id) DO UPDATE SET
+                    sort_index = excluded.sort_index,
+                    snapshot_json = excluded.snapshot_json
+                """,
+                (
+                    branch.branch_id,
+                    plan_revision.plan_revision_id,
+                    branch.fork_node_id,
+                    branch.merge_node_id,
+                    index,
+                    encode_branch(branch),
+                ),
+            )
+        for index, edge in enumerate(plan_revision.edges):
+            self._connection.execute(
+                """
+                INSERT INTO edges(
+                    edge_id, plan_revision_id, source_node_id, target_node_id,
+                    branch_id, sort_index, snapshot_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(edge_id) DO UPDATE SET
+                    sort_index = excluded.sort_index,
+                    snapshot_json = excluded.snapshot_json
+                """,
+                (
+                    edge.edge_id,
+                    plan_revision.plan_revision_id,
+                    edge.source_node_id,
+                    edge.target_node_id,
+                    edge.branch_id,
+                    index,
+                    encode_edge(edge),
+                ),
+            )
+
+    def get_plan_revision(self, plan_revision_id: ID) -> PlanRevision | None:
+        snapshot = self._snapshot("plan_revisions", "plan_revision_id", plan_revision_id)
+        if snapshot is None:
+            return None
+        nodes = tuple(
+            decode_plan_node(value)
+            for value in self._snapshots(
+                """
+                SELECT snapshot_json FROM plan_nodes
+                WHERE plan_revision_id = ? ORDER BY sort_index
+                """,
+                (plan_revision_id,),
+            )
+        )
+        edges = tuple(
+            decode_edge(value)
+            for value in self._snapshots(
+                """
+                SELECT snapshot_json FROM edges
+                WHERE plan_revision_id = ? ORDER BY sort_index
+                """,
+                (plan_revision_id,),
+            )
+        )
+        branches = tuple(
+            decode_branch(value)
+            for value in self._snapshots(
+                """
+                SELECT snapshot_json FROM branches
+                WHERE plan_revision_id = ? ORDER BY sort_index
+                """,
+                (plan_revision_id,),
+            )
+        )
+        return decode_plan_revision(snapshot, nodes, edges, branches)
+
+    def list_plan_revisions(self, goal_id: ID) -> tuple[PlanRevision, ...]:
+        return tuple(
+            self._required_plan_revision(ID(revision_id))
+            for revision_id in self._strings(
+                """
+                SELECT plan_revision_id FROM plan_revisions
+                WHERE goal_id = ? ORDER BY version
+                """,
+                (goal_id,),
+            )
+        )
+
+    def put_run(self, run: Run) -> None:
+        plan_revision = self._required_plan_revision(run.plan_revision_id)
+        if plan_revision.goal_id != run.goal_id:
+            raise PersistenceConflictError(
+                f"Run {run.run_id} Goal does not match PlanRevision {run.plan_revision_id}"
+            )
+        existing = self.get_run(run.run_id)
+        if existing is not None:
+            if _run_identity(existing) != _run_identity(run):
+                raise PersistenceConflictError(f"Run {run.run_id} identity changed")
+            if run.status not in _RUN_STATUS_TRANSITIONS[existing.status]:
+                raise PersistenceConflictError(f"Run {run.run_id} status transition is illegal")
+        self._connection.execute(
+            """
+            INSERT INTO runs(run_id, goal_id, plan_revision_id, created_at, snapshot_json)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(run_id) DO UPDATE SET snapshot_json = excluded.snapshot_json
+            """,
+            (
+                run.run_id,
+                run.goal_id,
+                run.plan_revision_id,
+                format_utc_datetime(run.created_at),
+                encode_run(run),
+            ),
+        )
+
+    def get_run(self, run_id: ID) -> Run | None:
+        snapshot = self._snapshot("runs", "run_id", run_id)
+        return None if snapshot is None else decode_run(snapshot)
+
+    def list_runs(self, goal_id: ID) -> tuple[Run, ...]:
+        return tuple(
+            decode_run(snapshot)
+            for snapshot in self._snapshots(
+                """
+                SELECT snapshot_json FROM runs
+                WHERE goal_id = ? ORDER BY created_at, run_id
+                """,
+                (goal_id,),
+            )
+        )
+
+    def put_attempt(self, attempt: Attempt) -> None:
+        run = self._required_run(attempt.run_id)
+        plan_revision = self._required_plan_revision(run.plan_revision_id)
+        _required_plan_node(plan_revision, attempt.plan_node_id)
+        existing = self.get_attempt(attempt.attempt_id)
+        if existing is not None:
+            if _attempt_identity(existing) != _attempt_identity(attempt):
+                raise PersistenceConflictError(f"Attempt {attempt.attempt_id} identity changed")
+            if attempt.status not in _ATTEMPT_STATUS_TRANSITIONS[existing.status]:
+                raise PersistenceConflictError(
+                    f"Attempt {attempt.attempt_id} status transition is illegal"
+                )
+        self._connection.execute(
+            """
+            INSERT INTO attempts(
+                attempt_id, run_id, plan_node_id, sequence, snapshot_json
+            ) VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(attempt_id) DO UPDATE SET snapshot_json = excluded.snapshot_json
+            """,
+            (
+                attempt.attempt_id,
+                attempt.run_id,
+                attempt.plan_node_id,
+                attempt.sequence,
+                encode_attempt(attempt),
+            ),
+        )
+
+    def get_attempt(self, attempt_id: ID) -> Attempt | None:
+        snapshot = self._snapshot("attempts", "attempt_id", attempt_id)
+        return None if snapshot is None else decode_attempt(snapshot)
+
+    def list_attempts(self, run_id: ID) -> tuple[Attempt, ...]:
+        return tuple(
+            decode_attempt(snapshot)
+            for snapshot in self._snapshots(
+                """
+                SELECT snapshot_json FROM attempts
+                WHERE run_id = ? ORDER BY sequence, attempt_id
+                """,
+                (run_id,),
+            )
+        )
+
+    def put_check_run(self, check_run: CheckRun) -> None:
+        attempt = self._required_attempt(check_run.attempt_id)
+        if attempt.run_id != check_run.run_id or attempt.plan_node_id != check_run.plan_node_id:
+            raise PersistenceConflictError(
+                f"CheckRun {check_run.check_run_id} does not match Attempt {attempt.attempt_id}"
+            )
+        run = self._required_run(check_run.run_id)
+        node = _required_plan_node(
+            self._required_plan_revision(run.plan_revision_id),
+            check_run.plan_node_id,
+        )
+        if check_run.check_id not in node.required_check_ids:
+            raise PersistenceConflictError(
+                f"CheckRun {check_run.check_run_id} Check is not required by PlanNode "
+                f"{node.plan_node_id}"
+            )
+        existing = self.get_check_run(check_run.check_run_id)
+        if existing is not None:
+            if _check_run_identity(existing) != _check_run_identity(check_run):
+                raise PersistenceConflictError(
+                    f"CheckRun {check_run.check_run_id} identity changed"
+                )
+            if check_run.status not in _CHECK_RUN_STATUS_TRANSITIONS[existing.status]:
+                raise PersistenceConflictError(
+                    f"CheckRun {check_run.check_run_id} status transition is illegal"
+                )
+        self._connection.execute(
+            """
+            INSERT INTO check_runs(
+                check_run_id, run_id, plan_node_id, attempt_id,
+                check_id, created_at, snapshot_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(check_run_id) DO UPDATE SET snapshot_json = excluded.snapshot_json
+            """,
+            (
+                check_run.check_run_id,
+                check_run.run_id,
+                check_run.plan_node_id,
+                check_run.attempt_id,
+                check_run.check_id,
+                format_utc_datetime(check_run.created_at),
+                encode_check_run(check_run),
+            ),
+        )
+
+    def get_check_run(self, check_run_id: ID) -> CheckRun | None:
+        snapshot = self._snapshot("check_runs", "check_run_id", check_run_id)
+        return None if snapshot is None else decode_check_run(snapshot)
+
+    def list_check_runs(self, run_id: ID) -> tuple[CheckRun, ...]:
+        return tuple(
+            decode_check_run(snapshot)
+            for snapshot in self._snapshots(
+                """
+                SELECT snapshot_json FROM check_runs
+                WHERE run_id = ? ORDER BY created_at, check_run_id
+                """,
+                (run_id,),
+            )
+        )
+
+    def put_checkpoint(self, checkpoint: Checkpoint) -> None:
+        self._validate_checkpoint_references(checkpoint)
+        snapshot = encode_checkpoint(checkpoint)
+        existing = self._snapshot("checkpoints", "checkpoint_id", checkpoint.checkpoint_id)
+        if existing is not None:
+            if existing != snapshot:
+                raise PersistenceConflictError(
+                    f"Checkpoint {checkpoint.checkpoint_id} is immutable"
+                )
+            return
+        self._connection.execute(
+            """
+            INSERT INTO checkpoints(
+                checkpoint_id, plan_revision_id, run_id, event_offset, gate_id, snapshot_json
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                checkpoint.checkpoint_id,
+                checkpoint.plan_revision_id,
+                checkpoint.run_id,
+                checkpoint.event_offset,
+                checkpoint.gate_decision.gate_id,
+                snapshot,
+            ),
+        )
+        self._connection.executemany(
+            """
+            INSERT INTO checkpoint_branch_selections(
+                checkpoint_id, fork_node_id, branch_id
+            ) VALUES (?, ?, ?)
+            """,
+            (
+                (checkpoint.checkpoint_id, fork_id, branch_id)
+                for fork_id, branch_id in checkpoint.branch_selections.items()
+            ),
+        )
+        self._connection.executemany(
+            """
+            INSERT INTO checkpoint_artifacts(checkpoint_id, artifact_id)
+            VALUES (?, ?)
+            """,
+            ((checkpoint.checkpoint_id, artifact_id) for artifact_id in checkpoint.artifact_refs),
+        )
+
+    def get_checkpoint(self, checkpoint_id: ID) -> Checkpoint | None:
+        snapshot = self._snapshot("checkpoints", "checkpoint_id", checkpoint_id)
+        return None if snapshot is None else decode_checkpoint(snapshot)
+
+    def list_checkpoints(self, run_id: ID) -> tuple[Checkpoint, ...]:
+        return tuple(
+            decode_checkpoint(snapshot)
+            for snapshot in self._snapshots(
+                """
+                SELECT snapshot_json FROM checkpoints
+                WHERE run_id = ? ORDER BY event_offset, checkpoint_id
+                """,
+                (run_id,),
+            )
+        )
+
+    def put_artifact(self, artifact: Artifact) -> None:
+        if artifact.run_id is not None:
+            run = self._required_run(artifact.run_id)
+            plan_revision = self._required_plan_revision(run.plan_revision_id)
+            if artifact.plan_node_id is not None:
+                _required_plan_node(plan_revision, artifact.plan_node_id)
+            if artifact.attempt_id is not None:
+                attempt = self._required_attempt(artifact.attempt_id)
+                if (
+                    attempt.run_id != artifact.run_id
+                    or attempt.plan_node_id != artifact.plan_node_id
+                ):
+                    raise PersistenceConflictError(
+                        f"Artifact {artifact.artifact_id} does not match Attempt "
+                        f"{artifact.attempt_id}"
+                    )
+        snapshot = encode_artifact(artifact)
+        existing = self._snapshot("artifacts", "artifact_id", artifact.artifact_id)
+        if existing is not None:
+            if existing != snapshot:
+                raise PersistenceConflictError(f"Artifact {artifact.artifact_id} is immutable")
+            return
+        self._connection.execute(
+            """
+            INSERT INTO artifacts(
+                artifact_id, run_id, plan_node_id, attempt_id, sha256,
+                relative_path, created_at, snapshot_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                artifact.artifact_id,
+                artifact.run_id,
+                artifact.plan_node_id,
+                artifact.attempt_id,
+                artifact.sha256,
+                artifact.relative_path,
+                format_utc_datetime(artifact.created_at),
+                snapshot,
+            ),
+        )
+
+    def get_artifact(self, artifact_id: ID) -> Artifact | None:
+        snapshot = self._snapshot("artifacts", "artifact_id", artifact_id)
+        return None if snapshot is None else decode_artifact(snapshot)
+
+    def list_artifacts_for_run(self, run_id: ID) -> tuple[Artifact, ...]:
+        return tuple(
+            decode_artifact(snapshot)
+            for snapshot in self._snapshots(
+                """
+                SELECT snapshot_json FROM artifacts
+                WHERE run_id = ? ORDER BY created_at, artifact_id
+                """,
+                (run_id,),
+            )
+        )
+
+    def _validate_plan_update(self, plan_revision: PlanRevision) -> None:
+        existing = self.get_plan_revision(plan_revision.plan_revision_id)
+        if existing is None:
+            return
+        if _plan_structure(existing) != _plan_structure(plan_revision):
+            raise PersistenceConflictError(
+                f"PlanRevision {plan_revision.plan_revision_id} structure changed"
+            )
+        if plan_revision.status not in _PLAN_REVISION_STATUS_TRANSITIONS[existing.status]:
+            raise PersistenceConflictError(
+                f"PlanRevision {plan_revision.plan_revision_id} status regressed"
+            )
+        if (
+            existing.status is plan_revision.status
+            and existing.approved_at != plan_revision.approved_at
+        ):
+            raise PersistenceConflictError(
+                f"PlanRevision {plan_revision.plan_revision_id} approval timestamp changed"
+            )
+        for previous_node, current_node in zip(existing.nodes, plan_revision.nodes, strict=True):
+            if current_node.status not in _PLAN_NODE_STATUS_TRANSITIONS[previous_node.status]:
+                raise PersistenceConflictError(
+                    f"PlanNode {current_node.plan_node_id} has an illegal persisted "
+                    "status transition"
+                )
+        for previous_branch, current_branch in zip(
+            existing.branches, plan_revision.branches, strict=True
+        ):
+            if current_branch.status not in _BRANCH_STATUS_TRANSITIONS[previous_branch.status]:
+                raise PersistenceConflictError(
+                    f"Branch {current_branch.branch_id} has an illegal persisted status transition"
+                )
+
+    def _validate_checkpoint_references(self, checkpoint: Checkpoint) -> None:
+        persisted_plan = self._required_plan_revision(checkpoint.plan_revision_id)
+        if persisted_plan != checkpoint.plan_revision:
+            raise PersistenceConflictError(
+                f"Checkpoint {checkpoint.checkpoint_id} PlanRevision snapshot is stale"
+            )
+        persisted_run = self._required_run(checkpoint.run_id)
+        if persisted_run != checkpoint.run:
+            raise PersistenceConflictError(
+                f"Checkpoint {checkpoint.checkpoint_id} Run snapshot is stale"
+            )
+        row = self._connection.execute(
+            "SELECT event_json FROM event_log WHERE event_offset = ?",
+            (checkpoint.event_offset,),
+        ).fetchone()
+        if row is None:
+            raise PersistenceConflictError(
+                f"Checkpoint {checkpoint.checkpoint_id} Event offset is not persisted"
+            )
+        event = Event.from_json(_row_string(row, "event_json"))
+        gate_id = event.payload.get("gate_id")
+        if (
+            event.type is not EventType.GATE_PASSED
+            or event.run_id != checkpoint.run_id
+            or gate_id != checkpoint.gate_decision.gate_id
+        ):
+            raise PersistenceConflictError(
+                f"Checkpoint {checkpoint.checkpoint_id} does not reference its GatePassed Event"
+            )
+
+        decision = checkpoint.gate_decision
+        node = _required_plan_node(persisted_plan, decision.plan_node_id)
+        if not set(node.required_check_ids).issubset(decision.required_check_ids):
+            raise PersistenceConflictError(
+                f"Checkpoint {checkpoint.checkpoint_id} Gate omits a required PlanNode Check"
+            )
+        attempt = self._required_attempt(decision.attempt_id)
+        if attempt.run_id != decision.run_id or attempt.plan_node_id != decision.plan_node_id:
+            raise PersistenceConflictError(
+                f"Checkpoint {checkpoint.checkpoint_id} Gate Attempt ownership does not match"
+            )
+
+        decision_evidence = set(decision.evidence_artifact_ids)
+        for check_id in decision.required_check_ids:
+            candidates = tuple(
+                decode_check_run(snapshot)
+                for snapshot in self._snapshots(
+                    """
+                    SELECT snapshot_json FROM check_runs
+                    WHERE run_id = ? AND plan_node_id = ?
+                        AND attempt_id = ? AND check_id = ?
+                    ORDER BY created_at, check_run_id
+                    """,
+                    (decision.run_id, decision.plan_node_id, decision.attempt_id, check_id),
+                )
+            )
+            valid_results = tuple(
+                check_run.result
+                for check_run in candidates
+                if check_run.status is CheckRunStatus.COMPLETED
+                and check_run.result is not None
+                and check_run.result.passed
+                and check_run.result.evidence_artifact_ids
+            )
+            if not valid_results or not any(
+                set(result.evidence_artifact_ids).issubset(decision_evidence)
+                for result in valid_results
+            ):
+                raise PersistenceConflictError(
+                    f"Checkpoint {checkpoint.checkpoint_id} lacks a passing evidenced "
+                    f"CheckRun for Check {check_id}"
+                )
+
+        for artifact_id in decision.evidence_artifact_ids:
+            artifact = self.get_artifact(artifact_id)
+            if artifact is None:
+                raise PersistenceConflictError(
+                    f"Checkpoint {checkpoint.checkpoint_id} evidence Artifact "
+                    f"{artifact_id} is not persisted"
+                )
+            if (
+                artifact.run_id != decision.run_id
+                or artifact.plan_node_id != decision.plan_node_id
+                or artifact.attempt_id != decision.attempt_id
+            ):
+                raise PersistenceConflictError(
+                    f"Checkpoint {checkpoint.checkpoint_id} evidence Artifact "
+                    f"{artifact_id} belongs to another execution scope"
+                )
+
+    def _validate_plan_child_identity(self, plan_revision: PlanRevision) -> None:
+        child_ids = {
+            "plan_nodes": (
+                "plan_node_id",
+                tuple(node.plan_node_id for node in plan_revision.nodes),
+            ),
+            "edges": ("edge_id", tuple(edge.edge_id for edge in plan_revision.edges)),
+            "branches": ("branch_id", tuple(branch.branch_id for branch in plan_revision.branches)),
+        }
+        for table, (id_column, entity_ids) in child_ids.items():
+            for entity_id in entity_ids:
+                owner = self._connection.execute(
+                    f"SELECT plan_revision_id FROM {table} WHERE {id_column} = ?",
+                    (entity_id,),
+                ).fetchone()
+                if (
+                    owner is not None
+                    and _row_index_string(owner, 0) != plan_revision.plan_revision_id
+                ):
+                    raise PersistenceConflictError(
+                        f"{id_column} {entity_id} already belongs to another PlanRevision"
+                    )
+
+        existing = self._connection.execute(
+            """
+            SELECT goal_id, completion_contract_id, version, supersedes_plan_revision_id
+            FROM plan_revisions WHERE plan_revision_id = ?
+            """,
+            (plan_revision.plan_revision_id,),
+        ).fetchone()
+        identity = (
+            str(plan_revision.goal_id),
+            str(plan_revision.completion_contract_id),
+            plan_revision.version,
+            (
+                None
+                if plan_revision.supersedes_plan_revision_id is None
+                else str(plan_revision.supersedes_plan_revision_id)
+            ),
+        )
+        if existing is None:
+            return
+        if _identity(existing, 4) != identity:
+            raise PersistenceConflictError(
+                f"PlanRevision {plan_revision.plan_revision_id} identity changed"
+            )
+        expected_children = {
+            "plan_nodes": {str(node.plan_node_id) for node in plan_revision.nodes},
+            "edges": {str(edge.edge_id) for edge in plan_revision.edges},
+            "branches": {str(branch.branch_id) for branch in plan_revision.branches},
+        }
+        id_columns = {
+            "plan_nodes": "plan_node_id",
+            "edges": "edge_id",
+            "branches": "branch_id",
+        }
+        for table, expected in expected_children.items():
+            column = id_columns[table]
+            actual = set(
+                self._strings(
+                    f"SELECT {column} FROM {table} WHERE plan_revision_id = ?",
+                    (plan_revision.plan_revision_id,),
+                )
+            )
+            if actual != expected:
+                raise PersistenceConflictError(
+                    f"PlanRevision {plan_revision.plan_revision_id} graph identity changed"
+                )
+
+    def _snapshot(self, table: str, id_column: str, entity_id: ID) -> str | None:
+        row = self._connection.execute(
+            f"SELECT snapshot_json FROM {table} WHERE {id_column} = ?",
+            (entity_id,),
+        ).fetchone()
+        return None if row is None else _row_string(row, "snapshot_json")
+
+    def _snapshots(
+        self,
+        sql: str,
+        parameters: tuple[object, ...] = (),
+    ) -> tuple[str, ...]:
+        return tuple(
+            _row_string(row, "snapshot_json")
+            for row in self._connection.execute(sql, parameters).fetchall()
+        )
+
+    def _strings(self, sql: str, parameters: tuple[object, ...]) -> tuple[str, ...]:
+        rows = self._connection.execute(sql, parameters).fetchall()
+        return tuple(_row_index_string(row, 0) for row in rows)
+
+    def _required_goal(self, goal_id: ID) -> Goal:
+        goal = self.get_goal(goal_id)
+        if goal is None:  # pragma: no cover - selected from the same transaction
+            raise RuntimeError(f"Goal {goal_id} disappeared during query")
+        return goal
+
+    def _required_run(self, run_id: ID) -> Run:
+        run = self.get_run(run_id)
+        if run is None:
+            raise PersistenceConflictError(f"Run {run_id} is not persisted")
+        return run
+
+    def _required_attempt(self, attempt_id: ID) -> Attempt:
+        attempt = self.get_attempt(attempt_id)
+        if attempt is None:
+            raise PersistenceConflictError(f"Attempt {attempt_id} is not persisted")
+        return attempt
+
+    def _required_plan_revision(self, plan_revision_id: ID) -> PlanRevision:
+        revision = self.get_plan_revision(plan_revision_id)
+        if revision is None:  # pragma: no cover - selected from the same transaction
+            raise RuntimeError(f"PlanRevision {plan_revision_id} disappeared during query")
+        return revision
+
+
+class SQLiteEventLog:
+    """Append-only Event Log sharing its caller's SQLite transaction."""
+
+    def __init__(self, connection: sqlite3.Connection) -> None:
+        self._connection = connection
+
+    def append(self, event: Event) -> StoredEvent:
+        try:
+            cursor = self._connection.execute(
+                """
+                INSERT INTO event_log(event_id, run_id, event_type, occurred_at, event_json)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (
+                    event.id,
+                    event.run_id,
+                    event.type.value,
+                    format_utc_datetime(event.occurred_at),
+                    event.to_json(),
+                ),
+            )
+        except sqlite3.IntegrityError as error:
+            if self._connection.execute(
+                "SELECT 1 FROM event_log WHERE event_id = ?", (event.id,)
+            ).fetchone():
+                raise DuplicateEventError(f"Event {event.id} was already appended") from error
+            raise
+        offset = cursor.lastrowid
+        if offset is None:  # pragma: no cover - SQLite always assigns the integer primary key
+            raise RuntimeError("SQLite did not assign an Event offset")
+        return StoredEvent(offset=offset, event=event)
+
+    def list_events(
+        self,
+        *,
+        after_event_id: ID | None = None,
+        limit: int | None = None,
+    ) -> tuple[StoredEvent, ...]:
+        if limit is not None and (type(limit) is not int or limit < 0):
+            raise ValueError("Event limit must be a non-negative integer")
+        after_offset = 0
+        if after_event_id is not None:
+            row = self._connection.execute(
+                "SELECT event_offset FROM event_log WHERE event_id = ?",
+                (after_event_id,),
+            ).fetchone()
+            if row is None:
+                raise UnknownEventCursorError(f"unknown Event cursor {after_event_id}")
+            after_offset = _row_index_integer(row, 0)
+
+        sql = """
+            SELECT event_offset, event_json FROM event_log
+            WHERE event_offset > ? ORDER BY event_offset
+        """
+        parameters: tuple[object, ...] = (after_offset,)
+        if limit is not None:
+            sql += " LIMIT ?"
+            parameters = (after_offset, limit)
+        return tuple(
+            StoredEvent(
+                offset=_row_index_integer(row, 0),
+                event=Event.from_json(_row_index_string(row, 1)),
+            )
+            for row in self._connection.execute(sql, parameters).fetchall()
+        )
+
+    def latest_offset(self) -> int:
+        row = self._connection.execute(
+            "SELECT COALESCE(MAX(event_offset), 0) FROM event_log"
+        ).fetchone()
+        if row is None:  # pragma: no cover - aggregate always returns one row
+            return 0
+        return _row_index_integer(row, 0)
+
+
+class SQLiteCommandReceiptStore:
+    """Durable idempotency receipts sharing the Unit of Work transaction."""
+
+    def __init__(self, connection: sqlite3.Connection) -> None:
+        self._connection = connection
+
+    def put(self, receipt: CommandReceipt) -> None:
+        existing = self.get(receipt.idempotency_key)
+        if existing is not None:
+            if (
+                existing.command_name != receipt.command_name
+                or existing.command_fingerprint != receipt.command_fingerprint
+                or existing.result != receipt.result
+            ):
+                raise IdempotencyConflictError(
+                    receipt.idempotency_key,
+                    existing.command_fingerprint,
+                    receipt.command_fingerprint,
+                )
+            return
+        self._connection.execute(
+            """
+            INSERT INTO command_receipts(
+                idempotency_key, command_name, command_fingerprint,
+                result_json, created_at
+            ) VALUES (?, ?, ?, ?, ?)
+            """,
+            (
+                receipt.idempotency_key,
+                receipt.command_name,
+                receipt.command_fingerprint,
+                json_dumps(receipt.result),
+                format_utc_datetime(receipt.created_at),
+            ),
+        )
+
+    def get(self, idempotency_key: str) -> CommandReceipt | None:
+        row = self._connection.execute(
+            """
+            SELECT command_name, command_fingerprint, result_json, created_at
+            FROM command_receipts WHERE idempotency_key = ?
+            """,
+            (idempotency_key,),
+        ).fetchone()
+        if row is None:
+            return None
+        result = json_loads(_row_string(row, "result_json"))
+        if not isinstance(result, dict):  # pragma: no cover - SQL CHECK and writer guarantee this
+            raise RuntimeError("stored Command receipt result is not an object")
+        return CommandReceipt(
+            idempotency_key=idempotency_key,
+            command_name=_row_string(row, "command_name"),
+            command_fingerprint=_row_string(row, "command_fingerprint"),
+            result=result,
+            created_at=parse_utc_datetime(_row_string(row, "created_at")),
+        )
+
+
+def _row_string(row: sqlite3.Row, column: str) -> str:
+    value = row[column]
+    if not isinstance(value, str):
+        raise RuntimeError(f"SQLite column {column} is not text")
+    return value
+
+
+def _optional_row_string(row: sqlite3.Row, column: str) -> str | None:
+    value = row[column]
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise RuntimeError(f"SQLite column {column} is not text or null")
+    return value
+
+
+def _row_index_string(row: sqlite3.Row, index: int) -> str:
+    value = row[index]
+    if not isinstance(value, str):
+        raise RuntimeError(f"SQLite column {index} is not text")
+    return value
+
+
+def _row_index_integer(row: sqlite3.Row, index: int) -> int:
+    value = row[index]
+    if not isinstance(value, int):
+        raise RuntimeError(f"SQLite column {index} is not an integer")
+    return value
+
+
+def _identity(row: sqlite3.Row, size: int) -> tuple[object, ...]:
+    return tuple(row[index] for index in range(size))
+
+
+def _completion_contract_structure(contract: CompletionContract) -> tuple[object, ...]:
+    return (
+        contract.completion_contract_id,
+        contract.goal_id,
+        contract.version,
+        contract.criteria,
+        contract.required_check_ids,
+        contract.created_at,
+        contract.supersedes_completion_contract_id,
+    )
+
+
+def _plan_structure(plan_revision: PlanRevision) -> tuple[object, ...]:
+    nodes = tuple(
+        (
+            node.plan_node_id,
+            node.title,
+            node.instruction,
+            node.kind,
+            node.required_dependency_ids,
+            node.required_check_ids,
+        )
+        for node in plan_revision.nodes
+    )
+    edges = tuple(
+        (
+            edge.edge_id,
+            edge.source_node_id,
+            edge.target_node_id,
+            edge.edge_type,
+            edge.branch_id,
+            edge.condition,
+        )
+        for edge in plan_revision.edges
+    )
+    branches = tuple(
+        (
+            branch.branch_id,
+            branch.label,
+            branch.fork_node_id,
+            branch.node_ids,
+            branch.merge_node_id,
+        )
+        for branch in plan_revision.branches
+    )
+    return (
+        plan_revision.plan_revision_id,
+        plan_revision.goal_id,
+        plan_revision.version,
+        plan_revision.completion_contract_id,
+        plan_revision.completion_contract_version,
+        plan_revision.created_at,
+        plan_revision.supersedes_plan_revision_id,
+        nodes,
+        edges,
+        branches,
+    )
+
+
+def _run_identity(run: Run) -> tuple[object, ...]:
+    return (run.run_id, run.goal_id, run.plan_revision_id, run.created_at)
+
+
+def _attempt_identity(attempt: Attempt) -> tuple[object, ...]:
+    return (
+        attempt.attempt_id,
+        attempt.run_id,
+        attempt.plan_node_id,
+        attempt.sequence,
+        attempt.created_at,
+    )
+
+
+def _check_run_identity(check_run: CheckRun) -> tuple[object, ...]:
+    return (
+        check_run.check_run_id,
+        check_run.run_id,
+        check_run.plan_node_id,
+        check_run.attempt_id,
+        check_run.check_id,
+        check_run.created_at,
+    )
+
+
+def _required_plan_node(plan_revision: PlanRevision, plan_node_id: ID) -> PlanNode:
+    for node in plan_revision.nodes:
+        if node.plan_node_id == plan_node_id:
+            return node
+    raise PersistenceConflictError(
+        f"PlanNode {plan_node_id} is not in PlanRevision {plan_revision.plan_revision_id}"
+    )
