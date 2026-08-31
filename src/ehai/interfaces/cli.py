@@ -24,18 +24,31 @@ from ehai.application.orchestrator import OrchestrationError, Orchestrator
 from ehai.application.planner import NON_EMPTY_ARTIFACT_CRITERION, DeterministicPlanner
 from ehai.application.run_control import RunControlError, RunController
 from ehai.application.service import ApplicationError, ExecutionService
+from ehai.application.workers import WorkerAdapter
 from ehai.domain.checking import CheckKind
 from ehai.infrastructure.artifacts import FilesystemArtifactStore
 from ehai.infrastructure.checks import ArtifactCheckAdapter, ArtifactCheckRule
 from ehai.infrastructure.sqlite import SQLiteDatabase
-from ehai.infrastructure.workers import FakeWorker
+from ehai.infrastructure.workers import CodexWorkerAdapter, FakeWorker
 
 
-def build_service(database_path: Path, artifact_root: Path) -> ExecutionService:
+def build_service(
+    database_path: Path,
+    artifact_root: Path,
+    *,
+    worker_kind: str = "fake",
+    worker_workspace: Path | None = None,
+) -> ExecutionService:
     """Build the local P1 service from concrete infrastructure Adapters."""
     database = SQLiteDatabase(database_path)
     artifact_store = FilesystemArtifactStore(artifact_root)
-    worker = FakeWorker()
+    worker: WorkerAdapter
+    if worker_kind == "fake":
+        worker = FakeWorker()
+    elif worker_kind == "codex":
+        worker = CodexWorkerAdapter(workspace=worker_workspace or Path.cwd())
+    else:
+        raise ValueError(f"unsupported Worker: {worker_kind}")
     check_runner = CheckRunner(
         {
             CheckKind.ARTIFACT: ArtifactCheckAdapter(
@@ -70,6 +83,17 @@ def create_parser() -> argparse.ArgumentParser:
         type=Path,
         required=True,
         help="immutable Artifact store root",
+    )
+    parser.add_argument(
+        "--worker",
+        choices=("fake", "codex"),
+        default="fake",
+        help="Worker Adapter (default: fake)",
+    )
+    parser.add_argument(
+        "--worker-workspace",
+        type=Path,
+        help="Codex working directory (default: current directory)",
     )
     commands = parser.add_subparsers(dest="command", required=True)
 
@@ -129,7 +153,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = create_parser()
     args = parser.parse_args(argv)
     try:
-        service = build_service(args.database, args.artifacts)
+        service = build_service(
+            args.database,
+            args.artifacts,
+            worker_kind=args.worker,
+            worker_workspace=args.worker_workspace,
+        )
         output = _dispatch(service, args)
     except (
         ApplicationError,

@@ -13,7 +13,14 @@ def test_cli_maps_orchestration_errors_to_json(
     monkeypatch: MonkeyPatch,
     capsys: CaptureFixture[str],
 ) -> None:
-    def fail_to_build(_database: Path, _artifacts: Path) -> ExecutionService:
+    def fail_to_build(
+        _database: Path,
+        _artifacts: Path,
+        *,
+        worker_kind: str,
+        worker_workspace: Path | None,
+    ) -> ExecutionService:
+        del worker_kind, worker_workspace
         raise OrchestrationError("controlled orchestration failure")
 
     monkeypatch.setattr(cli, "build_service", fail_to_build)

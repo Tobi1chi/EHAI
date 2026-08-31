@@ -12,6 +12,12 @@ from ehai.domain.execution import Attempt, AttemptStatus, Run, RunStatus
 from ehai.domain.goal import CompletionContract
 from ehai.domain.planning import PlanNode, PlanNodeStatus
 
+_MAX_ERROR_OUTPUT_BYTES = 1_048_576
+_MAX_ERROR_REASON_CHARACTERS = 2_000
+_MAX_ERROR_DIAGNOSTICS = 32
+_MAX_DIAGNOSTIC_CHARACTERS = 500
+_ERROR_TRUNCATION_MARKER = b"\n...[truncated]...\n"
+
 
 class WorkerExecutionError(RuntimeError):
     """A Worker failure tied to one Run, Attempt, and PlanNode."""
@@ -22,17 +28,38 @@ class WorkerExecutionError(RuntimeError):
         attempt_id: ID,
         plan_node_id: ID,
         reason: str,
+        *,
+        raw_output: bytes = b"",
+        log_output: bytes = b"",
+        diagnostics: tuple[str, ...] = (),
     ) -> None:
         self.run_id = _validated_id(run_id, "run_id")
         self.attempt_id = _validated_id(attempt_id, "attempt_id")
         self.plan_node_id = _validated_id(plan_node_id, "plan_node_id")
         if not isinstance(reason, str) or not reason.strip():
             raise ValueError("Worker failure reason must not be blank")
-        self.reason = reason
+        self.reason = _bounded_text(reason, _MAX_ERROR_REASON_CHARACTERS)
+        self.raw_output = _bounded_bytes(raw_output, "raw_output")
+        self.log_output = _bounded_bytes(log_output, "log_output")
+        normalized_diagnostics = tuple(diagnostics)
+        if any(not isinstance(item, str) or not item.strip() for item in normalized_diagnostics):
+            raise ValueError("Worker failure diagnostics must contain non-blank strings")
+        self.diagnostics = tuple(
+            _bounded_text(item, _MAX_DIAGNOSTIC_CHARACTERS)
+            for item in normalized_diagnostics[:_MAX_ERROR_DIAGNOSTICS]
+        )
         super().__init__(
             f"worker failed for run {self.run_id}, attempt {self.attempt_id}, "
-            f"node {self.plan_node_id}: {reason}"
+            f"node {self.plan_node_id}: {self.reason}"
         )
+
+
+class WorkerTimedOutError(WorkerExecutionError):
+    """A Worker exceeded its application wall-clock deadline."""
+
+
+class WorkerCancelledError(WorkerExecutionError):
+    """A Worker stopped because cancellation was requested."""
 
 
 @dataclass(frozen=True, slots=True, init=False)
@@ -197,3 +224,19 @@ def _validated_id(value: ID, field_name: str) -> ID:
         return normalize_id(value)
     except ValueError as error:
         raise ValueError(f"Worker has invalid {field_name}: {error}") from error
+
+
+def _bounded_bytes(value: bytes, field_name: str) -> bytes:
+    if not isinstance(value, (bytes, bytearray, memoryview)):
+        raise TypeError(f"Worker failure {field_name} must be bytes-like")
+    snapshot = bytes(value)
+    if len(snapshot) <= _MAX_ERROR_OUTPUT_BYTES:
+        return snapshot
+    retained = _MAX_ERROR_OUTPUT_BYTES - len(_ERROR_TRUNCATION_MARKER)
+    return snapshot[:retained] + _ERROR_TRUNCATION_MARKER
+
+
+def _bounded_text(value: str, limit: int) -> str:
+    if len(value) <= limit:
+        return value
+    return value[: limit - 16] + "...[truncated]"

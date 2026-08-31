@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
@@ -11,8 +12,15 @@ from pathlib import Path
 from ehai import ID, JsonValue, new_id, utc_now
 from ehai.application.checks import CheckContext, CheckRunner
 from ehai.application.ports import ArtifactStore, UnitOfWork
-from ehai.application.workers import WorkerAdapter, WorkerRequest, WorkerResult
-from ehai.domain.artifacts import Artifact
+from ehai.application.workers import (
+    WorkerAdapter,
+    WorkerCancelledError,
+    WorkerExecutionError,
+    WorkerRequest,
+    WorkerResult,
+    WorkerTimedOutError,
+)
+from ehai.domain.artifacts import Artifact, ArtifactKind
 from ehai.domain.checking import (
     Checkpoint,
     CheckResult,
@@ -23,7 +31,7 @@ from ehai.domain.checking import (
     GateDecision,
 )
 from ehai.domain.events import Event, EventType
-from ehai.domain.execution import Attempt, Run, RunStatus
+from ehai.domain.execution import Attempt, AttemptStatus, Run, RunStatus
 from ehai.domain.goal import CompletionContract, Goal
 from ehai.domain.planning import (
     PlanNode,
@@ -45,6 +53,10 @@ class UnsupportedPlanError(OrchestrationError):
 
 class WorkerFailedError(OrchestrationError):
     """Raised after Worker failure state and Events have been committed."""
+
+
+class WorkerCancellationUnsettledError(OrchestrationError):
+    """Raised when Worker cancellation has no matching Run control transition."""
 
 
 class ArtifactPersistenceError(OrchestrationError):
@@ -98,7 +110,12 @@ class Orchestrator:
         workspace: str | Path | None = None,
         clock: Callable[[], datetime] = utc_now,
         id_factory: Callable[[], ID] = new_id,
+        cancellation_settle_seconds: float = 2.0,
     ) -> None:
+        if not isinstance(cancellation_settle_seconds, (int, float)) or not (
+            0 < cancellation_settle_seconds < float("inf")
+        ):
+            raise ValueError("cancellation_settle_seconds must be finite and positive")
         self._uow_factory = uow_factory
         self._worker = worker
         self._artifact_store = artifact_store
@@ -106,6 +123,7 @@ class Orchestrator:
         self._workspace = Path.cwd() if workspace is None else Path(workspace)
         self._clock = clock
         self._id_factory = id_factory
+        self._cancellation_settle_seconds = float(cancellation_settle_seconds)
 
     def execute(self, run_id: ID) -> Run:
         """Execute one approved single-node Run through its final Gate and Checkpoint."""
@@ -120,8 +138,55 @@ class Orchestrator:
         )
         try:
             result = self._worker.execute(request)
+        except WorkerCancelledError as error:
+            try:
+                artifacts = self._store_worker_error_artifacts(context, error)
+            except Exception as artifact_error:
+                settled = self._await_controlled_cancellation(context.attempt.attempt_id, error)
+                raise ArtifactPersistenceError(
+                    f"attempt {context.attempt.attempt_id} settled as {settled.status.value}, "
+                    "but its cancellation diagnostics could not be persisted: "
+                    f"{type(artifact_error).__name__}: {artifact_error}"
+                ) from artifact_error
+            self._record_worker_diagnostics(context.attempt.attempt_id, artifacts)
+            return self._await_controlled_cancellation(context.attempt.attempt_id, error)
+        except WorkerTimedOutError as error:
+            try:
+                artifacts = self._store_worker_error_artifacts(context, error)
+            except Exception as artifact_error:
+                self._record_worker_failure(
+                    context.attempt.attempt_id,
+                    error,
+                    (),
+                    diagnostic_error=artifact_error,
+                )
+                raise ArtifactPersistenceError(
+                    f"attempt {context.attempt.attempt_id} timed out, but its diagnostics "
+                    f"could not be persisted: {type(artifact_error).__name__}: {artifact_error}"
+                ) from artifact_error
+            self._record_worker_failure(context.attempt.attempt_id, error, artifacts)
+            raise WorkerFailedError(
+                f"attempt {context.attempt.attempt_id} timed out: {error.reason}"
+            ) from error
         except Exception as error:
-            self._record_worker_failure(context.attempt.attempt_id, error)
+            try:
+                artifacts = (
+                    self._store_worker_error_artifacts(context, error)
+                    if isinstance(error, WorkerExecutionError)
+                    else ()
+                )
+            except Exception as artifact_error:
+                self._record_worker_failure(
+                    context.attempt.attempt_id,
+                    error,
+                    (),
+                    diagnostic_error=artifact_error,
+                )
+                raise ArtifactPersistenceError(
+                    f"attempt {context.attempt.attempt_id} failed, but its diagnostics "
+                    f"could not be persisted: {type(artifact_error).__name__}: {artifact_error}"
+                ) from artifact_error
+            self._record_worker_failure(context.attempt.attempt_id, error, artifacts)
             raise WorkerFailedError(
                 f"attempt {context.attempt.attempt_id} failed: {type(error).__name__}: {error}"
             ) from error
@@ -227,23 +292,72 @@ class Orchestrator:
     ) -> tuple[Artifact, ...]:
         artifacts: list[Artifact] = []
         for candidate in result.artifacts:
-            artifact_id = self._id_factory()
-            artifact = Artifact(
-                artifact_id=artifact_id,
-                kind=candidate.kind,
-                name=candidate.name,
-                media_type=candidate.media_type,
-                size_bytes=len(candidate.content),
-                sha256=sha256(candidate.content).hexdigest(),
-                relative_path=f"objects/{artifact_id[:2]}/{artifact_id}.blob",
-                created_at=self._clock(),
-                run_id=context.run.run_id,
-                plan_node_id=context.plan_node.plan_node_id,
-                attempt_id=context.attempt.attempt_id,
+            artifacts.append(
+                self._store_artifact(
+                    context,
+                    kind=candidate.kind,
+                    name=candidate.name,
+                    media_type=candidate.media_type,
+                    content=candidate.content,
+                )
             )
-            self._artifact_store.put(artifact, candidate.content)
-            artifacts.append(artifact)
         return tuple(artifacts)
+
+    def _store_worker_error_artifacts(
+        self,
+        context: _ExecutionContext,
+        error: WorkerExecutionError,
+    ) -> tuple[Artifact, ...]:
+        payloads = (
+            (
+                ArtifactKind.WORKER_OUTPUT,
+                "worker-error-output.txt",
+                error.raw_output,
+            ),
+            (ArtifactKind.LOG, "worker-error-stderr.log", error.log_output),
+            (
+                ArtifactKind.LOG,
+                "worker-error-diagnostics.log",
+                "\n".join(error.diagnostics).encode("utf-8"),
+            ),
+        )
+        return tuple(
+            self._store_artifact(
+                context,
+                kind=kind,
+                name=name,
+                media_type="text/plain; charset=utf-8",
+                content=content,
+            )
+            for kind, name, content in payloads
+            if content
+        )
+
+    def _store_artifact(
+        self,
+        context: _ExecutionContext,
+        *,
+        kind: ArtifactKind,
+        name: str,
+        media_type: str,
+        content: bytes,
+    ) -> Artifact:
+        artifact_id = self._id_factory()
+        artifact = Artifact(
+            artifact_id=artifact_id,
+            kind=kind,
+            name=name,
+            media_type=media_type,
+            size_bytes=len(content),
+            sha256=sha256(content).hexdigest(),
+            relative_path=f"objects/{artifact_id[:2]}/{artifact_id}.blob",
+            created_at=self._clock(),
+            run_id=context.run.run_id,
+            plan_node_id=context.plan_node.plan_node_id,
+            attempt_id=context.attempt.attempt_id,
+        )
+        self._artifact_store.put(artifact, content)
+        return artifact
 
     def _record_candidate(
         self,
@@ -256,8 +370,13 @@ class Orchestrator:
             run = _required_run(uow, attempt.run_id)
             plan = _required_plan(uow, run.plan_revision_id)
             node = _required_node(plan, attempt.plan_node_id)
+            evidence_artifacts = tuple(
+                artifact
+                for artifact in artifacts
+                if artifact.kind in {ArtifactKind.CANDIDATE, ArtifactKind.PATCH}
+            )
             succeeded = attempt.succeed(
-                tuple(artifact.artifact_id for artifact in artifacts), at=self._clock()
+                tuple(artifact.artifact_id for artifact in evidence_artifacts), at=self._clock()
             )
             candidate_node = node.submit_candidate()
             plan = _replace_node(plan, candidate_node)
@@ -386,11 +505,16 @@ class Orchestrator:
                     )
                 )
             uow.commit()
+        evidence_artifacts = tuple(
+            artifact
+            for artifact in artifacts
+            if artifact.kind in {ArtifactKind.CANDIDATE, ArtifactKind.PATCH}
+        )
         context = CheckContext(
             run=run,
             attempt=attempt,
             plan_node=verifying_node,
-            artifacts=artifacts,
+            artifacts=evidence_artifacts,
             workspace=self._workspace,
         )
         return context, tuple(zip(check_specs, check_runs, strict=True))
@@ -531,22 +655,53 @@ class Orchestrator:
             )
             uow.commit()
 
-    def _record_worker_failure(self, attempt_id: ID, error: Exception) -> None:
+    def _record_worker_diagnostics(
+        self,
+        attempt_id: ID,
+        artifacts: tuple[Artifact, ...],
+    ) -> None:
+        if not artifacts:
+            return
+        with self._uow_factory() as uow:
+            attempt = _required_attempt(uow, attempt_id)
+            run = _required_run(uow, attempt.run_id)
+            self._record_artifacts(uow, run, attempt, artifacts)
+            uow.commit()
+
+    def _record_worker_failure(
+        self,
+        attempt_id: ID,
+        error: Exception,
+        artifacts: tuple[Artifact, ...],
+        *,
+        diagnostic_error: Exception | None = None,
+    ) -> None:
         reason = f"{type(error).__name__}: {error}"
+        if diagnostic_error is not None:
+            reason = (
+                f"{reason}; diagnostic Artifact persistence failed: "
+                f"{type(diagnostic_error).__name__}: {diagnostic_error}"
+            )
         with self._uow_factory() as uow:
             attempt = _required_attempt(uow, attempt_id)
             run = _required_run(uow, attempt.run_id)
             plan = _required_plan(uow, run.plan_revision_id)
             node = _required_node(plan, attempt.plan_node_id)
-            failed_attempt = attempt.fail(reason, at=self._clock())
+            timed_out = isinstance(error, WorkerTimedOutError)
+            failed_attempt = (
+                attempt.time_out(reason, at=self._clock())
+                if timed_out
+                else attempt.fail(reason, at=self._clock())
+            )
             failed_node = node.fail()
             failed_run = run.fail(reason, at=self._clock())
+            self._record_artifacts(uow, run, attempt, artifacts)
             uow.states.put_attempt(failed_attempt)
             uow.states.put_plan_revision(_replace_node(plan, failed_node))
             uow.states.put_run(failed_run)
             uow.events.append(
                 self._event(
-                    EventType.ATTEMPT_FAILED,
+                    EventType.ATTEMPT_TIMED_OUT if timed_out else EventType.ATTEMPT_FAILED,
                     run,
                     attempt.attempt_id,
                     {"attempt_id": attempt.attempt_id, "reason": reason},
@@ -569,6 +724,54 @@ class Orchestrator:
                 )
             )
             uow.commit()
+
+    def _record_artifacts(
+        self,
+        uow: UnitOfWork,
+        run: Run,
+        attempt: Attempt,
+        artifacts: tuple[Artifact, ...],
+    ) -> None:
+        for artifact in artifacts:
+            uow.states.put_artifact(artifact)
+            uow.events.append(
+                self._event(
+                    EventType.ARTIFACT_CREATED,
+                    run,
+                    artifact.artifact_id,
+                    {
+                        "artifact_id": artifact.artifact_id,
+                        "attempt_id": attempt.attempt_id,
+                    },
+                )
+            )
+
+    def _await_controlled_cancellation(
+        self,
+        attempt_id: ID,
+        error: WorkerCancelledError,
+    ) -> Run:
+        deadline = time.monotonic() + self._cancellation_settle_seconds
+        while True:
+            with self._uow_factory() as uow:
+                attempt = _required_attempt(uow, attempt_id)
+                run = _required_run(uow, attempt.run_id)
+            if attempt.status is AttemptStatus.CANCELLED and run.status in {
+                RunStatus.PAUSED,
+                RunStatus.CANCELLED,
+            }:
+                return run
+            if attempt.status is not AttemptStatus.RUNNING or run.status is not RunStatus.RUNNING:
+                raise WorkerCancellationUnsettledError(
+                    f"attempt {attempt.attempt_id} cancellation settled inconsistently: "
+                    f"attempt={attempt.status.value}, run={run.status.value}"
+                ) from error
+            if time.monotonic() >= deadline:
+                raise WorkerCancellationUnsettledError(
+                    f"attempt {attempt.attempt_id} was cancelled by its Worker, but no "
+                    "RunController pause/cancel transition was committed"
+                ) from error
+            time.sleep(min(0.01, self._cancellation_settle_seconds))
 
     def _record_artifact_failure(
         self,

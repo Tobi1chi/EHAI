@@ -12,10 +12,19 @@ from ehai.application.orchestrator import (
     OrchestrationError,
     Orchestrator,
     UnsupportedPlanError,
+    WorkerCancellationUnsettledError,
     WorkerFailedError,
     ready_nodes,
 )
-from ehai.domain.artifacts import Artifact
+from ehai.application.workers import (
+    CandidateArtifact,
+    WorkerCancelledError,
+    WorkerExecutionError,
+    WorkerRequest,
+    WorkerResult,
+    WorkerTimedOutError,
+)
+from ehai.domain.artifacts import Artifact, ArtifactKind
 from ehai.domain.checking import CheckKind, CheckRunStatus, CheckSpec
 from ehai.domain.events import EventType
 from ehai.domain.execution import Attempt, AttemptStatus, Run, RunStatus
@@ -57,6 +66,25 @@ class _FailingArtifactStore:
     def list_for_run(self, run_id: ID) -> tuple[Artifact, ...]:
         del run_id
         return ()
+
+
+class _ErrorWorker:
+    def __init__(self, error_type: type[WorkerExecutionError]) -> None:
+        self._error_type = error_type
+
+    def execute(self, request: WorkerRequest) -> WorkerResult:
+        raise self._error_type(
+            request.run_id,
+            request.attempt_id,
+            request.plan_node_id,
+            "controlled worker error",
+            raw_output=b'{"type":"turn.failed"}\n',
+            log_output=b"controlled stderr\n",
+            diagnostics=("exit code 7",),
+        )
+
+    def cancel(self, attempt_id: ID) -> None:
+        del attempt_id
 
 
 def _check_runner(store) -> CheckRunner:
@@ -246,8 +274,8 @@ def test_orchestrator_completes_single_node_through_gate_and_checkpoint(tmp_path
 def test_orchestrator_records_worker_failure_before_raising(tmp_path) -> None:
     database = SQLiteDatabase(tmp_path / "failure.sqlite3")
     artifact_store = FilesystemArtifactStore(tmp_path / "artifacts")
-    _, plan, run, node = _seed_single_node(database)
-    worker = FakeWorker(failures_by_node={node.plan_node_id: "controlled failure"})
+    _, plan, run, _ = _seed_single_node(database)
+    worker = _ErrorWorker(WorkerExecutionError)
     orchestrator = Orchestrator(
         uow_factory=database.unit_of_work,
         worker=worker,
@@ -257,22 +285,174 @@ def test_orchestrator_records_worker_failure_before_raising(tmp_path) -> None:
         clock=lambda: NOW,
     )
 
-    with pytest.raises(WorkerFailedError, match="controlled failure"):
+    with pytest.raises(WorkerFailedError, match="controlled worker error"):
         orchestrator.execute(run.run_id)
 
     with database.unit_of_work() as uow:
         failed_run = uow.states.get_run(run.run_id)
         failed_plan = uow.states.get_plan_revision(plan.plan_revision_id)
         attempts = uow.states.list_attempts(run.run_id)
+        artifacts = uow.states.list_artifacts_for_run(run.run_id)
         events = tuple(item.event.type for item in uow.events.list_events())
     assert failed_run is not None and failed_run.status is RunStatus.FAILED
     assert failed_plan is not None and failed_plan.nodes[0].status is PlanNodeStatus.FAILED
     assert len(attempts) == 1 and attempts[0].status is AttemptStatus.FAILED
+    assert [artifact.kind for artifact in artifacts].count(ArtifactKind.WORKER_OUTPUT) == 1
+    assert [artifact.kind for artifact in artifacts].count(ArtifactKind.LOG) == 2
+    content_by_name = {
+        artifact.name: artifact_store.read(artifact.artifact_id) for artifact in artifacts
+    }
+    assert content_by_name == {
+        "worker-error-output.txt": b'{"type":"turn.failed"}\n',
+        "worker-error-stderr.log": b"controlled stderr\n",
+        "worker-error-diagnostics.log": b"exit code 7",
+    }
+    assert events.count(EventType.ARTIFACT_CREATED) == 3
     assert events[-3:] == (
         EventType.ATTEMPT_FAILED,
         EventType.PLAN_NODE_FAILED,
         EventType.RUN_FAILED,
     )
+
+
+def test_orchestrator_maps_worker_timeout_and_persists_diagnostics(tmp_path) -> None:
+    database = SQLiteDatabase(tmp_path / "worker-timeout.sqlite3")
+    artifact_store = FilesystemArtifactStore(tmp_path / "artifacts")
+    _, plan, run, _ = _seed_single_node(database)
+    orchestrator = Orchestrator(
+        uow_factory=database.unit_of_work,
+        worker=_ErrorWorker(WorkerTimedOutError),
+        artifact_store=artifact_store,
+        check_runner=_check_runner(artifact_store),
+        workspace=tmp_path,
+        clock=lambda: NOW,
+    )
+
+    with pytest.raises(WorkerFailedError, match="timed out"):
+        orchestrator.execute(run.run_id)
+
+    with database.unit_of_work() as uow:
+        failed_run = uow.states.get_run(run.run_id)
+        failed_plan = uow.states.get_plan_revision(plan.plan_revision_id)
+        attempts = uow.states.list_attempts(run.run_id)
+        artifacts = uow.states.list_artifacts_for_run(run.run_id)
+        events = tuple(item.event.type for item in uow.events.list_events())
+    assert failed_run is not None and failed_run.status is RunStatus.FAILED
+    assert failed_plan is not None and failed_plan.nodes[0].status is PlanNodeStatus.FAILED
+    assert attempts[0].status is AttemptStatus.TIMED_OUT
+    assert len(artifacts) == 3
+    assert EventType.ATTEMPT_TIMED_OUT in events
+    assert EventType.ATTEMPT_FAILED not in events
+
+
+def test_timeout_diagnostic_store_failure_still_records_timed_out_state(tmp_path) -> None:
+    database = SQLiteDatabase(tmp_path / "worker-timeout-artifact-failure.sqlite3")
+    _, plan, run, _ = _seed_single_node(database)
+    orchestrator = Orchestrator(
+        uow_factory=database.unit_of_work,
+        worker=_ErrorWorker(WorkerTimedOutError),
+        artifact_store=_FailingArtifactStore(),
+        check_runner=_check_runner(_FailingArtifactStore()),
+        workspace=tmp_path,
+        clock=lambda: NOW,
+    )
+
+    with pytest.raises(ArtifactPersistenceError, match="diagnostics could not be persisted"):
+        orchestrator.execute(run.run_id)
+
+    with database.unit_of_work() as uow:
+        stored_run = uow.states.get_run(run.run_id)
+        stored_plan = uow.states.get_plan_revision(plan.plan_revision_id)
+        attempts = uow.states.list_attempts(run.run_id)
+        artifacts = uow.states.list_artifacts_for_run(run.run_id)
+        events = tuple(item.event.type for item in uow.events.list_events())
+    assert stored_run is not None and stored_run.status is RunStatus.FAILED
+    assert stored_plan is not None and stored_plan.nodes[0].status is PlanNodeStatus.FAILED
+    assert attempts[0].status is AttemptStatus.TIMED_OUT
+    assert "diagnostic Artifact persistence failed" in (attempts[0].outcome_reason or "")
+    assert artifacts == ()
+    assert EventType.ATTEMPT_TIMED_OUT in events
+
+
+def test_worker_output_and_logs_are_persisted_but_excluded_from_gate_evidence(tmp_path) -> None:
+    database = SQLiteDatabase(tmp_path / "diagnostic-evidence.sqlite3")
+    artifact_store = FilesystemArtifactStore(tmp_path / "artifacts")
+    _, _, run, node = _seed_single_node(database)
+    result = WorkerResult(
+        artifacts=(
+            CandidateArtifact(
+                ArtifactKind.CANDIDATE,
+                "candidate.txt",
+                "text/plain",
+                b"candidate",
+            ),
+            CandidateArtifact(
+                ArtifactKind.WORKER_OUTPUT,
+                "worker-output.jsonl",
+                "application/x-ndjson",
+                b'{"type":"turn.completed"}\n',
+            ),
+            CandidateArtifact(
+                ArtifactKind.LOG,
+                "worker-stderr.log",
+                "text/plain",
+                b"diagnostic",
+            ),
+        ),
+        summary="candidate plus diagnostics",
+    )
+    orchestrator = Orchestrator(
+        uow_factory=database.unit_of_work,
+        worker=FakeWorker(results_by_node={node.plan_node_id: result}),
+        artifact_store=artifact_store,
+        check_runner=_check_runner(artifact_store),
+        workspace=tmp_path,
+        clock=lambda: NOW,
+    )
+
+    completed = orchestrator.execute(run.run_id)
+
+    with database.unit_of_work() as uow:
+        artifacts = uow.states.list_artifacts_for_run(run.run_id)
+        check_run = uow.states.list_check_runs(run.run_id)[0]
+    candidate_ids = tuple(
+        artifact.artifact_id for artifact in artifacts if artifact.kind is ArtifactKind.CANDIDATE
+    )
+    assert completed.status is RunStatus.COMPLETED
+    assert check_run.result is not None
+    assert check_run.result.evidence_artifact_ids == candidate_ids
+    assert len(artifacts) == 3
+
+
+def test_worker_cancel_without_run_control_fails_closed_without_failed_state(tmp_path) -> None:
+    database = SQLiteDatabase(tmp_path / "unsettled-cancel.sqlite3")
+    artifact_store = FilesystemArtifactStore(tmp_path / "artifacts")
+    _, plan, run, _ = _seed_single_node(database)
+    orchestrator = Orchestrator(
+        uow_factory=database.unit_of_work,
+        worker=_ErrorWorker(WorkerCancelledError),
+        artifact_store=artifact_store,
+        check_runner=_check_runner(artifact_store),
+        workspace=tmp_path,
+        clock=lambda: NOW,
+        cancellation_settle_seconds=0.02,
+    )
+
+    with pytest.raises(WorkerCancellationUnsettledError, match="no RunController"):
+        orchestrator.execute(run.run_id)
+
+    with database.unit_of_work() as uow:
+        stored_run = uow.states.get_run(run.run_id)
+        stored_plan = uow.states.get_plan_revision(plan.plan_revision_id)
+        attempts = uow.states.list_attempts(run.run_id)
+        artifacts = uow.states.list_artifacts_for_run(run.run_id)
+        events = tuple(item.event.type for item in uow.events.list_events())
+    assert stored_run is not None and stored_run.status is RunStatus.RUNNING
+    assert stored_plan is not None and stored_plan.nodes[0].status is PlanNodeStatus.RUNNING
+    assert attempts[0].status is AttemptStatus.RUNNING
+    assert len(artifacts) == 3
+    assert EventType.ATTEMPT_FAILED not in events
+    assert EventType.RUN_FAILED not in events
 
 
 def test_claim_rolls_back_run_and_node_when_attempt_cannot_be_created(tmp_path) -> None:

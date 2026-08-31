@@ -1,13 +1,22 @@
 from __future__ import annotations
 
+import threading
 from datetime import UTC, datetime
 
 import pytest
 
 from ehai import ID, new_id
+from ehai.application.checks import CheckRunner
+from ehai.application.orchestrator import Orchestrator
 from ehai.application.ports import CommandReceipt
 from ehai.application.run_control import RunControlError, RunController, WorkerCancellationError
-from ehai.application.workers import WorkerRequest, WorkerResult
+from ehai.application.workers import (
+    WorkerCancelledError,
+    WorkerRequest,
+    WorkerResult,
+)
+from ehai.domain.artifacts import ArtifactKind
+from ehai.domain.checking import CheckKind, CheckSpec
 from ehai.domain.events import EventType
 from ehai.domain.execution import Attempt, AttemptStatus, InvalidRunTransition, Run, RunStatus
 from ehai.domain.goal import CompletionContract, Goal, Project
@@ -18,6 +27,7 @@ from ehai.domain.planning import (
     PlanRevision,
     PlanRevisionStatus,
 )
+from ehai.infrastructure.artifacts import FilesystemArtifactStore
 from ehai.infrastructure.sqlite import SQLiteDatabase
 from ehai.infrastructure.workers import FakeWorker
 
@@ -46,6 +56,33 @@ class _FailingCancelWorker:
         raise OSError(f"cannot cancel {attempt_id}")
 
 
+class _ConcurrentCancellationWorker:
+    def __init__(self) -> None:
+        self.started = threading.Event()
+        self.cancelled = threading.Event()
+        self.attempt_id: ID | None = None
+        self.cancel_calls: list[ID] = []
+
+    def execute(self, request: WorkerRequest) -> WorkerResult:
+        self.attempt_id = request.attempt_id
+        self.started.set()
+        if not self.cancelled.wait(timeout=2):
+            raise AssertionError("test cancellation was not delivered")
+        raise WorkerCancelledError(
+            request.run_id,
+            request.attempt_id,
+            request.plan_node_id,
+            "controlled cancellation",
+            raw_output=b'{"type":"turn.cancelled"}\n',
+            log_output=b"cancelled stderr\n",
+            diagnostics=("cancelled by RunController",),
+        )
+
+    def cancel(self, attempt_id: ID) -> None:
+        self.cancel_calls.append(attempt_id)
+        self.cancelled.set()
+
+
 def _seed(
     database: SQLiteDatabase,
     *,
@@ -54,10 +91,17 @@ def _seed(
 ) -> tuple[Run, PlanRevision, Attempt | None]:
     project = Project.create("control", project_id=new_id(), created_at=NOW)
     goal = Goal.create(project.project_id, "control run", goal_id=new_id(), created_at=NOW)
+    check_id = new_id()
+    check_spec = CheckSpec(
+        "controlled",
+        CheckKind.ARTIFACT,
+        "controlled output exists",
+        check_id=check_id,
+    )
     contract = CompletionContract.draft(
         goal.goal_id,
         ("controlled",),
-        (new_id(),),
+        (check_id,),
         completion_contract_id=new_id(),
         created_at=NOW,
     ).confirm(confirmed_at=NOW)
@@ -109,6 +153,7 @@ def _seed(
         uow.states.put_goal(goal)
         uow.states.put_completion_contract(contract)
         uow.states.put_plan_revision(plan)
+        uow.states.put_check_spec(plan.plan_revision_id, check_spec)
         uow.states.put_run(run)
         if attempt is not None:
             uow.states.put_attempt(attempt)
@@ -345,3 +390,111 @@ def test_worker_cancel_failure_does_not_mutate_persisted_state(tmp_path) -> None
     assert stored_plan == plan
     assert attempts == (attempt,)
     assert events == ()
+
+
+@pytest.mark.parametrize(
+    ("control", "expected_status", "expected_event"),
+    [
+        ("pause", RunStatus.PAUSED, EventType.RUN_PAUSED),
+        ("cancel", RunStatus.CANCELLED, EventType.RUN_CANCELLED),
+    ],
+)
+def test_control_concurrently_settles_orchestrator_without_failed_state(
+    tmp_path,
+    control: str,
+    expected_status: RunStatus,
+    expected_event: EventType,
+) -> None:
+    database = SQLiteDatabase(tmp_path / f"concurrent-{control}.sqlite3")
+    run, _, _ = _seed(database, run_status=RunStatus.RUNNING, with_attempt=False)
+    worker = _ConcurrentCancellationWorker()
+    artifact_store = FilesystemArtifactStore(tmp_path / "artifacts")
+    orchestrator = Orchestrator(
+        uow_factory=database.unit_of_work,
+        worker=worker,
+        artifact_store=artifact_store,
+        check_runner=CheckRunner({}),
+        workspace=tmp_path,
+        clock=lambda: NOW,
+        cancellation_settle_seconds=1,
+    )
+    controller = RunController(database.unit_of_work, worker, clock=lambda: NOW)
+    results: list[Run] = []
+    failures: list[BaseException] = []
+
+    def execute() -> None:
+        try:
+            results.append(orchestrator.execute(run.run_id))
+        except BaseException as error:
+            failures.append(error)
+
+    thread = threading.Thread(target=execute)
+    thread.start()
+    assert worker.started.wait(timeout=2)
+
+    settled = (
+        controller.pause(run.run_id)
+        if control == "pause"
+        else controller.cancel(run.run_id, "user cancelled")
+    )
+    thread.join(timeout=2)
+
+    assert not thread.is_alive()
+    assert failures == []
+    assert results == [settled]
+    stored_run, stored_plan, attempts, events = _state(database, run)
+    assert stored_run.status is expected_status
+    assert stored_plan.nodes[0].status is PlanNodeStatus.FAILED
+    assert attempts[0].status is AttemptStatus.CANCELLED
+    assert worker.cancel_calls == [attempts[0].attempt_id]
+    assert events.count(EventType.ATTEMPT_CANCELLED) == 1
+    assert events.count(EventType.PLAN_NODE_FAILED) == 1
+    assert events.count(expected_event) == 1
+    assert EventType.ATTEMPT_FAILED not in events
+    assert EventType.RUN_FAILED not in events
+    with database.unit_of_work() as uow:
+        artifacts = uow.states.list_artifacts_for_run(run.run_id)
+    assert {artifact.kind for artifact in artifacts} == {
+        ArtifactKind.WORKER_OUTPUT,
+        ArtifactKind.LOG,
+    }
+    assert all(
+        artifact.kind not in {ArtifactKind.CANDIDATE, ArtifactKind.PATCH} for artifact in artifacts
+    )
+
+
+def test_concurrent_cancel_completion_closes_receipt_without_duplicate_events(tmp_path) -> None:
+    database = SQLiteDatabase(tmp_path / "settled-receipt.sqlite3")
+    run, _, attempt = _seed(database, run_status=RunStatus.RUNNING, with_attempt=True)
+    assert attempt is not None
+    inner_worker = FakeWorker()
+    inner = RunController(database.unit_of_work, inner_worker, clock=lambda: NOW)
+
+    class _CompletingWorker:
+        def execute(self, request: WorkerRequest) -> WorkerResult:
+            del request
+            raise AssertionError("execute must not be called")
+
+        def cancel(self, attempt_id: ID) -> None:
+            assert attempt_id == attempt.attempt_id
+            inner.cancel(run.run_id, "user cancelled")
+
+    receipt = CommandReceipt(
+        idempotency_key="cancel-concurrently",
+        command_name="CancelRun",
+        command_fingerprint="cancel-fingerprint",
+        result={"run_id": run.run_id},
+        created_at=NOW,
+    )
+    outer = RunController(database.unit_of_work, _CompletingWorker(), clock=lambda: NOW)
+
+    cancelled = outer.cancel(run.run_id, "user cancelled", receipt=receipt)
+
+    _, _, _, events = _state(database, run)
+    assert cancelled.status is RunStatus.CANCELLED
+    assert events.count(EventType.ATTEMPT_CANCELLED) == 1
+    assert events.count(EventType.PLAN_NODE_FAILED) == 1
+    assert events.count(EventType.RUN_CANCELLED) == 1
+    with database.unit_of_work() as uow:
+        stored_receipt = uow.command_receipts.get(receipt.idempotency_key)
+    assert stored_receipt == receipt

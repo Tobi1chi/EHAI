@@ -8,9 +8,11 @@ from ehai import ID, JsonValue, new_id
 from ehai.application.workers import (
     CandidateArtifact,
     WorkerAdapter,
+    WorkerCancelledError,
     WorkerExecutionError,
     WorkerRequest,
     WorkerResult,
+    WorkerTimedOutError,
 )
 from ehai.domain.artifacts import Artifact, ArtifactKind
 from ehai.domain.execution import Attempt, Run
@@ -228,6 +230,33 @@ def test_fake_worker_cancel_records_and_prevents_later_execution() -> None:
 
     assert worker.cancel_calls == (request.attempt_id,)
     assert worker.calls == (request,)
+
+
+@pytest.mark.parametrize("error_type", [WorkerTimedOutError, WorkerCancelledError])
+def test_specialized_worker_errors_snapshot_bounded_diagnostics(error_type) -> None:
+    request = make_request()
+    mutable_raw = bytearray(b"r" * 1_100_000)
+    mutable_log = bytearray(b"log")
+    mutable_diagnostics = ["diagnostic"]
+
+    error = error_type(
+        request.run_id,
+        request.attempt_id,
+        request.plan_node_id,
+        "scoped failure",
+        raw_output=mutable_raw,
+        log_output=mutable_log,
+        diagnostics=mutable_diagnostics,
+    )
+    mutable_raw.clear()
+    mutable_log.clear()
+    mutable_diagnostics.clear()
+
+    assert isinstance(error, WorkerExecutionError)
+    assert len(error.raw_output) == 1_048_576
+    assert error.raw_output.endswith(b"...[truncated]...\n")
+    assert error.log_output == b"log"
+    assert error.diagnostics == ("diagnostic",)
 
 
 def test_worker_result_has_no_completion_authority() -> None:

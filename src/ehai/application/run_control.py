@@ -10,7 +10,7 @@ from ehai import ID, JsonValue, normalize_id, utc_now
 from ehai.application.ports import CommandReceipt, UnitOfWork
 from ehai.application.workers import WorkerAdapter
 from ehai.domain.events import Event, EventType
-from ehai.domain.execution import Attempt, AttemptStatus, Run
+from ehai.domain.execution import Attempt, AttemptStatus, Run, RunStatus
 from ehai.domain.planning import PlanNode, PlanNodeStatus, PlanRevision
 
 UnitOfWorkFactory = Callable[[], UnitOfWork]
@@ -59,6 +59,9 @@ class RunController:
 
         with self._uow_factory() as uow:
             current = self._read_snapshot_from(uow, snapshot.run.run_id)
+            if self._is_settled_control(snapshot, current, RunStatus.PAUSED):
+                self._close_settled_control(uow, receipt)
+                return current.run
             self._require_unchanged(snapshot, current)
             plan = current.plan
             active = current.active_attempt
@@ -177,6 +180,14 @@ class RunController:
 
         with self._uow_factory() as uow:
             current = self._read_snapshot_from(uow, snapshot.run.run_id)
+            if self._is_settled_control(
+                snapshot,
+                current,
+                RunStatus.CANCELLED,
+                reason=cancellation_reason,
+            ):
+                self._close_settled_control(uow, receipt)
+                return current.run
             self._require_unchanged(snapshot, current)
             plan = current.plan
             active = current.active_attempt
@@ -263,6 +274,39 @@ class RunController:
                 f"run {snapshot.run.run_id} could not cancel Attempt "
                 f"{active.attempt_id}: {type(error).__name__}: {error}"
             ) from error
+
+    @staticmethod
+    def _is_settled_control(
+        expected: _ControlSnapshot,
+        current: _ControlSnapshot,
+        target: RunStatus,
+        *,
+        reason: str | None = None,
+    ) -> bool:
+        if current.run.status is not target:
+            return False
+        if target is RunStatus.CANCELLED and current.run.status_reason != reason:
+            return False
+        active = expected.active_attempt
+        if active is None:
+            return current.attempts == expected.attempts and current.plan == expected.plan
+        settled = next(
+            (item for item in current.attempts if item.attempt_id == active.attempt_id),
+            None,
+        )
+        if settled is None or settled.status is not AttemptStatus.CANCELLED:
+            return False
+        return _required_node(current.plan, active.plan_node_id).status is PlanNodeStatus.FAILED
+
+    @staticmethod
+    def _close_settled_control(
+        uow: UnitOfWork,
+        receipt: CommandReceipt | None,
+    ) -> None:
+        if receipt is None:
+            return
+        uow.command_receipts.put(receipt)
+        uow.commit()
 
     @staticmethod
     def _require_unchanged(expected: _ControlSnapshot, current: _ControlSnapshot) -> None:
