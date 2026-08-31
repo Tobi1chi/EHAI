@@ -2,35 +2,37 @@
 
 ## Project Structure & Module Organization
 
-EHAI is a Python scaffold with no package or tests yet. Keep root files limited to configuration and documentation. Add code under `src/ehai/` and mirror it under `tests/` (`src/ehai/services/client.py` maps to `tests/services/test_client.py`). Store fixtures in `tests/fixtures/` and static files in `assets/`.
+EHAI is a Python scaffold. Keep root files for configuration and docs. Put code in `src/ehai/` and mirror it under `tests/`. Store fixtures in `tests/fixtures/` and static files in `assets/`.
 
 ## Build, Test, and Development Commands
 
-Use `uv` for environments and commands; do not use bare `pip`.
+Use `uv`; never use bare `pip`.
 
-- `uv sync` — create/update the local environment from `pyproject.toml` and `uv.lock`.
-- `uv run pytest` — run the complete test suite.
-- `uv run pytest tests/path/test_file.py -k test_name` — run a focused test while iterating.
-- `uv run ruff check .` — check lint rules.
-- `uv run ruff format --check .` — verify formatting; omit `--check` to apply it.
+- `uv sync` — synchronize the environment.
+- `uv run pytest` — run all tests.
+- `uv run pytest tests/path/test_file.py -k test_name` — run a focused test.
+- `uv run ruff check .` — lint the project.
+- `uv run ruff format --check .` — verify formatting; omit `--check` to apply.
 
-These commands require settings and dependencies in `pyproject.toml`. Commit `uv.lock` for reproducible builds.
+These require `pyproject.toml`; commit `uv.lock` for reproducibility.
 
 ## Coding Style & Naming Conventions
 
-Target the Python version in `pyproject.toml`. Use four-space indentation, typed public APIs, and short docstrings for non-obvious behavior. Name modules, functions, and variables with `snake_case`; classes with `PascalCase`; constants with `UPPER_SNAKE_CASE`. Prefer small modules with explicit imports. Keep Ruff configuration in `pyproject.toml`.
+Follow the Python version in `pyproject.toml`. Use four spaces, typed public APIs, and short docstrings where needed. Use `snake_case` for modules, functions, and variables; `PascalCase` for classes; and `UPPER_SNAKE_CASE` for constants. Prefer small modules and explicit imports. Configure Ruff in `pyproject.toml`.
 
 ## Testing Guidelines
 
-Use `pytest`. Name files `test_*.py` and tests `test_<behavior>`. Cover normal behavior, boundaries, and expected failures; every bug fix needs a regression test. Isolate external services behind fixtures or mocks. No coverage threshold is configured yet.
+Use `pytest` with `test_*.py` files and `test_<behavior>` functions. Cover normal behavior, boundaries, and failures; bug fixes require regression tests. Mock external services. No coverage threshold exists yet.
+
+During implementation, run the narrowest relevant test, for example `uv run pytest tests/unit/test_planner.py::test_creates_branch`. Fix failures and rerun that test until it passes. Run `uv run pytest` before committing or final handoff, not after every edit. If the full suite fails, isolate and repair each failing test with focused runs, then rerun the full suite; repeat until it passes.
 
 ## Commit & Pull Request Guidelines
 
-Use Conventional Commits: `type(optional-scope): imperative summary`. Allowed types are `feat`, `fix`, `docs`, `test`, `refactor`, `perf`, `build`, `ci`, `chore`, and `revert`. Keep the summary lowercase, omit the final period, and stay within 72 characters. Examples: `feat(api): add health endpoint` and `docs: clarify uv setup`. Use a body to explain rationale or migration steps; mark incompatible changes with a `BREAKING CHANGE:` footer. Each commit must contain one logical change.
+Use Conventional Commits: `type(optional-scope): imperative summary`. Types are `feat`, `fix`, `docs`, `test`, `refactor`, `perf`, `build`, `ci`, `chore`, and `revert`. Keep summaries lowercase, period-free, and within 72 characters, for example `feat(api): add health endpoint`. Explain migration in the body and incompatible changes in a `BREAKING CHANGE:` footer. Keep one logical change per commit.
 
 Before committing, agents must inspect `git status` and `git diff`, stage only task-related files, and run applicable tests and lint checks. Never commit secrets or generated artifacts. Do not amend, rebase, force-push, or push unless the user explicitly requests it.
 
-Pull requests should explain motivation and approach, list verification commands, link issues, and call out dependency or configuration changes. Include screenshots for user-visible changes.
+Pull requests should explain motivation and approach, list verification, link issues, and identify dependency or configuration changes. Include screenshots for visible changes.
 
 ## Security & Configuration
 
