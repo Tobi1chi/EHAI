@@ -6,12 +6,22 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 from hashlib import sha256
+from pathlib import Path
 
 from ehai import ID, JsonValue, new_id, utc_now
+from ehai.application.checks import CheckContext, CheckRunner
 from ehai.application.ports import ArtifactStore, UnitOfWork
 from ehai.application.workers import WorkerAdapter, WorkerRequest, WorkerResult
 from ehai.domain.artifacts import Artifact
-from ehai.domain.checking import Checkpoint, CheckResult, CheckRun, Gate, GateDecision
+from ehai.domain.checking import (
+    Checkpoint,
+    CheckResult,
+    CheckRun,
+    CheckRunStatus,
+    CheckSpec,
+    Gate,
+    GateDecision,
+)
 from ehai.domain.events import Event, EventType
 from ehai.domain.execution import Attempt, Run, RunStatus
 from ehai.domain.goal import CompletionContract, Goal
@@ -72,6 +82,7 @@ class _ExecutionContext:
     completion_contract: CompletionContract
     plan_node: PlanNode
     attempt: Attempt
+    check_specs: tuple[CheckSpec, ...]
 
 
 class Orchestrator:
@@ -83,12 +94,16 @@ class Orchestrator:
         uow_factory: UnitOfWorkFactory,
         worker: WorkerAdapter,
         artifact_store: ArtifactStore,
+        check_runner: CheckRunner,
+        workspace: str | Path | None = None,
         clock: Callable[[], datetime] = utc_now,
         id_factory: Callable[[], ID] = new_id,
     ) -> None:
         self._uow_factory = uow_factory
         self._worker = worker
         self._artifact_store = artifact_store
+        self._check_runner = check_runner
+        self._workspace = Path.cwd() if workspace is None else Path(workspace)
         self._clock = clock
         self._id_factory = id_factory
 
@@ -120,7 +135,12 @@ class Orchestrator:
             ) from error
 
         self._record_candidate(context.attempt.attempt_id, artifacts, result)
-        return self._check_and_complete(run_id, context.attempt.attempt_id, artifacts)
+        return self._check_and_complete(
+            run_id,
+            context.attempt.attempt_id,
+            artifacts,
+            context.check_specs,
+        )
 
     def _prepare(self, run_id: ID) -> _ExecutionContext:
         with self._uow_factory() as uow:
@@ -137,22 +157,28 @@ class Orchestrator:
                     f"run {run.run_id} must be pending or running, not {run.status.value}"
                 )
 
-            candidates = ready_nodes(plan)
+            already_ready = tuple(
+                node for node in plan.nodes if node.status is PlanNodeStatus.READY
+            )
+            candidates = already_ready or ready_nodes(plan)
             if len(candidates) != 1:
                 raise OrchestrationError(
                     f"run {run.run_id} expected one ready PlanNode, found {len(candidates)}"
                 )
-            ready_node = candidates[0].mark_ready()
-            plan = _replace_node(plan, ready_node)
-            uow.states.put_plan_revision(plan)
-            uow.events.append(
-                self._event(
-                    EventType.PLAN_NODE_READIED,
-                    run,
-                    ready_node.plan_node_id,
-                    {"plan_node_id": ready_node.plan_node_id},
+            ready_node = candidates[0]
+            required_specs = _required_check_specs(uow, plan, ready_node)
+            if ready_node.status is PlanNodeStatus.PENDING:
+                ready_node = ready_node.mark_ready()
+                plan = _replace_node(plan, ready_node)
+                uow.states.put_plan_revision(plan)
+                uow.events.append(
+                    self._event(
+                        EventType.PLAN_NODE_READIED,
+                        run,
+                        ready_node.plan_node_id,
+                        {"plan_node_id": ready_node.plan_node_id},
+                    )
                 )
-            )
             running_node = ready_node.start()
             plan = _replace_node(plan, running_node)
             attempt = Attempt(
@@ -184,7 +210,15 @@ class Orchestrator:
                 )
             )
             uow.commit()
-        return _ExecutionContext(run, plan, goal, contract, running_node, attempt)
+        return _ExecutionContext(
+            run,
+            plan,
+            goal,
+            contract,
+            running_node,
+            attempt,
+            required_specs,
+        )
 
     def _store_candidate_artifacts(
         self,
@@ -265,49 +299,63 @@ class Orchestrator:
         run_id: ID,
         attempt_id: ID,
         artifacts: tuple[Artifact, ...],
+        check_specs: tuple[CheckSpec, ...],
     ) -> Run:
-        check_runs = self._start_checks(run_id, attempt_id)
-        evidence_ids = tuple(artifact.artifact_id for artifact in artifacts)
-        passed = bool(evidence_ids)
+        context, prepared = self._start_checks(run_id, attempt_id, artifacts, check_specs)
+        check_runs: list[CheckRun] = []
+        for spec, running_check in prepared:
+            try:
+                executed = self._check_runner.run(spec, context)
+                terminal = _rebind_check_run(running_check, executed)
+            except Exception as error:
+                terminal = running_check.fail(
+                    f"CheckRunner failed: {type(error).__name__}: {error}",
+                    at=self._clock(),
+                )
+            check_runs.append(terminal)
+
+        terminal_checks = tuple(check_runs)
         results = tuple(
-            CheckResult(
-                check_id=check_run.check_id,
-                check_run_id=check_run.check_run_id,
-                run_id=check_run.run_id,
-                plan_node_id=check_run.plan_node_id,
-                attempt_id=check_run.attempt_id,
-                passed=passed,
-                evaluated_at=self._clock(),
-                evidence_artifact_ids=evidence_ids,
-                output="candidate artifact present" if passed else "candidate artifact missing",
-                failure_reason=None if passed else "Worker returned no candidate Artifact",
-            )
-            for check_run in check_runs
+            check_run.result
+            for check_run in terminal_checks
+            if check_run.status is CheckRunStatus.COMPLETED and check_run.result is not None
         )
         gate = Gate(
-            required_check_ids=tuple(check_run.check_id for check_run in check_runs),
+            required_check_ids=tuple(check_run.check_id for check_run in terminal_checks),
             gate_id=self._id_factory(),
         )
         decision = gate.evaluate(
             results,
             run_id=run_id,
-            plan_node_id=check_runs[0].plan_node_id,
+            plan_node_id=terminal_checks[0].plan_node_id,
             attempt_id=attempt_id,
             at=self._clock(),
         )
         if not decision.passed:
-            self._record_gate_failure(run_id, check_runs, results, decision)
+            self._record_gate_failure(run_id, terminal_checks, decision)
             raise GateRejectedError(
                 f"run {run_id} failed Gate {decision.gate_id}: {decision.reason}"
             )
-        return self._record_completion(run_id, check_runs, results, decision, artifacts)
+        return self._record_completion(run_id, terminal_checks, decision, artifacts)
 
-    def _start_checks(self, run_id: ID, attempt_id: ID) -> tuple[CheckRun, ...]:
+    def _start_checks(
+        self,
+        run_id: ID,
+        attempt_id: ID,
+        artifacts: tuple[Artifact, ...],
+        check_specs: tuple[CheckSpec, ...],
+    ) -> tuple[CheckContext, tuple[tuple[CheckSpec, CheckRun], ...]]:
         with self._uow_factory() as uow:
             run = _required_run(uow, run_id)
             plan = _required_plan(uow, run.plan_revision_id)
             attempt = _required_attempt(uow, attempt_id)
             node = _required_node(plan, attempt.plan_node_id)
+            if tuple(spec.check_id for spec in check_specs) != node.required_check_ids or any(
+                not spec.required for spec in check_specs
+            ):
+                raise OrchestrationError(
+                    f"PlanNode {node.plan_node_id} required CheckSpecs are missing or optional"
+                )
             verifying_node = node.begin_verification()
             plan = _replace_node(plan, verifying_node)
             check_runs = tuple(
@@ -338,22 +386,27 @@ class Orchestrator:
                     )
                 )
             uow.commit()
-        return check_runs
+        context = CheckContext(
+            run=run,
+            attempt=attempt,
+            plan_node=verifying_node,
+            artifacts=artifacts,
+            workspace=self._workspace,
+        )
+        return context, tuple(zip(check_specs, check_runs, strict=True))
 
     def _record_completion(
         self,
         run_id: ID,
         check_runs: tuple[CheckRun, ...],
-        results: tuple[CheckResult, ...],
         decision: GateDecision,
         artifacts: tuple[Artifact, ...],
     ) -> Run:
         with self._uow_factory() as uow:
             run, plan, goal, _ = self._load_run_context(uow, run_id)
             node = _required_node(plan, decision.plan_node_id)
-            for check_run, result in zip(check_runs, results, strict=True):
-                completed_check = check_run.complete(result, at=self._clock())
-                uow.states.put_check_run(completed_check)
+            for check_run in check_runs:
+                uow.states.put_check_run(check_run)
                 uow.events.append(
                     self._event(
                         EventType.CHECK_PASSED,
@@ -418,21 +471,34 @@ class Orchestrator:
         self,
         run_id: ID,
         check_runs: tuple[CheckRun, ...],
-        results: tuple[CheckResult, ...],
         decision: GateDecision,
     ) -> None:
         with self._uow_factory() as uow:
             run = _required_run(uow, run_id)
             plan = _required_plan(uow, run.plan_revision_id)
             node = _required_node(plan, decision.plan_node_id)
-            for check_run, result in zip(check_runs, results, strict=True):
-                uow.states.put_check_run(check_run.complete(result, at=self._clock()))
+            for check_run in check_runs:
+                uow.states.put_check_run(check_run)
+                passed = check_run.result is not None and check_run.result.passed
+                reason = (
+                    None
+                    if passed
+                    else (
+                        check_run.failure_reason
+                        if check_run.result is None
+                        else check_run.result.failure_reason
+                    )
+                )
                 uow.events.append(
                     self._event(
-                        EventType.CHECK_FAILED,
+                        EventType.CHECK_PASSED if passed else EventType.CHECK_FAILED,
                         run,
                         check_run.check_run_id,
-                        {"check_id": check_run.check_id, "reason": result.failure_reason},
+                        {
+                            "check_id": check_run.check_id,
+                            "check_run_status": check_run.status.value,
+                            "reason": reason,
+                        },
                     )
                 )
             uow.events.append(
@@ -598,6 +664,66 @@ class Orchestrator:
             payload=payload,
             occurred_at=self._clock(),
         )
+
+
+def _rebind_check_run(persisted: CheckRun, executed: CheckRun) -> CheckRun:
+    """Attach a CheckRunner outcome to the already persisted running CheckRun ID."""
+    ended_at = executed.ended_at
+    if ended_at is None:
+        raise OrchestrationError(
+            f"CheckRunner returned non-terminal CheckRun {executed.check_run_id}"
+        )
+    if executed.status is CheckRunStatus.COMPLETED and executed.result is not None:
+        source = executed.result
+        result = CheckResult(
+            check_id=persisted.check_id,
+            check_run_id=persisted.check_run_id,
+            run_id=persisted.run_id,
+            plan_node_id=persisted.plan_node_id,
+            attempt_id=persisted.attempt_id,
+            passed=source.passed,
+            evaluated_at=source.evaluated_at,
+            evidence_artifact_ids=source.evidence_artifact_ids,
+            output=source.output,
+            failure_reason=source.failure_reason,
+        )
+        return persisted.complete(result, at=ended_at)
+    if executed.status is CheckRunStatus.TIMED_OUT:
+        return persisted.time_out(
+            executed.failure_reason or "Check adapter timed out",
+            at=ended_at,
+        )
+    if executed.status is CheckRunStatus.FAILED:
+        return persisted.fail(
+            executed.failure_reason or "Check adapter failed",
+            at=ended_at,
+        )
+    raise OrchestrationError(
+        f"CheckRunner returned unsupported status {executed.status.value} for "
+        f"Check {persisted.check_id}"
+    )
+
+
+def _required_check_specs(
+    uow: UnitOfWork,
+    plan: PlanRevision,
+    node: PlanNode,
+) -> tuple[CheckSpec, ...]:
+    specs_by_id = {
+        spec.check_id: spec for spec in uow.states.list_check_specs(plan.plan_revision_id)
+    }
+    required_specs = tuple(
+        specs_by_id[check_id] for check_id in node.required_check_ids if check_id in specs_by_id
+    )
+    if (
+        not required_specs
+        or len(required_specs) != len(node.required_check_ids)
+        or any(not spec.required for spec in required_specs)
+    ):
+        raise OrchestrationError(
+            f"PlanNode {node.plan_node_id} required CheckSpecs are missing or optional"
+        )
+    return required_specs
 
 
 def _replace_node(plan: PlanRevision, replacement: PlanNode) -> PlanRevision:

@@ -8,9 +8,12 @@ import pytest
 from ehai import ID, new_id
 from ehai.application.commands import (
     ApprovePlan,
+    CancelRun,
     CreateGoal,
     CreateProject,
+    PauseRun,
     ProposePlan,
+    ResumeRun,
     StartRun,
 )
 
@@ -22,10 +25,13 @@ def _command_factories(idempotency_key: str) -> tuple[Callable[[], object], ...]
         lambda: ProposePlan(idempotency_key, new_id(), ("criterion",)),
         lambda: ApprovePlan(idempotency_key, new_id(), new_id()),
         lambda: StartRun(idempotency_key, new_id()),
+        lambda: PauseRun(idempotency_key, new_id()),
+        lambda: ResumeRun(idempotency_key, new_id()),
+        lambda: CancelRun(idempotency_key, new_id()),
     )
 
 
-@pytest.mark.parametrize("command_index", range(5))
+@pytest.mark.parametrize("command_index", range(8))
 def test_every_command_requires_non_empty_idempotency_key(command_index: int) -> None:
     with pytest.raises(ValueError, match="idempotency_key"):
         _command_factories("   ")[command_index]()
@@ -78,6 +84,9 @@ def test_fingerprint_includes_command_type() -> None:
         lambda: ProposePlan("key", ID("not-a-uuid"), ("criterion",)),
         lambda: ApprovePlan("key", ID("not-a-uuid"), new_id()),
         lambda: StartRun("key", ID("not-a-uuid")),
+        lambda: PauseRun("key", ID("not-a-uuid")),
+        lambda: ResumeRun("key", ID("not-a-uuid")),
+        lambda: CancelRun("key", ID("not-a-uuid")),
     ],
 )
 def test_commands_reject_invalid_ids(factory: Callable[[], object]) -> None:
@@ -92,3 +101,5 @@ def test_commands_reject_empty_domain_text() -> None:
         CreateGoal("key", new_id(), " ")
     with pytest.raises(ValueError, match="criteria"):
         ProposePlan("key", new_id(), ())
+    with pytest.raises(ValueError, match="reason"):
+        CancelRun("key", new_id(), " ")

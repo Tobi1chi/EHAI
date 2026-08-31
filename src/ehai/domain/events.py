@@ -57,9 +57,11 @@ class EventType(StrEnum):
     CHECK_STARTED = "CheckStarted"
     CHECK_PASSED = "CheckPassed"
     CHECK_FAILED = "CheckFailed"
+    CHECK_INTERRUPTED = "CheckInterrupted"
     GATE_PASSED = "GatePassed"
     GATE_FAILED = "GateFailed"
     CHECKPOINT_CREATED = "CheckpointCreated"
+    CHECKPOINT_RESTORED = "CheckpointRestored"
 
 
 @dataclass(frozen=True, slots=True, init=False)

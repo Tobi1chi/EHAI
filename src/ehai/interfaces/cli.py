@@ -8,17 +8,25 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from ehai import JsonValue, json_dumps, normalize_id
+from ehai.application.checkpointing import RecoveryError, RecoveryService
+from ehai.application.checks import CheckRunner
 from ehai.application.commands import (
     ApprovePlan,
+    CancelRun,
     CreateGoal,
     CreateProject,
+    PauseRun,
     ProposePlan,
+    ResumeRun,
     StartRun,
 )
 from ehai.application.orchestrator import OrchestrationError, Orchestrator
-from ehai.application.planner import DeterministicPlanner
+from ehai.application.planner import NON_EMPTY_ARTIFACT_CRITERION, DeterministicPlanner
+from ehai.application.run_control import RunControlError, RunController
 from ehai.application.service import ApplicationError, ExecutionService
+from ehai.domain.checking import CheckKind
 from ehai.infrastructure.artifacts import FilesystemArtifactStore
+from ehai.infrastructure.checks import ArtifactCheckAdapter, ArtifactCheckRule
 from ehai.infrastructure.sqlite import SQLiteDatabase
 from ehai.infrastructure.workers import FakeWorker
 
@@ -27,15 +35,29 @@ def build_service(database_path: Path, artifact_root: Path) -> ExecutionService:
     """Build the local P1 service from concrete infrastructure Adapters."""
     database = SQLiteDatabase(database_path)
     artifact_store = FilesystemArtifactStore(artifact_root)
+    worker = FakeWorker()
+    check_runner = CheckRunner(
+        {
+            CheckKind.ARTIFACT: ArtifactCheckAdapter(
+                artifact_store,
+                {},
+                default_rule=ArtifactCheckRule(minimum_count=1, require_non_empty=True),
+            )
+        }
+    )
     orchestrator = Orchestrator(
         uow_factory=database.unit_of_work,
-        worker=FakeWorker(),
+        worker=worker,
         artifact_store=artifact_store,
+        check_runner=check_runner,
+        workspace=database_path.parent,
     )
     return ExecutionService(
         uow_factory=database.unit_of_work,
         planner=DeterministicPlanner(),
         orchestrator=orchestrator,
+        run_controller=RunController(database.unit_of_work, worker),
+        recovery_service=RecoveryService(uow_factory=database.unit_of_work),
     )
 
 
@@ -63,7 +85,12 @@ def create_parser() -> argparse.ArgumentParser:
     propose = commands.add_parser("propose-plan", help="propose a single-node plan")
     propose.add_argument("--idempotency-key", required=True)
     propose.add_argument("--goal-id", required=True)
-    propose.add_argument("--criterion", action="append", required=True)
+    propose.add_argument(
+        "--criterion",
+        action="append",
+        required=True,
+        help=f"P1 requires exactly one value: {NON_EMPTY_ARTIFACT_CRITERION}",
+    )
 
     approve = commands.add_parser("approve-plan", help="confirm and approve a proposal")
     approve.add_argument("--idempotency-key", required=True)
@@ -73,6 +100,24 @@ def create_parser() -> argparse.ArgumentParser:
     start = commands.add_parser("start-run", help="execute an approved plan")
     start.add_argument("--idempotency-key", required=True)
     start.add_argument("--plan-revision-id", required=True)
+
+    pause = commands.add_parser("pause-run", help="pause a running Run")
+    pause.add_argument("--idempotency-key", required=True)
+    pause.add_argument("--run-id", required=True)
+
+    resume = commands.add_parser("resume-run", help="resume and continue a paused Run")
+    resume.add_argument("--idempotency-key", required=True)
+    resume.add_argument("--run-id", required=True)
+
+    cancel = commands.add_parser("cancel-run", help="cancel a non-terminal Run")
+    cancel.add_argument("--idempotency-key", required=True)
+    cancel.add_argument("--run-id", required=True)
+    cancel.add_argument("--reason")
+
+    restore = commands.add_parser("restore-run", help="restore the latest Checkpoint")
+    restore.add_argument("--run-id", required=True)
+
+    commands.add_parser("recover", help="reconcile interrupted work after restart")
 
     query = commands.add_parser("get-run", help="query one Run")
     query.add_argument("--run-id", required=True)
@@ -86,7 +131,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         service = build_service(args.database, args.artifacts)
         output = _dispatch(service, args)
-    except (ApplicationError, OrchestrationError, ValueError, OSError) as error:
+    except (
+        ApplicationError,
+        OrchestrationError,
+        RecoveryError,
+        RunControlError,
+        ValueError,
+        OSError,
+    ) as error:
         print(
             json_dumps({"error": str(error), "error_type": type(error).__name__}), file=sys.stderr
         )
@@ -142,6 +194,27 @@ def _dispatch(service: ExecutionService, args: argparse.Namespace) -> dict[str, 
             "plan_revision_id": run.plan_revision_id,
             "run_id": run.run_id,
             "status": run.status.value,
+        }
+    if command == "pause-run":
+        run = service.pause_run(PauseRun(args.idempotency_key, normalize_id(args.run_id)))
+        return {"run_id": run.run_id, "status": run.status.value}
+    if command == "resume-run":
+        run = service.resume_run(ResumeRun(args.idempotency_key, normalize_id(args.run_id)))
+        return {"run_id": run.run_id, "status": run.status.value}
+    if command == "cancel-run":
+        run = service.cancel_run(
+            CancelRun(args.idempotency_key, normalize_id(args.run_id), args.reason)
+        )
+        return {"run_id": run.run_id, "status": run.status.value}
+    if command == "restore-run":
+        run = service.restore_latest_checkpoint(normalize_id(args.run_id))
+        return {"run_id": run.run_id, "status": run.status.value}
+    if command == "recover":
+        report = service.recover_startup()
+        return {
+            "failed_plan_node_ids": list(report.failed_plan_node_ids),
+            "interrupted_attempt_ids": list(report.interrupted_attempt_ids),
+            "paused_run_ids": list(report.paused_run_ids),
         }
     if command == "get-run":
         run = service.get_run(normalize_id(args.run_id))

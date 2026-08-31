@@ -12,6 +12,8 @@ from ehai.domain.checking import CheckKind, CheckSpec
 from ehai.domain.goal import CompletionContract, Goal, GoalStatus
 from ehai.domain.planning import PlanNode, PlanNodeKind, PlanRevision, PlanRevisionStatus
 
+NON_EMPTY_ARTIFACT_CRITERION = "artifact:non-empty"
+
 
 @dataclass(frozen=True, slots=True)
 class PlanProposal:
@@ -69,12 +71,17 @@ class DeterministicPlanner:
         normalized_criteria = tuple(criterion.strip() for criterion in criteria)
         if not normalized_criteria or any(not criterion for criterion in normalized_criteria):
             raise ValueError(f"Goal {goal.goal_id} requires non-empty completion criteria")
+        if normalized_criteria != (NON_EMPTY_ARTIFACT_CRITERION,):
+            raise ValueError(
+                "DeterministicPlanner supports exactly one P1 completion criterion: "
+                f"{NON_EMPTY_ARTIFACT_CRITERION}"
+            )
 
         proposed_at = self.clock()
         check_spec = CheckSpec(
             name="completion-artifact",
             kind=CheckKind.ARTIFACT,
-            description="; ".join(normalized_criteria),
+            description=NON_EMPTY_ARTIFACT_CRITERION,
             required=True,
             check_id=self.id_factory(),
         )

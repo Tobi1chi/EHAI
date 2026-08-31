@@ -1,10 +1,14 @@
+import json
+import sys
 from datetime import UTC, datetime
 
 import pytest
 
 from ehai import ID, new_id
+from ehai.application.checks import CheckRunner
 from ehai.application.orchestrator import (
     ArtifactPersistenceError,
+    GateRejectedError,
     OrchestrationError,
     Orchestrator,
     UnsupportedPlanError,
@@ -12,6 +16,7 @@ from ehai.application.orchestrator import (
     ready_nodes,
 )
 from ehai.domain.artifacts import Artifact
+from ehai.domain.checking import CheckKind, CheckRunStatus, CheckSpec
 from ehai.domain.events import EventType
 from ehai.domain.execution import Attempt, AttemptStatus, Run, RunStatus
 from ehai.domain.goal import CompletionContract, Goal, GoalStatus, Project
@@ -24,6 +29,13 @@ from ehai.domain.planning import (
     PlanRevisionStatus,
 )
 from ehai.infrastructure.artifacts import FilesystemArtifactStore
+from ehai.infrastructure.checks import (
+    ArtifactCheckAdapter,
+    ArtifactCheckRule,
+    CommandCheckAdapter,
+    SemanticCheckAdapter,
+    SemanticRubric,
+)
 from ehai.infrastructure.sqlite import SQLiteDatabase
 from ehai.infrastructure.workers import FakeWorker
 
@@ -45,6 +57,19 @@ class _FailingArtifactStore:
     def list_for_run(self, run_id: ID) -> tuple[Artifact, ...]:
         del run_id
         return ()
+
+
+def _check_runner(store) -> CheckRunner:
+    return CheckRunner(
+        {
+            CheckKind.ARTIFACT: ArtifactCheckAdapter(
+                store,
+                {},
+                default_rule=ArtifactCheckRule(),
+            )
+        },
+        clock=lambda: NOW,
+    )
 
 
 def _approved_plan(
@@ -69,10 +94,23 @@ def _approved_plan(
     )
 
 
-def _seed_single_node(database: SQLiteDatabase) -> tuple[Goal, PlanRevision, Run, PlanNode]:
+def _seed_single_node(
+    database: SQLiteDatabase,
+    *,
+    check_kind: CheckKind = CheckKind.ARTIFACT,
+    check_description: str = "candidate exists",
+    check_required: bool = True,
+) -> tuple[Goal, PlanRevision, Run, PlanNode]:
     project = Project.create("I3", project_id=new_id(), created_at=NOW)
     goal = Goal.create(project.project_id, "execute one node", goal_id=new_id(), created_at=NOW)
     check_id = new_id()
+    check_spec = CheckSpec(
+        "candidate",
+        check_kind,
+        check_description,
+        required=check_required,
+        check_id=check_id,
+    )
     contract = CompletionContract.draft(
         goal.goal_id,
         ("candidate exists",),
@@ -99,6 +137,7 @@ def _seed_single_node(database: SQLiteDatabase) -> tuple[Goal, PlanRevision, Run
         uow.states.put_goal(goal)
         uow.states.put_completion_contract(contract)
         uow.states.put_plan_revision(plan)
+        uow.states.put_check_spec(plan.plan_revision_id, check_spec)
         uow.states.put_run(run)
         uow.commit()
     return goal, plan, run, node
@@ -170,6 +209,8 @@ def test_orchestrator_completes_single_node_through_gate_and_checkpoint(tmp_path
         uow_factory=database.unit_of_work,
         worker=worker,
         artifact_store=artifact_store,
+        check_runner=_check_runner(artifact_store),
+        workspace=tmp_path,
         clock=lambda: NOW,
     )
 
@@ -211,6 +252,8 @@ def test_orchestrator_records_worker_failure_before_raising(tmp_path) -> None:
         uow_factory=database.unit_of_work,
         worker=worker,
         artifact_store=artifact_store,
+        check_runner=_check_runner(artifact_store),
+        workspace=tmp_path,
         clock=lambda: NOW,
     )
 
@@ -246,10 +289,13 @@ def test_claim_rolls_back_run_and_node_when_attempt_cannot_be_created(tmp_path) 
         uow.states.put_attempt(existing_attempt)
         uow.commit()
     worker = FakeWorker()
+    artifact_store = FilesystemArtifactStore(tmp_path / "artifacts")
     orchestrator = Orchestrator(
         uow_factory=database.unit_of_work,
         worker=worker,
-        artifact_store=FilesystemArtifactStore(tmp_path / "artifacts"),
+        artifact_store=artifact_store,
+        check_runner=_check_runner(artifact_store),
+        workspace=tmp_path,
         clock=lambda: NOW,
         id_factory=lambda: existing_attempt.attempt_id,
     )
@@ -271,10 +317,13 @@ def test_artifact_failure_keeps_worker_success_semantics(tmp_path) -> None:
     database = SQLiteDatabase(tmp_path / "artifact-failure.sqlite3")
     _, plan, run, _ = _seed_single_node(database)
     worker = FakeWorker()
+    artifact_store = _FailingArtifactStore()
     orchestrator = Orchestrator(
         uow_factory=database.unit_of_work,
         worker=worker,
-        artifact_store=_FailingArtifactStore(),
+        artifact_store=artifact_store,
+        check_runner=_check_runner(artifact_store),
+        workspace=tmp_path,
         clock=lambda: NOW,
     )
 
@@ -319,6 +368,8 @@ def test_contract_mismatch_is_rejected_before_worker_or_artifact_side_effects(tm
         uow_factory=database.unit_of_work,
         worker=worker,
         artifact_store=artifact_store,
+        check_runner=_check_runner(artifact_store),
+        workspace=tmp_path,
         clock=lambda: NOW,
     )
 
@@ -330,6 +381,53 @@ def test_contract_mismatch_is_rejected_before_worker_or_artifact_side_effects(tm
     with database.unit_of_work() as uow:
         unchanged = uow.states.get_run(run.run_id)
     assert unchanged is not None and unchanged.status is RunStatus.PENDING
+
+
+@pytest.mark.parametrize("invalid_spec", ["missing", "optional"])
+def test_invalid_required_check_spec_is_rejected_before_worker_side_effects(
+    tmp_path,
+    invalid_spec: str,
+) -> None:
+    database = SQLiteDatabase(tmp_path / f"{invalid_spec}-check-spec.sqlite3")
+    _, plan, run, node = _seed_single_node(
+        database,
+        check_required=invalid_spec != "optional",
+    )
+    if invalid_spec == "missing":
+        connection = database.connect()
+        try:
+            connection.execute(
+                "DELETE FROM check_specs WHERE check_id = ?",
+                (node.required_check_ids[0],),
+            )
+        finally:
+            connection.close()
+    worker = FakeWorker()
+    artifact_store = FilesystemArtifactStore(tmp_path / "artifacts")
+    orchestrator = Orchestrator(
+        uow_factory=database.unit_of_work,
+        worker=worker,
+        artifact_store=artifact_store,
+        check_runner=_check_runner(artifact_store),
+        workspace=tmp_path,
+        clock=lambda: NOW,
+    )
+
+    with pytest.raises(OrchestrationError, match="CheckSpecs are missing or optional"):
+        orchestrator.execute(run.run_id)
+
+    with database.unit_of_work() as uow:
+        stored_run = uow.states.get_run(run.run_id)
+        stored_plan = uow.states.get_plan_revision(plan.plan_revision_id)
+        attempts = uow.states.list_attempts(run.run_id)
+        artifacts = uow.states.list_artifacts_for_run(run.run_id)
+        check_runs = uow.states.list_check_runs(run.run_id)
+    assert worker.calls == ()
+    assert stored_run is not None and stored_run.status is RunStatus.PENDING
+    assert stored_plan is not None and stored_plan.nodes[0].status is PlanNodeStatus.PENDING
+    assert attempts == ()
+    assert artifacts == ()
+    assert check_runs == ()
 
 
 def test_orchestrator_rejects_non_single_node_plan_without_calling_worker(tmp_path) -> None:
@@ -359,10 +457,13 @@ def test_orchestrator_rejects_non_single_node_plan_without_calling_worker(tmp_pa
         uow.states.put_run(run)
         uow.commit()
     worker = FakeWorker()
+    artifact_store = FilesystemArtifactStore(tmp_path / "artifacts")
     orchestrator = Orchestrator(
         uow_factory=database.unit_of_work,
         worker=worker,
-        artifact_store=FilesystemArtifactStore(tmp_path / "artifacts"),
+        artifact_store=artifact_store,
+        check_runner=_check_runner(artifact_store),
+        workspace=tmp_path,
         clock=lambda: NOW,
     )
 
@@ -373,3 +474,118 @@ def test_orchestrator_rejects_non_single_node_plan_without_calling_worker(tmp_pa
     with database.unit_of_work() as uow:
         unchanged = uow.states.get_run(run.run_id)
     assert unchanged is not None and unchanged.status is RunStatus.PENDING
+
+
+def test_orchestrator_semantic_check_rejects_missing_required_term(tmp_path) -> None:
+    database = SQLiteDatabase(tmp_path / "semantic.sqlite3")
+    artifact_store = FilesystemArtifactStore(tmp_path / "artifacts")
+    _, _, run, node = _seed_single_node(
+        database,
+        check_kind=CheckKind.SEMANTIC,
+        check_description="candidate must contain NEVER_PRESENT_TERM",
+    )
+    check_id = node.required_check_ids[0]
+    check_runner = CheckRunner(
+        {
+            CheckKind.SEMANTIC: SemanticCheckAdapter(
+                artifact_store,
+                {
+                    check_id: SemanticRubric(
+                        "required term must appear",
+                        ("NEVER_PRESENT_TERM",),
+                    )
+                },
+            )
+        },
+        clock=lambda: NOW,
+    )
+    orchestrator = Orchestrator(
+        uow_factory=database.unit_of_work,
+        worker=FakeWorker(),
+        artifact_store=artifact_store,
+        check_runner=check_runner,
+        workspace=tmp_path,
+        clock=lambda: NOW,
+    )
+
+    with pytest.raises(GateRejectedError, match="failed Gate"):
+        orchestrator.execute(run.run_id)
+
+    with database.unit_of_work() as uow:
+        failed_run = uow.states.get_run(run.run_id)
+        check_runs = uow.states.list_check_runs(run.run_id)
+        checkpoints = uow.states.list_checkpoints(run.run_id)
+    assert failed_run is not None and failed_run.status is RunStatus.FAILED
+    assert check_runs[0].result is not None and not check_runs[0].result.passed
+    output = json.loads(check_runs[0].result.output or "")
+    assert output["score"] == 0.0
+    assert output["rubric"]["required_terms"] == ["never_present_term"]
+    assert checkpoints == ()
+
+
+def test_orchestrator_artifact_rule_failure_is_fail_closed(tmp_path) -> None:
+    database = SQLiteDatabase(tmp_path / "artifact-check.sqlite3")
+    artifact_store = FilesystemArtifactStore(tmp_path / "artifacts")
+    _, _, run, node = _seed_single_node(database)
+    check_id = node.required_check_ids[0]
+    check_runner = CheckRunner(
+        {
+            CheckKind.ARTIFACT: ArtifactCheckAdapter(
+                artifact_store,
+                {check_id: ArtifactCheckRule(allowed_media_types=("application/json",))},
+            )
+        },
+        clock=lambda: NOW,
+    )
+    orchestrator = Orchestrator(
+        uow_factory=database.unit_of_work,
+        worker=FakeWorker(),
+        artifact_store=artifact_store,
+        check_runner=check_runner,
+        workspace=tmp_path,
+        clock=lambda: NOW,
+    )
+
+    with pytest.raises(GateRejectedError):
+        orchestrator.execute(run.run_id)
+
+    with database.unit_of_work() as uow:
+        check_run = uow.states.list_check_runs(run.run_id)[0]
+        failed_run = uow.states.get_run(run.run_id)
+    assert check_run.result is not None and not check_run.result.passed
+    assert "not allowed" in (check_run.result.failure_reason or "")
+    assert failed_run is not None and failed_run.status is RunStatus.FAILED
+
+
+def test_orchestrator_command_timeout_persists_terminal_check(tmp_path) -> None:
+    database = SQLiteDatabase(tmp_path / "command-timeout.sqlite3")
+    artifact_store = FilesystemArtifactStore(tmp_path / "artifacts")
+    _, _, run, node = _seed_single_node(database, check_kind=CheckKind.COMMAND)
+    check_id = node.required_check_ids[0]
+    check_runner = CheckRunner(
+        {
+            CheckKind.COMMAND: CommandCheckAdapter(
+                {check_id: (sys.executable, "-c", "import time; time.sleep(5)")},
+                timeout_seconds=0.05,
+            )
+        },
+        clock=lambda: NOW,
+    )
+    orchestrator = Orchestrator(
+        uow_factory=database.unit_of_work,
+        worker=FakeWorker(),
+        artifact_store=artifact_store,
+        check_runner=check_runner,
+        workspace=tmp_path,
+        clock=lambda: NOW,
+    )
+
+    with pytest.raises(GateRejectedError):
+        orchestrator.execute(run.run_id)
+
+    with database.unit_of_work() as uow:
+        check_run = uow.states.list_check_runs(run.run_id)[0]
+        failed_run = uow.states.get_run(run.run_id)
+    assert check_run.status is CheckRunStatus.TIMED_OUT
+    assert check_run.failure_reason is not None and "timed out" in check_run.failure_reason
+    assert failed_run is not None and failed_run.status is RunStatus.FAILED

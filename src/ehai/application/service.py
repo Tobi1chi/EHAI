@@ -6,20 +6,25 @@ from collections.abc import Callable, Mapping
 from datetime import datetime
 
 from ehai import ID, JsonValue, new_id, normalize_id, utc_now
+from ehai.application.checkpointing import RecoveryReport, RecoveryService
 from ehai.application.commands import (
     ApprovePlan,
+    CancelRun,
     CreateGoal,
     CreateProject,
+    PauseRun,
     ProposePlan,
+    ResumeRun,
     StartRun,
 )
 from ehai.application.orchestrator import Orchestrator
 from ehai.application.planner import Planner
 from ehai.application.ports import CommandReceipt, UnitOfWork
+from ehai.application.run_control import RunController
 from ehai.domain.events import Event, EventType
-from ehai.domain.execution import Run, RunStatus
+from ehai.domain.execution import AttemptStatus, Run, RunStatus
 from ehai.domain.goal import CompletionContract, Goal, Project
-from ehai.domain.planning import PlanRevision, PlanRevisionStatus
+from ehai.domain.planning import PlanNodeStatus, PlanRevision, PlanRevisionStatus
 
 UnitOfWorkFactory = Callable[[], UnitOfWork]
 
@@ -45,12 +50,16 @@ class ExecutionService:
         uow_factory: UnitOfWorkFactory,
         planner: Planner,
         orchestrator: Orchestrator,
+        run_controller: RunController | None = None,
+        recovery_service: RecoveryService | None = None,
         clock: Callable[[], datetime] = utc_now,
         id_factory: Callable[[], ID] = new_id,
     ) -> None:
         self._uow_factory = uow_factory
         self._planner = planner
         self._orchestrator = orchestrator
+        self._run_controller = run_controller
+        self._recovery_service = recovery_service
         self._clock = clock
         self._id_factory = id_factory
 
@@ -155,6 +164,8 @@ class ExecutionService:
             uow.states.put_completion_contract(proposal.contract)
             uow.states.put_goal(aligned_goal)
             uow.states.put_plan_revision(proposal.plan_revision)
+            for check_spec in proposal.check_specs:
+                uow.states.put_check_spec(proposal.plan_revision.plan_revision_id, check_spec)
             uow.events.append(
                 self._event(
                     EventType.PLAN_REVISION_PROPOSED,
@@ -290,6 +301,127 @@ class ExecutionService:
         with self._uow_factory() as uow:
             return _required_run(uow, normalize_id(run_id))
 
+    def pause_run(self, command: PauseRun) -> Run:
+        """Pause one Run with its idempotency receipt in the control transaction."""
+        controller = self._required_run_controller()
+        existing = self._existing_run_for_command(
+            command.idempotency_key,
+            type(command).__name__,
+            command.fingerprint,
+        )
+        if existing is not None:
+            return existing
+        receipt = self._make_receipt(
+            command.idempotency_key,
+            type(command).__name__,
+            command.fingerprint,
+            {"run_id": command.run_id},
+        )
+        return controller.pause(command.run_id, receipt=receipt)
+
+    def resume_run(self, command: ResumeRun) -> Run:
+        """Resume a paused Run and synchronously continue its next Attempt."""
+        controller = self._required_run_controller()
+        existing = self._existing_run_for_command(
+            command.idempotency_key,
+            type(command).__name__,
+            command.fingerprint,
+        )
+        if existing is not None:
+            if existing.status is RunStatus.PAUSED and self._was_paused_by_startup(existing.run_id):
+                resumed = controller.resume(existing.run_id)
+                return self._orchestrator.execute(resumed.run_id)
+            return (
+                self._orchestrator.execute(existing.run_id)
+                if self._is_ready_to_continue(existing)
+                else existing
+            )
+        receipt = self._make_receipt(
+            command.idempotency_key,
+            type(command).__name__,
+            command.fingerprint,
+            {"run_id": command.run_id},
+        )
+        resumed = controller.resume(command.run_id, receipt=receipt)
+        return self._orchestrator.execute(resumed.run_id)
+
+    def cancel_run(self, command: CancelRun) -> Run:
+        """Cancel one Run without allowing Worker or interface code to complete it."""
+        controller = self._required_run_controller()
+        existing = self._existing_run_for_command(
+            command.idempotency_key,
+            type(command).__name__,
+            command.fingerprint,
+        )
+        if existing is not None:
+            return existing
+        receipt = self._make_receipt(
+            command.idempotency_key,
+            type(command).__name__,
+            command.fingerprint,
+            {"run_id": command.run_id},
+        )
+        return controller.cancel(command.run_id, command.reason, receipt=receipt)
+
+    def recover_startup(self) -> RecoveryReport:
+        """Reconcile interrupted work after a process restart."""
+        return self._required_recovery_service().recover_startup()
+
+    def restore_latest_checkpoint(self, run_id: ID) -> Run:
+        """Restore a validated Checkpoint without rerunning external side effects."""
+        return self._required_recovery_service().restore_latest(normalize_id(run_id))
+
+    def _existing_run_for_command(
+        self,
+        idempotency_key: str,
+        command_name: str,
+        fingerprint: str,
+    ) -> Run | None:
+        with self._uow_factory() as uow:
+            existing = self._existing_result(
+                uow,
+                idempotency_key,
+                command_name,
+                fingerprint,
+            )
+            return None if existing is None else _required_run(uow, _result_id(existing, "run_id"))
+
+    def _required_run_controller(self) -> RunController:
+        if self._run_controller is None:
+            raise ApplicationError("Run control is not configured")
+        return self._run_controller
+
+    def _required_recovery_service(self) -> RecoveryService:
+        if self._recovery_service is None:
+            raise ApplicationError("Checkpoint recovery is not configured")
+        return self._recovery_service
+
+    def _is_ready_to_continue(self, run: Run) -> bool:
+        if run.status is not RunStatus.RUNNING:
+            return False
+        with self._uow_factory() as uow:
+            attempts = uow.states.list_attempts(run.run_id)
+            if any(attempt.status is AttemptStatus.RUNNING for attempt in attempts):
+                return False
+            plan = _required_plan(uow, run.plan_revision_id)
+            return any(node.status is PlanNodeStatus.READY for node in plan.nodes)
+
+    def _was_paused_by_startup(self, run_id: ID) -> bool:
+        startup_reasons = {
+            "running Attempts were interrupted",
+            "running Run had no active Attempt at startup",
+        }
+        with self._uow_factory() as uow:
+            pause_events = tuple(
+                stored.event
+                for stored in uow.events.list_events()
+                if stored.event.run_id == run_id and stored.event.type is EventType.RUN_PAUSED
+            )
+        if not pause_events:
+            return False
+        reason = pause_events[-1].payload.get("reason")
+        return isinstance(reason, str) and reason in startup_reasons
+
     @staticmethod
     def _existing_result(
         uow: UnitOfWork,
@@ -315,13 +447,22 @@ class ExecutionService:
         result: Mapping[str, JsonValue],
     ) -> None:
         uow.command_receipts.put(
-            CommandReceipt(
-                idempotency_key=idempotency_key,
-                command_name=command_name,
-                command_fingerprint=fingerprint,
-                result=result,
-                created_at=self._clock(),
-            )
+            self._make_receipt(idempotency_key, command_name, fingerprint, result)
+        )
+
+    def _make_receipt(
+        self,
+        idempotency_key: str,
+        command_name: str,
+        fingerprint: str,
+        result: Mapping[str, JsonValue],
+    ) -> CommandReceipt:
+        return CommandReceipt(
+            idempotency_key=idempotency_key,
+            command_name=command_name,
+            command_fingerprint=fingerprint,
+            result=result,
+            created_at=self._clock(),
         )
 
     def _event(

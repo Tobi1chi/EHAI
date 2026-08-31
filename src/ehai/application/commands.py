@@ -130,6 +130,63 @@ class StartRun:
         return _fingerprint(type(self).__name__, {"plan_revision_id": self.plan_revision_id})
 
 
+@dataclass(frozen=True, slots=True)
+class PauseRun:
+    """Request pausing a running Run."""
+
+    idempotency_key: str
+    run_id: ID
+
+    def __post_init__(self) -> None:
+        owner = type(self).__name__
+        _require_idempotency_key(self.idempotency_key, owner)
+        object.__setattr__(self, "run_id", _normalized_id(self.run_id, "run_id", owner))
+
+    @property
+    def fingerprint(self) -> str:
+        """Return a deterministic fingerprint excluding the idempotency key."""
+        return _fingerprint(type(self).__name__, {"run_id": self.run_id})
+
+
+@dataclass(frozen=True, slots=True)
+class ResumeRun:
+    """Request resuming a paused Run."""
+
+    idempotency_key: str
+    run_id: ID
+
+    def __post_init__(self) -> None:
+        owner = type(self).__name__
+        _require_idempotency_key(self.idempotency_key, owner)
+        object.__setattr__(self, "run_id", _normalized_id(self.run_id, "run_id", owner))
+
+    @property
+    def fingerprint(self) -> str:
+        """Return a deterministic fingerprint excluding the idempotency key."""
+        return _fingerprint(type(self).__name__, {"run_id": self.run_id})
+
+
+@dataclass(frozen=True, slots=True)
+class CancelRun:
+    """Request cancellation of a non-terminal Run."""
+
+    idempotency_key: str
+    run_id: ID
+    reason: str | None = None
+
+    def __post_init__(self) -> None:
+        owner = type(self).__name__
+        _require_idempotency_key(self.idempotency_key, owner)
+        object.__setattr__(self, "run_id", _normalized_id(self.run_id, "run_id", owner))
+        if self.reason is not None:
+            object.__setattr__(self, "reason", _non_empty_text(self.reason, "reason", owner))
+
+    @property
+    def fingerprint(self) -> str:
+        """Return a deterministic fingerprint excluding the idempotency key."""
+        return _fingerprint(type(self).__name__, {"reason": self.reason, "run_id": self.run_id})
+
+
 def _require_idempotency_key(value: str, owner: str) -> None:
     if not isinstance(value, str) or not value.strip():
         raise ValueError(f"{owner} idempotency_key must not be empty")

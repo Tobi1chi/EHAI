@@ -5,7 +5,7 @@ from __future__ import annotations
 import sqlite3
 from collections.abc import Sequence
 
-LATEST_SCHEMA_VERSION = 1
+LATEST_SCHEMA_VERSION = 2
 
 
 class SchemaVersionError(RuntimeError):
@@ -216,7 +216,29 @@ _MIGRATION_1: tuple[str, ...] = (
     """,
 )
 
-_MIGRATIONS: dict[int, Sequence[str]] = {1: _MIGRATION_1}
+_MIGRATION_2: tuple[str, ...] = (
+    """
+    CREATE TABLE check_specs (
+        check_id TEXT PRIMARY KEY,
+        plan_revision_id TEXT NOT NULL
+            REFERENCES plan_revisions(plan_revision_id) ON DELETE CASCADE,
+        sort_index INTEGER NOT NULL CHECK (sort_index >= 0),
+        kind TEXT NOT NULL,
+        snapshot_json TEXT NOT NULL CHECK (json_valid(snapshot_json)),
+        UNIQUE (plan_revision_id, sort_index)
+    )
+    """,
+    """
+    CREATE INDEX check_specs_revision_idx
+        ON check_specs(plan_revision_id, sort_index)
+    """,
+    """
+    CREATE UNIQUE INDEX checkpoints_run_event_offset_unique
+        ON checkpoints(run_id, event_offset)
+    """,
+)
+
+_MIGRATIONS: dict[int, Sequence[str]] = {1: _MIGRATION_1, 2: _MIGRATION_2}
 
 
 def migrate(connection: sqlite3.Connection) -> None:

@@ -5,6 +5,7 @@ from pytest import CaptureFixture
 
 from ehai import JsonValue, json_loads, normalize_id
 from ehai.application.commands import CreateGoal, CreateProject, ProposePlan, StartRun
+from ehai.application.planner import NON_EMPTY_ARTIFACT_CRITERION
 from ehai.application.service import ApplicationError
 from ehai.domain.events import EventType
 from ehai.domain.execution import AttemptStatus, RunStatus
@@ -80,9 +81,17 @@ def test_cli_executes_idempotent_single_node_loop_on_real_sqlite(
         "--goal-id",
         _string(goal, "goal_id"),
         "--criterion",
-        "a candidate Artifact exists",
+        NON_EMPTY_ARTIFACT_CRITERION,
     )
     assert proposal["status"] == "draft"
+    database = SQLiteDatabase(database_path)
+    plan_id = normalize_id(_string(proposal, "plan_revision_id"))
+    with database.unit_of_work() as uow:
+        proposed_plan = uow.states.get_plan_revision(plan_id)
+        proposed_checks = uow.states.list_check_specs(plan_id)
+    assert proposed_plan is not None
+    assert len(proposed_checks) == 1
+    assert proposed_plan.nodes[0].required_check_ids == (proposed_checks[0].check_id,)
     approved = _invoke(
         database_path,
         artifact_root,
@@ -129,10 +138,8 @@ def test_cli_executes_idempotent_single_node_loop_on_real_sqlite(
     )
     assert retried == started
 
-    database = SQLiteDatabase(database_path)
     run_id = normalize_id(_string(started, "run_id"))
     goal_id = normalize_id(_string(goal, "goal_id"))
-    plan_id = normalize_id(_string(proposal, "plan_revision_id"))
     with database.unit_of_work() as uow:
         stored_run = uow.states.get_run(run_id)
         stored_goal = uow.states.get_goal(goal_id)
@@ -169,7 +176,7 @@ def test_start_run_cannot_bypass_plan_approval(tmp_path: Path) -> None:
     service = build_service(database_path, tmp_path / "artifacts")
     project = service.create_project(CreateProject("project", "approval"))
     goal = service.create_goal(CreateGoal("goal", project.project_id, "prove approval"))
-    plan = service.propose_plan(ProposePlan("plan", goal.goal_id, ("checked",)))
+    plan = service.propose_plan(ProposePlan("plan", goal.goal_id, (NON_EMPTY_ARTIFACT_CRITERION,)))
 
     with pytest.raises(ApplicationError, match="must be approved"):
         service.start_run(StartRun("run", plan.plan_revision_id))
@@ -177,3 +184,22 @@ def test_start_run_cannot_bypass_plan_approval(tmp_path: Path) -> None:
     database = SQLiteDatabase(database_path)
     with database.unit_of_work() as uow:
         assert uow.states.list_runs(goal.goal_id) == ()
+
+
+def test_propose_plan_rejects_unsupported_criterion_without_persisting(tmp_path: Path) -> None:
+    database_path = tmp_path / "unsupported-criterion.sqlite3"
+    service = build_service(database_path, tmp_path / "artifacts")
+    project = service.create_project(CreateProject("project", "criteria"))
+    goal = service.create_goal(CreateGoal("goal", project.project_id, "prove criteria"))
+
+    with pytest.raises(ValueError, match="artifact:non-empty"):
+        service.propose_plan(
+            ProposePlan("plan", goal.goal_id, ("artifact must be application/json",))
+        )
+
+    database = SQLiteDatabase(database_path)
+    with database.unit_of_work() as uow:
+        stored_goal = uow.states.get_goal(goal.goal_id)
+        assert stored_goal is not None and stored_goal.completion_contract is None
+        assert uow.states.list_plan_revisions(goal.goal_id) == ()
+        assert uow.command_receipts.get("plan") is None

@@ -10,7 +10,7 @@ from typing import Protocol, Self, runtime_checkable
 
 from ehai import ID, JsonValue, json_dumps, json_loads
 from ehai.domain.artifacts import Artifact
-from ehai.domain.checking import Checkpoint, CheckRun
+from ehai.domain.checking import Checkpoint, CheckRun, CheckSpec
 from ehai.domain.events import Event
 from ehai.domain.execution import Attempt, Run
 from ehai.domain.goal import CompletionContract, Goal, Project
@@ -159,6 +159,18 @@ class CurrentStateRepository(Protocol):
         """List Attempts for one Run in sequence order."""
         ...
 
+    def put_check_spec(self, plan_revision_id: ID, check_spec: CheckSpec) -> None:
+        """Persist one immutable CheckSpec owned by a PlanRevision."""
+        ...
+
+    def get_check_spec(self, check_id: ID) -> CheckSpec | None:
+        """Return one CheckSpec by ID."""
+        ...
+
+    def list_check_specs(self, plan_revision_id: ID) -> tuple[CheckSpec, ...]:
+        """List CheckSpecs for one PlanRevision in insertion order."""
+        ...
+
     def put_check_run(self, check_run: CheckRun) -> None:
         """Insert or replace a CheckRun snapshot by ID."""
         ...
@@ -181,6 +193,10 @@ class CurrentStateRepository(Protocol):
 
     def list_checkpoints(self, run_id: ID) -> tuple[Checkpoint, ...]:
         """List Checkpoints for one Run in event-offset order."""
+        ...
+
+    def restore_checkpoint_state(self, checkpoint: Checkpoint, restored_run: Run) -> None:
+        """Restore only a persisted Checkpoint through the explicit recovery boundary."""
         ...
 
     def put_artifact(self, artifact: Artifact) -> None:

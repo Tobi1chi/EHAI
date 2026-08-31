@@ -5,7 +5,12 @@ from datetime import UTC, datetime
 import pytest
 
 from ehai import ID, new_id
-from ehai.application.planner import DeterministicPlanner, Planner, PlanProposal
+from ehai.application.planner import (
+    NON_EMPTY_ARTIFACT_CRITERION,
+    DeterministicPlanner,
+    Planner,
+    PlanProposal,
+)
 from ehai.domain import (
     CheckKind,
     Goal,
@@ -33,7 +38,7 @@ def test_deterministic_planner_proposes_one_unapproved_work_node() -> None:
     goal = _goal()
     planner = DeterministicPlanner(clock=lambda: NOW)
 
-    proposal = planner.propose(goal, ("artifact exists",))
+    proposal = planner.propose(goal, (NON_EMPTY_ARTIFACT_CRITERION,))
 
     assert isinstance(planner, Planner)
     assert proposal.contract.goal_id == goal.goal_id
@@ -53,7 +58,7 @@ def test_injected_ids_and_clock_make_proposal_stable() -> None:
     ids = tuple(new_id() for _ in range(4))
     planner = DeterministicPlanner(id_factory=_Ids(ids), clock=lambda: NOW)
 
-    proposal = planner.propose(_goal(), ("first", "second"))
+    proposal = planner.propose(_goal(), (NON_EMPTY_ARTIFACT_CRITERION,))
 
     check_id, contract_id, node_id, revision_id = ids
     assert proposal.check_specs[0].check_id == check_id
@@ -65,7 +70,9 @@ def test_injected_ids_and_clock_make_proposal_stable() -> None:
 
 
 def test_plan_proposal_snapshots_specs_and_validates_required_checks() -> None:
-    proposal = DeterministicPlanner(clock=lambda: NOW).propose(_goal(), ("criterion",))
+    proposal = DeterministicPlanner(clock=lambda: NOW).propose(
+        _goal(), (NON_EMPTY_ARTIFACT_CRITERION,)
+    )
     specs = list(proposal.check_specs)
     snapshotted = PlanProposal(
         proposal.contract,
@@ -79,13 +86,24 @@ def test_plan_proposal_snapshots_specs_and_validates_required_checks() -> None:
         PlanProposal(proposal.contract, proposal.plan_revision, ())
 
 
-def test_planner_rejects_empty_criteria_and_goal_with_existing_contract() -> None:
+@pytest.mark.parametrize(
+    "criteria",
+    [
+        (),
+        ("artifact must be application/json",),
+        (NON_EMPTY_ARTIFACT_CRITERION, "semantic:looks-good"),
+    ],
+)
+def test_planner_rejects_unsupported_criteria(criteria: tuple[str, ...]) -> None:
+    planner = DeterministicPlanner(clock=lambda: NOW)
+    with pytest.raises(ValueError, match=r"completion criteria|exactly one P1"):
+        planner.propose(_goal(), criteria)
+
+
+def test_planner_rejects_goal_with_existing_contract() -> None:
     goal = _goal()
     planner = DeterministicPlanner(clock=lambda: NOW)
-    with pytest.raises(ValueError, match="completion criteria"):
-        planner.propose(goal, ())
-
-    proposal = planner.propose(goal, ("criterion",))
+    proposal = planner.propose(goal, (NON_EMPTY_ARTIFACT_CRITERION,))
     aligned = goal.use_completion_contract(proposal.contract)
     with pytest.raises(ValueError, match="already has"):
-        planner.propose(aligned, ("criterion",))
+        planner.propose(aligned, (NON_EMPTY_ARTIFACT_CRITERION,))

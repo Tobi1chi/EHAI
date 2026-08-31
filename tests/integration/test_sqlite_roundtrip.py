@@ -5,7 +5,7 @@ import pytest
 
 from ehai import ID, new_id
 from ehai.domain.artifacts import Artifact, ArtifactKind
-from ehai.domain.checking import Checkpoint, CheckResult, CheckRun, Gate
+from ehai.domain.checking import CheckKind, Checkpoint, CheckResult, CheckRun, CheckSpec, Gate
 from ehai.domain.events import Event, EventType
 from ehai.domain.execution import Attempt, Run
 from ehai.domain.goal import CompletionContract, Goal, Project
@@ -289,6 +289,12 @@ def test_all_p1_state_round_trips_with_relational_references(tmp_path) -> None:
     project = Project.create("P1", project_id=new_id(), created_at=NOW)
     goal = Goal.create(project.project_id, "prove the loop", goal_id=new_id(), created_at=NOW)
     check_id = new_id()
+    check_spec = CheckSpec(
+        "artifact",
+        CheckKind.ARTIFACT,
+        "artifact must exist",
+        check_id=check_id,
+    )
     contract = CompletionContract.draft(
         goal.goal_id,
         ("all checks pass",),
@@ -367,6 +373,7 @@ def test_all_p1_state_round_trips_with_relational_references(tmp_path) -> None:
         uow.states.put_goal(goal)
         uow.states.put_completion_contract(contract)
         uow.states.put_plan_revision(plan)
+        uow.states.put_check_spec(plan.plan_revision_id, check_spec)
         uow.states.put_run(run)
         uow.states.put_attempt(attempt)
         uow.states.put_artifact(artifact)
@@ -394,6 +401,8 @@ def test_all_p1_state_round_trips_with_relational_references(tmp_path) -> None:
         assert uow.states.list_completion_contracts(goal.goal_id) == (contract,)
         assert uow.states.get_plan_revision(plan.plan_revision_id) == plan
         assert uow.states.list_plan_revisions(goal.goal_id) == (plan,)
+        assert uow.states.get_check_spec(check_spec.check_id) == check_spec
+        assert uow.states.list_check_specs(plan.plan_revision_id) == (check_spec,)
         assert uow.states.get_run(run.run_id) == run
         assert uow.states.list_runs(goal.goal_id) == (run,)
         assert uow.states.get_attempt(attempt.attempt_id) == attempt

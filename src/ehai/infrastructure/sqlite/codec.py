@@ -8,10 +8,12 @@ from datetime import datetime
 from ehai import ID, JsonValue, format_utc_datetime, json_dumps, json_loads, parse_utc_datetime
 from ehai.domain.artifacts import Artifact
 from ehai.domain.checking import (
+    CheckKind,
     Checkpoint,
     CheckResult,
     CheckRun,
     CheckRunStatus,
+    CheckSpec,
     GateDecision,
 )
 from ehai.domain.execution import Attempt, AttemptStatus, Run, RunStatus
@@ -175,6 +177,29 @@ def decode_attempt(snapshot: str) -> Attempt:
         started_at=_optional_datetime(document, "started_at"),
         ended_at=_optional_datetime(document, "ended_at"),
         outcome_reason=_optional_string(document, "outcome_reason"),
+    )
+
+
+def encode_check_spec(check_spec: CheckSpec) -> str:
+    return json_dumps(
+        {
+            "check_id": check_spec.check_id,
+            "name": check_spec.name,
+            "kind": check_spec.kind.value,
+            "description": check_spec.description,
+            "required": check_spec.required,
+        }
+    )
+
+
+def decode_check_spec(snapshot: str) -> CheckSpec:
+    document = _load_object(snapshot, "CheckSpec")
+    return CheckSpec(
+        check_id=ID(_string(document, "check_id")),
+        name=_string(document, "name"),
+        kind=CheckKind(_string(document, "kind")),
+        description=_string(document, "description"),
+        required=_boolean(document, "required"),
     )
 
 

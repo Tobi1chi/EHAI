@@ -7,7 +7,7 @@ import sqlite3
 from ehai import ID, format_utc_datetime, json_dumps, json_loads, parse_utc_datetime
 from ehai.application.ports import CommandReceipt, StoredEvent
 from ehai.domain.artifacts import Artifact
-from ehai.domain.checking import Checkpoint, CheckRun, CheckRunStatus
+from ehai.domain.checking import Checkpoint, CheckRun, CheckRunStatus, CheckSpec
 from ehai.domain.events import Event, EventType
 from ehai.domain.execution import Attempt, AttemptStatus, Run, RunStatus
 from ehai.domain.goal import CompletionContract, Goal, Project
@@ -23,6 +23,7 @@ from ehai.infrastructure.sqlite.codec import (
     decode_attempt,
     decode_branch,
     decode_check_run,
+    decode_check_spec,
     decode_checkpoint,
     decode_completion_contract,
     decode_edge,
@@ -35,6 +36,7 @@ from ehai.infrastructure.sqlite.codec import (
     encode_attempt,
     encode_branch,
     encode_check_run,
+    encode_check_spec,
     encode_checkpoint,
     encode_completion_contract,
     encode_edge,
@@ -513,6 +515,71 @@ class SQLiteCurrentStateRepository:
             )
         )
 
+    def put_check_spec(self, plan_revision_id: ID, check_spec: CheckSpec) -> None:
+        plan = self._required_plan_revision(plan_revision_id)
+        existing_row = self._connection.execute(
+            "SELECT plan_revision_id, snapshot_json FROM check_specs WHERE check_id = ?",
+            (check_spec.check_id,),
+        ).fetchone()
+        snapshot = encode_check_spec(check_spec)
+        if existing_row is not None:
+            owner_id = _row_index_string(existing_row, 0)
+            stored_snapshot = _row_index_string(existing_row, 1)
+            if owner_id != plan.plan_revision_id or stored_snapshot != snapshot:
+                raise PersistenceConflictError(f"CheckSpec {check_spec.check_id} is immutable")
+            return
+
+        referenced_ids = {check_id for node in plan.nodes for check_id in node.required_check_ids}
+        contract = self.get_completion_contract(plan.completion_contract_id)
+        if contract is None:
+            raise PersistenceConflictError(
+                f"PlanRevision {plan.plan_revision_id} CompletionContract is not persisted"
+            )
+        if check_spec.required and (
+            check_spec.check_id not in referenced_ids
+            or check_spec.check_id not in contract.required_check_ids
+        ):
+            raise PersistenceConflictError(
+                f"required CheckSpec {check_spec.check_id} is not referenced by PlanRevision "
+                f"{plan.plan_revision_id} and its CompletionContract"
+            )
+        row = self._connection.execute(
+            "SELECT COALESCE(MAX(sort_index), -1) + 1 FROM check_specs WHERE plan_revision_id = ?",
+            (plan.plan_revision_id,),
+        ).fetchone()
+        if row is None:  # pragma: no cover - aggregate always returns a row
+            raise RuntimeError("SQLite did not assign a CheckSpec order")
+        sort_index = _row_index_integer(row, 0)
+        self._connection.execute(
+            """
+            INSERT INTO check_specs(check_id, plan_revision_id, sort_index, kind, snapshot_json)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (
+                check_spec.check_id,
+                plan.plan_revision_id,
+                sort_index,
+                check_spec.kind.value,
+                snapshot,
+            ),
+        )
+
+    def get_check_spec(self, check_id: ID) -> CheckSpec | None:
+        snapshot = self._snapshot("check_specs", "check_id", check_id)
+        return None if snapshot is None else decode_check_spec(snapshot)
+
+    def list_check_specs(self, plan_revision_id: ID) -> tuple[CheckSpec, ...]:
+        return tuple(
+            decode_check_spec(snapshot)
+            for snapshot in self._snapshots(
+                """
+                SELECT snapshot_json FROM check_specs
+                WHERE plan_revision_id = ? ORDER BY sort_index
+                """,
+                (plan_revision_id,),
+            )
+        )
+
     def put_check_run(self, check_run: CheckRun) -> None:
         attempt = self._required_attempt(check_run.attempt_id)
         if attempt.run_id != check_run.run_id or attempt.plan_node_id != check_run.plan_node_id:
@@ -632,6 +699,75 @@ class SQLiteCurrentStateRepository:
                 """,
                 (run_id,),
             )
+        )
+
+    def restore_checkpoint_state(self, checkpoint: Checkpoint, restored_run: Run) -> None:
+        """Restore an audited Checkpoint without weakening normal transition checks."""
+        stored_checkpoint = self.get_checkpoint(checkpoint.checkpoint_id)
+        if stored_checkpoint != checkpoint:
+            raise PersistenceConflictError(
+                f"Checkpoint {checkpoint.checkpoint_id} is not the persisted recovery snapshot"
+            )
+        latest_row = self._connection.execute(
+            """
+            SELECT checkpoint_id FROM checkpoints
+            WHERE run_id = ? ORDER BY event_offset DESC, checkpoint_id DESC LIMIT 1
+            """,
+            (checkpoint.run_id,),
+        ).fetchone()
+        if latest_row is None or _row_index_string(latest_row, 0) != checkpoint.checkpoint_id:
+            raise PersistenceConflictError(
+                f"Checkpoint {checkpoint.checkpoint_id} is superseded and cannot be restored"
+            )
+        current_run = self._required_run(checkpoint.run_id)
+        current_plan = self._required_plan_revision(checkpoint.plan_revision_id)
+        if current_run.status is not RunStatus.PAUSED:
+            raise PersistenceConflictError(
+                f"Run {current_run.run_id} must be paused before Checkpoint restore"
+            )
+        if (
+            restored_run.run_id != checkpoint.run_id
+            or restored_run.goal_id != checkpoint.run.goal_id
+            or restored_run.plan_revision_id != checkpoint.plan_revision_id
+            or restored_run.status is not RunStatus.PAUSED
+        ):
+            raise PersistenceConflictError(
+                f"Run {restored_run.run_id} is not a paused snapshot of Checkpoint "
+                f"{checkpoint.checkpoint_id}"
+            )
+        expected_run = (
+            checkpoint.run.pause() if checkpoint.run.status is RunStatus.RUNNING else checkpoint.run
+        )
+        if restored_run != expected_run:
+            raise PersistenceConflictError(
+                f"Run {restored_run.run_id} differs from Checkpoint {checkpoint.checkpoint_id}"
+            )
+        if _plan_structure(current_plan) != _plan_structure(checkpoint.plan_revision):
+            raise PersistenceConflictError(
+                f"Checkpoint {checkpoint.checkpoint_id} PlanRevision structure changed"
+            )
+
+        self._connection.execute(
+            "UPDATE plan_revisions SET snapshot_json = ? WHERE plan_revision_id = ?",
+            (encode_plan_revision(checkpoint.plan_revision), checkpoint.plan_revision_id),
+        )
+        self._connection.executemany(
+            "UPDATE plan_nodes SET snapshot_json = ? WHERE plan_node_id = ?",
+            (
+                (encode_plan_node(node), node.plan_node_id)
+                for node in checkpoint.plan_revision.nodes
+            ),
+        )
+        self._connection.executemany(
+            "UPDATE branches SET snapshot_json = ? WHERE branch_id = ?",
+            (
+                (encode_branch(branch), branch.branch_id)
+                for branch in checkpoint.plan_revision.branches
+            ),
+        )
+        self._connection.execute(
+            "UPDATE runs SET snapshot_json = ? WHERE run_id = ?",
+            (encode_run(restored_run), restored_run.run_id),
         )
 
     def put_artifact(self, artifact: Artifact) -> None:

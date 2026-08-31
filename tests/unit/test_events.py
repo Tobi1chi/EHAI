@@ -120,6 +120,28 @@ def test_event_json_round_trip_is_deterministic_and_normalizes_utc() -> None:
     assert Event.from_dict(event.to_dict()) == event
 
 
+def test_checkpoint_restored_event_round_trips() -> None:
+    event = Event(
+        type=EventType.CHECKPOINT_RESTORED,
+        correlation_id=CORRELATION_ID,
+        run_id=RUN_ID,
+        payload={"checkpoint_id": EVENT_ID},
+    )
+
+    assert Event.from_json(event.to_json()) == event
+
+
+def test_check_interrupted_event_round_trips() -> None:
+    event = Event(
+        type=EventType.CHECK_INTERRUPTED,
+        correlation_id=CORRELATION_ID,
+        run_id=RUN_ID,
+        payload={"check_run_id": EVENT_ID},
+    )
+
+    assert Event.from_json(event.to_json()) == event
+
+
 @pytest.mark.parametrize(
     ("field", "value"),
     [
