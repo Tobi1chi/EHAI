@@ -1,4 +1,4 @@
-"""Minimal JSON CLI for the P1 single-node execution slice."""
+"""Minimal JSON CLI for the P1 execution slice."""
 
 from __future__ import annotations
 
@@ -21,15 +21,41 @@ from ehai.application.commands import (
     StartRun,
 )
 from ehai.application.orchestrator import OrchestrationError, Orchestrator
-from ehai.application.planner import NON_EMPTY_ARTIFACT_CRITERION, DeterministicPlanner
+from ehai.application.planner import (
+    NON_EMPTY_ARTIFACT_CRITERION,
+    DeterministicExplorationPlanner,
+    DeterministicPlanner,
+    ExplorationBudget,
+    ExplorationPlanRequest,
+    Planner,
+    PlanProposal,
+)
 from ehai.application.run_control import RunControlError, RunController
 from ehai.application.service import ApplicationError, ExecutionService
 from ehai.application.workers import WorkerAdapter
 from ehai.domain.checking import CheckKind
+from ehai.domain.goal import Goal
 from ehai.infrastructure.artifacts import FilesystemArtifactStore
 from ehai.infrastructure.checks import ArtifactCheckAdapter, ArtifactCheckRule
 from ehai.infrastructure.sqlite import SQLiteDatabase
 from ehai.infrastructure.workers import CodexWorkerAdapter, FakeWorker
+
+
+class _ExplorationPlannerAdapter:
+    """Adapt the I6 request object to the application Planner Port."""
+
+    def __init__(self) -> None:
+        self._planner = DeterministicExplorationPlanner()
+        self._budget = ExplorationBudget(max_attempts=5)
+
+    def propose(self, goal: Goal, criteria: tuple[str, ...]) -> PlanProposal:
+        return self._planner.propose(
+            ExplorationPlanRequest(
+                goal=goal,
+                criteria=criteria,
+                budget=self._budget,
+            )
+        )
 
 
 def build_service(
@@ -38,6 +64,7 @@ def build_service(
     *,
     worker_kind: str = "fake",
     worker_workspace: Path | None = None,
+    planner_kind: str = "single",
 ) -> ExecutionService:
     """Build the local P1 service from concrete infrastructure Adapters."""
     database = SQLiteDatabase(database_path)
@@ -49,6 +76,13 @@ def build_service(
         worker = CodexWorkerAdapter(workspace=worker_workspace or Path.cwd())
     else:
         raise ValueError(f"unsupported Worker: {worker_kind}")
+    planner: Planner
+    if planner_kind == "single":
+        planner = DeterministicPlanner()
+    elif planner_kind == "exploration":
+        planner = _ExplorationPlannerAdapter()
+    else:
+        raise ValueError(f"unsupported Planner: {planner_kind}")
     check_runner = CheckRunner(
         {
             CheckKind.ARTIFACT: ArtifactCheckAdapter(
@@ -67,7 +101,7 @@ def build_service(
     )
     return ExecutionService(
         uow_factory=database.unit_of_work,
-        planner=DeterministicPlanner(),
+        planner=planner,
         orchestrator=orchestrator,
         run_controller=RunController(database.unit_of_work, worker),
         recovery_service=RecoveryService(uow_factory=database.unit_of_work),
@@ -95,6 +129,12 @@ def create_parser() -> argparse.ArgumentParser:
         type=Path,
         help="Codex working directory (default: current directory)",
     )
+    parser.add_argument(
+        "--planner",
+        choices=("single", "exploration"),
+        default="single",
+        help="Planner implementation (default: single)",
+    )
     commands = parser.add_subparsers(dest="command", required=True)
 
     project = commands.add_parser("create-project", help="create a Project")
@@ -106,7 +146,7 @@ def create_parser() -> argparse.ArgumentParser:
     goal.add_argument("--project-id", required=True)
     goal.add_argument("--objective", required=True)
 
-    propose = commands.add_parser("propose-plan", help="propose a single-node plan")
+    propose = commands.add_parser("propose-plan", help="propose a plan")
     propose.add_argument("--idempotency-key", required=True)
     propose.add_argument("--goal-id", required=True)
     propose.add_argument(
@@ -158,6 +198,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             args.artifacts,
             worker_kind=args.worker,
             worker_workspace=args.worker_workspace,
+            planner_kind=args.planner,
         )
         output = _dispatch(service, args)
     except (

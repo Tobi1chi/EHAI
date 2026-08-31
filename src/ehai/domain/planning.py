@@ -609,9 +609,13 @@ class PlanRevision:
                 raise PlanInvariantError(
                     f"{owner} Branch {branch.branch_id} references an unknown node"
                 )
-            if fork.kind is not PlanNodeKind.FORK or merge.kind is not PlanNodeKind.MERGE:
+            if fork.kind is not PlanNodeKind.FORK or merge.kind not in {
+                PlanNodeKind.EVALUATOR,
+                PlanNodeKind.MERGE,
+            }:
                 raise PlanInvariantError(
-                    f"{owner} Branch {branch.branch_id} must connect fork and merge node roles"
+                    f"{owner} Branch {branch.branch_id} must connect a fork to an "
+                    "evaluator or merge node"
                 )
             overlap = branch_nodes_seen.intersection(branch.node_ids)
             if overlap:

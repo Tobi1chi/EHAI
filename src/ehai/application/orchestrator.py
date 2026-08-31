@@ -11,6 +11,12 @@ from pathlib import Path
 
 from ehai import ID, JsonValue, new_id, utc_now
 from ehai.application.checks import CheckContext, CheckRunner
+from ehai.application.evaluation import (
+    BranchEvaluationContext,
+    BranchEvaluator,
+    BranchSelection,
+    DeterministicBranchEvaluator,
+)
 from ehai.application.ports import ArtifactStore, UnitOfWork
 from ehai.application.workers import (
     WorkerAdapter,
@@ -34,7 +40,10 @@ from ehai.domain.events import Event, EventType
 from ehai.domain.execution import Attempt, AttemptStatus, Run, RunStatus
 from ehai.domain.goal import CompletionContract, Goal
 from ehai.domain.planning import (
+    Branch,
+    BranchStatus,
     PlanNode,
+    PlanNodeKind,
     PlanNodeStatus,
     PlanRevision,
     PlanRevisionStatus,
@@ -59,6 +68,14 @@ class WorkerCancellationUnsettledError(OrchestrationError):
     """Raised when Worker cancellation has no matching Run control transition."""
 
 
+class BranchEvaluationError(OrchestrationError):
+    """Raised after branch evaluation fails closed and the Run is failed."""
+
+
+class AttemptBudgetExceededError(OrchestrationError):
+    """Raised when scheduling another Worker would exceed the Run budget."""
+
+
 class ArtifactPersistenceError(OrchestrationError):
     """Raised when a successful Worker result cannot be persisted as Artifacts."""
 
@@ -78,12 +95,57 @@ def ready_nodes(plan_revision: PlanRevision) -> tuple[PlanNode, ...]:
     for node in plan_revision.nodes:
         if node.status is not PlanNodeStatus.PENDING:
             continue
-        if all(
-            node_by_id[dependency_id].status is PlanNodeStatus.COMPLETED
-            for dependency_id in node.required_dependency_ids
-        ):
-            ready.append(node)
+        containing_branch = _branch_containing(plan_revision, node.plan_node_id)
+        if containing_branch is not None and containing_branch.status is BranchStatus.PRUNED:
+            continue
+        incoming_branches = tuple(
+            branch for branch in plan_revision.branches if branch.merge_node_id == node.plan_node_id
+        )
+        branch_endpoint_ids = {branch.node_ids[-1] for branch in plan_revision.branches}
+        if node.kind is PlanNodeKind.EVALUATOR:
+            if incoming_branches and not all(
+                _branch_is_terminal(branch, node_by_id) for branch in incoming_branches
+            ):
+                continue
+            dependencies_ready = all(
+                node_by_id[dependency_id].status is PlanNodeStatus.COMPLETED
+                or (
+                    dependency_id in branch_endpoint_ids
+                    and node_by_id[dependency_id].status is PlanNodeStatus.FAILED
+                )
+                or (
+                    (branch := _branch_containing(plan_revision, dependency_id)) is not None
+                    and _branch_has_failed(branch, node_by_id)
+                )
+                for dependency_id in node.required_dependency_ids
+            )
+        else:
+            dependencies_ready = all(
+                node_by_id[dependency_id].status is PlanNodeStatus.COMPLETED
+                for dependency_id in node.required_dependency_ids
+            )
+        if not dependencies_ready:
+            continue
+        ready.append(node)
     return tuple(ready)
+
+
+def _branch_containing(plan: PlanRevision, plan_node_id: ID) -> Branch | None:
+    return next(
+        (branch for branch in plan.branches if plan_node_id in branch.node_ids),
+        None,
+    )
+
+
+def _branch_is_terminal(branch: Branch, node_by_id: dict[ID, PlanNode]) -> bool:
+    return _branch_has_failed(branch, node_by_id) or node_by_id[branch.node_ids[-1]].status in {
+        PlanNodeStatus.COMPLETED,
+        PlanNodeStatus.FAILED,
+    }
+
+
+def _branch_has_failed(branch: Branch, node_by_id: dict[ID, PlanNode]) -> bool:
+    return any(node_by_id[node_id].status is PlanNodeStatus.FAILED for node_id in branch.node_ids)
 
 
 @dataclass(frozen=True, slots=True)
@@ -111,11 +173,15 @@ class Orchestrator:
         clock: Callable[[], datetime] = utc_now,
         id_factory: Callable[[], ID] = new_id,
         cancellation_settle_seconds: float = 2.0,
+        branch_evaluator: BranchEvaluator | None = None,
+        attempt_budget: int = 5,
     ) -> None:
         if not isinstance(cancellation_settle_seconds, (int, float)) or not (
             0 < cancellation_settle_seconds < float("inf")
         ):
             raise ValueError("cancellation_settle_seconds must be finite and positive")
+        if type(attempt_budget) is not int or attempt_budget < 1:
+            raise ValueError("attempt_budget must be a positive integer")
         self._uow_factory = uow_factory
         self._worker = worker
         self._artifact_store = artifact_store
@@ -124,93 +190,124 @@ class Orchestrator:
         self._clock = clock
         self._id_factory = id_factory
         self._cancellation_settle_seconds = float(cancellation_settle_seconds)
+        self._branch_evaluator = branch_evaluator or DeterministicBranchEvaluator()
+        self._attempt_budget = attempt_budget
 
     def execute(self, run_id: ID) -> Run:
-        """Execute one approved single-node Run through its final Gate and Checkpoint."""
-        context = self._prepare(run_id)
-        request = WorkerRequest(
-            run=context.run,
-            attempt=context.attempt,
-            plan_node=context.plan_node,
-            completion_contract=context.completion_contract,
-            context={},
-            artifact_inputs=(),
-        )
-        try:
-            result = self._worker.execute(request)
-        except WorkerCancelledError as error:
+        """Execute an approved P1 PlanGraph serially through its final merge Gate."""
+        while True:
+            if self._evaluate_completed_evaluator(run_id):
+                continue
+            context = self._prepare(run_id)
+            if context is None:
+                continue
+            branch_local = (
+                _branch_containing(context.plan_revision, context.plan_node.plan_node_id)
+                is not None
+            )
+            request = WorkerRequest(
+                run=context.run,
+                attempt=context.attempt,
+                plan_node=context.plan_node,
+                completion_contract=context.completion_contract,
+                context={},
+                artifact_inputs=self._worker_inputs(context),
+            )
             try:
-                artifacts = self._store_worker_error_artifacts(context, error)
-            except Exception as artifact_error:
-                settled = self._await_controlled_cancellation(context.attempt.attempt_id, error)
-                raise ArtifactPersistenceError(
-                    f"attempt {context.attempt.attempt_id} settled as {settled.status.value}, "
-                    "but its cancellation diagnostics could not be persisted: "
-                    f"{type(artifact_error).__name__}: {artifact_error}"
-                ) from artifact_error
-            self._record_worker_diagnostics(context.attempt.attempt_id, artifacts)
-            return self._await_controlled_cancellation(context.attempt.attempt_id, error)
-        except WorkerTimedOutError as error:
-            try:
-                artifacts = self._store_worker_error_artifacts(context, error)
-            except Exception as artifact_error:
+                result = self._worker.execute(request)
+            except WorkerCancelledError as error:
+                try:
+                    artifacts = self._store_worker_error_artifacts(context, error)
+                except Exception as artifact_error:
+                    settled = self._await_controlled_cancellation(context.attempt.attempt_id, error)
+                    raise ArtifactPersistenceError(
+                        f"attempt {context.attempt.attempt_id} settled as "
+                        f"{settled.status.value}, but its cancellation diagnostics could "
+                        f"not be persisted: {type(artifact_error).__name__}: {artifact_error}"
+                    ) from artifact_error
+                self._record_worker_diagnostics(context.attempt.attempt_id, artifacts)
+                return self._await_controlled_cancellation(context.attempt.attempt_id, error)
+            except WorkerTimedOutError as error:
+                try:
+                    artifacts = self._store_worker_error_artifacts(context, error)
+                except Exception as artifact_error:
+                    self._record_worker_failure(
+                        context.attempt.attempt_id,
+                        error,
+                        (),
+                        diagnostic_error=artifact_error,
+                        fail_run=True,
+                    )
+                    raise ArtifactPersistenceError(
+                        f"attempt {context.attempt.attempt_id} timed out, but its diagnostics "
+                        f"could not be persisted: {type(artifact_error).__name__}: "
+                        f"{artifact_error}"
+                    ) from artifact_error
                 self._record_worker_failure(
                     context.attempt.attempt_id,
                     error,
-                    (),
-                    diagnostic_error=artifact_error,
+                    artifacts,
+                    fail_run=not branch_local,
                 )
-                raise ArtifactPersistenceError(
-                    f"attempt {context.attempt.attempt_id} timed out, but its diagnostics "
-                    f"could not be persisted: {type(artifact_error).__name__}: {artifact_error}"
-                ) from artifact_error
-            self._record_worker_failure(context.attempt.attempt_id, error, artifacts)
-            raise WorkerFailedError(
-                f"attempt {context.attempt.attempt_id} timed out: {error.reason}"
-            ) from error
-        except Exception as error:
-            try:
-                artifacts = (
-                    self._store_worker_error_artifacts(context, error)
-                    if isinstance(error, WorkerExecutionError)
-                    else ()
-                )
-            except Exception as artifact_error:
+                if branch_local:
+                    continue
+                raise WorkerFailedError(
+                    f"attempt {context.attempt.attempt_id} timed out: {error.reason}"
+                ) from error
+            except Exception as error:
+                try:
+                    artifacts = (
+                        self._store_worker_error_artifacts(context, error)
+                        if isinstance(error, WorkerExecutionError)
+                        else ()
+                    )
+                except Exception as artifact_error:
+                    self._record_worker_failure(
+                        context.attempt.attempt_id,
+                        error,
+                        (),
+                        diagnostic_error=artifact_error,
+                        fail_run=True,
+                    )
+                    raise ArtifactPersistenceError(
+                        f"attempt {context.attempt.attempt_id} failed, but its diagnostics "
+                        f"could not be persisted: {type(artifact_error).__name__}: "
+                        f"{artifact_error}"
+                    ) from artifact_error
                 self._record_worker_failure(
                     context.attempt.attempt_id,
                     error,
-                    (),
-                    diagnostic_error=artifact_error,
+                    artifacts,
+                    fail_run=not branch_local,
                 )
+                if branch_local:
+                    continue
+                raise WorkerFailedError(
+                    f"attempt {context.attempt.attempt_id} failed: {type(error).__name__}: {error}"
+                ) from error
+            try:
+                artifacts = self._store_candidate_artifacts(context, result)
+            except Exception as error:
+                self._record_artifact_failure(context.attempt.attempt_id, result, error)
                 raise ArtifactPersistenceError(
-                    f"attempt {context.attempt.attempt_id} failed, but its diagnostics "
-                    f"could not be persisted: {type(artifact_error).__name__}: {artifact_error}"
-                ) from artifact_error
-            self._record_worker_failure(context.attempt.attempt_id, error, artifacts)
-            raise WorkerFailedError(
-                f"attempt {context.attempt.attempt_id} failed: {type(error).__name__}: {error}"
-            ) from error
-        try:
-            artifacts = self._store_candidate_artifacts(context, result)
-        except Exception as error:
-            self._record_artifact_failure(context.attempt.attempt_id, result, error)
-            raise ArtifactPersistenceError(
-                f"attempt {context.attempt.attempt_id} produced a candidate but Artifact "
-                f"persistence failed: {type(error).__name__}: {error}"
-            ) from error
+                    f"attempt {context.attempt.attempt_id} produced a candidate but Artifact "
+                    f"persistence failed: {type(error).__name__}: {error}"
+                ) from error
 
-        self._record_candidate(context.attempt.attempt_id, artifacts, result)
-        return self._check_and_complete(
-            run_id,
-            context.attempt.attempt_id,
-            artifacts,
-            context.check_specs,
-        )
+            self._record_candidate(context.attempt.attempt_id, artifacts, result)
+            outcome = self._check_and_complete(
+                run_id,
+                context.attempt.attempt_id,
+                artifacts,
+                context.check_specs,
+                branch_local=branch_local,
+            )
+            if outcome.status is not RunStatus.RUNNING:
+                return outcome
 
-    def _prepare(self, run_id: ID) -> _ExecutionContext:
+    def _prepare(self, run_id: ID) -> _ExecutionContext | None:
         with self._uow_factory() as uow:
             run, plan, goal, contract = self._load_run_context(uow, run_id)
-            self._require_single_node(plan, contract)
             if run.status is RunStatus.PENDING:
                 run = run.start(at=self._clock())
                 uow.states.put_run(run)
@@ -226,12 +323,32 @@ class Orchestrator:
                 node for node in plan.nodes if node.status is PlanNodeStatus.READY
             )
             candidates = already_ready or ready_nodes(plan)
-            if len(candidates) != 1:
+            if not candidates:
                 raise OrchestrationError(
-                    f"run {run.run_id} expected one ready PlanNode, found {len(candidates)}"
+                    f"run {run.run_id} has no schedulable PlanNode while still running"
                 )
             ready_node = candidates[0]
-            required_specs = _required_check_specs(uow, plan, ready_node)
+            attempts = uow.states.list_attempts(run.run_id)
+            if any(attempt.status is AttemptStatus.RUNNING for attempt in attempts):
+                raise OrchestrationError(f"run {run.run_id} already has a running Attempt")
+            if len(attempts) >= self._attempt_budget:
+                reason = (
+                    f"attempt budget exhausted before PlanNode {ready_node.plan_node_id}: "
+                    f"consumed={len(attempts)}, limit={self._attempt_budget}"
+                )
+                failed_run = run.fail(reason, at=self._clock())
+                uow.states.put_run(failed_run)
+                uow.events.append(
+                    self._event(
+                        EventType.RUN_FAILED,
+                        failed_run,
+                        failed_run.run_id,
+                        {"run_id": failed_run.run_id, "reason": reason},
+                    )
+                )
+                uow.commit()
+                raise AttemptBudgetExceededError(reason)
+
             if ready_node.status is PlanNodeStatus.PENDING:
                 ready_node = ready_node.mark_ready()
                 plan = _replace_node(plan, ready_node)
@@ -246,10 +363,11 @@ class Orchestrator:
                 )
             running_node = ready_node.start()
             plan = _replace_node(plan, running_node)
+            required_specs = _required_check_specs(uow, plan, running_node)
             attempt = Attempt(
                 run_id=run.run_id,
                 plan_node_id=running_node.plan_node_id,
-                sequence=len(uow.states.list_attempts(run.run_id)) + 1,
+                sequence=len(attempts) + 1,
                 attempt_id=self._id_factory(),
                 created_at=self._clock(),
             ).start(at=self._clock())
@@ -271,6 +389,8 @@ class Orchestrator:
                     {
                         "attempt_id": attempt.attempt_id,
                         "plan_node_id": attempt.plan_node_id,
+                        "attempt_budget_consumed": len(attempts) + 1,
+                        "attempt_budget_limit": self._attempt_budget,
                     },
                 )
             )
@@ -284,6 +404,211 @@ class Orchestrator:
             attempt,
             required_specs,
         )
+
+    def _evaluate_completed_evaluator(self, run_id: ID) -> bool:
+        with self._uow_factory() as uow:
+            run, plan, _, _ = self._load_run_context(uow, run_id)
+            if run.status is not RunStatus.RUNNING:
+                return False
+            completed_evaluator = next(
+                (
+                    node
+                    for node in plan.nodes
+                    if node.kind is PlanNodeKind.EVALUATOR
+                    and node.status is PlanNodeStatus.COMPLETED
+                ),
+                None,
+            )
+            if completed_evaluator is None:
+                return False
+            if not any(branch.status is BranchStatus.ACTIVE for branch in plan.branches):
+                return False
+            branch_node_ids = {node_id for branch in plan.branches for node_id in branch.node_ids}
+            attempts = tuple(
+                attempt
+                for attempt in uow.states.list_attempts(run.run_id)
+                if attempt.plan_node_id in branch_node_ids
+            )
+            artifact_ids = {
+                artifact_id for attempt in attempts for artifact_id in attempt.artifact_ids
+            }
+            artifacts = tuple(
+                artifact
+                for artifact in uow.states.list_artifacts_for_run(run.run_id)
+                if artifact.artifact_id in artifact_ids
+            )
+        context = BranchEvaluationContext(plan, run, attempts, artifacts)
+        try:
+            selection = self._branch_evaluator.evaluate(context)
+            self._record_branch_selection(context, selection)
+        except Exception as error:
+            self._record_evaluation_failure(run.run_id, error)
+            raise BranchEvaluationError(
+                f"run {run.run_id} branch evaluation failed: {type(error).__name__}: {error}"
+            ) from error
+        return True
+
+    def _record_branch_selection(
+        self,
+        context: BranchEvaluationContext,
+        selection: BranchSelection,
+    ) -> None:
+        branch_by_id = {branch.branch_id: branch for branch in context.plan.branches}
+        selected = branch_by_id.get(selection.selected_branch_id)
+        if selected is None or selected.status is not BranchStatus.ACTIVE:
+            raise OrchestrationError(
+                f"BranchEvaluator selected unavailable Branch {selection.selected_branch_id}"
+            )
+        node_by_id = {node.plan_node_id: node for node in context.plan.nodes}
+        if any(
+            node_by_id[node_id].status is not PlanNodeStatus.COMPLETED
+            for node_id in selected.node_ids
+        ):
+            raise OrchestrationError(
+                f"BranchEvaluator selected non-viable Branch {selected.branch_id}"
+            )
+        active_sibling_ids = {
+            branch.branch_id
+            for branch in context.plan.branches
+            if branch.branch_id != selected.branch_id
+            and branch.status is BranchStatus.ACTIVE
+            and branch.fork_node_id == selected.fork_node_id
+            and branch.merge_node_id == selected.merge_node_id
+        }
+        if set(selection.pruned_branch_ids) != active_sibling_ids:
+            raise OrchestrationError(
+                "BranchEvaluator pruned Branches do not match the active sibling set"
+            )
+        artifact_by_id = {artifact.artifact_id: artifact for artifact in context.artifacts}
+        attempt_by_id = {attempt.attempt_id: attempt for attempt in context.attempts}
+        for artifact_id in selection.evidence_artifact_ids:
+            artifact = artifact_by_id.get(artifact_id)
+            attempt = (
+                None
+                if artifact is None or artifact.attempt_id is None
+                else attempt_by_id.get(artifact.attempt_id)
+            )
+            if (
+                artifact is None
+                or artifact.plan_node_id not in selected.node_ids
+                or artifact.kind not in {ArtifactKind.CANDIDATE, ArtifactKind.PATCH}
+                or attempt is None
+                or attempt.status is not AttemptStatus.SUCCEEDED
+            ):
+                raise OrchestrationError(
+                    "BranchEvaluator selection evidence does not belong to the selected Branch"
+                )
+
+        with self._uow_factory() as uow:
+            run = _required_run(uow, context.run.run_id)
+            plan = _required_plan(uow, run.plan_revision_id)
+            if run != context.run or plan != context.plan:
+                raise OrchestrationError(
+                    f"run {run.run_id} changed while BranchEvaluator was deciding"
+                )
+            replacements = {
+                selected.branch_id: selected.select(),
+                **{
+                    branch_id: branch_by_id[branch_id].prune()
+                    for branch_id in selection.pruned_branch_ids
+                },
+            }
+            pruned_nodes: list[PlanNode] = []
+            nodes = list(plan.nodes)
+            for branch_id in selection.pruned_branch_ids:
+                branch = branch_by_id[branch_id]
+                for index, node in enumerate(nodes):
+                    if node.plan_node_id in branch.node_ids and node.status in {
+                        PlanNodeStatus.PENDING,
+                        PlanNodeStatus.READY,
+                    }:
+                        pruned = node.prune()
+                        nodes[index] = pruned
+                        pruned_nodes.append(pruned)
+            plan = _rehydrate_plan(
+                plan,
+                nodes=tuple(nodes),
+                branches=tuple(
+                    replacements.get(branch.branch_id, branch) for branch in plan.branches
+                ),
+            )
+            uow.states.put_plan_revision(plan)
+            evidence: list[JsonValue] = list(selection.evidence_artifact_ids)
+            uow.events.append(
+                self._event(
+                    EventType.BRANCH_SELECTED,
+                    run,
+                    selected.branch_id,
+                    {
+                        "branch_id": selected.branch_id,
+                        "fork_node_id": selected.fork_node_id,
+                        "criterion": selection.criterion,
+                        "evidence_artifact_ids": evidence,
+                        "explanation": selection.explanation,
+                    },
+                )
+            )
+            for branch_id in selection.pruned_branch_ids:
+                uow.events.append(
+                    self._event(
+                        EventType.BRANCH_PRUNED,
+                        run,
+                        branch_id,
+                        {
+                            "branch_id": branch_id,
+                            "selected_branch_id": selected.branch_id,
+                            "criterion": selection.criterion,
+                            "evidence_artifact_ids": evidence,
+                        },
+                    )
+                )
+            for node in pruned_nodes:
+                uow.events.append(
+                    self._event(
+                        EventType.PLAN_NODE_PRUNED,
+                        run,
+                        node.plan_node_id,
+                        {"plan_node_id": node.plan_node_id},
+                    )
+                )
+            uow.commit()
+
+    def _record_evaluation_failure(self, run_id: ID, error: Exception) -> None:
+        reason = f"Branch evaluation failed: {type(error).__name__}: {error}"
+        with self._uow_factory() as uow:
+            run = _required_run(uow, run_id)
+            failed_run = run.fail(reason, at=self._clock())
+            uow.states.put_run(failed_run)
+            uow.events.append(
+                self._event(
+                    EventType.RUN_FAILED,
+                    failed_run,
+                    failed_run.run_id,
+                    {"run_id": failed_run.run_id, "reason": reason},
+                )
+            )
+            uow.commit()
+
+    def _worker_inputs(self, context: _ExecutionContext) -> tuple[Artifact, ...]:
+        plan = context.plan_revision
+        if context.plan_node.kind is PlanNodeKind.EVALUATOR:
+            source_node_ids = {
+                node_id
+                for branch in plan.branches
+                if branch.status is BranchStatus.ACTIVE
+                for node_id in branch.node_ids
+            }
+        else:
+            source_node_ids = set(context.plan_node.required_dependency_ids)
+        if not source_node_ids:
+            return ()
+        with self._uow_factory() as uow:
+            return tuple(
+                artifact
+                for artifact in uow.states.list_artifacts_for_run(context.run.run_id)
+                if artifact.plan_node_id in source_node_ids
+                and artifact.kind in {ArtifactKind.CANDIDATE, ArtifactKind.PATCH}
+            )
 
     def _store_candidate_artifacts(
         self,
@@ -419,6 +744,8 @@ class Orchestrator:
         attempt_id: ID,
         artifacts: tuple[Artifact, ...],
         check_specs: tuple[CheckSpec, ...],
+        *,
+        branch_local: bool,
     ) -> Run:
         context, prepared = self._start_checks(run_id, attempt_id, artifacts, check_specs)
         check_runs: list[CheckRun] = []
@@ -451,7 +778,15 @@ class Orchestrator:
             at=self._clock(),
         )
         if not decision.passed:
-            self._record_gate_failure(run_id, terminal_checks, decision)
+            self._record_gate_failure(
+                run_id,
+                terminal_checks,
+                decision,
+                fail_run=not branch_local,
+            )
+            if branch_local:
+                with self._uow_factory() as uow:
+                    return _required_run(uow, run_id)
             raise GateRejectedError(
                 f"run {run_id} failed Gate {decision.gate_id}: {decision.reason}"
             )
@@ -563,6 +898,7 @@ class Orchestrator:
                 run=run,
                 event_offset=gate_event.offset,
                 gate_decision=decision,
+                branch_selections=_selected_branch_mapping(plan),
                 artifact_refs=tuple(artifact.artifact_id for artifact in artifacts),
                 checkpoint_id=self._id_factory(),
                 created_at=self._clock(),
@@ -576,6 +912,9 @@ class Orchestrator:
                     {"checkpoint_id": checkpoint.checkpoint_id},
                 )
             )
+            if not _is_final_completion(plan, completed_node):
+                uow.commit()
+                return run
             completed_run = run.complete(decision, at=self._clock())
             satisfied_goal = goal.satisfy(decision)
             uow.states.put_run(completed_run)
@@ -596,6 +935,8 @@ class Orchestrator:
         run_id: ID,
         check_runs: tuple[CheckRun, ...],
         decision: GateDecision,
+        *,
+        fail_run: bool,
     ) -> None:
         with self._uow_factory() as uow:
             run = _required_run(uow, run_id)
@@ -634,9 +975,7 @@ class Orchestrator:
                 )
             )
             failed_node = node.fail()
-            failed_run = run.fail(decision.reason or "Gate rejected candidate", at=self._clock())
             uow.states.put_plan_revision(_replace_node(plan, failed_node))
-            uow.states.put_run(failed_run)
             uow.events.append(
                 self._event(
                     EventType.PLAN_NODE_FAILED,
@@ -645,14 +984,20 @@ class Orchestrator:
                     {"plan_node_id": node.plan_node_id, "reason": decision.reason},
                 )
             )
-            uow.events.append(
-                self._event(
-                    EventType.RUN_FAILED,
-                    failed_run,
-                    run.run_id,
-                    {"run_id": run.run_id, "reason": decision.reason},
+            if fail_run:
+                failed_run = run.fail(
+                    decision.reason or "Gate rejected candidate",
+                    at=self._clock(),
                 )
-            )
+                uow.states.put_run(failed_run)
+                uow.events.append(
+                    self._event(
+                        EventType.RUN_FAILED,
+                        failed_run,
+                        run.run_id,
+                        {"run_id": run.run_id, "reason": decision.reason},
+                    )
+                )
             uow.commit()
 
     def _record_worker_diagnostics(
@@ -675,6 +1020,7 @@ class Orchestrator:
         artifacts: tuple[Artifact, ...],
         *,
         diagnostic_error: Exception | None = None,
+        fail_run: bool,
     ) -> None:
         reason = f"{type(error).__name__}: {error}"
         if diagnostic_error is not None:
@@ -694,11 +1040,9 @@ class Orchestrator:
                 else attempt.fail(reason, at=self._clock())
             )
             failed_node = node.fail()
-            failed_run = run.fail(reason, at=self._clock())
             self._record_artifacts(uow, run, attempt, artifacts)
             uow.states.put_attempt(failed_attempt)
             uow.states.put_plan_revision(_replace_node(plan, failed_node))
-            uow.states.put_run(failed_run)
             uow.events.append(
                 self._event(
                     EventType.ATTEMPT_TIMED_OUT if timed_out else EventType.ATTEMPT_FAILED,
@@ -715,14 +1059,17 @@ class Orchestrator:
                     {"plan_node_id": node.plan_node_id, "reason": reason},
                 )
             )
-            uow.events.append(
-                self._event(
-                    EventType.RUN_FAILED,
-                    failed_run,
-                    run.run_id,
-                    {"run_id": run.run_id, "reason": reason},
+            if fail_run:
+                failed_run = run.fail(reason, at=self._clock())
+                uow.states.put_run(failed_run)
+                uow.events.append(
+                    self._event(
+                        EventType.RUN_FAILED,
+                        failed_run,
+                        run.run_id,
+                        {"run_id": run.run_id, "reason": reason},
+                    )
                 )
-            )
             uow.commit()
 
     def _record_artifacts(
@@ -938,19 +1285,57 @@ def _replace_node(plan: PlanRevision, replacement: PlanNode) -> PlanRevision:
         raise OrchestrationError(
             f"PlanNode {replacement.plan_node_id} is not in PlanRevision {plan.plan_revision_id}"
         )
+    return _rehydrate_plan(plan, nodes=nodes)
+
+
+def _rehydrate_plan(
+    plan: PlanRevision,
+    *,
+    nodes: tuple[PlanNode, ...] | None = None,
+    branches: tuple[Branch, ...] | None = None,
+) -> PlanRevision:
     return PlanRevision.rehydrate(
         plan_revision_id=plan.plan_revision_id,
         goal_id=plan.goal_id,
         version=plan.version,
         completion_contract_id=plan.completion_contract_id,
         completion_contract_version=plan.completion_contract_version,
-        nodes=nodes,
+        nodes=plan.nodes if nodes is None else nodes,
         edges=plan.edges,
-        branches=plan.branches,
+        branches=plan.branches if branches is None else branches,
         created_at=plan.created_at,
         status=plan.status,
         approved_at=plan.approved_at,
         supersedes_plan_revision_id=plan.supersedes_plan_revision_id,
+    )
+
+
+def _selected_branch_mapping(plan: PlanRevision) -> dict[ID, ID]:
+    return {
+        branch.fork_node_id: branch.branch_id
+        for branch in plan.branches
+        if branch.status is BranchStatus.SELECTED
+    }
+
+
+def _is_final_completion(plan: PlanRevision, completed_node: PlanNode) -> bool:
+    if any(edge.source_node_id == completed_node.plan_node_id for edge in plan.edges):
+        return False
+    if len(plan.nodes) == 1:
+        return True
+    if plan.branches and completed_node.kind is not PlanNodeKind.MERGE:
+        return False
+    pruned_branch_node_ids = {
+        node_id
+        for branch in plan.branches
+        if branch.status is BranchStatus.PRUNED
+        for node_id in branch.node_ids
+    }
+    return all(
+        node.plan_node_id == completed_node.plan_node_id
+        or node.status in {PlanNodeStatus.COMPLETED, PlanNodeStatus.PRUNED}
+        or (node.plan_node_id in pruned_branch_node_ids and node.status is PlanNodeStatus.FAILED)
+        for node in plan.nodes
     )
 
 

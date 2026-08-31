@@ -390,7 +390,7 @@ def test_graph_rejects_invalid_branch_relationships() -> None:
         merge.plan_node_id,
     )
 
-    with pytest.raises(PlanInvariantError, match="fork and merge node roles"):
+    with pytest.raises(PlanInvariantError, match="connect a fork to an evaluator or merge"):
         PlanRevision.draft(
             goal_id,
             contract,

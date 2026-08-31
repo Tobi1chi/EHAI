@@ -6,12 +6,14 @@ import pytest
 
 from ehai import ID, new_id
 from ehai.application.checks import CheckRunner
+from ehai.application.evaluation import BranchEvaluationContext, BranchSelection
 from ehai.application.orchestrator import (
     ArtifactPersistenceError,
+    AttemptBudgetExceededError,
+    BranchEvaluationError,
     GateRejectedError,
     OrchestrationError,
     Orchestrator,
-    UnsupportedPlanError,
     WorkerCancellationUnsettledError,
     WorkerFailedError,
     ready_nodes,
@@ -30,9 +32,12 @@ from ehai.domain.events import EventType
 from ehai.domain.execution import Attempt, AttemptStatus, Run, RunStatus
 from ehai.domain.goal import CompletionContract, Goal, GoalStatus, Project
 from ehai.domain.planning import (
+    Branch,
+    BranchStatus,
     Edge,
     EdgeType,
     PlanNode,
+    PlanNodeKind,
     PlanNodeStatus,
     PlanRevision,
     PlanRevisionStatus,
@@ -85,6 +90,36 @@ class _ErrorWorker:
 
     def cancel(self, attempt_id: ID) -> None:
         del attempt_id
+
+
+class _MissingEvidenceEvaluator:
+    def evaluate(self, context: BranchEvaluationContext) -> BranchSelection:
+        selected, *pruned = context.plan.branches
+        return BranchSelection(
+            selected.branch_id,
+            tuple(branch.branch_id for branch in pruned),
+            "controlled criterion",
+            (new_id(),),
+            "controlled invalid evidence",
+        )
+
+
+class _FailedBranchEvaluator:
+    def evaluate(self, context: BranchEvaluationContext) -> BranchSelection:
+        selected, *pruned = context.plan.branches
+        evidence = next(
+            artifact
+            for artifact in context.artifacts
+            if artifact.plan_node_id in selected.node_ids
+            and artifact.kind in {ArtifactKind.CANDIDATE, ArtifactKind.PATCH}
+        )
+        return BranchSelection(
+            selected.branch_id,
+            tuple(branch.branch_id for branch in pruned),
+            "controlled criterion",
+            (evidence.artifact_id,),
+            "controlled invalid branch selection",
+        )
 
 
 def _check_runner(store) -> CheckRunner:
@@ -169,6 +204,203 @@ def _seed_single_node(
         uow.states.put_run(run)
         uow.commit()
     return goal, plan, run, node
+
+
+def _seed_exploration(
+    database: SQLiteDatabase,
+    *,
+    depth_two: bool = False,
+) -> tuple[Goal, PlanRevision, Run, dict[str, PlanNode], tuple[Branch, Branch]]:
+    project = Project.create("I6", project_id=new_id(), created_at=NOW)
+    goal = Goal.create(project.project_id, "explore two routes", goal_id=new_id(), created_at=NOW)
+    check_id = new_id()
+    check_spec = CheckSpec(
+        "candidate",
+        CheckKind.ARTIFACT,
+        "candidate exists",
+        check_id=check_id,
+    )
+    contract = CompletionContract.draft(
+        goal.goal_id,
+        ("candidate exists",),
+        (check_id,),
+        completion_contract_id=new_id(),
+        created_at=NOW,
+    ).confirm(confirmed_at=NOW)
+    goal = goal.use_completion_contract(contract)
+    required_checks = (check_id,)
+    fork = PlanNode(
+        new_id(),
+        "fork",
+        "start exploration",
+        kind=PlanNodeKind.FORK,
+        required_check_ids=required_checks,
+    )
+    left = PlanNode(new_id(), "left", "try left", required_check_ids=required_checks)
+    right = PlanNode(new_id(), "right", "try right", required_check_ids=required_checks)
+    left_tail = (
+        PlanNode(
+            new_id(),
+            "left tail",
+            "finish left",
+            required_dependency_ids=(left.plan_node_id,),
+            required_check_ids=required_checks,
+        )
+        if depth_two
+        else None
+    )
+    right_tail = (
+        PlanNode(
+            new_id(),
+            "right tail",
+            "finish right",
+            required_dependency_ids=(right.plan_node_id,),
+            required_check_ids=required_checks,
+        )
+        if depth_two
+        else None
+    )
+    left_endpoint = left if left_tail is None else left_tail
+    right_endpoint = right if right_tail is None else right_tail
+    evaluator = PlanNode(
+        new_id(),
+        "evaluate",
+        "evaluate branches",
+        kind=PlanNodeKind.EVALUATOR,
+        required_dependency_ids=(left_endpoint.plan_node_id, right_endpoint.plan_node_id),
+        required_check_ids=required_checks,
+    )
+    merge = PlanNode(
+        new_id(),
+        "merge",
+        "merge selected route",
+        kind=PlanNodeKind.MERGE,
+        required_dependency_ids=(evaluator.plan_node_id,),
+        required_check_ids=required_checks,
+    )
+    left_branch = Branch(
+        new_id(),
+        "left",
+        fork.plan_node_id,
+        (left.plan_node_id,) if left_tail is None else (left.plan_node_id, left_tail.plan_node_id),
+        merge.plan_node_id,
+    )
+    right_branch = Branch(
+        new_id(),
+        "right",
+        fork.plan_node_id,
+        (right.plan_node_id,)
+        if right_tail is None
+        else (right.plan_node_id, right_tail.plan_node_id),
+        merge.plan_node_id,
+    )
+    edges = [
+        Edge(
+            new_id(),
+            fork.plan_node_id,
+            left.plan_node_id,
+            EdgeType.EXPLORATION,
+            left_branch.branch_id,
+        ),
+        Edge(
+            new_id(),
+            left_endpoint.plan_node_id,
+            merge.plan_node_id,
+            EdgeType.MERGE,
+            left_branch.branch_id,
+        ),
+        Edge(
+            new_id(),
+            fork.plan_node_id,
+            right.plan_node_id,
+            EdgeType.EXPLORATION,
+            right_branch.branch_id,
+        ),
+        Edge(
+            new_id(),
+            right_endpoint.plan_node_id,
+            merge.plan_node_id,
+            EdgeType.MERGE,
+            right_branch.branch_id,
+        ),
+        Edge(
+            new_id(),
+            left_endpoint.plan_node_id,
+            evaluator.plan_node_id,
+            EdgeType.DEPENDENCY,
+        ),
+        Edge(
+            new_id(),
+            right_endpoint.plan_node_id,
+            evaluator.plan_node_id,
+            EdgeType.DEPENDENCY,
+        ),
+        Edge(new_id(), evaluator.plan_node_id, merge.plan_node_id, EdgeType.DEPENDENCY),
+    ]
+    if left_tail is not None and right_tail is not None:
+        edges.extend(
+            (
+                Edge(
+                    new_id(),
+                    left.plan_node_id,
+                    left_tail.plan_node_id,
+                    EdgeType.DEPENDENCY,
+                    left_branch.branch_id,
+                ),
+                Edge(
+                    new_id(),
+                    right.plan_node_id,
+                    right_tail.plan_node_id,
+                    EdgeType.DEPENDENCY,
+                    right_branch.branch_id,
+                ),
+            )
+        )
+    branch_nodes = (
+        (left, right)
+        if left_tail is None or right_tail is None
+        else (left, left_tail, right, right_tail)
+    )
+    plan = PlanRevision.rehydrate(
+        plan_revision_id=new_id(),
+        goal_id=goal.goal_id,
+        version=1,
+        completion_contract_id=contract.completion_contract_id,
+        completion_contract_version=contract.version,
+        nodes=(fork, *branch_nodes, evaluator, merge),
+        edges=tuple(edges),
+        branches=(left_branch, right_branch),
+        created_at=NOW,
+        status=PlanRevisionStatus.APPROVED,
+        approved_at=NOW,
+        supersedes_plan_revision_id=None,
+    )
+    run = Run(goal.goal_id, plan.plan_revision_id, run_id=new_id(), created_at=NOW)
+    with database.unit_of_work() as uow:
+        uow.states.put_project(project)
+        uow.states.put_goal(goal)
+        uow.states.put_completion_contract(contract)
+        uow.states.put_plan_revision(plan)
+        uow.states.put_check_spec(plan.plan_revision_id, check_spec)
+        uow.states.put_run(run)
+        uow.commit()
+    nodes_by_name = {
+        "fork": fork,
+        "left": left,
+        "right": right,
+        "evaluator": evaluator,
+        "merge": merge,
+    }
+    if left_tail is not None and right_tail is not None:
+        nodes_by_name["left_tail"] = left_tail
+        nodes_by_name["right_tail"] = right_tail
+    return (
+        goal,
+        plan,
+        run,
+        nodes_by_name,
+        (left_branch, right_branch),
+    )
 
 
 def _rehydrated_node(node: PlanNode, status: PlanNodeStatus) -> PlanNode:
@@ -610,32 +842,9 @@ def test_invalid_required_check_spec_is_rejected_before_worker_side_effects(
     assert check_runs == ()
 
 
-def test_orchestrator_rejects_non_single_node_plan_without_calling_worker(tmp_path) -> None:
-    database = SQLiteDatabase(tmp_path / "multi.sqlite3")
-    project = Project.create("multi", project_id=new_id(), created_at=NOW)
-    goal = Goal.create(project.project_id, "multi", goal_id=new_id(), created_at=NOW)
-    check_id = new_id()
-    contract = CompletionContract.draft(
-        goal.goal_id,
-        ("done",),
-        (check_id,),
-        completion_contract_id=new_id(),
-        created_at=NOW,
-    ).confirm(confirmed_at=NOW)
-    goal = goal.use_completion_contract(contract)
-    nodes = (
-        PlanNode(new_id(), "one", "one", required_check_ids=(check_id,)),
-        PlanNode(new_id(), "two", "two"),
-    )
-    plan = _approved_plan(goal, contract, nodes)
-    run = Run(goal.goal_id, plan.plan_revision_id, run_id=new_id(), created_at=NOW)
-    with database.unit_of_work() as uow:
-        uow.states.put_project(project)
-        uow.states.put_goal(goal)
-        uow.states.put_completion_contract(contract)
-        uow.states.put_plan_revision(plan)
-        uow.states.put_run(run)
-        uow.commit()
+def test_orchestrator_executes_exploration_serially_and_completes_only_merge(tmp_path) -> None:
+    database = SQLiteDatabase(tmp_path / "exploration.sqlite3")
+    goal, plan, run, nodes, branches = _seed_exploration(database)
     worker = FakeWorker()
     artifact_store = FilesystemArtifactStore(tmp_path / "artifacts")
     orchestrator = Orchestrator(
@@ -647,13 +856,314 @@ def test_orchestrator_rejects_non_single_node_plan_without_calling_worker(tmp_pa
         clock=lambda: NOW,
     )
 
-    with pytest.raises(UnsupportedPlanError, match="supports one PlanNode"):
+    completed = orchestrator.execute(run.run_id)
+
+    with database.unit_of_work() as uow:
+        stored_goal = uow.states.get_goal(goal.goal_id)
+        stored_plan = uow.states.get_plan_revision(plan.plan_revision_id)
+        attempts = uow.states.list_attempts(run.run_id)
+        checkpoints = uow.states.list_checkpoints(run.run_id)
+        events = tuple(item.event for item in uow.events.list_events())
+    assert completed.status is RunStatus.COMPLETED
+    assert stored_goal is not None and stored_goal.status is GoalStatus.SATISFIED
+    assert stored_plan is not None
+    assert tuple(node.status for node in stored_plan.nodes) == (
+        PlanNodeStatus.COMPLETED,
+        PlanNodeStatus.COMPLETED,
+        PlanNodeStatus.COMPLETED,
+        PlanNodeStatus.COMPLETED,
+        PlanNodeStatus.COMPLETED,
+    )
+    assert tuple(branch.status for branch in stored_plan.branches) == (
+        BranchStatus.SELECTED,
+        BranchStatus.PRUNED,
+    )
+    assert tuple(call.plan_node_id for call in worker.calls) == tuple(
+        nodes[name].plan_node_id for name in ("fork", "left", "right", "evaluator", "merge")
+    )
+    evaluator_call = worker.calls[3]
+    assert {artifact.plan_node_id for artifact in evaluator_call.artifact_inputs} == {
+        nodes["left"].plan_node_id,
+        nodes["right"].plan_node_id,
+    }
+    assert len(attempts) == 5
+    assert len(checkpoints) == 5
+    attempt_events = tuple(event for event in events if event.type is EventType.ATTEMPT_STARTED)
+    assert [event.payload["attempt_budget_consumed"] for event in attempt_events] == [
+        1,
+        2,
+        3,
+        4,
+        5,
+    ]
+    assert all(event.payload["attempt_budget_limit"] == 5 for event in attempt_events)
+    selected_event = next(event for event in events if event.type is EventType.BRANCH_SELECTED)
+    pruned_event = next(event for event in events if event.type is EventType.BRANCH_PRUNED)
+    assert selected_event.correlation_id == branches[0].branch_id
+    assert pruned_event.correlation_id == branches[1].branch_id
+    assert selected_event.payload["criterion"]
+    assert selected_event.payload["evidence_artifact_ids"]
+    evaluator_completed_index = next(
+        index
+        for index, event in enumerate(events)
+        if event.type is EventType.PLAN_NODE_COMPLETED
+        and event.payload["plan_node_id"] == nodes["evaluator"].plan_node_id
+    )
+    selection_index = events.index(selected_event)
+    assert evaluator_completed_index < selection_index
+    assert sum(event.type is EventType.GATE_PASSED for event in events[:selection_index]) == 4
+    assert events[-1].type is EventType.RUN_COMPLETED
+
+
+@pytest.mark.parametrize("failure_kind", ["worker", "check"])
+def test_one_failed_branch_is_pruned_and_other_branch_completes(
+    tmp_path,
+    failure_kind: str,
+) -> None:
+    database = SQLiteDatabase(tmp_path / f"one-failed-{failure_kind}.sqlite3")
+    _, plan, run, nodes, branches = _seed_exploration(database)
+    worker = (
+        FakeWorker(failures_by_node={nodes["left"].plan_node_id: "left failed"})
+        if failure_kind == "worker"
+        else FakeWorker(
+            results_by_node={
+                nodes["left"].plan_node_id: WorkerResult(
+                    artifacts=(
+                        CandidateArtifact(
+                            ArtifactKind.LOG,
+                            "left.log",
+                            "text/plain",
+                            b"no candidate evidence",
+                        ),
+                    ),
+                    summary="log only",
+                )
+            }
+        )
+    )
+    artifact_store = FilesystemArtifactStore(tmp_path / "artifacts")
+    orchestrator = Orchestrator(
+        uow_factory=database.unit_of_work,
+        worker=worker,
+        artifact_store=artifact_store,
+        check_runner=_check_runner(artifact_store),
+        workspace=tmp_path,
+        clock=lambda: NOW,
+    )
+
+    completed = orchestrator.execute(run.run_id)
+
+    with database.unit_of_work() as uow:
+        stored_plan = uow.states.get_plan_revision(plan.plan_revision_id)
+        attempts = uow.states.list_attempts(run.run_id)
+        event_types = tuple(item.event.type for item in uow.events.list_events())
+    assert completed.status is RunStatus.COMPLETED
+    assert stored_plan is not None
+    assert stored_plan.nodes[1].status is PlanNodeStatus.FAILED
+    assert tuple(branch.status for branch in stored_plan.branches) == (
+        BranchStatus.PRUNED,
+        BranchStatus.SELECTED,
+    )
+    assert attempts[1].status is (
+        AttemptStatus.FAILED if failure_kind == "worker" else AttemptStatus.SUCCEEDED
+    )
+    assert EventType.RUN_FAILED not in event_types
+    assert event_types.count(EventType.BRANCH_SELECTED) == 1
+    assert event_types.count(EventType.BRANCH_PRUNED) == 1
+    assert branches[1].branch_id == stored_plan.branches[1].branch_id
+
+
+def test_depth_two_branch_failure_terminates_path_and_prunes_pending_tail(tmp_path) -> None:
+    database = SQLiteDatabase(tmp_path / "depth-two-failure.sqlite3")
+    _, plan, run, nodes, _ = _seed_exploration(database, depth_two=True)
+    worker = FakeWorker(failures_by_node={nodes["left"].plan_node_id: "left failed"})
+    artifact_store = FilesystemArtifactStore(tmp_path / "artifacts")
+    orchestrator = Orchestrator(
+        uow_factory=database.unit_of_work,
+        worker=worker,
+        artifact_store=artifact_store,
+        check_runner=_check_runner(artifact_store),
+        workspace=tmp_path,
+        clock=lambda: NOW,
+        attempt_budget=7,
+    )
+
+    completed = orchestrator.execute(run.run_id)
+
+    with database.unit_of_work() as uow:
+        stored_plan = uow.states.get_plan_revision(plan.plan_revision_id)
+        attempts = uow.states.list_attempts(run.run_id)
+        event_types = tuple(item.event.type for item in uow.events.list_events())
+    assert completed.status is RunStatus.COMPLETED
+    assert stored_plan is not None
+    node_by_id = {node.plan_node_id: node for node in stored_plan.nodes}
+    assert node_by_id[nodes["left"].plan_node_id].status is PlanNodeStatus.FAILED
+    assert node_by_id[nodes["left_tail"].plan_node_id].status is PlanNodeStatus.PRUNED
+    assert nodes["left_tail"].plan_node_id not in {attempt.plan_node_id for attempt in attempts}
+    assert tuple(branch.status for branch in stored_plan.branches) == (
+        BranchStatus.PRUNED,
+        BranchStatus.SELECTED,
+    )
+    evaluator_call = next(
+        call for call in worker.calls if call.plan_node_id == nodes["evaluator"].plan_node_id
+    )
+    assert {artifact.plan_node_id for artifact in evaluator_call.artifact_inputs} == {
+        nodes["right"].plan_node_id,
+        nodes["right_tail"].plan_node_id,
+    }
+    assert EventType.PLAN_NODE_PRUNED in event_types
+
+
+def test_all_failed_branches_fail_after_evaluator_cannot_select(tmp_path) -> None:
+    database = SQLiteDatabase(tmp_path / "all-branches-failed.sqlite3")
+    _, _, run, nodes, _ = _seed_exploration(database)
+    worker = FakeWorker(
+        failures_by_node={
+            nodes["left"].plan_node_id: "left failed",
+            nodes["right"].plan_node_id: "right failed",
+        }
+    )
+    artifact_store = FilesystemArtifactStore(tmp_path / "artifacts")
+    orchestrator = Orchestrator(
+        uow_factory=database.unit_of_work,
+        worker=worker,
+        artifact_store=artifact_store,
+        check_runner=_check_runner(artifact_store),
+        workspace=tmp_path,
+        clock=lambda: NOW,
+    )
+
+    with pytest.raises(BranchEvaluationError, match="no active Branch"):
         orchestrator.execute(run.run_id)
 
-    assert worker.calls == ()
     with database.unit_of_work() as uow:
-        unchanged = uow.states.get_run(run.run_id)
-    assert unchanged is not None and unchanged.status is RunStatus.PENDING
+        failed_run = uow.states.get_run(run.run_id)
+        attempts = uow.states.list_attempts(run.run_id)
+        checkpoints = uow.states.list_checkpoints(run.run_id)
+        event_types = tuple(item.event.type for item in uow.events.list_events())
+    assert failed_run is not None and failed_run.status is RunStatus.FAILED
+    assert tuple(attempt.plan_node_id for attempt in attempts) == (
+        nodes["fork"].plan_node_id,
+        nodes["left"].plan_node_id,
+        nodes["right"].plan_node_id,
+        nodes["evaluator"].plan_node_id,
+    )
+    assert worker.calls[-1].plan_node_id == nodes["evaluator"].plan_node_id
+    assert worker.calls[-1].artifact_inputs == ()
+    assert len(checkpoints) == 2
+    assert EventType.BRANCH_SELECTED not in event_types
+    assert event_types[-1] is EventType.RUN_FAILED
+
+
+def test_invalid_selection_evidence_fails_closed_after_evaluator(tmp_path) -> None:
+    database = SQLiteDatabase(tmp_path / "invalid-selection-evidence.sqlite3")
+    _, _, run, nodes, _ = _seed_exploration(database)
+    worker = FakeWorker()
+    artifact_store = FilesystemArtifactStore(tmp_path / "artifacts")
+    orchestrator = Orchestrator(
+        uow_factory=database.unit_of_work,
+        worker=worker,
+        artifact_store=artifact_store,
+        check_runner=_check_runner(artifact_store),
+        branch_evaluator=_MissingEvidenceEvaluator(),
+        workspace=tmp_path,
+        clock=lambda: NOW,
+    )
+
+    with pytest.raises(BranchEvaluationError, match="evidence"):
+        orchestrator.execute(run.run_id)
+
+    with database.unit_of_work() as uow:
+        failed_run = uow.states.get_run(run.run_id)
+        attempts = uow.states.list_attempts(run.run_id)
+    assert failed_run is not None and failed_run.status is RunStatus.FAILED
+    assert nodes["evaluator"].plan_node_id in {attempt.plan_node_id for attempt in attempts}
+
+
+def test_evaluator_cannot_select_a_branch_that_failed_its_local_gate(tmp_path) -> None:
+    database = SQLiteDatabase(tmp_path / "failed-selection.sqlite3")
+    _, plan, run, nodes, _ = _seed_exploration(database)
+    worker = FakeWorker(
+        results_by_node={
+            nodes["left"].plan_node_id: WorkerResult(
+                artifacts=(
+                    CandidateArtifact(
+                        ArtifactKind.CANDIDATE,
+                        "empty-left.txt",
+                        "text/plain",
+                        b"",
+                    ),
+                ),
+                summary="empty candidate",
+            )
+        }
+    )
+    artifact_store = FilesystemArtifactStore(tmp_path / "artifacts")
+    orchestrator = Orchestrator(
+        uow_factory=database.unit_of_work,
+        worker=worker,
+        artifact_store=artifact_store,
+        check_runner=_check_runner(artifact_store),
+        branch_evaluator=_FailedBranchEvaluator(),
+        workspace=tmp_path,
+        clock=lambda: NOW,
+    )
+
+    with pytest.raises(BranchEvaluationError, match="non-viable Branch"):
+        orchestrator.execute(run.run_id)
+
+    with database.unit_of_work() as uow:
+        failed_run = uow.states.get_run(run.run_id)
+        stored_plan = uow.states.get_plan_revision(plan.plan_revision_id)
+        attempts = uow.states.list_attempts(run.run_id)
+    assert failed_run is not None and failed_run.status is RunStatus.FAILED
+    assert stored_plan is not None
+    assert tuple(branch.status for branch in stored_plan.branches) == (
+        BranchStatus.ACTIVE,
+        BranchStatus.ACTIVE,
+    )
+    assert nodes["evaluator"].plan_node_id in {attempt.plan_node_id for attempt in attempts}
+
+
+def test_attempt_budget_exhaustion_fails_before_dispatch(tmp_path) -> None:
+    database = SQLiteDatabase(tmp_path / "attempt-budget.sqlite3")
+    _, _, run, nodes, _ = _seed_exploration(database)
+    worker = FakeWorker()
+    artifact_store = FilesystemArtifactStore(tmp_path / "artifacts")
+    orchestrator = Orchestrator(
+        uow_factory=database.unit_of_work,
+        worker=worker,
+        artifact_store=artifact_store,
+        check_runner=_check_runner(artifact_store),
+        workspace=tmp_path,
+        clock=lambda: NOW,
+        attempt_budget=4,
+    )
+
+    with pytest.raises(AttemptBudgetExceededError, match="consumed=4, limit=4"):
+        orchestrator.execute(run.run_id)
+
+    with database.unit_of_work() as uow:
+        failed_run = uow.states.get_run(run.run_id)
+        stored_plan = uow.states.get_plan_revision(run.plan_revision_id)
+        attempts = uow.states.list_attempts(run.run_id)
+        events = tuple(item.event for item in uow.events.list_events())
+    assert failed_run is not None and failed_run.status is RunStatus.FAILED
+    assert stored_plan is not None
+    assert stored_plan.nodes[-1].status is PlanNodeStatus.PENDING
+    assert len(attempts) == 4
+    assert nodes["merge"].plan_node_id not in {attempt.plan_node_id for attempt in attempts}
+    assert [
+        event.payload["attempt_budget_consumed"]
+        for event in events
+        if event.type is EventType.ATTEMPT_STARTED
+    ] == [1, 2, 3, 4]
+    assert not any(
+        event.type is EventType.PLAN_NODE_READIED
+        and event.payload["plan_node_id"] == nodes["merge"].plan_node_id
+        for event in events
+    )
+    assert events[-1].type is EventType.RUN_FAILED
 
 
 def test_orchestrator_semantic_check_rejects_missing_required_term(tmp_path) -> None:
