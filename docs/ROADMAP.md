@@ -18,6 +18,8 @@ EHAI（Enhanced Human-Agent Interface）用于建立可规划、可探索、可�
 
 **目标：** 验证从目标对齐到自动执行、检查和恢复的完整链路。
 
+详细编码顺序和验收方法见 [P1 Implementation Plan](P1_IMPLEMENTATION_PLAN.md)。
+
 范围：
 
 - Project、Goal、PlanRevision、PlanNode、Branch、Run、Attempt 等核心模型。
