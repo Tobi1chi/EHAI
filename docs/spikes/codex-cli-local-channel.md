@@ -74,7 +74,7 @@ Get-Content -LiteralPath $jsonl
 - 在 PTY 中运行时发送 Ctrl+C，进程停止并返回退出码 1。
 - 本次取消发生在认证重试期间，没有观察到独立的结构化 cancelled event。因此 Adapter 必须以自身的取消请求、进程退出和超时状态为准，不能依赖 CLI 一定输出取消事件。
 
-## 未完成验证与局限
+## Spike 当时的未完成验证与局限
 
 本机 `codex login status` 显示使用 API key 登录，但该凭证在实际请求时返回 HTTP 401。为避免新增权限或修改用户认证，本 Spike 没有尝试登录或更换凭证。因此以下项目仍必须由 I5 的显式真实 smoke test 在有效认证下补验：
 
@@ -84,7 +84,44 @@ Get-Content -LiteralPath $jsonl
 - 长运行任务在非 PTY Windows 子进程中的 terminate/kill process-tree 行为。
 - 输出截断、非零 Worker 退出、网络中断及 timeout 的 Adapter 映射。
 
-这些局限不阻塞选择 `codex exec` 子进程通道：启动、输入、流式错误捕获、退出码和人工取消路径均已得到直接观察；成功内容依赖一个当前缺失且不应由本 Spike 擅自更改的有效凭证。
+这些局限不阻塞选择 `codex exec` 子进程通道：启动、输入、流式错误捕获、退出码和人工取消路径均已得到直接观察；在 Spike 当时，成功内容依赖一个当时缺失且不应由本 Spike 擅自更改的有效凭证。后续成功结果见下一节。
+
+## I8 自动化 Smoke 结果
+
+2026-08-31 在未修改登录或凭证的前提下，显式运行：
+
+```powershell
+$env:EHAI_RUN_CODEX_SMOKE = '1'
+uv run pytest tests/smoke/test_codex_worker_smoke.py -q
+```
+
+结果为 `1 passed in 10.42s`。测试在 read-only sandbox 和 120 秒上限内，通过真实
+`CodexWorkerAdapter` 获得了符合输出 Schema 的结构化候选，候选内容包含预期的
+`EHAI_CODEX_SMOKE_OK` 标记。这关闭了成功结构化候选的环境验证缺口；历史 401 仍保留在上文，
+用于说明先前环境状态，而不是当前阻塞。测试没有记录凭证、request ID 或 thread ID，也没有执行
+真实 descendant-process 清理场景。
+
+仍未由该成功 smoke 覆盖的项目包括 Windows 超时/取消的真实进程树行为、网络中断以及大输出
+截断；这些路径继续由安全的确定性或 mocked 测试验证。
+
+同日还使用 CLI 的 `--worker codex --planner exploration` 在非 Git 的系统临时工作区执行了完整
+P1 场景。首次运行暴露 Adapter 未传递 `--skip-git-repo-check`，Codex CLI 因工作区信任检查在 fork
+节点 fail-closed；补齐 ADR 已验证的参数并完成回归测试后，重新运行得到以下脱敏摘要：
+
+```json
+{
+  "attempt_statuses": ["succeeded", "succeeded", "succeeded", "succeeded", "succeeded"],
+  "attempts": 5,
+  "branch_statuses": ["selected", "pruned"],
+  "checkpoints": 5,
+  "events": 66,
+  "node_statuses": ["completed", "completed", "completed", "completed", "completed"],
+  "run_status": "completed"
+}
+```
+
+该运行覆盖 fork、两个探索分支、Evaluator、选择/剪枝、merge、最终 Gate 和 Checkpoint。摘要不含
+凭证、Artifact 内容、request ID、thread ID 或领域实体 ID。
 
 ## 清理
 

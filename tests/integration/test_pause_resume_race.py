@@ -90,6 +90,20 @@ class _ObservedRunController(RunController):
         return super().resume(run_id, receipt=receipt)
 
 
+class _ObservedLock:
+    def __init__(self) -> None:
+        self._lock = Lock()
+        self.contended = ThreadEvent()
+
+    def __enter__(self) -> None:
+        if self._lock.locked():
+            self.contended.set()
+        self._lock.acquire()
+
+    def __exit__(self, *_args: object) -> None:
+        self._lock.release()
+
+
 def test_immediate_resume_waits_for_paused_attempt_to_settle(tmp_path) -> None:
     database = SQLiteDatabase(tmp_path / "pause-resume-race.sqlite3")
     artifact_store = FilesystemArtifactStore(tmp_path / "artifacts")
@@ -117,6 +131,8 @@ def test_immediate_resume_waits_for_paused_attempt_to_settle(tmp_path) -> None:
         orchestrator=orchestrator,
         run_controller=controller,
     )
+    execution_lock = _ObservedLock()
+    service._execution_lock = execution_lock  # type: ignore[assignment]
     project = service.create_project(CreateProject("project", "pause resume race"))
     goal = service.create_goal(CreateGoal("goal", project.project_id, "finish after resume"))
     plan = service.propose_plan(ProposePlan("plan", goal.goal_id, (NON_EMPTY_ARTIFACT_CRITERION,)))
@@ -124,6 +140,7 @@ def test_immediate_resume_waits_for_paused_attempt_to_settle(tmp_path) -> None:
 
     results: dict[str, Run] = {}
     failures: dict[str, BaseException] = {}
+    resume_started = ThreadEvent()
 
     def start() -> None:
         try:
@@ -133,6 +150,7 @@ def test_immediate_resume_waits_for_paused_attempt_to_settle(tmp_path) -> None:
 
     def resume(run_id: ID) -> None:
         try:
+            resume_started.set()
             results["resume"] = service.resume_run(ResumeRun("resume", run_id))
         except BaseException as error:
             failures["resume"] = error
@@ -141,7 +159,6 @@ def test_immediate_resume_waits_for_paused_attempt_to_settle(tmp_path) -> None:
     resume_thread: Thread | None = None
     paused: Run | None = None
     state_while_start_locked: Run | None = None
-    resume_reached_controller_while_locked = False
     start_thread.start()
     try:
         assert worker.first_entered.wait(timeout=5)
@@ -152,7 +169,9 @@ def test_immediate_resume_waits_for_paused_attempt_to_settle(tmp_path) -> None:
         resume_thread = Thread(target=resume, args=(run_id,))
         resume_thread.start()
 
-        resume_reached_controller_while_locked = controller.resume_called.wait(timeout=0.5)
+        assert resume_started.wait(timeout=5)
+        assert execution_lock.contended.wait(timeout=5)
+        assert not controller.resume_called.is_set()
         state_while_start_locked = service.get_run(run_id)
     finally:
         worker.cancel_requested.set()
@@ -164,7 +183,6 @@ def test_immediate_resume_waits_for_paused_attempt_to_settle(tmp_path) -> None:
     assert not start_thread.is_alive()
     assert resume_thread is not None and not resume_thread.is_alive()
     assert paused is not None and paused.status is RunStatus.PAUSED
-    assert not resume_reached_controller_while_locked
     assert state_while_start_locked is not None
     assert state_while_start_locked.status is RunStatus.PAUSED
     assert controller.resume_called.is_set()
