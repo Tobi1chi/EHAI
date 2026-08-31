@@ -219,10 +219,11 @@ def test_codex_worker_invokes_exact_non_shell_contract_and_tolerates_unknown_jso
     )
     record = json.loads(record_path.read_text(encoding="utf-8"))
     args = record["args"]
-    assert args[:7] == [
+    assert args[:8] == [
         "--ask-for-approval",
         "never",
         "exec",
+        "--skip-git-repo-check",
         "--ephemeral",
         "--sandbox",
         "read-only",

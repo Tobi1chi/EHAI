@@ -681,6 +681,7 @@ class CodexWorkerAdapter:
             "--ask-for-approval",
             "never",
             "exec",
+            "--skip-git-repo-check",
             "--ephemeral",
             "--sandbox",
             self._sandbox,
