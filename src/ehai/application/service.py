@@ -323,7 +323,7 @@ class ExecutionService:
 
     def resume_run(self, command: ResumeRun) -> Run:
         """Resume a paused Run and synchronously continue its next Attempt."""
-        controller = self._required_run_controller()
+        self._required_run_controller()
         existing = self._existing_run_for_command(
             command.idempotency_key,
             type(command).__name__,
@@ -331,8 +331,7 @@ class ExecutionService:
         )
         if existing is not None:
             if existing.status is RunStatus.PAUSED and self._was_paused_by_startup(existing.run_id):
-                resumed = controller.resume(existing.run_id)
-                return self._execute_serially(resumed.run_id)
+                return self._resume_and_execute_serially(existing.run_id)
             return (
                 self._execute_serially(existing.run_id)
                 if self._is_ready_to_continue(existing)
@@ -344,8 +343,7 @@ class ExecutionService:
             command.fingerprint,
             {"run_id": command.run_id},
         )
-        resumed = controller.resume(command.run_id, receipt=receipt)
-        return self._execute_serially(resumed.run_id)
+        return self._resume_and_execute_serially(command.run_id, receipt=receipt)
 
     def cancel_run(self, command: CancelRun) -> Run:
         """Cancel one Run without allowing Worker or interface code to complete it."""
@@ -402,6 +400,18 @@ class ExecutionService:
         """Keep external Worker Attempts serial without blocking pause or cancel controls."""
         with self._execution_lock:
             return self._orchestrator.execute(run_id)
+
+    def _resume_and_execute_serially(
+        self,
+        run_id: ID,
+        *,
+        receipt: CommandReceipt | None = None,
+    ) -> Run:
+        """Keep the resumed state hidden until the prior Attempt settles."""
+        controller = self._required_run_controller()
+        with self._execution_lock:
+            resumed = controller.resume(run_id, receipt=receipt)
+            return self._orchestrator.execute(resumed.run_id)
 
     def _is_ready_to_continue(self, run: Run) -> bool:
         if run.status is not RunStatus.RUNNING:
