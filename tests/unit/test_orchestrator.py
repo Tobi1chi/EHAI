@@ -1,0 +1,375 @@
+from datetime import UTC, datetime
+
+import pytest
+
+from ehai import ID, new_id
+from ehai.application.orchestrator import (
+    ArtifactPersistenceError,
+    OrchestrationError,
+    Orchestrator,
+    UnsupportedPlanError,
+    WorkerFailedError,
+    ready_nodes,
+)
+from ehai.domain.artifacts import Artifact
+from ehai.domain.events import EventType
+from ehai.domain.execution import Attempt, AttemptStatus, Run, RunStatus
+from ehai.domain.goal import CompletionContract, Goal, GoalStatus, Project
+from ehai.domain.planning import (
+    Edge,
+    EdgeType,
+    PlanNode,
+    PlanNodeStatus,
+    PlanRevision,
+    PlanRevisionStatus,
+)
+from ehai.infrastructure.artifacts import FilesystemArtifactStore
+from ehai.infrastructure.sqlite import SQLiteDatabase
+from ehai.infrastructure.workers import FakeWorker
+
+NOW = datetime(2026, 8, 31, 14, 0, tzinfo=UTC)
+
+
+class _FailingArtifactStore:
+    def put(self, artifact: Artifact, content: bytes) -> None:
+        del artifact, content
+        raise OSError("controlled Artifact failure")
+
+    def get(self, artifact_id: ID) -> Artifact | None:
+        del artifact_id
+        return None
+
+    def read(self, artifact_id: ID) -> bytes:
+        raise FileNotFoundError(artifact_id)
+
+    def list_for_run(self, run_id: ID) -> tuple[Artifact, ...]:
+        del run_id
+        return ()
+
+
+def _approved_plan(
+    goal: Goal,
+    contract: CompletionContract,
+    nodes: tuple[PlanNode, ...],
+    edges: tuple[Edge, ...] = (),
+) -> PlanRevision:
+    return PlanRevision.rehydrate(
+        plan_revision_id=new_id(),
+        goal_id=goal.goal_id,
+        version=1,
+        completion_contract_id=contract.completion_contract_id,
+        completion_contract_version=contract.version,
+        nodes=nodes,
+        edges=edges,
+        branches=(),
+        created_at=NOW,
+        status=PlanRevisionStatus.APPROVED,
+        approved_at=NOW,
+        supersedes_plan_revision_id=None,
+    )
+
+
+def _seed_single_node(database: SQLiteDatabase) -> tuple[Goal, PlanRevision, Run, PlanNode]:
+    project = Project.create("I3", project_id=new_id(), created_at=NOW)
+    goal = Goal.create(project.project_id, "execute one node", goal_id=new_id(), created_at=NOW)
+    check_id = new_id()
+    contract = CompletionContract.draft(
+        goal.goal_id,
+        ("candidate exists",),
+        (check_id,),
+        completion_contract_id=new_id(),
+        created_at=NOW,
+    ).confirm(confirmed_at=NOW)
+    goal = goal.use_completion_contract(contract)
+    node = PlanNode(
+        plan_node_id=new_id(),
+        title="produce candidate",
+        instruction="return one candidate artifact",
+        required_check_ids=(check_id,),
+    )
+    plan = _approved_plan(goal, contract, (node,))
+    run = Run(
+        goal_id=goal.goal_id,
+        plan_revision_id=plan.plan_revision_id,
+        run_id=new_id(),
+        created_at=NOW,
+    )
+    with database.unit_of_work() as uow:
+        uow.states.put_project(project)
+        uow.states.put_goal(goal)
+        uow.states.put_completion_contract(contract)
+        uow.states.put_plan_revision(plan)
+        uow.states.put_run(run)
+        uow.commit()
+    return goal, plan, run, node
+
+
+def _rehydrated_node(node: PlanNode, status: PlanNodeStatus) -> PlanNode:
+    return PlanNode.rehydrate(
+        plan_node_id=node.plan_node_id,
+        title=node.title,
+        instruction=node.instruction,
+        kind=node.kind,
+        required_dependency_ids=node.required_dependency_ids,
+        required_check_ids=node.required_check_ids,
+        status=status,
+    )
+
+
+def test_ready_nodes_requires_approval_and_preserves_node_order() -> None:
+    project = Project.create("ready", project_id=new_id(), created_at=NOW)
+    goal = Goal.create(project.project_id, "ready", goal_id=new_id(), created_at=NOW)
+    contract = CompletionContract.draft(
+        goal.goal_id,
+        ("done",),
+        (new_id(),),
+        completion_contract_id=new_id(),
+        created_at=NOW,
+    ).confirm(confirmed_at=NOW)
+    goal = goal.use_completion_contract(contract)
+    dependency = _rehydrated_node(
+        PlanNode(new_id(), "dependency", "done"), PlanNodeStatus.COMPLETED
+    )
+    first_ready = PlanNode(new_id(), "first", "ready")
+    second_ready = PlanNode(
+        new_id(),
+        "second",
+        "ready after dependency",
+        required_dependency_ids=(dependency.plan_node_id,),
+    )
+    pruned = _rehydrated_node(PlanNode(new_id(), "pruned", "ignored"), PlanNodeStatus.PRUNED)
+    edge = Edge(new_id(), dependency.plan_node_id, second_ready.plan_node_id, EdgeType.DEPENDENCY)
+    plan = _approved_plan(goal, contract, (first_ready, second_ready, dependency, pruned), (edge,))
+
+    assert ready_nodes(plan) == (first_ready, second_ready)
+
+    draft = PlanRevision.rehydrate(
+        plan_revision_id=plan.plan_revision_id,
+        goal_id=plan.goal_id,
+        version=plan.version,
+        completion_contract_id=plan.completion_contract_id,
+        completion_contract_version=plan.completion_contract_version,
+        nodes=plan.nodes,
+        edges=plan.edges,
+        branches=(),
+        created_at=plan.created_at,
+        status=PlanRevisionStatus.DRAFT,
+        approved_at=None,
+        supersedes_plan_revision_id=None,
+    )
+    with pytest.raises(OrchestrationError, match="must be approved"):
+        ready_nodes(draft)
+
+
+def test_orchestrator_completes_single_node_through_gate_and_checkpoint(tmp_path) -> None:
+    database = SQLiteDatabase(tmp_path / "happy.sqlite3")
+    artifact_store = FilesystemArtifactStore(tmp_path / "artifacts")
+    goal, plan, run, _ = _seed_single_node(database)
+    worker = FakeWorker()
+    orchestrator = Orchestrator(
+        uow_factory=database.unit_of_work,
+        worker=worker,
+        artifact_store=artifact_store,
+        clock=lambda: NOW,
+    )
+
+    completed_run = orchestrator.execute(run.run_id)
+
+    assert completed_run.status is RunStatus.COMPLETED
+    assert len(worker.calls) == 1
+    assert worker.calls[0].run.status is RunStatus.RUNNING
+    assert worker.calls[0].attempt.status is AttemptStatus.RUNNING
+    assert worker.calls[0].plan_node.status is PlanNodeStatus.RUNNING
+    with database.unit_of_work() as uow:
+        stored_goal = uow.states.get_goal(goal.goal_id)
+        stored_plan = uow.states.get_plan_revision(plan.plan_revision_id)
+        attempts = uow.states.list_attempts(run.run_id)
+        artifacts = uow.states.list_artifacts_for_run(run.run_id)
+        check_runs = uow.states.list_check_runs(run.run_id)
+        checkpoints = uow.states.list_checkpoints(run.run_id)
+        event_types = tuple(item.event.type for item in uow.events.list_events())
+
+    assert stored_goal is not None and stored_goal.status is GoalStatus.SATISFIED
+    assert stored_plan is not None and stored_plan.nodes[0].status is PlanNodeStatus.COMPLETED
+    assert len(attempts) == 1 and attempts[0].status is AttemptStatus.SUCCEEDED
+    assert len(artifacts) == 1
+    assert artifact_store.get(artifacts[0].artifact_id) == artifacts[0]
+    assert len(check_runs) == 1 and check_runs[0].result is not None
+    assert check_runs[0].result.passed
+    assert len(checkpoints) == 1
+    assert EventType.GATE_PASSED in event_types
+    assert EventType.CHECKPOINT_CREATED in event_types
+    assert event_types[-1] is EventType.RUN_COMPLETED
+
+
+def test_orchestrator_records_worker_failure_before_raising(tmp_path) -> None:
+    database = SQLiteDatabase(tmp_path / "failure.sqlite3")
+    artifact_store = FilesystemArtifactStore(tmp_path / "artifacts")
+    _, plan, run, node = _seed_single_node(database)
+    worker = FakeWorker(failures_by_node={node.plan_node_id: "controlled failure"})
+    orchestrator = Orchestrator(
+        uow_factory=database.unit_of_work,
+        worker=worker,
+        artifact_store=artifact_store,
+        clock=lambda: NOW,
+    )
+
+    with pytest.raises(WorkerFailedError, match="controlled failure"):
+        orchestrator.execute(run.run_id)
+
+    with database.unit_of_work() as uow:
+        failed_run = uow.states.get_run(run.run_id)
+        failed_plan = uow.states.get_plan_revision(plan.plan_revision_id)
+        attempts = uow.states.list_attempts(run.run_id)
+        events = tuple(item.event.type for item in uow.events.list_events())
+    assert failed_run is not None and failed_run.status is RunStatus.FAILED
+    assert failed_plan is not None and failed_plan.nodes[0].status is PlanNodeStatus.FAILED
+    assert len(attempts) == 1 and attempts[0].status is AttemptStatus.FAILED
+    assert events[-3:] == (
+        EventType.ATTEMPT_FAILED,
+        EventType.PLAN_NODE_FAILED,
+        EventType.RUN_FAILED,
+    )
+
+
+def test_claim_rolls_back_run_and_node_when_attempt_cannot_be_created(tmp_path) -> None:
+    database = SQLiteDatabase(tmp_path / "claim-rollback.sqlite3")
+    _, plan, run, node = _seed_single_node(database)
+    existing_attempt = Attempt(
+        run_id=run.run_id,
+        plan_node_id=node.plan_node_id,
+        sequence=1,
+        attempt_id=new_id(),
+        created_at=NOW,
+    )
+    with database.unit_of_work() as uow:
+        uow.states.put_attempt(existing_attempt)
+        uow.commit()
+    worker = FakeWorker()
+    orchestrator = Orchestrator(
+        uow_factory=database.unit_of_work,
+        worker=worker,
+        artifact_store=FilesystemArtifactStore(tmp_path / "artifacts"),
+        clock=lambda: NOW,
+        id_factory=lambda: existing_attempt.attempt_id,
+    )
+
+    with pytest.raises(RuntimeError, match="identity changed"):
+        orchestrator.execute(run.run_id)
+
+    with database.unit_of_work() as uow:
+        stored_run = uow.states.get_run(run.run_id)
+        stored_plan = uow.states.get_plan_revision(plan.plan_revision_id)
+        attempts = uow.states.list_attempts(run.run_id)
+    assert stored_run is not None and stored_run.status is RunStatus.PENDING
+    assert stored_plan is not None and stored_plan.nodes[0].status is PlanNodeStatus.PENDING
+    assert attempts == (existing_attempt,)
+    assert worker.calls == ()
+
+
+def test_artifact_failure_keeps_worker_success_semantics(tmp_path) -> None:
+    database = SQLiteDatabase(tmp_path / "artifact-failure.sqlite3")
+    _, plan, run, _ = _seed_single_node(database)
+    worker = FakeWorker()
+    orchestrator = Orchestrator(
+        uow_factory=database.unit_of_work,
+        worker=worker,
+        artifact_store=_FailingArtifactStore(),
+        clock=lambda: NOW,
+    )
+
+    with pytest.raises(ArtifactPersistenceError, match="controlled Artifact failure"):
+        orchestrator.execute(run.run_id)
+
+    with database.unit_of_work() as uow:
+        failed_run = uow.states.get_run(run.run_id)
+        failed_plan = uow.states.get_plan_revision(plan.plan_revision_id)
+        attempts = uow.states.list_attempts(run.run_id)
+        artifacts = uow.states.list_artifacts_for_run(run.run_id)
+        events = tuple(item.event.type for item in uow.events.list_events())
+    assert failed_run is not None and failed_run.status is RunStatus.FAILED
+    assert failed_plan is not None and failed_plan.nodes[0].status is PlanNodeStatus.FAILED
+    assert len(attempts) == 1 and attempts[0].status is AttemptStatus.SUCCEEDED
+    assert attempts[0].artifact_ids == ()
+    assert artifacts == ()
+    assert EventType.ATTEMPT_SUCCEEDED in events
+    assert EventType.ATTEMPT_FAILED not in events
+    assert events[-2:] == (EventType.PLAN_NODE_FAILED, EventType.RUN_FAILED)
+
+
+def test_contract_mismatch_is_rejected_before_worker_or_artifact_side_effects(tmp_path) -> None:
+    database = SQLiteDatabase(tmp_path / "contract-mismatch.sqlite3")
+    goal, _, run, _ = _seed_single_node(database)
+    current = goal.completion_contract
+    assert current is not None
+    replacement = current.revise(
+        ("new current contract",),
+        current.required_check_ids,
+        completion_contract_id=new_id(),
+        created_at=NOW,
+    ).confirm(confirmed_at=NOW)
+    changed_goal = goal.use_completion_contract(replacement)
+    with database.unit_of_work() as uow:
+        uow.states.put_completion_contract(replacement)
+        uow.states.put_goal(changed_goal)
+        uow.commit()
+    worker = FakeWorker()
+    artifact_store = FilesystemArtifactStore(tmp_path / "artifacts")
+    orchestrator = Orchestrator(
+        uow_factory=database.unit_of_work,
+        worker=worker,
+        artifact_store=artifact_store,
+        clock=lambda: NOW,
+    )
+
+    with pytest.raises(OrchestrationError, match="current CompletionContract version"):
+        orchestrator.execute(run.run_id)
+
+    assert worker.calls == ()
+    assert artifact_store.list_for_run(run.run_id) == ()
+    with database.unit_of_work() as uow:
+        unchanged = uow.states.get_run(run.run_id)
+    assert unchanged is not None and unchanged.status is RunStatus.PENDING
+
+
+def test_orchestrator_rejects_non_single_node_plan_without_calling_worker(tmp_path) -> None:
+    database = SQLiteDatabase(tmp_path / "multi.sqlite3")
+    project = Project.create("multi", project_id=new_id(), created_at=NOW)
+    goal = Goal.create(project.project_id, "multi", goal_id=new_id(), created_at=NOW)
+    check_id = new_id()
+    contract = CompletionContract.draft(
+        goal.goal_id,
+        ("done",),
+        (check_id,),
+        completion_contract_id=new_id(),
+        created_at=NOW,
+    ).confirm(confirmed_at=NOW)
+    goal = goal.use_completion_contract(contract)
+    nodes = (
+        PlanNode(new_id(), "one", "one", required_check_ids=(check_id,)),
+        PlanNode(new_id(), "two", "two"),
+    )
+    plan = _approved_plan(goal, contract, nodes)
+    run = Run(goal.goal_id, plan.plan_revision_id, run_id=new_id(), created_at=NOW)
+    with database.unit_of_work() as uow:
+        uow.states.put_project(project)
+        uow.states.put_goal(goal)
+        uow.states.put_completion_contract(contract)
+        uow.states.put_plan_revision(plan)
+        uow.states.put_run(run)
+        uow.commit()
+    worker = FakeWorker()
+    orchestrator = Orchestrator(
+        uow_factory=database.unit_of_work,
+        worker=worker,
+        artifact_store=FilesystemArtifactStore(tmp_path / "artifacts"),
+        clock=lambda: NOW,
+    )
+
+    with pytest.raises(UnsupportedPlanError, match="supports one PlanNode"):
+        orchestrator.execute(run.run_id)
+
+    assert worker.calls == ()
+    with database.unit_of_work() as uow:
+        unchanged = uow.states.get_run(run.run_id)
+    assert unchanged is not None and unchanged.status is RunStatus.PENDING

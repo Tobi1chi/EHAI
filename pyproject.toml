@@ -11,6 +11,9 @@ requires-python = ">=3.12,<3.13"
 license = { file = "LICENSE" }
 dependencies = []
 
+[project.scripts]
+ehai = "ehai.interfaces.cli:main"
+
 [dependency-groups]
 dev = [
     "mypy>=1.17,<2",

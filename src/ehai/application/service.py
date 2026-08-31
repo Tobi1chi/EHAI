@@ -1,0 +1,380 @@
+"""Application service shared by the P1 CLI and later HTTP interface."""
+
+from __future__ import annotations
+
+from collections.abc import Callable, Mapping
+from datetime import datetime
+
+from ehai import ID, JsonValue, new_id, normalize_id, utc_now
+from ehai.application.commands import (
+    ApprovePlan,
+    CreateGoal,
+    CreateProject,
+    ProposePlan,
+    StartRun,
+)
+from ehai.application.orchestrator import Orchestrator
+from ehai.application.planner import Planner
+from ehai.application.ports import CommandReceipt, UnitOfWork
+from ehai.domain.events import Event, EventType
+from ehai.domain.execution import Run, RunStatus
+from ehai.domain.goal import CompletionContract, Goal, Project
+from ehai.domain.planning import PlanRevision, PlanRevisionStatus
+
+UnitOfWorkFactory = Callable[[], UnitOfWork]
+
+
+class ApplicationError(RuntimeError):
+    """Base error for P1 application use cases."""
+
+
+class EntityNotFoundError(ApplicationError):
+    """Raised when a Command references a missing persisted entity."""
+
+
+class IdempotencyConflictError(ApplicationError):
+    """Raised before side effects when an idempotency key changes meaning."""
+
+
+class ExecutionService:
+    """Handle P1 Commands while keeping all state changes in domain methods."""
+
+    def __init__(
+        self,
+        *,
+        uow_factory: UnitOfWorkFactory,
+        planner: Planner,
+        orchestrator: Orchestrator,
+        clock: Callable[[], datetime] = utc_now,
+        id_factory: Callable[[], ID] = new_id,
+    ) -> None:
+        self._uow_factory = uow_factory
+        self._planner = planner
+        self._orchestrator = orchestrator
+        self._clock = clock
+        self._id_factory = id_factory
+
+    def create_project(self, command: CreateProject) -> Project:
+        """Create a Project and its immutable fact Event atomically."""
+        with self._uow_factory() as uow:
+            existing = self._existing_result(
+                uow,
+                command.idempotency_key,
+                type(command).__name__,
+                command.fingerprint,
+            )
+            if existing is not None:
+                return _required_project(uow, _result_id(existing, "project_id"))
+
+            project = Project.create(
+                command.name,
+                project_id=self._id_factory(),
+                created_at=self._clock(),
+            )
+            uow.states.put_project(project)
+            uow.events.append(
+                self._event(
+                    EventType.PROJECT_CREATED,
+                    project.project_id,
+                    {"project_id": project.project_id},
+                )
+            )
+            self._record_receipt(
+                uow,
+                command.idempotency_key,
+                type(command).__name__,
+                command.fingerprint,
+                {"project_id": project.project_id},
+            )
+            uow.commit()
+            return project
+
+    def create_goal(self, command: CreateGoal) -> Goal:
+        """Create an open Goal without inventing completion criteria."""
+        with self._uow_factory() as uow:
+            existing = self._existing_result(
+                uow,
+                command.idempotency_key,
+                type(command).__name__,
+                command.fingerprint,
+            )
+            if existing is not None:
+                return _required_goal(uow, _result_id(existing, "goal_id"))
+            _required_project(uow, command.project_id)
+            goal = Goal.create(
+                command.project_id,
+                command.objective,
+                goal_id=self._id_factory(),
+                created_at=self._clock(),
+            )
+            uow.states.put_goal(goal)
+            uow.events.append(
+                self._event(
+                    EventType.GOAL_CREATED,
+                    goal.goal_id,
+                    {"goal_id": goal.goal_id, "project_id": goal.project_id},
+                )
+            )
+            self._record_receipt(
+                uow,
+                command.idempotency_key,
+                type(command).__name__,
+                command.fingerprint,
+                {"goal_id": goal.goal_id},
+            )
+            uow.commit()
+            return goal
+
+    def propose_plan(self, command: ProposePlan) -> PlanRevision:
+        """Ask the Planner for an unapproved contract and graph proposal."""
+        with self._uow_factory() as uow:
+            existing = self._existing_result(
+                uow,
+                command.idempotency_key,
+                type(command).__name__,
+                command.fingerprint,
+            )
+            if existing is not None:
+                return _required_plan(uow, _result_id(existing, "plan_revision_id"))
+            goal = _required_goal(uow, command.goal_id)
+
+        proposal = self._planner.propose(goal, command.criteria)
+        aligned_goal = goal.use_completion_contract(proposal.contract)
+        with self._uow_factory() as uow:
+            existing = self._existing_result(
+                uow,
+                command.idempotency_key,
+                type(command).__name__,
+                command.fingerprint,
+            )
+            if existing is not None:
+                return _required_plan(uow, _result_id(existing, "plan_revision_id"))
+            current_goal = _required_goal(uow, command.goal_id)
+            if current_goal != goal:
+                raise ApplicationError(f"Goal {goal.goal_id} changed while planning")
+            uow.states.put_completion_contract(proposal.contract)
+            uow.states.put_goal(aligned_goal)
+            uow.states.put_plan_revision(proposal.plan_revision)
+            uow.events.append(
+                self._event(
+                    EventType.PLAN_REVISION_PROPOSED,
+                    proposal.plan_revision.plan_revision_id,
+                    {
+                        "completion_contract_id": proposal.contract.completion_contract_id,
+                        "goal_id": goal.goal_id,
+                        "plan_revision_id": proposal.plan_revision.plan_revision_id,
+                    },
+                )
+            )
+            self._record_receipt(
+                uow,
+                command.idempotency_key,
+                type(command).__name__,
+                command.fingerprint,
+                {
+                    "completion_contract_id": proposal.contract.completion_contract_id,
+                    "plan_revision_id": proposal.plan_revision.plan_revision_id,
+                },
+            )
+            uow.commit()
+            return proposal.plan_revision
+
+    def approve_plan(self, command: ApprovePlan) -> PlanRevision:
+        """Confirm the exact CompletionContract and approve its PlanRevision."""
+        with self._uow_factory() as uow:
+            existing = self._existing_result(
+                uow,
+                command.idempotency_key,
+                type(command).__name__,
+                command.fingerprint,
+            )
+            if existing is not None:
+                return _required_plan(uow, _result_id(existing, "plan_revision_id"))
+            plan = _required_plan(uow, command.plan_revision_id)
+            contract = _required_contract(uow, command.completion_contract_id)
+            goal = _required_goal(uow, plan.goal_id)
+            confirmed = contract.confirm(confirmed_at=self._clock())
+            aligned_goal = goal.use_completion_contract(confirmed)
+            approved = plan.approve(confirmed, approved_at=self._clock())
+            uow.states.put_completion_contract(confirmed)
+            uow.states.put_goal(aligned_goal)
+            uow.states.put_plan_revision(approved)
+            uow.events.append(
+                self._event(
+                    EventType.COMPLETION_CONTRACT_CONFIRMED,
+                    confirmed.completion_contract_id,
+                    {
+                        "completion_contract_id": confirmed.completion_contract_id,
+                        "goal_id": confirmed.goal_id,
+                    },
+                )
+            )
+            uow.events.append(
+                self._event(
+                    EventType.PLAN_REVISION_APPROVED,
+                    approved.plan_revision_id,
+                    {"plan_revision_id": approved.plan_revision_id},
+                )
+            )
+            self._record_receipt(
+                uow,
+                command.idempotency_key,
+                type(command).__name__,
+                command.fingerprint,
+                {"plan_revision_id": approved.plan_revision_id},
+            )
+            uow.commit()
+            return approved
+
+    def start_run(self, command: StartRun) -> Run:
+        """Create an idempotent Run, then execute it outside the Command transaction."""
+        with self._uow_factory() as uow:
+            existing = self._existing_result(
+                uow,
+                command.idempotency_key,
+                type(command).__name__,
+                command.fingerprint,
+            )
+            if existing is not None:
+                run = _required_run(uow, _result_id(existing, "run_id"))
+            else:
+                plan = _required_plan(uow, command.plan_revision_id)
+                if plan.status is not PlanRevisionStatus.APPROVED:
+                    raise ApplicationError(
+                        f"PlanRevision {plan.plan_revision_id} must be approved before StartRun"
+                    )
+                goal = _required_goal(uow, plan.goal_id)
+                contract = goal.completion_contract
+                if (
+                    contract is None
+                    or not contract.is_confirmed
+                    or contract.completion_contract_id != plan.completion_contract_id
+                    or contract.version != plan.completion_contract_version
+                ):
+                    raise ApplicationError(
+                        f"PlanRevision {plan.plan_revision_id} is not aligned to the current "
+                        "confirmed CompletionContract"
+                    )
+                prior_runs = tuple(
+                    run
+                    for run in uow.states.list_runs(goal.goal_id)
+                    if run.plan_revision_id == plan.plan_revision_id
+                )
+                if prior_runs:
+                    raise ApplicationError(
+                        f"PlanRevision {plan.plan_revision_id} already has a Run; "
+                        "P1 permits one Run per PlanRevision"
+                    )
+                run = Run(
+                    goal_id=goal.goal_id,
+                    plan_revision_id=plan.plan_revision_id,
+                    run_id=self._id_factory(),
+                    created_at=self._clock(),
+                )
+                uow.states.put_run(run)
+                self._record_receipt(
+                    uow,
+                    command.idempotency_key,
+                    type(command).__name__,
+                    command.fingerprint,
+                    {"run_id": run.run_id},
+                )
+                uow.commit()
+
+        if run.status is RunStatus.PENDING:
+            return self._orchestrator.execute(run.run_id)
+        return run
+
+    def get_run(self, run_id: ID) -> Run:
+        """Return one persisted Run for CLI/API queries."""
+        with self._uow_factory() as uow:
+            return _required_run(uow, normalize_id(run_id))
+
+    @staticmethod
+    def _existing_result(
+        uow: UnitOfWork,
+        idempotency_key: str,
+        command_name: str,
+        fingerprint: str,
+    ) -> Mapping[str, JsonValue] | None:
+        receipt = uow.command_receipts.get(idempotency_key)
+        if receipt is None:
+            return None
+        if receipt.command_name != command_name or receipt.command_fingerprint != fingerprint:
+            raise IdempotencyConflictError(
+                f"idempotency key {idempotency_key!r} already belongs to {receipt.command_name}"
+            )
+        return receipt.result
+
+    def _record_receipt(
+        self,
+        uow: UnitOfWork,
+        idempotency_key: str,
+        command_name: str,
+        fingerprint: str,
+        result: Mapping[str, JsonValue],
+    ) -> None:
+        uow.command_receipts.put(
+            CommandReceipt(
+                idempotency_key=idempotency_key,
+                command_name=command_name,
+                command_fingerprint=fingerprint,
+                result=result,
+                created_at=self._clock(),
+            )
+        )
+
+    def _event(
+        self,
+        event_type: EventType,
+        correlation_id: ID,
+        payload: Mapping[str, JsonValue],
+    ) -> Event:
+        return Event(
+            type=event_type,
+            correlation_id=correlation_id,
+            payload=payload,
+            occurred_at=self._clock(),
+        )
+
+
+def _result_id(result: Mapping[str, JsonValue], key: str) -> ID:
+    value = result.get(key)
+    if not isinstance(value, str):
+        raise RuntimeError(f"stored Command receipt has no {key}")
+    return normalize_id(value)
+
+
+def _required_project(uow: UnitOfWork, project_id: ID) -> Project:
+    project = uow.states.get_project(project_id)
+    if project is None:
+        raise EntityNotFoundError(f"Project {project_id} does not exist")
+    return project
+
+
+def _required_goal(uow: UnitOfWork, goal_id: ID) -> Goal:
+    goal = uow.states.get_goal(goal_id)
+    if goal is None:
+        raise EntityNotFoundError(f"Goal {goal_id} does not exist")
+    return goal
+
+
+def _required_contract(uow: UnitOfWork, contract_id: ID) -> CompletionContract:
+    contract = uow.states.get_completion_contract(contract_id)
+    if contract is None:
+        raise EntityNotFoundError(f"CompletionContract {contract_id} does not exist")
+    return contract
+
+
+def _required_plan(uow: UnitOfWork, plan_revision_id: ID) -> PlanRevision:
+    plan = uow.states.get_plan_revision(plan_revision_id)
+    if plan is None:
+        raise EntityNotFoundError(f"PlanRevision {plan_revision_id} does not exist")
+    return plan
+
+
+def _required_run(uow: UnitOfWork, run_id: ID) -> Run:
+    run = uow.states.get_run(run_id)
+    if run is None:
+        raise EntityNotFoundError(f"Run {run_id} does not exist")
+    return run
