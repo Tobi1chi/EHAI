@@ -31,6 +31,15 @@
 
 状态变更应经过领域方法或应用服务，禁止业务代码直接修改持久化字段。
 
+## 技术栈与所有权边界
+
+- Execution Plane 使用 Python，负责 Planner、Orchestrator、Worker、Check、Checkpoint、Event Store 和执行状态。
+- Control Plane 使用 TypeScript，负责 Dashboard、图形交互、用户输入、展示模型和本地 UI 状态。
+- Workflow 编辑器属于 TypeScript Control Plane；Workflow 校验、调度和副作用执行属于 Python Execution Plane。
+- TypeScript 只能通过 API 发送 Command 和查询数据，不得直接读写 Execution Plane 数据库。
+- Python 是执行领域状态的唯一真相来源；Control Plane 不得复制状态机或自行推断完成状态。
+- TypeScript UI 框架和包管理器必须在开始 P3 前通过 ADR 选定，并提交对应锁文件。
+
 ## 项目结构
 
 ```text
@@ -43,10 +52,14 @@ tests/
   unit/
   integration/
   e2e/
+control-plane/
+  src/             # TypeScript UI、交互和展示模型
+  tests/           # TypeScript 单元、组件和端到端测试
+schemas/           # OpenAPI/JSON Schema 与生成配置
 docs/
 ```
 
-领域层不得依赖具体 Worker SDK、数据库或 Web 框架。外部实现通过 Protocol/Adapter 接入。
+Python 领域层不得依赖具体 Worker SDK、数据库或 Web 框架。外部实现通过 Protocol/Adapter 接入。Control Plane 不得导入 Python 内部模型，必须使用从 `schemas/` 生成的 TypeScript 类型和 API Client。
 
 ## Python 代码规范
 
@@ -58,18 +71,35 @@ docs/
 - 核心状态使用枚举和值对象，避免散落的字符串和布尔标志。
 - 异常必须携带运行、节点或 Attempt 标识；不得静默吞掉错误。
 
+## TypeScript 代码规范
+
+- `tsconfig.json` 必须启用严格类型检查；不得用 `any` 绕过边界，应使用 `unknown` 并显式收窄。
+- 变量和函数使用 `camelCase`，组件、类型和接口使用 `PascalCase`，常量使用 `UPPER_SNAKE_CASE`。
+- API、Event 和领域查询类型必须生成，不得在 UI 中手写重复定义。
+- 组件负责展示和交互；Command 构造、事件消费和展示模型转换放入独立模块。
+- 不根据按钮点击预先改变执行真相；界面应等待 Execution Plane 返回状态或 Event。
+- 格式化、lint、类型检查和测试必须通过 `control-plane/package.json` 中的项目脚本运行。
+
+## API 与跨语言契约
+
+跨 Plane 契约使用 OpenAPI 或 JSON Schema 并带显式版本。Python 生成或验证契约，TypeScript Client 和类型由契约生成。破坏性变化必须新建版本并提供迁移说明。REST 用于 Command 和查询；SSE 或 WebSocket 用于实时 Event。Event 必须携带可恢复订阅所需的 Event ID。
+
 ## Commands、Events 与幂等
 
 Command 使用祈使语义，例如 `StartRun`、`CancelAttempt`；Event 使用过去式，例如 `RunStarted`、`AttemptFailed`。Event 至少包含唯一 ID、类型、时间、Run ID、关联 ID、版本和载荷。事件处理器必须允许安全重放；外部副作用应使用幂等键。
 
 ## 测试与完成标准
 
-- 使用 `pytest`，测试文件命名为 `test_*.py`。
+- Python 使用 `pytest`，测试文件命名为 `test_*.py`。
+- TypeScript 使用 `package.json` 中固定的测试脚本，并分别覆盖纯逻辑、组件交互和关键用户路径。
 - 单元测试覆盖领域状态机、Gate 和图不变量。
 - 集成测试覆盖持久化、Event Replay、Connector 和 Check Runner。
+- 契约测试验证 Python 响应与 Schema 一致，并验证生成的 TypeScript Client 能正确消费。
 - 每一期至少维护一个代表其退出条件的端到端场景。
 - Bug 修复必须包含回归测试。
 - 测试不得默认访问真实外部服务；使用 Fake Adapter 或受控 Fixture。
+
+开发过程中优先运行与改动直接相关的最小测试。提交前再运行 Python 和 TypeScript 各自的完整测试、lint 与类型检查；若全量检查失败，先聚焦修复失败项，再重新执行全量检查。
 
 功能只有在代码、测试、必要文档和适用检查全部完成后才满足 Definition of Done。P1 保持必要验证；P2 至 P5 每期结束后执行系统性审查。
 

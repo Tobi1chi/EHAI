@@ -8,6 +8,8 @@ EHAI（Enhanced Human-Agent Interface）用于建立可规划、可探索、可�
 
 - P1 优先证明最小闭环，不做过度工程化，也不单独进行系统性代码审查。
 - P2 至 P5 每期结束后进行代码、架构和测试审查。
+- Execution Plane 使用 Python，拥有 Agent 执行状态和领域规则；Control Plane 使用 TypeScript，拥有交互与展示状态。
+- 两个 Plane 通过版本化 API、Command/Event Schema 和生成类型通信，不直接读写对方的数据存储。
 - `PlanGraph` 表示计划，`ExecutionTrace` 表示实际轨迹；二者分开存储、可叠加展示。
 - Worker 只能提交候选结果，任务完成必须由预先确认的检查条件决定。
 - 每一期必须定义范围、非目标、演示场景和退出条件。
@@ -25,11 +27,12 @@ EHAI（Enhanced Human-Agent Interface）用于建立可规划、可探索、可�
 - Codex External Worker Connector。
 - Event、Artifact、Check、Gate 和 Checkpoint 服务。
 - SQLite 持久化及中断恢复。
-- 最小 CLI 或 API，用于确认计划、启动、暂停和查看结果。
+- Python 实现的最小 CLI/API 和事件流，用于确认计划、启动、暂停和查看结果。
+- 为 Command、Event 和查询模型建立语言无关、可版本化的 Schema。
 
 退出条件：用户确认目标和检查条件后，系统能让 Codex 探索至少两个分支，自动比较结果，完成最终检查，创建 Checkpoint，并在重启后恢复轨迹。
 
-非目标：正式 Dashboard、多 Worker、分布式执行、通用插件系统和复杂权限模型。
+非目标：正式 TypeScript Control Plane、多 Worker、分布式执行、通用插件系统和复杂权限模型。
 
 ## P2：稳定的多 Worker 执行内核
 
@@ -44,6 +47,7 @@ EHAI（Enhanced Human-Agent Interface）用于建立可规划、可探索、可�
 - 分支上下文与 Git worktree 隔离。
 - Artifact、日志、上下文摘要和 Event Replay。
 - Check Runner 插件化及恢复测试。
+- 稳定 OpenAPI/JSON Schema，并建立 TypeScript 类型和 API Client 的生成流程。
 
 退出条件：同一 PlanRevision 能混合调度多个 Worker；运行失败或进程重启后可恢复；每个决策均能追溯到事件和证据。完成首次系统性代码审查。
 
@@ -53,11 +57,14 @@ EHAI（Enhanced Human-Agent Interface）用于建立可规划、可探索、可�
 
 范围：
 
-- Dashboard 与实时 PlanGraph/ExecutionTrace。
+- 使用 TypeScript 构建 Control Plane；启用严格类型检查，具体 UI 框架和包管理器通过 ADR 固定。
+- Dashboard 与实时 PlanGraph/ExecutionTrace 可视化。
 - 分支结果、Artifact、Check 和 Checkpoint 展示。
 - 暂停、继续、取消、重新规划和人工 Gate。
 - Projects、Settings、Calendar、Gantt 和 Activity Heatmap。
 - 节点级人—Agent 对话与反馈。
+- 使用生成的 API Client 发送 Command，通过 SSE 或 WebSocket 消费带版本的 Event。
+- Control Plane 不直接修改 Execution Plane 数据库或复制其领域状态机。
 
 退出条件：用户无需 CLI 即可完成任务创建、计划确认、过程观察、分支干预和最终验收。完成交互、性能与代码审查。
 
@@ -68,6 +75,7 @@ EHAI（Enhanced Human-Agent Interface）用于建立可规划、可探索、可�
 范围：
 
 - Workflow 定义、模板、版本和运行历史。
+- TypeScript 提供 Workflow 编辑体验，Python 负责校验、调度和实际执行。
 - Routines：定时、事件触发和周期执行。
 - Universal Connector Hub。
 - Email、Weather、Navigation 和 Notification Service。
@@ -85,6 +93,7 @@ EHAI（Enhanced Human-Agent Interface）用于建立可规划、可探索、可�
 - External Assistance Agent Framework 与 OpenClaw 系列。
 - DSH 接入；其职责和边界明确后再固定具体位置。
 - Worker、Checker 和 Connector 插件 SDK。
+- 语言无关的扩展协议，以及 Python/TypeScript 对应的 SDK。
 - 多 Agent 协作及分层 Orchestrator。
 - 跨项目上下文、策略、配额、权限、审计和沙箱。
 

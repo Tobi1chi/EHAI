@@ -2,7 +2,7 @@
 
 ## Project Structure & Module Organization
 
-EHAI is a Python scaffold. Keep root files for configuration and docs. Put code in `src/ehai/` and mirror it under `tests/`. Store fixtures in `tests/fixtures/` and static files in `assets/`.
+EHAI uses Python for Execution Plane and TypeScript for Control Plane. Put implementations in `src/ehai/` and `control-plane/src/`, with tests in `tests/` and `control-plane/tests/`. Store cross-plane schemas in `schemas/` and documentation in `docs/`.
 
 ## Build, Test, and Development Commands
 
@@ -16,15 +16,17 @@ Use `uv`; never use bare `pip`.
 
 These require `pyproject.toml`; commit `uv.lock` for reproducibility.
 
+Run TypeScript scripts from `control-plane/package.json` with the ADR-selected package manager and lockfile.
+
 ## Coding Style & Naming Conventions
 
-Follow the Python version in `pyproject.toml`. Use four spaces, typed public APIs, and short docstrings where needed. Use `snake_case` for modules, functions, and variables; `PascalCase` for classes; and `UPPER_SNAKE_CASE` for constants. Prefer small modules and explicit imports. Configure Ruff in `pyproject.toml`.
+Python follows `pyproject.toml`: four spaces, typed public APIs, `snake_case` functions, `PascalCase` classes, and Ruff. TypeScript uses strict mode, `unknown` instead of `any`, `camelCase` functions, and `PascalCase` components/types. Generate cross-plane types from `schemas/`; never duplicate Execution Plane state rules in UI.
 
 ## Testing Guidelines
 
-Use `pytest` with `test_*.py` files and `test_<behavior>` functions. Cover normal behavior, boundaries, and failures; bug fixes require regression tests. Mock external services. No coverage threshold exists yet.
+Use `pytest` for Python and `control-plane/package.json` scripts for TypeScript. Cover normal, boundary, and failure cases; bug fixes require regression tests. Mock external services.
 
-During implementation, run the narrowest relevant test, for example `uv run pytest tests/unit/test_planner.py::test_creates_branch`. Fix failures and rerun that test until it passes. Run `uv run pytest` before committing or final handoff, not after every edit. If the full suite fails, isolate and repair each failing test with focused runs, then rerun the full suite; repeat until it passes.
+During implementation, run the narrowest relevant test and repeat it until fixed. Before committing or final handoff, run the full suites for every affected stack. If a full suite fails, isolate each failure with focused runs, repair it, then rerun all affected suites until they pass. Do not run every test after each edit.
 
 ## Commit & Pull Request Guidelines
 
@@ -32,8 +34,8 @@ Use Conventional Commits: `type(optional-scope): imperative summary`. Types are 
 
 Before committing, agents must inspect `git status` and `git diff`, stage only task-related files, and run applicable tests and lint checks. Never commit secrets or generated artifacts. Do not amend, rebase, force-push, or push unless the user explicitly requests it.
 
-Pull requests should explain motivation and approach, list verification, link issues, and identify dependency or configuration changes. Include screenshots for visible changes.
+PRs should explain motivation and approach, list verification, link issues, and flag dependency or configuration changes. Include screenshots for visible changes.
 
 ## Security & Configuration
 
-Never commit secrets, `.env` files, virtual environments, generated coverage, or build artifacts; these are already ignored. Provide sanitized examples such as `.env.example` for required settings and document new variables in `README.md`.
+Never commit secrets, `.env` files, virtual environments, generated coverage, or build artifacts. Provide sanitized examples such as `.env.example` and document new variables in `README.md`.
