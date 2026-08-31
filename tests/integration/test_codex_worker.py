@@ -32,7 +32,6 @@ import json
 import os
 import pathlib
 import signal
-import subprocess
 import sys
 import time
 
@@ -70,25 +69,6 @@ record_path.write_text(
 if mode in {"timeout", "cancel"}:
     print("token=partial-stdout-secret", flush=True)
     print("password=partial-stderr-secret", file=sys.stderr, flush=True)
-    time.sleep(60)
-
-if mode == "child-tree":
-    ready_path = record_path.with_suffix(".child-ready")
-    survived_path = record_path.with_suffix(".child-survived")
-    child_code = (
-        "import os,pathlib,signal,time\n"
-        "signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
-        f"pathlib.Path({str(ready_path)!r}).write_text('ready')\n"
-        "while True:\n"
-        "    try:\n"
-        f"        os.kill({os.getpid()}, 0)\n"
-        "    except OSError:\n"
-        "        break\n"
-        "    time.sleep(0.05)\n"
-        f"pathlib.Path({str(survived_path)!r}).write_text('survived')\n"
-        "time.sleep(60)\n"
-    )
-    subprocess.Popen([sys.executable, "-c", child_code])
     time.sleep(60)
 
 if mode == "nonzero":
@@ -370,34 +350,6 @@ def test_codex_worker_cancel_before_execute_is_consumed_without_spawn(tmp_path: 
         adapter.execute(request)
 
     assert not record_path.exists()
-
-
-@pytest.mark.skip(
-    reason="unsafe on a shared Codex host; tree cleanup is verified without real descendants"
-)
-def test_codex_worker_cancel_kills_child_that_ignores_parent_termination(tmp_path: Path) -> None:
-    request = _request()
-    adapter, record_path = _adapter(tmp_path, "child-tree", timeout_seconds=10)
-    ready_path = record_path.with_suffix(".child-ready")
-    survived_path = record_path.with_suffix(".child-survived")
-    failures: list[BaseException] = []
-
-    def run() -> None:
-        try:
-            adapter.execute(request)
-        except BaseException as error:
-            failures.append(error)
-
-    thread = threading.Thread(target=run)
-    thread.start()
-    _wait_for_file(ready_path)
-    adapter.cancel(request.attempt_id)
-    thread.join(timeout=4)
-    time.sleep(0.5)
-
-    assert not thread.is_alive()
-    assert len(failures) == 1 and isinstance(failures[0], WorkerCancelledError)
-    assert not survived_path.exists(), failures[0].diagnostics
 
 
 def test_codex_worker_cancel_requests_scoped_windows_tree_cleanup(
