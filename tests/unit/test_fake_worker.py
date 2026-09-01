@@ -1,3 +1,4 @@
+from base64 import b64encode
 from dataclasses import FrozenInstanceError
 from datetime import UTC, datetime
 from hashlib import sha256
@@ -6,6 +7,7 @@ import pytest
 
 from ehai import ID, JsonValue, new_id
 from ehai.application.workers import (
+    ArtifactInputSnapshot,
     CandidateArtifact,
     WorkerAdapter,
     WorkerCancelledError,
@@ -14,7 +16,7 @@ from ehai.application.workers import (
     WorkerResult,
     WorkerTimedOutError,
 )
-from ehai.domain.artifacts import Artifact, ArtifactKind
+from ehai.domain.artifacts import ArtifactKind
 from ehai.domain.execution import Attempt, Run
 from ehai.domain.goal import CompletionContract
 from ehai.domain.planning import PlanNode, PlanNodeKind
@@ -25,7 +27,7 @@ NOW = datetime(2026, 8, 31, 14, tzinfo=UTC)
 
 def make_request(
     *,
-    artifact_inputs: tuple[Artifact, ...] = (),
+    artifact_inputs: tuple[ArtifactInputSnapshot, ...] = (),
     context: dict[str, JsonValue] | None = None,
     node_kind: PlanNodeKind = PlanNodeKind.WORK,
 ) -> WorkerRequest:
@@ -73,18 +75,31 @@ def result(content: bytes = b"configured") -> WorkerResult:
     )
 
 
-def input_artifact(run_id: ID | None = None) -> Artifact:
+def input_artifact(
+    run_id: ID | None = None,
+    *,
+    plan_node_id: ID | None = None,
+    content: bytes = b"input",
+) -> ArtifactInputSnapshot:
     artifact_id = new_id()
-    return Artifact(
+    try:
+        encoded_content = content.decode("utf-8")
+        encoding = "utf-8"
+    except UnicodeDecodeError:
+        encoded_content = b64encode(content).decode("ascii")
+        encoding = "base64"
+    return ArtifactInputSnapshot(
         artifact_id=artifact_id,
         kind=ArtifactKind.EVIDENCE,
         name="input.txt",
         media_type="text/plain",
-        size_bytes=0,
-        sha256=sha256(b"").hexdigest(),
-        relative_path=f"objects/{artifact_id[:2]}/{artifact_id}.blob",
-        created_at=NOW,
+        size_bytes=len(content),
+        sha256=sha256(content).hexdigest(),
         run_id=run_id,
+        plan_node_id=plan_node_id or new_id(),
+        attempt_id=new_id(),
+        encoding=encoding,
+        content=encoded_content,
     )
 
 
@@ -143,6 +158,17 @@ def test_worker_request_rejects_cross_scope_attempt_contract_and_artifacts() -> 
             context={},
             artifact_inputs=(input_artifact(other.run_id),),
         )
+
+
+def test_artifact_input_snapshot_supports_utf8_and_base64() -> None:
+    text = input_artifact(content=b"plain text")
+    binary = input_artifact(content=b"\xff\x00")
+
+    assert text.encoding == "utf-8"
+    assert text.content == "plain text"
+    assert binary.encoding == "base64"
+    assert binary.content == "/wA="
+    assert "relative_path" not in text.to_prompt_dict()
 
 
 def test_candidate_and_result_snapshot_bytes_and_containers() -> None:

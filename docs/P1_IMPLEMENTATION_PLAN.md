@@ -14,6 +14,9 @@ P1 验证的是端到端语义，不追求通用平台能力。TypeScript Contro
 - P1 同一时刻只执行一个 Attempt。多个就绪分支按稳定顺序运行；并发留到 P2。
 - Command、Event 和查询模型在 `schemas/v1/` 中提供语言无关 Schema，为后续 TypeScript Client 做准备。
 - Worker 只能提交候选结果；Gate 是进入 `completed` 的唯一入口。
+- Worker 依赖输入必须使用受控 Artifact 内容快照，而不是仅传数据库元数据或 Artifact Store
+  `relative_path`。P1 快照限制为单 Artifact 256 KiB、总输入 1 MiB；UTF-8 内容直接传递，非
+  UTF-8 内容以 base64 传递，超过预算必须 fail closed。
 
 ## 代码结构
 
@@ -155,6 +158,10 @@ Run:     pending → running ↔ paused → completed | failed | cancelled
 - 支持 `fork → explore → evaluate → select/prune → merge`。
 - P1 默认限制分支宽度为 3、深度为 2，并记录预算消耗。
 - 每个分支先通过局部 Gate；Evaluator 根据预先定义的准则生成选择结果和证据。
+- Evaluator 的输出必须是持久化 Artifact 中的结构化 BranchSelection proposal。Orchestrator 读取
+  该 Artifact、验证 Branch/Artifact/Run/Plan 范围、确认比较证据覆盖所有可行候选分支，然后才
+  通过领域状态转换提交 `BranchSelected`/`BranchPruned` Event。Evaluator 不得直接修改 Branch
+  状态，DeterministicBranchEvaluator 仅作为测试替身。
 - 未选择分支进入 `pruned`，但保留 Attempt、Event 和 Artifact。
 - 重新规划通过 GraphPatch 产生新的 PlanRevision，旧轨迹保持可查询。
 - `ReplanPlan` 必须引用已批准 base，通过 GraphPatch 创建 `version + 1` draft；若 CheckSpec 变化，则 CompletionContract 与 CheckSpec 使用 fresh ID 和显式 predecessor lineage，并要求再次批准，不能修改已确认版本。
@@ -229,7 +236,9 @@ ListEvents(after_event_id)
 - 用户可在执行前确认 PlanRevision 和 CompletionContract。
 - PlanGraph 至少包含两个探索分支，并能选择、剪枝和汇合。
 - Codex 只能提交候选结果，不能直接宣布节点或 Goal 完成。
-- 局部 Gate 和最终 Gate 都产生可追溯证据。
+- 局部 Gate 和最终 Gate 都产生可追溯证据；当用户选择 `command:exit-zero` 或
+  `semantic:required-terms` 时，EHAI 必须在内部执行对应 Command/Semantic Check，不得静默退化为
+  `artifact:non-empty`。
 - Gate 通过后才能提交 Checkpoint。
 - 中途停止并重启后，系统可从持久化状态恢复且不重复已确认副作用。
 - PlanGraph 与 ExecutionTrace 可分别查询，所有关键决策能追溯到 Event 和 Artifact。

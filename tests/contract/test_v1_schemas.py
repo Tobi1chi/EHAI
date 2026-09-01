@@ -291,14 +291,18 @@ def _client() -> TestClient:
         ),
         (
             "ProposePlanRequest",
-            ProposePlanRequest(idempotency_key="plan", goal_id=new_id(), criteria=["done"]),
+            ProposePlanRequest(
+                idempotency_key="plan",
+                goal_id=new_id(),
+                criteria=[NON_EMPTY_ARTIFACT_CRITERION],
+            ),
         ),
         (
             "ReplanPlanRequest",
             ReplanPlanRequest(
                 idempotency_key="replan",
                 base_plan_revision_id=new_id(),
-                criteria=["done"],
+                criteria=[NON_EMPTY_ARTIFACT_CRITERION],
             ),
         ),
         (
@@ -565,7 +569,7 @@ def test_request_schema_constraints_match_pydantic_normalization() -> None:
         ProposePlanRequest(
             idempotency_key="plan",
             goal_id=new_id(),
-            criteria=["   "],
+            criteria=["   "],  # type: ignore[list-item]
         )
 
 

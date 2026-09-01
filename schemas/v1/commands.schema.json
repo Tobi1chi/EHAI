@@ -25,6 +25,14 @@
         }
       ]
     },
+    "P1CompletionCriterion": {
+      "type": "string",
+      "enum": [
+        "artifact:non-empty",
+        "command:exit-zero",
+        "semantic:required-terms"
+      ]
+    },
     "Project": {
       "type": "object",
       "additionalProperties": false,
@@ -55,7 +63,8 @@
         "criteria": {
           "type": "array",
           "minItems": 1,
-          "items": {"type": "string", "minLength": 1}
+          "maxItems": 1,
+          "items": {"$ref": "#/$defs/P1CompletionCriterion"}
         },
         "required_check_ids": {
           "type": "array",
@@ -145,7 +154,8 @@
         "criteria": {
           "type": "array",
           "minItems": 1,
-          "items": {"type": "string", "minLength": 1, "pattern": "\\S"}
+          "maxItems": 1,
+          "items": {"$ref": "#/$defs/P1CompletionCriterion"}
         }
       }
     },
@@ -159,7 +169,8 @@
         "criteria": {
           "type": "array",
           "minItems": 1,
-          "items": {"type": "string", "minLength": 1, "pattern": "\\S"}
+          "maxItems": 1,
+          "items": {"$ref": "#/$defs/P1CompletionCriterion"}
         }
       }
     },

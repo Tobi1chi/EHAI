@@ -171,6 +171,8 @@ def _adapter(
     timeout_seconds: float = 2.0,
     max_output_bytes: int = 4096,
     env_overrides: dict[str, str] | None = None,
+    model: str | None = None,
+    reasoning_effort: str | None = None,
 ) -> tuple[CodexWorkerAdapter, Path]:
     executable = tmp_path / "fake_codex.py"
     executable.write_text(_FAKE_CODEX, encoding="utf-8")
@@ -182,6 +184,8 @@ def _adapter(
         cancel_grace_seconds=0.2,
         max_output_bytes=max_output_bytes,
         env_overrides=env_overrides,
+        model=model,
+        reasoning_effort=reasoning_effort,
     )
     return adapter, record
 
@@ -694,6 +698,27 @@ def test_codex_worker_redacts_bare_explicit_environment_values(tmp_path: Path) -
     text = _all_result_text(result)
     assert secret not in text
     assert "[REDACTED]" in text
+
+
+def test_codex_worker_passes_model_and_reasoning_as_non_shell_argv(tmp_path: Path) -> None:
+    adapter, record_path = _adapter(
+        tmp_path,
+        "normal",
+        model="gpt-5.5",
+        reasoning_effort="high",
+    )
+
+    adapter.execute(_request())
+
+    args = json.loads(record_path.read_text(encoding="utf-8"))["args"]
+    assert args[:4] == [
+        "--model",
+        "gpt-5.5",
+        "--config",
+        'model_reasoning_effort="high"',
+    ]
+    assert "--ask-for-approval" in args
+    assert "exec" in args
 
 
 def test_codex_worker_launch_error_is_scoped(tmp_path: Path) -> None:

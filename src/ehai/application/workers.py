@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import base64
+import binascii
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from hashlib import sha256
 from typing import Protocol, runtime_checkable
 
 from ehai import ID, JsonValue, json_dumps, json_loads, normalize_id
@@ -17,6 +20,9 @@ _MAX_ERROR_REASON_CHARACTERS = 2_000
 _MAX_ERROR_DIAGNOSTICS = 32
 _MAX_DIAGNOSTIC_CHARACTERS = 500
 _ERROR_TRUNCATION_MARKER = b"\n...[truncated]...\n"
+MAX_ARTIFACT_INPUT_BYTES = 256 * 1024
+MAX_ARTIFACT_INPUT_TOTAL_BYTES = 1024 * 1024
+_ARTIFACT_INPUT_ENCODINGS = frozenset({"utf-8", "base64"})
 
 
 class WorkerExecutionError(RuntimeError):
@@ -62,6 +68,120 @@ class WorkerCancelledError(WorkerExecutionError):
     """A Worker stopped because cancellation was requested."""
 
 
+class ArtifactInputBudgetExceeded(ValueError):
+    """Raised when dependency Artifact content cannot be safely snapshotted."""
+
+
+@dataclass(frozen=True, slots=True)
+class ArtifactInputSnapshot:
+    """A bounded immutable Artifact content snapshot for one Worker invocation."""
+
+    artifact_id: ID
+    plan_node_id: ID
+    name: str
+    media_type: str
+    sha256: str
+    encoding: str
+    content: str
+    kind: ArtifactKind
+    size_bytes: int
+    run_id: ID | None = None
+    attempt_id: ID | None = None
+
+    @classmethod
+    def from_artifact(cls, artifact: Artifact, content: bytes) -> ArtifactInputSnapshot:
+        """Build and verify a content snapshot from trusted Artifact metadata and bytes."""
+        if not isinstance(artifact, Artifact):
+            raise TypeError("artifact must be an Artifact")
+        if not isinstance(content, bytes):
+            raise TypeError("Artifact input content must be bytes")
+        if artifact.plan_node_id is None:
+            raise ValueError(f"Artifact {artifact.artifact_id} has no PlanNode scope")
+        if len(content) != artifact.size_bytes or sha256(content).hexdigest() != artifact.sha256:
+            raise ValueError(f"Artifact {artifact.artifact_id} content does not match metadata")
+        try:
+            encoded_content = content.decode("utf-8")
+            encoding = "utf-8"
+        except UnicodeDecodeError:
+            encoded_content = base64.b64encode(content).decode("ascii")
+            encoding = "base64"
+        return cls(
+            artifact_id=artifact.artifact_id,
+            plan_node_id=artifact.plan_node_id,
+            name=artifact.name,
+            media_type=artifact.media_type,
+            sha256=artifact.sha256,
+            encoding=encoding,
+            content=encoded_content,
+            kind=artifact.kind,
+            size_bytes=artifact.size_bytes,
+            run_id=artifact.run_id,
+            attempt_id=artifact.attempt_id,
+        )
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "artifact_id", normalize_id(self.artifact_id))
+        object.__setattr__(self, "plan_node_id", normalize_id(self.plan_node_id))
+        object.__setattr__(
+            self, "run_id", None if self.run_id is None else normalize_id(self.run_id)
+        )
+        object.__setattr__(
+            self,
+            "attempt_id",
+            None if self.attempt_id is None else normalize_id(self.attempt_id),
+        )
+        object.__setattr__(self, "kind", ArtifactKind(self.kind))
+        if not isinstance(self.name, str) or not self.name.strip() or "\x00" in self.name:
+            raise ValueError("Artifact input name must not be blank or contain NUL")
+        if (
+            not isinstance(self.media_type, str)
+            or not self.media_type.strip()
+            or "/" not in self.media_type
+            or any(character in self.media_type for character in "\r\n\x00")
+        ):
+            raise ValueError("Artifact input media_type is invalid")
+        if (
+            not isinstance(self.sha256, str)
+            or len(self.sha256) != 64
+            or any(character not in "0123456789abcdefABCDEF" for character in self.sha256)
+        ):
+            raise ValueError("Artifact input sha256 must be 64 hexadecimal digits")
+        object.__setattr__(self, "sha256", self.sha256.lower())
+        if self.encoding not in _ARTIFACT_INPUT_ENCODINGS:
+            raise ValueError("Artifact input encoding must be utf-8 or base64")
+        if not isinstance(self.content, str):
+            raise TypeError("Artifact input content must be text")
+        if type(self.size_bytes) is not int or self.size_bytes < 0:
+            raise ValueError("Artifact input size_bytes must be non-negative")
+        decoded = self._decoded_content()
+        if len(decoded) != self.size_bytes:
+            raise ValueError("Artifact input content size does not match size_bytes")
+        if sha256(decoded).hexdigest() != self.sha256:
+            raise ValueError("Artifact input content SHA-256 does not match metadata")
+
+    def to_prompt_dict(self) -> dict[str, JsonValue]:
+        """Return the stable JSON form exposed to Workers."""
+        return {
+            "artifact_id": self.artifact_id,
+            "plan_node_id": self.plan_node_id,
+            "name": self.name,
+            "kind": self.kind.value,
+            "media_type": self.media_type,
+            "size_bytes": self.size_bytes,
+            "sha256": self.sha256,
+            "encoding": self.encoding,
+            "content": self.content,
+        }
+
+    def _decoded_content(self) -> bytes:
+        if self.encoding == "utf-8":
+            return self.content.encode("utf-8")
+        try:
+            return base64.b64decode(self.content.encode("ascii"), validate=True)
+        except (UnicodeEncodeError, binascii.Error) as error:
+            raise ValueError("Artifact input base64 content is invalid") from error
+
+
 @dataclass(frozen=True, slots=True, init=False)
 class WorkerRequest:
     """A validated, immutable input snapshot for one Worker invocation."""
@@ -70,7 +190,7 @@ class WorkerRequest:
     attempt: Attempt
     plan_node: PlanNode
     completion_contract: CompletionContract
-    artifact_inputs: tuple[Artifact, ...]
+    artifact_inputs: tuple[ArtifactInputSnapshot, ...]
     _context_json: str = field(repr=False)
 
     def __init__(
@@ -81,7 +201,7 @@ class WorkerRequest:
         plan_node: PlanNode,
         completion_contract: CompletionContract,
         context: Mapping[str, JsonValue],
-        artifact_inputs: tuple[Artifact, ...] = (),
+        artifact_inputs: tuple[ArtifactInputSnapshot, ...] = (),
     ) -> None:
         if not isinstance(run, Run):
             raise ValueError("WorkerRequest run must be a Run")
@@ -95,8 +215,10 @@ class WorkerRequest:
             raise ValueError("WorkerRequest context must be a JSON object")
 
         artifacts = tuple(artifact_inputs)
-        if not all(isinstance(artifact, Artifact) for artifact in artifacts):
-            raise ValueError("WorkerRequest artifact_inputs must contain only Artifacts")
+        if not all(isinstance(artifact, ArtifactInputSnapshot) for artifact in artifacts):
+            raise ValueError(
+                "WorkerRequest artifact_inputs must contain only ArtifactInputSnapshots"
+            )
         if len({artifact.artifact_id for artifact in artifacts}) != len(artifacts):
             raise ValueError("WorkerRequest artifact_inputs must not contain duplicate IDs")
 

@@ -21,6 +21,8 @@ uv run ehai-api --help
 下面的 PowerShell 脚本创建独立数据库，完成 Project → Goal → Plan → Approve → Run 闭环。
 `FakeWorker` 不访问网络，结果可重复。把 `$Planner` 设为 `single` 可运行单节点计划；设为
 `exploration` 可运行固定的双分支 `fork → explore → evaluate → select/prune → merge` 计划。
+exploration 模式下 evaluator 节点会提交结构化 BranchSelection artifact；Orchestrator 读取该
+artifact 后执行 selected/pruned 状态转换，Merge 只接收被选中分支的 Artifact 内容快照。
 
 ```powershell
 $Planner = "exploration" # 可改为 "single"
@@ -46,8 +48,24 @@ uv run ehai --database .ehai/exploration.sqlite3 --artifacts .ehai/exploration-a
 uv run ehai --database .ehai/codex-planner.sqlite3 --artifacts .ehai/codex-planner-artifacts --planner codex --planner-timeout-seconds 120 propose-plan --idempotency-key plan-1 --goal-id <GOAL_UUID> --criterion "artifact:non-empty"
 ```
 
+P1 支持三个单项完成 criterion：
+
+- `artifact:non-empty`：使用内置 Artifact Check，确认候选 Artifact 存在且非空。
+- `command:exit-zero`：使用宿主通过 `--command-check-argv` 配置的 argv，在 EHAI Check 内执行。
+- `semantic:required-terms`：使用宿主通过 `--semantic-required-term` 配置的透明词项 rubric。
+
+Command Check 的 argv 是 JSON 字符串数组，不经过 shell；候选 Artifact 会被物化到本次
+Attempt/Check 专属临时目录，不写入项目 worktree。例如：
+
+```powershell
+uv run ehai --database .ehai/command.sqlite3 --artifacts .ehai/command-artifacts --command-check-argv '["uv","run","pytest","-q"]' --planner single propose-plan --idempotency-key plan-1 --goal-id <GOAL_UUID> --criterion "command:exit-zero"
+```
+
 `--planner-timeout-seconds` 只控制 Planner 调用期限，与 Worker Attempt 的期限相互独立。
-自动化测试使用受控假进程验证 Codex Planner；当前真实 Codex smoke 仅覆盖 Worker connector。
+Codex Worker 还可显式配置 `--worker-timeout-seconds`、`--codex-model` 和
+`--codex-reasoning-effort`；这些参数只作为本次 `codex exec` argv/config override 传递，不修改
+用户全局 Codex config。自动化测试使用受控假进程验证 Codex Planner 和 Worker；当前真实 Codex
+smoke 仅覆盖 Worker connector。
 
 每个 Goal 只能对齐一个当前 CompletionContract；比较两种 Planner 时请使用不同 Goal 或独立演示数据库。
 CLI 还提供 `pause-run`、`resume-run`、`cancel-run`、`restore-run` 和启动恢复用的 `recover`；
@@ -132,10 +150,12 @@ Checkpoints。完整真实场景不会加入默认测试套件，避免隐式消
 - `ehai-api` 按单进程使用。进程内有串行执行保护，但多个服务进程共享 SQLite 时不保证全局串行；
   不要用多 Uvicorn worker 运行 P1。
 - Artifact 内容保存在不可变文件存储中；HTTP 仅公开安全元数据，不公开内部 `relative_path`。
+- Worker 依赖输入使用有上限的 Artifact 内容快照传递：UTF-8 直接传文本，非 UTF-8 使用 base64；
+  超过单 Artifact 或总输入预算会 fail closed，不会静默丢弃内容。
 - 真实 Codex 必须使用受控工作目录和 sandbox；不要使用跳过批准或 sandbox 的危险参数，也不要把
   secrets 写入日志、Artifact 或测试夹具。
-- 会真实创建 descendant 进程并执行系统级 cleanup 的测试已移除。当前 descendant cleanup 覆盖只
-  使用 mock 的进程发现和 `taskkill` 调用，不会清理真实用户进程树。
+- Windows descendant cleanup 覆盖包含一个受 Windows Job Object 隔离的真实后代进程探针，以及
+  mock 的进程发现和 `taskkill` 调用契约测试；它不会清理测试 Job 之外的用户进程树。
 
 常规验证命令：
 

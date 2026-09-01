@@ -116,8 +116,8 @@ def test_public_service_completes_and_reloads_exploration_trace(tmp_path: Path) 
     assert len(graph.edges) == 7
     assert all(node.status is PlanNodeStatus.COMPLETED for node in graph.nodes)
     assert tuple(branch.status for branch in graph.branches) == (
-        BranchStatus.SELECTED,
         BranchStatus.PRUNED,
+        BranchStatus.SELECTED,
     )
 
     graph_fields = {field.name for field in fields(graph)}
@@ -139,10 +139,15 @@ def test_public_service_completes_and_reloads_exploration_trace(tmp_path: Path) 
     branch_node_ids = {node_id for branch in graph.branches for node_id in branch.node_ids}
     evaluator_call = worker.calls[3]
     assert {artifact.plan_node_id for artifact in evaluator_call.artifact_inputs} == branch_node_ids
+    evaluator_context = evaluator_call.context
+    candidate_branches = evaluator_context["candidate_branches"]
+    assert isinstance(candidate_branches, list)
+    evaluator_prompt = build_codex_prompt(evaluator_call)
+    assert all(str(node_id) in evaluator_prompt for node_id in branch_node_ids)
     merge_call = worker.calls[-1]
     assert merge_call.plan_node_id == graph.nodes[-1].plan_node_id
 
-    selected_branch, pruned_branch = graph.branches
+    pruned_branch, selected_branch = graph.branches
     selected_node_ids = set(selected_branch.node_ids)
     pruned_node_ids = set(pruned_branch.node_ids)
     merge_input_node_ids = {artifact.plan_node_id for artifact in merge_call.artifact_inputs}
@@ -158,6 +163,8 @@ def test_public_service_completes_and_reloads_exploration_trace(tmp_path: Path) 
     assert branch_selection["explanation"]
     evidence_artifact_ids = branch_selection["evidence_artifact_ids"]
     assert isinstance(evidence_artifact_ids, list)
+    selected_artifact_ids = branch_selection["selected_artifact_ids"]
+    assert isinstance(selected_artifact_ids, list)
 
     selected_artifacts = merge_context["selected_artifacts"]
     assert isinstance(selected_artifacts, list)
@@ -174,7 +181,8 @@ def test_public_service_completes_and_reloads_exploration_trace(tmp_path: Path) 
     selected_artifact_ids = {
         artifact["artifact_id"] for artifact in selected_artifacts if isinstance(artifact, dict)
     }
-    assert set(evidence_artifact_ids).issubset(selected_artifact_ids)
+    assert set(branch_selection["selected_artifact_ids"]).issubset(selected_artifact_ids)
+    assert not set(evidence_artifact_ids).issubset(selected_artifact_ids)
     merge_prompt = build_codex_prompt(merge_call)
     assert all(str(node_id) in merge_prompt for node_id in selected_node_ids)
     assert all(str(node_id) not in merge_prompt for node_id in pruned_node_ids)
@@ -203,8 +211,8 @@ def test_public_service_completes_and_reloads_exploration_trace(tmp_path: Path) 
     assert all(not checkpoint.branch_selections for checkpoint in trace.checkpoints[:-1])
     final_selection = trace.checkpoints[-1].branch_selections
     assert len(final_selection) == 1
-    assert final_selection[0].fork_node_id == graph.branches[0].fork_node_id
-    assert final_selection[0].branch_id == graph.branches[0].branch_id
+    assert final_selection[0].fork_node_id == selected_branch.fork_node_id
+    assert final_selection[0].branch_id == selected_branch.branch_id
 
     event_types = tuple(stored.event.type for stored in trace.events)
     assert event_types.count(EventType.ATTEMPT_STARTED) == 5
@@ -225,17 +233,20 @@ def test_public_service_completes_and_reloads_exploration_trace(tmp_path: Path) 
     pruned_event = next(
         stored.event for stored in trace.events if stored.event.type is EventType.BRANCH_PRUNED
     )
-    assert selected_event.correlation_id == graph.branches[0].branch_id
-    assert pruned_event.correlation_id == graph.branches[1].branch_id
+    assert selected_event.correlation_id == selected_branch.branch_id
+    assert pruned_event.correlation_id == pruned_branch.branch_id
     selected_evidence_ids = selected_event.payload["evidence_artifact_ids"]
     assert isinstance(selected_evidence_ids, list)
-    selected_node_ids = set(graph.branches[0].node_ids)
+    compared_node_ids = set(selected_branch.node_ids + pruned_branch.node_ids)
     artifact_by_id = {artifact.artifact_id: artifact for artifact in trace.artifacts}
     assert selected_evidence_ids
     assert all(
-        artifact_by_id[artifact_id].plan_node_id in selected_node_ids
+        artifact_by_id[artifact_id].plan_node_id in compared_node_ids
         for artifact_id in selected_evidence_ids
     )
+    assert {
+        artifact_by_id[artifact_id].plan_node_id for artifact_id in selected_evidence_ids
+    } == compared_node_ids
 
     offsets = tuple(stored.offset for stored in trace.events)
     assert offsets == tuple(sorted(offsets))

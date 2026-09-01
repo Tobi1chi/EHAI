@@ -1,13 +1,15 @@
 from __future__ import annotations
 
+from base64 import b64encode
 from dataclasses import FrozenInstanceError
 from datetime import UTC, datetime
+from hashlib import sha256
 
 import pytest
 
 from ehai import JsonValue, json_dumps, json_loads, new_id
-from ehai.application.workers import WorkerRequest, WorkerResult
-from ehai.domain.artifacts import Artifact, ArtifactKind
+from ehai.application.workers import ArtifactInputSnapshot, WorkerRequest, WorkerResult
+from ehai.domain.artifacts import ArtifactKind
 from ehai.domain.execution import Attempt, Run
 from ehai.domain.goal import CompletionContract
 from ehai.domain.planning import PlanNode, PlanNodeKind
@@ -24,7 +26,7 @@ NOW = datetime(2026, 8, 31, 17, 0, tzinfo=UTC)
 
 def _request(
     *,
-    artifact_inputs: tuple[Artifact, ...] = (),
+    artifact_inputs: tuple[ArtifactInputSnapshot, ...] = (),
     context: dict[str, JsonValue] | None = None,
     node_kind: PlanNodeKind = PlanNodeKind.WORK,
 ) -> WorkerRequest:
@@ -66,16 +68,24 @@ def _request(
     )
 
 
-def _input_artifact() -> Artifact:
-    return Artifact(
-        artifact_id=new_id(),
+def _input_artifact(content: bytes = b"available input body") -> ArtifactInputSnapshot:
+    artifact_id = new_id()
+    try:
+        encoded_content = content.decode("utf-8")
+        encoding = "utf-8"
+    except UnicodeDecodeError:
+        encoded_content = b64encode(content).decode("ascii")
+        encoding = "base64"
+    return ArtifactInputSnapshot(
+        artifact_id=artifact_id,
         kind=ArtifactKind.EVIDENCE,
         name="input.txt",
         media_type="text/plain",
-        size_bytes=19,
-        sha256="a" * 64,
-        relative_path="objects/input.metadata-only",
-        created_at=NOW,
+        size_bytes=len(content),
+        sha256=sha256(content).hexdigest(),
+        plan_node_id=new_id(),
+        encoding=encoding,
+        content=encoded_content,
     )
 
 
@@ -96,7 +106,7 @@ def _valid_document(*, artifacts: list[dict[str, str]] | None = None) -> str:
     )
 
 
-def test_prompt_is_deterministic_separated_and_metadata_only(
+def test_prompt_is_deterministic_separated_and_contains_snapshotted_inputs(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("EHAI_TEST_SECRET", "must-not-leak")
@@ -111,13 +121,48 @@ def test_prompt_is_deterministic_separated_and_metadata_only(
     assert '--- CONTEXT_JSON ---\n{"a":"context","z":2}' in prompt
     assert "--- CONFIRMED_COMPLETION_CONTRACT_JSON ---" in prompt
     assert '"criteria":["artifact:non-empty"]' in prompt
-    assert "--- INPUT_ARTIFACT_METADATA_JSON ---" in prompt
+    assert "--- INPUT_ARTIFACTS_JSON ---" in prompt
     assert artifact.artifact_id in prompt
     assert artifact.sha256 in prompt
+    assert "available input body" in prompt
+    assert "relative_path" not in prompt
     assert "Return candidate artifacts only" in prompt
     assert "must not mark the PlanNode, Run, or Goal completed" in prompt
     assert "must-not-leak" not in prompt
     assert "unavailable Artifact body sentinel" not in prompt
+
+
+def test_evaluator_prompt_contains_branch_candidate_contents() -> None:
+    first = _input_artifact(b"branch A candidate")
+    second = _input_artifact(b"branch B candidate")
+    request = _request(
+        node_kind=PlanNodeKind.EVALUATOR,
+        artifact_inputs=(first, second),
+        context={
+            "candidate_branches": [
+                {
+                    "branch_id": new_id(),
+                    "label": "approach-a",
+                    "node_ids": [first.plan_node_id],
+                    "artifacts": [first.to_prompt_dict()],
+                },
+                {
+                    "branch_id": new_id(),
+                    "label": "approach-b",
+                    "node_ids": [second.plan_node_id],
+                    "artifacts": [second.to_prompt_dict()],
+                },
+            ]
+        },
+    )
+
+    prompt = build_codex_prompt(request)
+
+    assert "--- CANDIDATE_BRANCHES_JSON ---" in prompt
+    assert "branch A candidate" in prompt
+    assert "branch B candidate" in prompt
+    assert "selected_branch_id" in prompt
+    assert "compared_artifact_ids" in prompt
 
 
 def test_merge_prompt_explicitly_contains_selected_candidate_content_only() -> None:

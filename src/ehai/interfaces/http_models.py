@@ -2,13 +2,18 @@
 
 from __future__ import annotations
 
-from typing import Annotated
+from typing import Annotated, Literal
 
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, StringConstraints
 
 from ehai import JsonValue, normalize_id
 
 NonBlank = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
+P1CompletionCriterion = Literal[
+    "artifact:non-empty",
+    "command:exit-zero",
+    "semantic:required-terms",
+]
 UuidInput = Annotated[
     str,
     StringConstraints(
@@ -39,13 +44,13 @@ class CreateGoalRequest(_StrictRequest):
 class ProposePlanRequest(_StrictRequest):
     idempotency_key: NonBlank
     goal_id: UuidInput
-    criteria: list[NonBlank] = Field(min_length=1)
+    criteria: list[P1CompletionCriterion] = Field(min_length=1, max_length=1)
 
 
 class ReplanPlanRequest(_StrictRequest):
     idempotency_key: NonBlank
     base_plan_revision_id: UuidInput
-    criteria: list[NonBlank] = Field(min_length=1)
+    criteria: list[P1CompletionCriterion] = Field(min_length=1, max_length=1)
 
 
 class ApprovePlanRequest(_StrictRequest):

@@ -1,3 +1,4 @@
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -12,7 +13,7 @@ from ehai.application.commands import (
     ReplanPlan,
 )
 from ehai.application.orchestrator import OrchestrationError
-from ehai.application.planner import NON_EMPTY_ARTIFACT_CRITERION
+from ehai.application.planner import COMMAND_EXIT_ZERO_CRITERION, NON_EMPTY_ARTIFACT_CRITERION
 from ehai.application.service import ExecutionService
 from ehai.infrastructure.planners import CodexPlannerError
 from ehai.interfaces import cli
@@ -31,10 +32,17 @@ def test_cli_maps_orchestration_errors_to_json(
         worker_workspace: Path | None,
         planner_kind: str,
         planner_timeout_seconds: float,
+        command_check_argv: object,
+        semantic_required_terms: object,
+        worker_timeout_seconds: float,
+        codex_model: str | None,
+        codex_reasoning_effort: str | None,
     ) -> ExecutionService:
-        del worker_kind, worker_workspace
+        del worker_kind, worker_workspace, command_check_argv, semantic_required_terms
+        del codex_model, codex_reasoning_effort
         assert planner_kind == "single"
         assert planner_timeout_seconds == 120.0
+        assert worker_timeout_seconds == 300.0
         raise OrchestrationError("controlled orchestration failure")
 
     monkeypatch.setattr(cli, "build_service", fail_to_build)
@@ -136,6 +144,28 @@ def test_build_service_selects_exploration_planner(tmp_path: Path) -> None:
     assert len(replanned.branches) == 2
 
 
+def test_build_service_runs_trusted_command_check_inside_ehai(tmp_path: Path) -> None:
+    service = cli.build_service(
+        tmp_path / "command.sqlite3",
+        tmp_path / "command-artifacts",
+        command_check_argv=(
+            sys.executable,
+            "-c",
+            "import pathlib; assert list(pathlib.Path('.').glob('*.txt'))",
+        ),
+    )
+    project = service.create_project(CreateProject("project", "command"))
+    goal = service.create_goal(CreateGoal("goal", project.project_id, "command goal"))
+    plan = service.propose_plan(ProposePlan("plan", goal.goal_id, (COMMAND_EXIT_ZERO_CRITERION,)))
+    approved = service.approve_plan(
+        ApprovePlan("approve", plan.plan_revision_id, plan.completion_contract_id)
+    )
+
+    run = service.start_run(cli.StartRun("start", approved.plan_revision_id))
+
+    assert run.status.value == "completed"
+
+
 def test_parser_accepts_minimal_exploration_selection(tmp_path: Path) -> None:
     args = cli.create_parser().parse_args(
         [
@@ -177,6 +207,37 @@ def test_parser_accepts_codex_planner_with_independent_timeout(tmp_path: Path) -
 
     assert args.planner == "codex"
     assert args.planner_timeout_seconds == 17
+
+
+def test_parser_accepts_worker_runtime_configuration(tmp_path: Path) -> None:
+    args = cli.create_parser().parse_args(
+        [
+            "--database",
+            str(tmp_path / "state.sqlite3"),
+            "--artifacts",
+            str(tmp_path / "artifacts"),
+            "--worker",
+            "codex",
+            "--worker-timeout-seconds",
+            "42",
+            "--codex-model",
+            "gpt-5.5",
+            "--codex-reasoning-effort",
+            "high",
+            "--command-check-argv",
+            '["uv","run","pytest","-q"]',
+            "create-project",
+            "--idempotency-key",
+            "project",
+            "--name",
+            "project",
+        ]
+    )
+
+    assert args.worker_timeout_seconds == 42
+    assert args.codex_model == "gpt-5.5"
+    assert args.codex_reasoning_effort == "high"
+    assert cli._parse_command_argv(args.command_check_argv) == ("uv", "run", "pytest", "-q")
 
 
 def test_parser_accepts_replan_product_command(tmp_path: Path) -> None:

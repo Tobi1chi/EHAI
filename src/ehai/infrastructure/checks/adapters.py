@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import math
 import subprocess
+import tempfile
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
+from pathlib import Path, PurePath
 
 from ehai import ID, JsonValue, json_dumps, normalize_id
 from ehai.application.checks import (
@@ -26,8 +28,12 @@ class CommandCheckAdapter:
         self,
         commands: Mapping[ID, Sequence[str]],
         *,
+        store: ArtifactStore | None = None,
+        default_argv: Sequence[str] | None = None,
         timeout_seconds: float = 30.0,
         max_output_bytes: int = 64 * 1024,
+        max_artifact_bytes: int = 256 * 1024,
+        max_total_artifact_bytes: int = 1024 * 1024,
     ) -> None:
         if (
             isinstance(timeout_seconds, bool)
@@ -38,48 +44,67 @@ class CommandCheckAdapter:
             raise ValueError("timeout_seconds must be a positive finite number")
         if type(max_output_bytes) is not int or max_output_bytes < 1:
             raise ValueError("max_output_bytes must be a positive integer")
+        if type(max_artifact_bytes) is not int or max_artifact_bytes < 1:
+            raise ValueError("max_artifact_bytes must be a positive integer")
+        if type(max_total_artifact_bytes) is not int or max_total_artifact_bytes < 1:
+            raise ValueError("max_total_artifact_bytes must be a positive integer")
+        if store is not None and not isinstance(store, ArtifactStore):
+            raise TypeError("store must implement ArtifactStore")
         self._commands = _argv_mapping(commands)
+        self._default_argv = None if default_argv is None else _argv(default_argv)
+        if not self._commands and self._default_argv is None:
+            raise ValueError("CommandCheckAdapter requires configured argv")
+        self._store = store
         self._timeout_seconds = float(timeout_seconds)
         self._max_output_bytes = max_output_bytes
+        self._max_artifact_bytes = max_artifact_bytes
+        self._max_total_artifact_bytes = max_total_artifact_bytes
 
     def evaluate(self, spec: CheckSpec, context: CheckContext) -> CheckOutcome:
-        argv = self._commands.get(spec.check_id)
+        argv = self._commands.get(spec.check_id, self._default_argv)
         if argv is None:
             raise CheckAdapterError(f"Command Check {spec.check_id} has no configured argv")
-        try:
-            completed = subprocess.run(
-                argv,
-                cwd=context.workspace,
-                stdin=subprocess.DEVNULL,
-                capture_output=True,
-                check=False,
-                shell=False,
-                timeout=self._timeout_seconds,
+        with tempfile.TemporaryDirectory(prefix="ehai-check-") as check_dir:
+            check_path = Path(check_dir).resolve(strict=True)
+            materialized = (
+                self._materialize_artifacts(context, check_path) if self._store is not None else ()
             )
-        except subprocess.TimeoutExpired as error:
+            try:
+                completed = subprocess.run(
+                    argv,
+                    cwd=check_path if self._store is not None else context.workspace,
+                    stdin=subprocess.DEVNULL,
+                    capture_output=True,
+                    check=False,
+                    shell=False,
+                    timeout=self._timeout_seconds,
+                )
+            except subprocess.TimeoutExpired as error:
+                output = self._command_output(
+                    argv,
+                    exit_code=None,
+                    stdout=error.stdout,
+                    stderr=error.stderr,
+                    timed_out=True,
+                    materialized=materialized,
+                )
+                raise CheckAdapterTimeout(
+                    f"Command Check {spec.check_id} timed out after {self._timeout_seconds:g}s; "
+                    f"output={output}"
+                ) from error
+            except OSError as error:
+                raise CheckAdapterError(
+                    f"Command Check {spec.check_id} could not start: {error}"
+                ) from error
+
             output = self._command_output(
                 argv,
-                exit_code=None,
-                stdout=error.stdout,
-                stderr=error.stderr,
-                timed_out=True,
+                exit_code=completed.returncode,
+                stdout=completed.stdout,
+                stderr=completed.stderr,
+                timed_out=False,
+                materialized=materialized,
             )
-            raise CheckAdapterTimeout(
-                f"Command Check {spec.check_id} timed out after {self._timeout_seconds:g}s; "
-                f"output={output}"
-            ) from error
-        except OSError as error:
-            raise CheckAdapterError(
-                f"Command Check {spec.check_id} could not start: {error}"
-            ) from error
-
-        output = self._command_output(
-            argv,
-            exit_code=completed.returncode,
-            stdout=completed.stdout,
-            stderr=completed.stderr,
-            timed_out=False,
-        )
         evidence = tuple(artifact.artifact_id for artifact in context.artifacts)
         if completed.returncode != 0:
             return CheckOutcome(
@@ -105,6 +130,7 @@ class CommandCheckAdapter:
         stdout: bytes | str | None,
         stderr: bytes | str | None,
         timed_out: bool,
+        materialized: tuple[dict[str, JsonValue], ...],
     ) -> str:
         stdout_text, stdout_truncated = _truncate_output(stdout, self._max_output_bytes)
         stderr_text, stderr_truncated = _truncate_output(stderr, self._max_output_bytes)
@@ -117,8 +143,50 @@ class CommandCheckAdapter:
                 "stdout_truncated": stdout_truncated,
                 "stderr_truncated": stderr_truncated,
                 "timed_out": timed_out,
+                "materialized_artifacts": list(materialized),
             }
         )
+
+    def _materialize_artifacts(
+        self,
+        context: CheckContext,
+        check_path: Path,
+    ) -> tuple[dict[str, JsonValue], ...]:
+        assert self._store is not None
+        total_bytes = 0
+        used_names: set[str] = set()
+        materialized: list[dict[str, JsonValue]] = []
+        for artifact in context.artifacts:
+            name = _safe_materialized_name(artifact.name)
+            if name in used_names:
+                raise CheckAdapterError(f"duplicate materialized Artifact filename: {name}")
+            stored, content, problem = _load_artifact(self._store, artifact)
+            if problem is not None:
+                raise CheckAdapterError(problem)
+            assert stored is not None and content is not None
+            if len(content) > self._max_artifact_bytes:
+                raise CheckAdapterError(
+                    f"Artifact {artifact.artifact_id} exceeds Check input limit"
+                )
+            total_bytes += len(content)
+            if total_bytes > self._max_total_artifact_bytes:
+                raise CheckAdapterError("Command Check Artifact inputs exceed total limit")
+            target = (check_path / name).resolve(strict=False)
+            if not target.is_relative_to(check_path):
+                raise CheckAdapterError(
+                    f"Artifact {artifact.artifact_id} filename escapes check dir"
+                )
+            target.write_bytes(content)
+            used_names.add(name)
+            materialized.append(
+                {
+                    "artifact_id": artifact.artifact_id,
+                    "name": name,
+                    "size_bytes": len(content),
+                    "sha256": stored.sha256,
+                }
+            )
+        return tuple(materialized)
 
 
 @dataclass(frozen=True, slots=True)
@@ -285,20 +353,25 @@ class SemanticCheckAdapter:
         store: ArtifactStore,
         rubrics: Mapping[ID, SemanticRubric],
         *,
+        default_rubric: SemanticRubric | None = None,
         evaluator: SemanticEvaluator | None = None,
     ) -> None:
         if not isinstance(store, ArtifactStore):
             raise TypeError("store must implement ArtifactStore")
+        if default_rubric is not None and not isinstance(default_rubric, SemanticRubric):
+            raise TypeError("default_rubric must be a SemanticRubric")
         self._store = store
         self._rubrics = _rule_mapping(rubrics, SemanticRubric, "Semantic rubric")
-        if evaluator is None and any(
-            not rubric.required_terms for rubric in self._rubrics.values()
-        ):
+        self._default_rubric = default_rubric
+        configured_rubrics = tuple(self._rubrics.values()) + (
+            () if self._default_rubric is None else (self._default_rubric,)
+        )
+        if evaluator is None and any(not rubric.required_terms for rubric in configured_rubrics):
             raise ValueError("default Semantic evaluator requires at least one required term")
         self._evaluator = _required_terms_evaluator if evaluator is None else evaluator
 
     def evaluate(self, spec: CheckSpec, context: CheckContext) -> CheckOutcome:
-        rubric = self._rubrics.get(spec.check_id)
+        rubric = self._rubrics.get(spec.check_id, self._default_rubric)
         if rubric is None:
             raise CheckAdapterError(f"Semantic Check {spec.check_id} has no configured rubric")
 
@@ -401,15 +474,30 @@ def _argv_mapping(commands: Mapping[ID, Sequence[str]]) -> dict[ID, tuple[str, .
         normalized_id = normalize_id(check_id)
         if normalized_id in normalized:
             raise ValueError("commands contains duplicate normalized Check IDs")
-        if isinstance(argv_source, str):
-            raise ValueError("command argv must be a sequence of arguments, not shell text")
-        argv = tuple(argv_source)
-        if not argv or any(
-            not isinstance(argument, str) or not argument or "\x00" in argument for argument in argv
-        ):
-            raise ValueError("command argv must contain non-empty string arguments")
-        normalized[normalized_id] = argv
+        normalized[normalized_id] = _argv(argv_source)
     return normalized
+
+
+def _argv(argv_source: Sequence[str]) -> tuple[str, ...]:
+    if isinstance(argv_source, str):
+        raise ValueError("command argv must be a sequence of arguments, not shell text")
+    argv = tuple(argv_source)
+    if not argv or any(
+        not isinstance(argument, str) or not argument or "\x00" in argument for argument in argv
+    ):
+        raise ValueError("command argv must contain non-empty string arguments")
+    return argv
+
+
+def _safe_materialized_name(name: str) -> str:
+    if not isinstance(name, str) or not name.strip() or "\x00" in name:
+        raise CheckAdapterError("Artifact filename must not be blank or contain NUL")
+    path = PurePath(name)
+    if path.is_absolute() or path.name != name or name in {".", ".."}:
+        raise CheckAdapterError(f"Artifact filename is unsafe: {name!r}")
+    if any(separator in name for separator in ("/", "\\")):
+        raise CheckAdapterError(f"Artifact filename is unsafe: {name!r}")
+    return name
 
 
 def _rule_mapping[RuleT](

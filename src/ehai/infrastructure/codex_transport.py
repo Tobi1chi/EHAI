@@ -17,6 +17,9 @@ from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
 _SANDBOX_MODES = frozenset({"read-only", "workspace-write", "danger-full-access"})
+_REASONING_EFFORTS = frozenset(
+    {"none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"}
+)
 _TRUNCATION_MARKER = b"\n...[truncated]...\n"
 _STREAM_CHUNK_BYTES = 8192
 _MAX_JSONL_LINE_BYTES = 65_536
@@ -209,6 +212,8 @@ class CodexProcessTransport:
         cancel_grace_seconds: float = 2.0,
         max_output_bytes: int = 1_048_576,
         env_overrides: Mapping[str, str] | None = None,
+        model: str | None = None,
+        reasoning_effort: str | None = None,
     ) -> None:
         self._workspace = _validated_workspace(workspace)
         self._command_prefix = _validated_command_prefix(executable)
@@ -223,6 +228,8 @@ class CodexProcessTransport:
         self._sandbox = sandbox
         self._max_output_bytes = max_output_bytes
         self._environment, self._secret_values = _codex_environment(env_overrides)
+        self._model = _optional_cli_value(model, "model")
+        self._reasoning_effort = _optional_reasoning_effort(reasoning_effort)
 
     async def _execute_async(
         self,
@@ -475,8 +482,17 @@ class CodexProcessTransport:
                 return process.returncode, "Codex process did not exit after bounded cleanup"
 
     def _command(self, schema_path: Path, last_message_path: Path) -> tuple[str, ...]:
+        model_options: tuple[str, ...] = ()
+        if self._model is not None:
+            model_options += ("--model", self._model)
+        if self._reasoning_effort is not None:
+            model_options += (
+                "--config",
+                f'model_reasoning_effort="{self._reasoning_effort}"',
+            )
         return (
             *self._command_prefix,
+            *model_options,
             "--ask-for-approval",
             "never",
             "exec",
@@ -587,6 +603,29 @@ def _positive_finite(value: float, field_name: str) -> float:
     ):
         raise ValueError(f"{field_name} must be positive and finite")
     return float(value)
+
+
+def _optional_cli_value(value: str | None, field_name: str) -> str | None:
+    if value is None:
+        return None
+    if (
+        not isinstance(value, str)
+        or not value.strip()
+        or any(character in value for character in "\r\n\x00")
+    ):
+        raise ValueError(f"Codex {field_name} override must be non-blank CLI-safe text")
+    return value.strip()
+
+
+def _optional_reasoning_effort(value: str | None) -> str | None:
+    if value is None:
+        return None
+    normalized = _optional_cli_value(value, "reasoning_effort")
+    assert normalized is not None
+    if normalized not in _REASONING_EFFORTS:
+        allowed = ", ".join(sorted(_REASONING_EFFORTS))
+        raise ValueError(f"unsupported Codex reasoning effort {normalized!r}; allowed: {allowed}")
+    return normalized
 
 
 def _codex_environment(

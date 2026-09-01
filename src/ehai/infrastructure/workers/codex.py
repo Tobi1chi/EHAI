@@ -49,6 +49,8 @@ class CodexWorkerAdapter(CodexProcessTransport):
         cancel_grace_seconds: float = 2.0,
         max_output_bytes: int = 1_048_576,
         env_overrides: Mapping[str, str] | None = None,
+        model: str | None = None,
+        reasoning_effort: str | None = None,
     ) -> None:
         super().__init__(
             workspace=workspace,
@@ -58,6 +60,8 @@ class CodexWorkerAdapter(CodexProcessTransport):
             cancel_grace_seconds=cancel_grace_seconds,
             max_output_bytes=max_output_bytes,
             env_overrides=env_overrides,
+            model=model,
+            reasoning_effort=reasoning_effort,
         )
         self._active: dict[ID, CodexCancellation] = {}
         self._pending_cancellations: set[ID] = set()

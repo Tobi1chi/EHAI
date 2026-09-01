@@ -23,6 +23,15 @@ from ehai.domain.planning import (
 )
 
 NON_EMPTY_ARTIFACT_CRITERION = "artifact:non-empty"
+COMMAND_EXIT_ZERO_CRITERION = "command:exit-zero"
+SEMANTIC_REQUIRED_TERMS_CRITERION = "semantic:required-terms"
+P1_COMPLETION_CRITERIA = frozenset(
+    {
+        NON_EMPTY_ARTIFACT_CRITERION,
+        COMMAND_EXIT_ZERO_CRITERION,
+        SEMANTIC_REQUIRED_TERMS_CRITERION,
+    }
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -174,10 +183,10 @@ class DeterministicPlanner:
         normalized_criteria = tuple(criterion.strip() for criterion in criteria)
         if not normalized_criteria or any(not criterion for criterion in normalized_criteria):
             raise ValueError(f"Goal {goal.goal_id} requires non-empty completion criteria")
-        if normalized_criteria != (NON_EMPTY_ARTIFACT_CRITERION,):
+        if len(normalized_criteria) != 1 or normalized_criteria[0] not in P1_COMPLETION_CRITERIA:
             raise ValueError(
                 "DeterministicPlanner supports exactly one P1 completion criterion: "
-                f"{NON_EMPTY_ARTIFACT_CRITERION}"
+                + ", ".join(sorted(P1_COMPLETION_CRITERIA))
             )
         return self._build_proposal(goal, normalized_criteria)
 
@@ -190,10 +199,10 @@ class DeterministicPlanner:
         """Create a single-node replacement through the explicit GraphPatch boundary."""
         current_contract = require_replan_context(goal, base)
         normalized_criteria = tuple(criterion.strip() for criterion in criteria)
-        if normalized_criteria != (NON_EMPTY_ARTIFACT_CRITERION,):
+        if len(normalized_criteria) != 1 or normalized_criteria[0] not in P1_COMPLETION_CRITERIA:
             raise ValueError(
                 "DeterministicPlanner supports exactly one P1 completion criterion: "
-                f"{NON_EMPTY_ARTIFACT_CRITERION}"
+                + ", ".join(sorted(P1_COMPLETION_CRITERIA))
             )
         template = self._build_proposal(goal, normalized_criteria)
         return _replan_from_template(base, current_contract, template)
@@ -204,10 +213,11 @@ class DeterministicPlanner:
         normalized_criteria: tuple[str, ...],
     ) -> PlanProposal:
         proposed_at = self.clock()
+        criterion = normalized_criteria[0]
         check_spec = CheckSpec(
-            name="completion-artifact",
-            kind=CheckKind.ARTIFACT,
-            description=NON_EMPTY_ARTIFACT_CRITERION,
+            name=_check_name(criterion),
+            kind=_check_kind(criterion),
+            description=criterion,
             required=True,
             check_id=self.id_factory(),
         )
@@ -256,10 +266,10 @@ class DeterministicExplorationPlanner:
             raise ValueError(f"Goal {goal.goal_id} must be open before planning")
         if goal.completion_contract is not None:
             raise ValueError(f"Goal {goal.goal_id} already has a CompletionContract")
-        if request.criteria != (NON_EMPTY_ARTIFACT_CRITERION,):
+        if len(request.criteria) != 1 or request.criteria[0] not in P1_COMPLETION_CRITERIA:
             raise ValueError(
-                "DeterministicExplorationPlanner supports exactly one P1 completion "
-                f"criterion: {NON_EMPTY_ARTIFACT_CRITERION}"
+                "DeterministicExplorationPlanner supports exactly one P1 completion criterion: "
+                + ", ".join(sorted(P1_COMPLETION_CRITERIA))
             )
         return self._build_proposal(request)
 
@@ -270,10 +280,10 @@ class DeterministicExplorationPlanner:
     ) -> PlanProposal:
         """Create an exploration replacement through the explicit GraphPatch boundary."""
         current_contract = require_replan_context(request.goal, base)
-        if request.criteria != (NON_EMPTY_ARTIFACT_CRITERION,):
+        if len(request.criteria) != 1 or request.criteria[0] not in P1_COMPLETION_CRITERIA:
             raise ValueError(
-                "DeterministicExplorationPlanner supports exactly one P1 completion "
-                f"criterion: {NON_EMPTY_ARTIFACT_CRITERION}"
+                "DeterministicExplorationPlanner supports exactly one P1 completion criterion: "
+                + ", ".join(sorted(P1_COMPLETION_CRITERIA))
             )
         template = self._build_proposal(request)
         return _replan_from_template(base, current_contract, template)
@@ -283,10 +293,11 @@ class DeterministicExplorationPlanner:
         usage = ExplorationUsage(width=2, depth=1, attempts=5)
         usage.require_within(request.budget)
         proposed_at = self.clock()
+        criterion = request.criteria[0]
         check_spec = CheckSpec(
-            name="completion-artifact",
-            kind=CheckKind.ARTIFACT,
-            description=NON_EMPTY_ARTIFACT_CRITERION,
+            name=_check_name(criterion),
+            kind=_check_kind(criterion),
+            description=criterion,
             required=True,
             check_id=self.id_factory(),
         )
@@ -498,6 +509,24 @@ def _planner_messages(values: tuple[str, ...], field_name: str) -> tuple[str, ..
     if any(not isinstance(value, str) or not value.strip() for value in snapshot):
         raise ValueError(f"PlanProposal {field_name} must contain non-blank strings")
     return snapshot
+
+
+def _check_kind(criterion: str) -> CheckKind:
+    if criterion == NON_EMPTY_ARTIFACT_CRITERION:
+        return CheckKind.ARTIFACT
+    if criterion == COMMAND_EXIT_ZERO_CRITERION:
+        return CheckKind.COMMAND
+    if criterion == SEMANTIC_REQUIRED_TERMS_CRITERION:
+        return CheckKind.SEMANTIC
+    raise ValueError(f"unsupported P1 completion criterion: {criterion}")
+
+
+def _check_name(criterion: str) -> str:
+    return {
+        NON_EMPTY_ARTIFACT_CRITERION: "completion-artifact",
+        COMMAND_EXIT_ZERO_CRITERION: "completion-command",
+        SEMANTIC_REQUIRED_TERMS_CRITERION: "completion-semantic",
+    }[criterion]
 
 
 def require_replan_context(goal: Goal, base: PlanRevision) -> CompletionContract:

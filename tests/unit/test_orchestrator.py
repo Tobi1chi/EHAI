@@ -7,7 +7,11 @@ import pytest
 
 from ehai import ID, new_id
 from ehai.application.checks import CheckRunner
-from ehai.application.evaluation import BranchEvaluationContext, BranchSelection
+from ehai.application.evaluation import (
+    BranchEvaluationContext,
+    BranchSelection,
+    DeterministicBranchEvaluator,
+)
 from ehai.application.orchestrator import (
     ArtifactPersistenceError,
     AttemptBudgetExceededError,
@@ -53,6 +57,7 @@ from ehai.infrastructure.checks import (
 )
 from ehai.infrastructure.sqlite import SQLiteDatabase
 from ehai.infrastructure.workers import FakeWorker
+from ehai.infrastructure.workers.codex_protocol import build_codex_prompt
 
 NOW = datetime(2026, 8, 31, 14, 0, tzinfo=UTC)
 
@@ -93,6 +98,107 @@ class _ErrorWorker:
         del attempt_id
 
 
+class _DependencyInspectingWorker:
+    def __init__(self) -> None:
+        self.calls: list[WorkerRequest] = []
+
+    def execute(self, request: WorkerRequest) -> WorkerResult:
+        self.calls.append(request)
+        if request.plan_node.title == "consume upstream":
+            assert len(request.artifact_inputs) == 1
+            assert request.artifact_inputs[0].content == "upstream-token"
+            content = b"downstream saw upstream-token"
+        else:
+            content = b"upstream-token"
+        return WorkerResult(
+            artifacts=(
+                CandidateArtifact(
+                    ArtifactKind.CANDIDATE,
+                    f"{request.plan_node.title}.txt",
+                    "text/plain",
+                    content,
+                ),
+            ),
+            summary="inspected dependency input",
+        )
+
+    def cancel(self, attempt_id: ID) -> None:
+        del attempt_id
+
+
+class _SelectiveEvaluatorWorker:
+    def __init__(self, selected_node_id: ID) -> None:
+        self._selected_node_id = selected_node_id
+        self._fallback = FakeWorker()
+        self.calls: list[WorkerRequest] = []
+
+    def execute(self, request: WorkerRequest) -> WorkerResult:
+        self.calls.append(request)
+        if request.plan_node_id == self._selected_node_id:
+            return WorkerResult(
+                artifacts=(
+                    CandidateArtifact(
+                        ArtifactKind.CANDIDATE,
+                        "chosen.txt",
+                        "text/plain",
+                        b"SELECTED_ARTIFACT_TOKEN",
+                    ),
+                    CandidateArtifact(
+                        ArtifactKind.PATCH,
+                        "not-chosen.diff",
+                        "text/x-diff",
+                        b"UNSELECTED_SAME_BRANCH_TOKEN",
+                    ),
+                ),
+                summary="returned two selectable outputs",
+            )
+        if request.plan_node.kind is PlanNodeKind.EVALUATOR:
+            branches = request.context["candidate_branches"]
+            assert isinstance(branches, list)
+            selected_branch = next(
+                branch
+                for branch in branches
+                if isinstance(branch, dict) and self._selected_node_id in branch.get("node_ids", [])
+            )
+            selected_branch_id = selected_branch["branch_id"]
+            selected_input = next(
+                artifact
+                for artifact in request.artifact_inputs
+                if artifact.plan_node_id == self._selected_node_id and artifact.name == "chosen.txt"
+            )
+            compared_ids = [artifact.artifact_id for artifact in request.artifact_inputs]
+            pruned_ids = [
+                branch["branch_id"]
+                for branch in branches
+                if isinstance(branch, dict) and branch["branch_id"] != selected_branch_id
+            ]
+            content = json.dumps(
+                {
+                    "selected_branch_id": selected_branch_id,
+                    "pruned_branch_ids": pruned_ids,
+                    "criterion": "select one explicit output",
+                    "explanation": "selected only chosen.txt from the viable branch",
+                    "compared_artifact_ids": compared_ids,
+                    "selected_artifact_ids": [selected_input.artifact_id],
+                }
+            ).encode()
+            return WorkerResult(
+                artifacts=(
+                    CandidateArtifact(
+                        ArtifactKind.CANDIDATE,
+                        "selection.json",
+                        "application/json",
+                        content,
+                    ),
+                ),
+                summary="selected one branch output",
+            )
+        return self._fallback.execute(request)
+
+    def cancel(self, attempt_id: ID) -> None:
+        self._fallback.cancel(attempt_id)
+
+
 class _MissingEvidenceEvaluator:
     def evaluate(self, context: BranchEvaluationContext) -> BranchSelection:
         selected, *pruned = context.plan.branches
@@ -102,6 +208,37 @@ class _MissingEvidenceEvaluator:
             "controlled criterion",
             (new_id(),),
             "controlled invalid evidence",
+        )
+
+
+class _MissingFailedSiblingEvidenceEvaluator:
+    def evaluate(self, context: BranchEvaluationContext) -> BranchSelection:
+        node_by_id = {node.plan_node_id: node for node in context.plan.nodes}
+        selected = next(
+            branch
+            for branch in context.plan.branches
+            if all(
+                node_by_id[node_id].status is PlanNodeStatus.COMPLETED
+                for node_id in branch.node_ids
+            )
+        )
+        selected_artifact_ids = tuple(
+            artifact.artifact_id
+            for artifact in context.artifacts
+            if artifact.plan_node_id in selected.node_ids
+            and artifact.kind in {ArtifactKind.CANDIDATE, ArtifactKind.PATCH}
+        )
+        return BranchSelection(
+            selected_branch_id=selected.branch_id,
+            pruned_branch_ids=tuple(
+                branch.branch_id
+                for branch in context.plan.branches
+                if branch.branch_id != selected.branch_id
+            ),
+            criterion="incomplete injected evidence",
+            evidence_artifact_ids=selected_artifact_ids,
+            explanation="omitted the failed sibling candidate",
+            selected_artifact_ids=selected_artifact_ids,
         )
 
 
@@ -211,13 +348,14 @@ def _seed_exploration(
     database: SQLiteDatabase,
     *,
     depth_two: bool = False,
+    check_kind: CheckKind = CheckKind.ARTIFACT,
 ) -> tuple[Goal, PlanRevision, Run, dict[str, PlanNode], tuple[Branch, Branch]]:
     project = Project.create("I6", project_id=new_id(), created_at=NOW)
     goal = Goal.create(project.project_id, "explore two routes", goal_id=new_id(), created_at=NOW)
     check_id = new_id()
     check_spec = CheckSpec(
         "candidate",
-        CheckKind.ARTIFACT,
+        check_kind,
         "candidate exists",
         check_id=check_id,
     )
@@ -657,6 +795,61 @@ def test_worker_output_and_logs_are_persisted_but_excluded_from_gate_evidence(tm
     assert len(artifacts) == 3
 
 
+def test_plain_dependency_worker_receives_upstream_artifact_content(tmp_path) -> None:
+    database = SQLiteDatabase(tmp_path / "dependency-input.sqlite3")
+    artifact_store = FilesystemArtifactStore(tmp_path / "artifacts")
+    project = Project.create("dependencies", project_id=new_id(), created_at=NOW)
+    goal = Goal.create(project.project_id, "dependency content", goal_id=new_id(), created_at=NOW)
+    check_id = new_id()
+    check_spec = CheckSpec("candidate", CheckKind.ARTIFACT, "candidate exists", check_id=check_id)
+    contract = CompletionContract.draft(
+        goal.goal_id,
+        ("candidate exists",),
+        (check_id,),
+        completion_contract_id=new_id(),
+        created_at=NOW,
+    ).confirm(confirmed_at=NOW)
+    goal = goal.use_completion_contract(contract)
+    upstream = PlanNode(new_id(), "produce upstream", "produce", required_check_ids=(check_id,))
+    downstream = PlanNode(
+        new_id(),
+        "consume upstream",
+        "consume",
+        required_dependency_ids=(upstream.plan_node_id,),
+        required_check_ids=(check_id,),
+    )
+    plan = _approved_plan(
+        goal,
+        contract,
+        (upstream, downstream),
+        (Edge(new_id(), upstream.plan_node_id, downstream.plan_node_id, EdgeType.DEPENDENCY),),
+    )
+    run = Run(goal.goal_id, plan.plan_revision_id, run_id=new_id(), created_at=NOW)
+    with database.unit_of_work() as uow:
+        uow.states.put_project(project)
+        uow.states.put_goal(goal)
+        uow.states.put_completion_contract(contract)
+        uow.states.put_plan_revision(plan)
+        uow.states.put_check_spec(plan.plan_revision_id, check_spec)
+        uow.states.put_run(run)
+        uow.commit()
+    worker = _DependencyInspectingWorker()
+    orchestrator = Orchestrator(
+        uow_factory=database.unit_of_work,
+        worker=worker,
+        artifact_store=artifact_store,
+        check_runner=_check_runner(artifact_store),
+        workspace=tmp_path,
+        clock=lambda: NOW,
+    )
+
+    completed = orchestrator.execute(run.run_id)
+
+    assert completed.status is RunStatus.COMPLETED
+    assert len(worker.calls) == 2
+    assert worker.calls[1].artifact_inputs[0].content == "upstream-token"
+
+
 def test_worker_cancel_without_run_control_fails_closed_without_failed_state(tmp_path) -> None:
     database = SQLiteDatabase(tmp_path / "unsettled-cancel.sqlite3")
     artifact_store = FilesystemArtifactStore(tmp_path / "artifacts")
@@ -960,6 +1153,178 @@ def test_merge_snapshots_non_utf8_selected_candidate_as_base64(tmp_path) -> None
     assert binary_snapshot["content"] == b64encode(selected_content).decode("ascii")
 
 
+def test_merge_worker_and_prompt_only_receive_explicitly_selected_artifact(tmp_path) -> None:
+    database = SQLiteDatabase(tmp_path / "selected-artifact-only.sqlite3")
+    _, _, run, nodes, _ = _seed_exploration(database)
+    worker = _SelectiveEvaluatorWorker(nodes["right"].plan_node_id)
+    artifact_store = FilesystemArtifactStore(tmp_path / "selected-artifact-only-artifacts")
+    orchestrator = Orchestrator(
+        uow_factory=database.unit_of_work,
+        worker=worker,
+        artifact_store=artifact_store,
+        check_runner=_check_runner(artifact_store),
+        workspace=tmp_path,
+        clock=lambda: NOW,
+    )
+
+    completed = orchestrator.execute(run.run_id)
+
+    merge_request = worker.calls[-1]
+    assert completed.status is RunStatus.COMPLETED
+    assert merge_request.plan_node.kind is PlanNodeKind.MERGE
+    assert len(merge_request.artifact_inputs) == 1
+    assert merge_request.artifact_inputs[0].name == "chosen.txt"
+    assert merge_request.artifact_inputs[0].content == "SELECTED_ARTIFACT_TOKEN"
+    prompt = build_codex_prompt(merge_request)
+    assert "SELECTED_ARTIFACT_TOKEN" in prompt
+    assert "UNSELECTED_SAME_BRANCH_TOKEN" not in prompt
+
+
+def test_evaluator_artifact_input_budget_excess_fails_before_merge(tmp_path) -> None:
+    database = SQLiteDatabase(tmp_path / "oversized-input.sqlite3")
+    _, _, run, nodes, _ = _seed_exploration(database)
+    oversized = b"x" * (256 * 1024 + 1)
+    worker = FakeWorker(
+        results_by_node={
+            nodes["left"].plan_node_id: WorkerResult(
+                artifacts=(
+                    CandidateArtifact(
+                        ArtifactKind.CANDIDATE,
+                        "left.txt",
+                        "text/plain",
+                        oversized,
+                    ),
+                ),
+                summary="oversized left candidate",
+            )
+        }
+    )
+    artifact_store = FilesystemArtifactStore(tmp_path / "oversized-artifacts")
+    orchestrator = Orchestrator(
+        uow_factory=database.unit_of_work,
+        worker=worker,
+        artifact_store=artifact_store,
+        check_runner=_check_runner(artifact_store),
+        workspace=tmp_path,
+        clock=lambda: NOW,
+    )
+
+    with pytest.raises(WorkerFailedError, match="ArtifactInputBudgetExceeded"):
+        orchestrator.execute(run.run_id)
+
+    with database.unit_of_work() as uow:
+        failed_run = uow.states.get_run(run.run_id)
+        attempts = uow.states.list_attempts(run.run_id)
+    assert failed_run is not None and failed_run.status is RunStatus.FAILED
+    assert nodes["merge"].plan_node_id not in {attempt.plan_node_id for attempt in attempts}
+
+
+def test_evaluator_total_artifact_input_budget_excess_fails_closed(tmp_path) -> None:
+    database = SQLiteDatabase(tmp_path / "oversized-total-input.sqlite3")
+    _, _, run, nodes, _ = _seed_exploration(database)
+    artifact_size = 192 * 1024
+
+    def branch_result(prefix: str) -> WorkerResult:
+        return WorkerResult(
+            artifacts=tuple(
+                CandidateArtifact(
+                    ArtifactKind.CANDIDATE,
+                    f"{prefix}-{index}.txt",
+                    "text/plain",
+                    bytes([65 + index]) * artifact_size,
+                )
+                for index in range(3)
+            ),
+            summary=f"three bounded {prefix} candidates",
+        )
+
+    worker = FakeWorker(
+        results_by_node={
+            nodes["left"].plan_node_id: branch_result("left"),
+            nodes["right"].plan_node_id: branch_result("right"),
+        }
+    )
+    artifact_store = FilesystemArtifactStore(tmp_path / "oversized-total-artifacts")
+    orchestrator = Orchestrator(
+        uow_factory=database.unit_of_work,
+        worker=worker,
+        artifact_store=artifact_store,
+        check_runner=_check_runner(artifact_store),
+        workspace=tmp_path,
+        clock=lambda: NOW,
+    )
+
+    with pytest.raises(WorkerFailedError, match="total limit"):
+        orchestrator.execute(run.run_id)
+
+    with database.unit_of_work() as uow:
+        failed_run = uow.states.get_run(run.run_id)
+        attempts = uow.states.list_attempts(run.run_id)
+    assert failed_run is not None and failed_run.status is RunStatus.FAILED
+    assert nodes["evaluator"].plan_node_id in {attempt.plan_node_id for attempt in attempts}
+    assert nodes["merge"].plan_node_id not in {attempt.plan_node_id for attempt in attempts}
+
+
+def test_candidate_from_gate_failed_branch_is_compared_then_pruned(tmp_path) -> None:
+    database = SQLiteDatabase(tmp_path / "failed-gate-candidate.sqlite3")
+    _, plan, run, nodes, _ = _seed_exploration(database, check_kind=CheckKind.COMMAND)
+    artifact_store = FilesystemArtifactStore(tmp_path / "failed-gate-candidate-artifacts")
+    left_node_id = nodes["left"].plan_node_id
+    check_code = (
+        "import pathlib,sys;"
+        "data=b''.join(path.read_bytes() for path in pathlib.Path('.').iterdir() "
+        "if path.is_file());"
+        f"sys.exit(7 if {left_node_id!r}.encode() in data else 0)"
+    )
+    check_runner = CheckRunner(
+        {
+            CheckKind.COMMAND: CommandCheckAdapter(
+                {},
+                store=artifact_store,
+                default_argv=(sys.executable, "-c", check_code),
+            )
+        },
+        clock=lambda: NOW,
+    )
+    worker = FakeWorker()
+    orchestrator = Orchestrator(
+        uow_factory=database.unit_of_work,
+        worker=worker,
+        artifact_store=artifact_store,
+        check_runner=check_runner,
+        workspace=tmp_path,
+        clock=lambda: NOW,
+    )
+
+    completed = orchestrator.execute(run.run_id)
+
+    with database.unit_of_work() as uow:
+        stored_plan = uow.states.get_plan_revision(plan.plan_revision_id)
+        check_runs = uow.states.list_check_runs(run.run_id)
+        checkpoints = uow.states.list_checkpoints(run.run_id)
+        events = tuple(item.event for item in uow.events.list_events())
+    assert completed.status is RunStatus.COMPLETED
+    assert stored_plan is not None
+    assert stored_plan.nodes[1].status is PlanNodeStatus.FAILED
+    assert stored_plan.nodes[2].status is PlanNodeStatus.COMPLETED
+    assert tuple(branch.status for branch in stored_plan.branches) == (
+        BranchStatus.PRUNED,
+        BranchStatus.SELECTED,
+    )
+    left_check = next(check for check in check_runs if check.plan_node_id == left_node_id)
+    assert left_check.result is not None and not left_check.result.passed
+    assert len(checkpoints) == 4
+    evaluator_request = next(
+        call for call in worker.calls if call.plan_node_id == nodes["evaluator"].plan_node_id
+    )
+    assert {artifact.plan_node_id for artifact in evaluator_request.artifact_inputs} == {
+        nodes["left"].plan_node_id,
+        nodes["right"].plan_node_id,
+    }
+    assert EventType.BRANCH_SELECTED in {event.type for event in events}
+    assert EventType.RUN_COMPLETED in {event.type for event in events}
+
+
 @pytest.mark.parametrize("failure_kind", ["worker", "check"])
 def test_one_failed_branch_is_pruned_and_other_branch_completes(
     tmp_path,
@@ -1078,7 +1443,7 @@ def test_all_failed_branches_fail_after_evaluator_cannot_select(tmp_path) -> Non
         clock=lambda: NOW,
     )
 
-    with pytest.raises(BranchEvaluationError, match="no active Branch"):
+    with pytest.raises(WorkerFailedError, match="no viable Branch candidate"):
         orchestrator.execute(run.run_id)
 
     with database.unit_of_work() as uow:
@@ -1095,7 +1460,7 @@ def test_all_failed_branches_fail_after_evaluator_cannot_select(tmp_path) -> Non
     )
     assert worker.calls[-1].plan_node_id == nodes["evaluator"].plan_node_id
     assert worker.calls[-1].artifact_inputs == ()
-    assert len(checkpoints) == 2
+    assert len(checkpoints) == 1
     assert EventType.BRANCH_SELECTED not in event_types
     assert event_types[-1] is EventType.RUN_FAILED
 
@@ -1123,6 +1488,105 @@ def test_invalid_selection_evidence_fails_closed_after_evaluator(tmp_path) -> No
         attempts = uow.states.list_attempts(run.run_id)
     assert failed_run is not None and failed_run.status is RunStatus.FAILED
     assert nodes["evaluator"].plan_node_id in {attempt.plan_node_id for attempt in attempts}
+
+
+def test_injected_evaluator_must_compare_failed_active_sibling_candidate(tmp_path) -> None:
+    database = SQLiteDatabase(tmp_path / "injected-missing-sibling-evidence.sqlite3")
+    _, plan, run, nodes, _ = _seed_exploration(database)
+    worker = FakeWorker(
+        results_by_node={
+            nodes["left"].plan_node_id: WorkerResult(
+                artifacts=(
+                    CandidateArtifact(
+                        ArtifactKind.CANDIDATE,
+                        "empty-left.txt",
+                        "text/plain",
+                        b"",
+                    ),
+                ),
+                summary="empty candidate fails its Gate",
+            )
+        }
+    )
+    artifact_store = FilesystemArtifactStore(tmp_path / "artifacts")
+    orchestrator = Orchestrator(
+        uow_factory=database.unit_of_work,
+        worker=worker,
+        artifact_store=artifact_store,
+        check_runner=_check_runner(artifact_store),
+        branch_evaluator=_MissingFailedSiblingEvidenceEvaluator(),
+        workspace=tmp_path,
+        clock=lambda: NOW,
+    )
+
+    with pytest.raises(BranchEvaluationError, match="every active Branch candidate Artifact"):
+        orchestrator.execute(run.run_id)
+
+    with database.unit_of_work() as uow:
+        failed_run = uow.states.get_run(run.run_id)
+        stored_plan = uow.states.get_plan_revision(plan.plan_revision_id)
+        event_types = tuple(item.event.type for item in uow.events.list_events())
+    assert failed_run is not None and failed_run.status is RunStatus.FAILED
+    assert stored_plan is not None
+    assert tuple(branch.status for branch in stored_plan.branches) == (
+        BranchStatus.ACTIVE,
+        BranchStatus.ACTIVE,
+    )
+    assert EventType.BRANCH_SELECTED not in event_types
+
+
+def test_injected_evaluator_with_full_sibling_evidence_selects_viable_branch(tmp_path) -> None:
+    database = SQLiteDatabase(tmp_path / "injected-complete-sibling-evidence.sqlite3")
+    _, plan, run, nodes, _ = _seed_exploration(database)
+    worker = FakeWorker(
+        results_by_node={
+            nodes["left"].plan_node_id: WorkerResult(
+                artifacts=(
+                    CandidateArtifact(
+                        ArtifactKind.CANDIDATE,
+                        "empty-left.txt",
+                        "text/plain",
+                        b"",
+                    ),
+                ),
+                summary="empty candidate fails its Gate",
+            )
+        }
+    )
+    artifact_store = FilesystemArtifactStore(tmp_path / "artifacts")
+    orchestrator = Orchestrator(
+        uow_factory=database.unit_of_work,
+        worker=worker,
+        artifact_store=artifact_store,
+        check_runner=_check_runner(artifact_store),
+        branch_evaluator=DeterministicBranchEvaluator(),
+        workspace=tmp_path,
+        clock=lambda: NOW,
+    )
+
+    completed = orchestrator.execute(run.run_id)
+
+    with database.unit_of_work() as uow:
+        stored_plan = uow.states.get_plan_revision(plan.plan_revision_id)
+        artifacts = uow.states.list_artifacts_for_run(run.run_id)
+        selected_event = next(
+            item.event
+            for item in uow.events.list_events()
+            if item.event.type is EventType.BRANCH_SELECTED
+        )
+    assert completed.status is RunStatus.COMPLETED
+    assert stored_plan is not None
+    assert tuple(branch.status for branch in stored_plan.branches) == (
+        BranchStatus.PRUNED,
+        BranchStatus.SELECTED,
+    )
+    compared_ids = selected_event.payload["compared_artifact_ids"]
+    assert isinstance(compared_ids, list)
+    artifact_by_id = {artifact.artifact_id: artifact for artifact in artifacts}
+    assert {artifact_by_id[artifact_id].plan_node_id for artifact_id in compared_ids} == {
+        nodes["left"].plan_node_id,
+        nodes["right"].plan_node_id,
+    }
 
 
 def test_evaluator_cannot_select_a_branch_that_failed_its_local_gate(tmp_path) -> None:

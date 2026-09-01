@@ -6,14 +6,16 @@ from hashlib import sha256
 
 import pytest
 
-from ehai import ID, new_id
+from ehai import ID, json_dumps, new_id
 from ehai.application.evaluation import (
     FIRST_VIABLE_BRANCH_CRITERION,
     BranchEvaluationContext,
     BranchEvaluator,
     BranchSelection,
+    BranchSelectionProtocolError,
     DeterministicBranchEvaluator,
     NoViableBranchError,
+    parse_branch_selection,
 )
 from ehai.domain.artifacts import Artifact, ArtifactKind
 from ehai.domain.execution import Attempt, Run
@@ -179,7 +181,11 @@ def test_two_successes_select_first_branch_with_evidence_without_mutation() -> N
     assert selection.selected_branch_id == left_branch.branch_id
     assert selection.pruned_branch_ids == (right_branch.branch_id,)
     assert selection.criterion == FIRST_VIABLE_BRANCH_CRITERION
-    assert selection.evidence_artifact_ids == (left_artifact.artifact_id,)
+    assert selection.evidence_artifact_ids == (
+        left_artifact.artifact_id,
+        right_artifact.artifact_id,
+    )
+    assert selection.selected_artifact_ids == (left_artifact.artifact_id,)
     assert tuple(branch.status for branch in plan.branches) == (
         BranchStatus.ACTIVE,
         BranchStatus.ACTIVE,
@@ -207,7 +213,11 @@ def test_failed_first_branch_is_ignored_even_when_it_has_candidate_evidence() ->
 
     assert selection.selected_branch_id == right_branch.branch_id
     assert selection.pruned_branch_ids == (left_branch.branch_id,)
-    assert selection.evidence_artifact_ids == (right_artifact.artifact_id,)
+    assert selection.evidence_artifact_ids == (
+        left_artifact.artifact_id,
+        right_artifact.artifact_id,
+    )
+    assert selection.selected_artifact_ids == (right_artifact.artifact_id,)
 
 
 def test_all_failed_branches_raise_no_viable_branch() -> None:
@@ -288,3 +298,166 @@ def test_branch_selection_requires_evidence_and_disjoint_pruned_ids() -> None:
         BranchSelection(selected_id, (), "criterion", (), "explanation")
     with pytest.raises(ValueError, match="cannot prune"):
         BranchSelection(selected_id, (selected_id,), "criterion", (new_id(),), "explanation")
+
+
+def test_parse_evaluator_selection_can_choose_second_branch_with_full_evidence() -> None:
+    plan, left_branch, right_branch, left, right = _plan(
+        PlanNodeStatus.COMPLETED,
+        PlanNodeStatus.COMPLETED,
+    )
+    run = _run(plan)
+    left_attempt, left_artifact = _attempt_and_artifact(run, left)
+    right_attempt, right_artifact = _attempt_and_artifact(run, right)
+    context = BranchEvaluationContext(
+        plan,
+        run,
+        (left_attempt, right_attempt),
+        (left_artifact, right_artifact),
+    )
+    document = json_dumps(
+        {
+            "selected_branch_id": right_branch.branch_id,
+            "pruned_branch_ids": [left_branch.branch_id],
+            "criterion": "higher score",
+            "explanation": "right candidate passed the explicit comparison",
+            "compared_artifact_ids": [left_artifact.artifact_id, right_artifact.artifact_id],
+            "selected_artifact_ids": [right_artifact.artifact_id],
+        }
+    )
+
+    selection = parse_branch_selection(document, context)
+
+    assert selection.selected_branch_id == right_branch.branch_id
+    assert selection.pruned_branch_ids == (left_branch.branch_id,)
+    assert selection.evidence_artifact_ids == (
+        left_artifact.artifact_id,
+        right_artifact.artifact_id,
+    )
+    assert selection.selected_artifact_ids == (right_artifact.artifact_id,)
+
+
+def test_parse_selection_compares_failed_branch_candidate_but_selects_viable_sibling() -> None:
+    plan, left_branch, right_branch, left, right = _plan(
+        PlanNodeStatus.FAILED,
+        PlanNodeStatus.COMPLETED,
+    )
+    run = _run(plan)
+    left_attempt, left_artifact = _attempt_and_artifact(run, left)
+    right_attempt, right_artifact = _attempt_and_artifact(run, right)
+    context = BranchEvaluationContext(
+        plan,
+        run,
+        (left_attempt, right_attempt),
+        (left_artifact, right_artifact),
+    )
+
+    selection = parse_branch_selection(
+        json_dumps(
+            {
+                "selected_branch_id": right_branch.branch_id,
+                "pruned_branch_ids": [left_branch.branch_id],
+                "criterion": "only viable branch",
+                "explanation": "compared both candidates and rejected the failed branch",
+                "compared_artifact_ids": [
+                    left_artifact.artifact_id,
+                    right_artifact.artifact_id,
+                ],
+                "selected_artifact_ids": [right_artifact.artifact_id],
+            }
+        ),
+        context,
+    )
+
+    assert selection.selected_branch_id == right_branch.branch_id
+    assert selection.compared_artifact_ids == (
+        left_artifact.artifact_id,
+        right_artifact.artifact_id,
+    )
+
+
+@pytest.mark.parametrize(
+    ("patch", "message"),
+    [
+        ({"selected_branch_id": new_id()}, "selected_branch_id"),
+        ({"compared_artifact_ids": "not-list"}, "compared_artifact_ids"),
+        ({"selected_artifact_ids": []}, "selected_artifact_ids"),
+    ],
+)
+def test_parse_evaluator_selection_fails_closed_on_invalid_references(
+    patch: dict[str, object],
+    message: str,
+) -> None:
+    plan, left_branch, right_branch, left, right = _plan(
+        PlanNodeStatus.COMPLETED,
+        PlanNodeStatus.COMPLETED,
+    )
+    run = _run(plan)
+    left_attempt, left_artifact = _attempt_and_artifact(run, left)
+    right_attempt, right_artifact = _attempt_and_artifact(run, right)
+    context = BranchEvaluationContext(
+        plan,
+        run,
+        (left_attempt, right_attempt),
+        (left_artifact, right_artifact),
+    )
+    payload: dict[str, object] = {
+        "selected_branch_id": right_branch.branch_id,
+        "pruned_branch_ids": [left_branch.branch_id],
+        "criterion": "higher score",
+        "explanation": "right candidate passed the explicit comparison",
+        "compared_artifact_ids": [left_artifact.artifact_id, right_artifact.artifact_id],
+        "selected_artifact_ids": [right_artifact.artifact_id],
+    }
+    payload.update(patch)
+
+    with pytest.raises(BranchSelectionProtocolError, match=message):
+        parse_branch_selection(json_dumps(payload), context)
+
+
+def test_parse_evaluator_selection_requires_every_active_branch_evidence() -> None:
+    plan, left_branch, right_branch, left, right = _plan(
+        PlanNodeStatus.COMPLETED,
+        PlanNodeStatus.COMPLETED,
+    )
+    run = _run(plan)
+    left_attempt, left_artifact = _attempt_and_artifact(run, left)
+    right_attempt, right_artifact = _attempt_and_artifact(run, right)
+    context = BranchEvaluationContext(
+        plan,
+        run,
+        (left_attempt, right_attempt),
+        (left_artifact, right_artifact),
+    )
+
+    with pytest.raises(BranchSelectionProtocolError, match="every active Branch"):
+        parse_branch_selection(
+            json_dumps(
+                {
+                    "selected_branch_id": right_branch.branch_id,
+                    "pruned_branch_ids": [left_branch.branch_id],
+                    "criterion": "higher score",
+                    "explanation": "right candidate passed the explicit comparison",
+                    "compared_artifact_ids": [right_artifact.artifact_id],
+                    "selected_artifact_ids": [right_artifact.artifact_id],
+                }
+            ),
+            context,
+        )
+
+    with pytest.raises(BranchSelectionProtocolError, match="outside the selected Branch"):
+        parse_branch_selection(
+            json_dumps(
+                {
+                    "selected_branch_id": right_branch.branch_id,
+                    "pruned_branch_ids": [left_branch.branch_id],
+                    "criterion": "higher score",
+                    "explanation": "right candidate passed the explicit comparison",
+                    "compared_artifact_ids": [
+                        left_artifact.artifact_id,
+                        right_artifact.artifact_id,
+                    ],
+                    "selected_artifact_ids": [left_artifact.artifact_id],
+                }
+            ),
+            context,
+        )

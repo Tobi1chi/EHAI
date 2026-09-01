@@ -130,6 +130,52 @@ def test_command_check_passes_with_evidence_and_captures_output(tmp_path: Path) 
     assert check_run.result.evidence_artifact_ids == context.attempt.artifact_ids
 
 
+def test_command_check_materializes_artifacts_in_check_temp_dir(tmp_path: Path) -> None:
+    spec = CheckSpec("command", CheckKind.COMMAND, "command must inspect candidate")
+    context, store = make_context(tmp_path, check_id=spec.check_id, contents=(b"candidate",))
+    adapter = CommandCheckAdapter(
+        {
+            spec.check_id: (
+                sys.executable,
+                "-c",
+                "import pathlib; assert pathlib.Path('candidate-0.txt').read_text() == 'candidate'",
+            )
+        },
+        store=store,
+    )
+
+    check_run = run_check(spec, context, adapter)
+
+    assert check_run.result is not None and check_run.result.passed
+    output = json.loads(check_run.result.output or "")
+    assert output["materialized_artifacts"] == [
+        {
+            "artifact_id": context.artifacts[0].artifact_id,
+            "name": "candidate-0.txt",
+            "size_bytes": len(b"candidate"),
+            "sha256": context.artifacts[0].sha256,
+        }
+    ]
+    assert not (tmp_path / "candidate-0.txt").exists()
+
+
+def test_command_check_rejects_materialized_path_escape(tmp_path: Path) -> None:
+    spec = CheckSpec("command", CheckKind.COMMAND, "command must inspect candidate")
+    context, store = make_context(tmp_path, check_id=spec.check_id)
+    unsafe = replace(context.artifacts[0], name="../escape.txt")
+    store.entries[unsafe.artifact_id] = (unsafe, b"candidate evidence")
+    context = replace(context, artifacts=(unsafe,))
+    adapter = CommandCheckAdapter(
+        {spec.check_id: (sys.executable, "-c", "raise SystemExit(0)")},
+        store=store,
+    )
+
+    check_run = run_check(spec, context, adapter)
+
+    assert check_run.status is CheckRunStatus.FAILED
+    assert check_run.failure_reason is not None and "unsafe" in check_run.failure_reason
+
+
 def test_command_check_nonzero_is_a_failed_verdict_with_output(tmp_path: Path) -> None:
     spec = CheckSpec("command", CheckKind.COMMAND, "command must pass")
     context, _ = make_context(tmp_path, check_id=spec.check_id)

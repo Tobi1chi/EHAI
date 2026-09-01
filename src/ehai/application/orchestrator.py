@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import time
-from base64 import b64encode
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
@@ -16,10 +15,16 @@ from ehai.application.evaluation import (
     BranchEvaluationContext,
     BranchEvaluator,
     BranchSelection,
-    DeterministicBranchEvaluator,
+    BranchSelectionProtocolError,
+    parse_branch_selection,
+    validate_branch_selection,
 )
 from ehai.application.ports import ArtifactStore, UnitOfWork
 from ehai.application.workers import (
+    MAX_ARTIFACT_INPUT_BYTES,
+    MAX_ARTIFACT_INPUT_TOTAL_BYTES,
+    ArtifactInputBudgetExceeded,
+    ArtifactInputSnapshot,
     WorkerAdapter,
     WorkerCancelledError,
     WorkerExecutionError,
@@ -191,7 +196,7 @@ class Orchestrator:
         self._clock = clock
         self._id_factory = id_factory
         self._cancellation_settle_seconds = float(cancellation_settle_seconds)
-        self._branch_evaluator = branch_evaluator or DeterministicBranchEvaluator()
+        self._branch_evaluator = branch_evaluator
         self._attempt_budget = attempt_budget
 
     def execute(self, run_id: ID) -> Run:
@@ -208,12 +213,15 @@ class Orchestrator:
             )
             try:
                 artifact_inputs = self._worker_inputs(context)
+                worker_context = self._worker_context(context, artifact_inputs)
+                if context.plan_node.kind is PlanNodeKind.MERGE:
+                    artifact_inputs = _selected_merge_inputs(worker_context, artifact_inputs)
                 request = WorkerRequest(
                     run=context.run,
                     attempt=context.attempt,
                     plan_node=context.plan_node,
                     completion_contract=context.completion_contract,
-                    context=self._worker_context(context, artifact_inputs),
+                    context=worker_context,
                     artifact_inputs=artifact_inputs,
                 )
                 result = self._worker.execute(request)
@@ -439,9 +447,41 @@ class Orchestrator:
                 for artifact in uow.states.list_artifacts_for_run(run.run_id)
                 if artifact.artifact_id in artifact_ids
             )
+            evaluator_attempts = tuple(
+                attempt
+                for attempt in uow.states.list_attempts(run.run_id)
+                if attempt.plan_node_id == completed_evaluator.plan_node_id
+                and attempt.status is AttemptStatus.SUCCEEDED
+            )
+            evaluator_artifact_ids = {
+                artifact_id
+                for attempt in evaluator_attempts
+                for artifact_id in attempt.artifact_ids
+            }
+            evaluator_artifacts = tuple(
+                artifact
+                for artifact in uow.states.list_artifacts_for_run(run.run_id)
+                if artifact.artifact_id in evaluator_artifact_ids
+                and artifact.kind in {ArtifactKind.CANDIDATE, ArtifactKind.PATCH}
+            )
         context = BranchEvaluationContext(plan, run, attempts, artifacts)
         try:
-            selection = self._branch_evaluator.evaluate(context)
+            if self._branch_evaluator is None:
+                if len(evaluator_artifacts) != 1:
+                    raise BranchSelectionProtocolError(
+                        "Evaluator must persist exactly one candidate BranchSelection Artifact"
+                    )
+                try:
+                    document = self._artifact_store.read(evaluator_artifacts[0].artifact_id).decode(
+                        "utf-8"
+                    )
+                except UnicodeDecodeError as error:
+                    raise BranchSelectionProtocolError(
+                        "Evaluator BranchSelection Artifact must be UTF-8 JSON"
+                    ) from error
+                selection = parse_branch_selection(document, context)
+            else:
+                selection = self._branch_evaluator.evaluate(context)
             self._record_branch_selection(context, selection)
         except Exception as error:
             self._record_evaluation_failure(run.run_id, error)
@@ -455,6 +495,7 @@ class Orchestrator:
         context: BranchEvaluationContext,
         selection: BranchSelection,
     ) -> None:
+        selection = validate_branch_selection(selection, context)
         branch_by_id = {branch.branch_id: branch for branch in context.plan.branches}
         selected = branch_by_id.get(selection.selected_branch_id)
         if selected is None or selected.status is not BranchStatus.ACTIVE:
@@ -483,7 +524,44 @@ class Orchestrator:
             )
         artifact_by_id = {artifact.artifact_id: artifact for artifact in context.artifacts}
         attempt_by_id = {attempt.attempt_id: attempt for attempt in context.attempts}
+        active_sibling_group = {selected.branch_id, *active_sibling_ids}
+        viable_sibling_group = {
+            branch_id
+            for branch_id in active_sibling_group
+            if all(
+                node_by_id[node_id].status is PlanNodeStatus.COMPLETED
+                for node_id in branch_by_id[branch_id].node_ids
+            )
+        }
+        compared_branch_ids: set[ID] = set()
         for artifact_id in selection.evidence_artifact_ids:
+            artifact = artifact_by_id.get(artifact_id)
+            artifact_plan_node_id = None if artifact is None else artifact.plan_node_id
+            attempt = (
+                None
+                if artifact is None or artifact.attempt_id is None
+                else attempt_by_id.get(artifact.attempt_id)
+            )
+            artifact_branch = (
+                None
+                if artifact_plan_node_id is None
+                else _branch_containing(context.plan, artifact_plan_node_id)
+            )
+            if (
+                artifact is None
+                or artifact_branch is None
+                or artifact_branch.branch_id not in active_sibling_group
+                or artifact.kind not in {ArtifactKind.CANDIDATE, ArtifactKind.PATCH}
+                or attempt is None
+                or attempt.status is not AttemptStatus.SUCCEEDED
+            ):
+                raise OrchestrationError(
+                    "BranchEvaluator selection evidence is outside active Branch candidates"
+                )
+            compared_branch_ids.add(artifact_branch.branch_id)
+        if not viable_sibling_group.issubset(compared_branch_ids):
+            raise OrchestrationError("BranchEvaluator did not compare every viable Branch")
+        for artifact_id in selection.selected_artifact_ids:
             artifact = artifact_by_id.get(artifact_id)
             attempt = (
                 None
@@ -498,7 +576,7 @@ class Orchestrator:
                 or attempt.status is not AttemptStatus.SUCCEEDED
             ):
                 raise OrchestrationError(
-                    "BranchEvaluator selection evidence does not belong to the selected Branch"
+                    "BranchEvaluator selected Artifacts do not belong to the selected Branch"
                 )
 
         with self._uow_factory() as uow:
@@ -536,6 +614,7 @@ class Orchestrator:
             )
             uow.states.put_plan_revision(plan)
             evidence: list[JsonValue] = list(selection.evidence_artifact_ids)
+            selected_artifact_ids: list[JsonValue] = list(selection.selected_artifact_ids)
             uow.events.append(
                 self._event(
                     EventType.BRANCH_SELECTED,
@@ -546,6 +625,8 @@ class Orchestrator:
                         "fork_node_id": selected.fork_node_id,
                         "criterion": selection.criterion,
                         "evidence_artifact_ids": evidence,
+                        "compared_artifact_ids": evidence,
+                        "selected_artifact_ids": selected_artifact_ids,
                         "explanation": selection.explanation,
                     },
                 )
@@ -561,6 +642,9 @@ class Orchestrator:
                             "selected_branch_id": selected.branch_id,
                             "criterion": selection.criterion,
                             "evidence_artifact_ids": evidence,
+                            "compared_artifact_ids": evidence,
+                            "selected_artifact_ids": selected_artifact_ids,
+                            "explanation": selection.explanation,
                         },
                     )
                 )
@@ -591,7 +675,7 @@ class Orchestrator:
             )
             uow.commit()
 
-    def _worker_inputs(self, context: _ExecutionContext) -> tuple[Artifact, ...]:
+    def _worker_inputs(self, context: _ExecutionContext) -> tuple[ArtifactInputSnapshot, ...]:
         plan = context.plan_revision
         if context.plan_node.kind is PlanNodeKind.EVALUATOR:
             source_node_ids = {
@@ -602,27 +686,32 @@ class Orchestrator:
             }
         elif context.plan_node.kind is PlanNodeKind.MERGE:
             selected = _required_selected_branch(plan, context.plan_node.plan_node_id)
-            source_node_ids = {
-                *context.plan_node.required_dependency_ids,
-                *selected.node_ids,
-            }
+            source_node_ids = set(selected.node_ids)
         else:
             source_node_ids = set(context.plan_node.required_dependency_ids)
         if not source_node_ids:
             return ()
         with self._uow_factory() as uow:
-            return tuple(
+            artifacts = tuple(
                 artifact
                 for artifact in uow.states.list_artifacts_for_run(context.run.run_id)
                 if artifact.plan_node_id in source_node_ids
                 and artifact.kind in {ArtifactKind.CANDIDATE, ArtifactKind.PATCH}
             )
+        return self._artifact_input_snapshots(artifacts)
 
     def _worker_context(
         self,
         context: _ExecutionContext,
-        artifact_inputs: tuple[Artifact, ...],
+        artifact_inputs: tuple[ArtifactInputSnapshot, ...],
     ) -> dict[str, JsonValue]:
+        if context.plan_node.kind is PlanNodeKind.EVALUATOR:
+            return {
+                "candidate_branches": _candidate_branch_context(
+                    context.plan_revision,
+                    artifact_inputs,
+                )
+            }
         if context.plan_node.kind is not PlanNodeKind.MERGE:
             return {}
         selected = _required_selected_branch(
@@ -649,6 +738,7 @@ class Orchestrator:
             )
         selection = selected_event.payload
         evidence_ids = selection.get("evidence_artifact_ids")
+        selected_ids = selection.get("selected_artifact_ids")
         criterion = selection.get("criterion")
         explanation = selection.get("explanation")
         if (
@@ -656,6 +746,8 @@ class Orchestrator:
             or selection.get("fork_node_id") != selected.fork_node_id
             or not isinstance(evidence_ids, list)
             or not evidence_ids
+            or not isinstance(selected_ids, list)
+            or not selected_ids
             or not isinstance(criterion, str)
             or not criterion.strip()
             or not isinstance(explanation, str)
@@ -670,37 +762,37 @@ class Orchestrator:
                 for artifact_id in evidence_ids
                 if isinstance(artifact_id, str)
             ]
+            selected_artifact_ids = [
+                normalize_id(artifact_id)
+                for artifact_id in selected_ids
+                if isinstance(artifact_id, str)
+            ]
         except ValueError as error:
             raise OrchestrationError(
-                f"selected Branch {selected.branch_id} has invalid evidence Artifact IDs"
+                f"selected Branch {selected.branch_id} has invalid selection Artifact IDs"
             ) from error
-        if len(evidence_artifact_ids) != len(evidence_ids):
+        if len(evidence_artifact_ids) != len(evidence_ids) or len(selected_artifact_ids) != len(
+            selected_ids
+        ):
             raise OrchestrationError(
-                f"selected Branch {selected.branch_id} has invalid evidence Artifact IDs"
+                f"selected Branch {selected.branch_id} has invalid selection Artifact IDs"
             )
-        selected_artifact_ids = {artifact.artifact_id for artifact in selected_artifacts}
-        if not set(evidence_artifact_ids).issubset(selected_artifact_ids):
+        selected_payload_ids = set(selected_artifact_ids)
+        selected_artifact_id_set = {artifact.artifact_id for artifact in selected_artifacts}
+        if not selected_payload_ids.issubset(selected_artifact_id_set):
             raise OrchestrationError(
-                f"selected Branch {selected.branch_id} evidence is outside its candidate Artifacts"
+                f"selected Branch {selected.branch_id} payload is outside its candidate Artifacts"
             )
         evidence_json: list[JsonValue] = [str(artifact_id) for artifact_id in evidence_artifact_ids]
-        contents: list[JsonValue] = []
-        for artifact in selected_artifacts:
-            content = self._artifact_store.read(artifact.artifact_id)
-            try:
-                encoded_content = content.decode("utf-8")
-                encoding = "utf-8"
-            except UnicodeDecodeError:
-                encoded_content = b64encode(content).decode("ascii")
-                encoding = "base64"
-            contents.append(
-                {
-                    "artifact_id": artifact.artifact_id,
-                    "sha256": artifact.sha256,
-                    "media_type": artifact.media_type,
-                    "encoding": encoding,
-                    "content": encoded_content,
-                }
+        selected_json: list[JsonValue] = [str(artifact_id) for artifact_id in selected_artifact_ids]
+        contents: list[JsonValue] = [
+            artifact.to_prompt_dict()
+            for artifact in selected_artifacts
+            if artifact.artifact_id in selected_payload_ids
+        ]
+        if not contents:
+            raise OrchestrationError(
+                f"selected Branch {selected.branch_id} has no selected Artifact content"
             )
         return {
             "branch_selection": {
@@ -709,9 +801,32 @@ class Orchestrator:
                 "criterion": criterion,
                 "explanation": explanation,
                 "evidence_artifact_ids": evidence_json,
+                "compared_artifact_ids": evidence_json,
+                "selected_artifact_ids": selected_json,
             },
             "selected_artifacts": contents,
         }
+
+    def _artifact_input_snapshots(
+        self,
+        artifacts: tuple[Artifact, ...],
+    ) -> tuple[ArtifactInputSnapshot, ...]:
+        snapshots: list[ArtifactInputSnapshot] = []
+        total_bytes = 0
+        for artifact in artifacts:
+            content = self._artifact_store.read(artifact.artifact_id)
+            if len(content) > MAX_ARTIFACT_INPUT_BYTES:
+                raise ArtifactInputBudgetExceeded(
+                    f"Artifact {artifact.artifact_id} exceeds input limit "
+                    f"{MAX_ARTIFACT_INPUT_BYTES} bytes"
+                )
+            total_bytes += len(content)
+            if total_bytes > MAX_ARTIFACT_INPUT_TOTAL_BYTES:
+                raise ArtifactInputBudgetExceeded(
+                    f"Artifact inputs exceed total limit {MAX_ARTIFACT_INPUT_TOTAL_BYTES} bytes"
+                )
+            snapshots.append(ArtifactInputSnapshot.from_artifact(artifact, content))
+        return tuple(snapshots)
 
     def _store_candidate_artifacts(
         self,
@@ -1419,6 +1534,65 @@ def _selected_branch_mapping(plan: PlanRevision) -> dict[ID, ID]:
         for branch in plan.branches
         if branch.status is BranchStatus.SELECTED
     }
+
+
+def _candidate_branch_context(
+    plan: PlanRevision,
+    artifact_inputs: tuple[ArtifactInputSnapshot, ...],
+) -> list[JsonValue]:
+    """Build the Evaluator's explicit branch-to-candidate content map."""
+    branches: list[JsonValue] = []
+    node_by_id = {node.plan_node_id: node for node in plan.nodes}
+    for branch in plan.branches:
+        if branch.status is not BranchStatus.ACTIVE:
+            continue
+        artifacts: list[JsonValue] = [
+            artifact.to_prompt_dict()
+            for artifact in artifact_inputs
+            if artifact.plan_node_id in branch.node_ids
+        ]
+        branches.append(
+            {
+                "branch_id": branch.branch_id,
+                "label": branch.label,
+                "fork_node_id": branch.fork_node_id,
+                "merge_node_id": branch.merge_node_id,
+                "node_ids": list(branch.node_ids),
+                "viable": all(
+                    node_by_id[node_id].status is PlanNodeStatus.COMPLETED
+                    for node_id in branch.node_ids
+                ),
+                "artifacts": artifacts,
+            }
+        )
+    return branches
+
+
+def _selected_merge_inputs(
+    context: dict[str, JsonValue],
+    artifact_inputs: tuple[ArtifactInputSnapshot, ...],
+) -> tuple[ArtifactInputSnapshot, ...]:
+    """Restrict Merge Worker inputs to the persisted selected Artifact IDs."""
+    selection = context.get("branch_selection")
+    if not isinstance(selection, dict):
+        raise OrchestrationError("Merge context has no validated Branch selection")
+    selected_values = selection.get("selected_artifact_ids")
+    if not isinstance(selected_values, list) or not selected_values:
+        raise OrchestrationError("Merge context has no selected Artifact IDs")
+    try:
+        selected_ids = tuple(
+            normalize_id(value) for value in selected_values if isinstance(value, str)
+        )
+    except ValueError as error:
+        raise OrchestrationError("Merge context has invalid selected Artifact IDs") from error
+    if len(selected_ids) != len(selected_values):
+        raise OrchestrationError("Merge context has invalid selected Artifact IDs")
+    input_by_id = {artifact.artifact_id: artifact for artifact in artifact_inputs}
+    if len(input_by_id) != len(artifact_inputs) or any(
+        artifact_id not in input_by_id for artifact_id in selected_ids
+    ):
+        raise OrchestrationError("Merge selected Artifact inputs are incomplete")
+    return tuple(input_by_id[artifact_id] for artifact_id in selected_ids)
 
 
 def _required_selected_branch(plan: PlanRevision, merge_node_id: ID) -> Branch:

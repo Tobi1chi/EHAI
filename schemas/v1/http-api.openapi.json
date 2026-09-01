@@ -7,504 +7,1587 @@
   "paths": {
     "/api/v1/projects": {
       "post": {
-        "operationId": "create_project_api_v1_projects_post",
         "summary": "Create Project",
+        "operationId": "create_project_api_v1_projects_post",
         "requestBody": {
-          "required": true,
           "content": {
             "application/json": {
-              "schema": {"$ref": "commands.schema.json#/$defs/CreateProjectRequest"}
+              "schema": {
+                "$ref": "#/components/schemas/CreateProjectRequest"
+              }
             }
-          }
+          },
+          "required": true
         },
         "responses": {
-          "201": {"$ref": "#/components/responses/ProjectResponse"},
-          "409": {"$ref": "#/components/responses/ErrorResponse"},
-          "422": {"$ref": "#/components/responses/ErrorResponse"},
-          "500": {"$ref": "#/components/responses/ErrorResponse"}
+          "201": {
+            "description": "Created Project",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "commands.schema.json#/$defs/ProjectResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Unprocessable Entity",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
         }
       }
     },
     "/api/v1/goals": {
       "post": {
-        "operationId": "create_goal_api_v1_goals_post",
         "summary": "Create Goal",
+        "operationId": "create_goal_api_v1_goals_post",
         "requestBody": {
-          "required": true,
           "content": {
             "application/json": {
-              "schema": {"$ref": "commands.schema.json#/$defs/CreateGoalRequest"}
+              "schema": {
+                "$ref": "#/components/schemas/CreateGoalRequest"
+              }
             }
-          }
+          },
+          "required": true
         },
         "responses": {
-          "201": {"$ref": "#/components/responses/GoalResponse"},
-          "404": {"$ref": "#/components/responses/ErrorResponse"},
-          "409": {"$ref": "#/components/responses/ErrorResponse"},
-          "422": {"$ref": "#/components/responses/ErrorResponse"},
-          "500": {"$ref": "#/components/responses/ErrorResponse"}
+          "201": {
+            "description": "Created Goal",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "commands.schema.json#/$defs/GoalResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Unprocessable Entity",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
         }
       }
     },
     "/api/v1/plans/propose": {
       "post": {
-        "operationId": "propose_plan_api_v1_plans_propose_post",
         "summary": "Propose Plan",
+        "operationId": "propose_plan_api_v1_plans_propose_post",
         "requestBody": {
-          "required": true,
           "content": {
             "application/json": {
-              "schema": {"$ref": "commands.schema.json#/$defs/ProposePlanRequest"}
+              "schema": {
+                "$ref": "#/components/schemas/ProposePlanRequest"
+              }
             }
-          }
+          },
+          "required": true
         },
         "responses": {
-          "201": {"$ref": "#/components/responses/CommandPlanGraphResponse"},
-          "404": {"$ref": "#/components/responses/ErrorResponse"},
-          "409": {"$ref": "#/components/responses/ErrorResponse"},
-          "422": {"$ref": "#/components/responses/ErrorResponse"},
-          "500": {"$ref": "#/components/responses/ErrorResponse"}
+          "201": {
+            "description": "Draft PlanRevision",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "commands.schema.json#/$defs/PlanGraphResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Unprocessable Entity",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
         }
       }
     },
     "/api/v1/plans/replan": {
       "post": {
-        "operationId": "replan_plan_api_v1_plans_replan_post",
         "summary": "Replan Plan",
+        "operationId": "replan_plan_api_v1_plans_replan_post",
         "requestBody": {
-          "required": true,
           "content": {
             "application/json": {
-              "schema": {"$ref": "commands.schema.json#/$defs/ReplanPlanRequest"}
+              "schema": {
+                "$ref": "#/components/schemas/ReplanPlanRequest"
+              }
             }
-          }
+          },
+          "required": true
         },
         "responses": {
-          "201": {"$ref": "#/components/responses/CommandPlanGraphResponse"},
-          "404": {"$ref": "#/components/responses/ErrorResponse"},
-          "409": {"$ref": "#/components/responses/ErrorResponse"},
-          "422": {"$ref": "#/components/responses/ErrorResponse"},
-          "500": {"$ref": "#/components/responses/ErrorResponse"}
+          "201": {
+            "description": "Draft PlanRevision",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "commands.schema.json#/$defs/PlanGraphResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Unprocessable Entity",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
         }
       }
     },
     "/api/v1/plans/approve": {
       "post": {
-        "operationId": "approve_plan_api_v1_plans_approve_post",
         "summary": "Approve Plan",
+        "operationId": "approve_plan_api_v1_plans_approve_post",
         "requestBody": {
-          "required": true,
           "content": {
             "application/json": {
-              "schema": {"$ref": "commands.schema.json#/$defs/ApprovePlanRequest"}
+              "schema": {
+                "$ref": "#/components/schemas/ApprovePlanRequest"
+              }
             }
-          }
+          },
+          "required": true
         },
         "responses": {
-          "200": {"$ref": "#/components/responses/CommandPlanGraphResponse"},
-          "404": {"$ref": "#/components/responses/ErrorResponse"},
-          "409": {"$ref": "#/components/responses/ErrorResponse"},
-          "422": {"$ref": "#/components/responses/ErrorResponse"},
-          "500": {"$ref": "#/components/responses/ErrorResponse"}
+          "200": {
+            "description": "PlanRevision",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "commands.schema.json#/$defs/PlanGraphResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Unprocessable Entity",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
         }
       }
     },
     "/api/v1/runs/start": {
       "post": {
-        "operationId": "start_run_api_v1_runs_start_post",
         "summary": "Start Run",
+        "operationId": "start_run_api_v1_runs_start_post",
         "requestBody": {
-          "required": true,
           "content": {
             "application/json": {
-              "schema": {"$ref": "commands.schema.json#/$defs/StartRunRequest"}
+              "schema": {
+                "$ref": "#/components/schemas/StartRunRequest"
+              }
             }
-          }
+          },
+          "required": true
         },
         "responses": {
-          "201": {"$ref": "#/components/responses/CommandRunResponse"},
-          "404": {"$ref": "#/components/responses/ErrorResponse"},
-          "409": {"$ref": "#/components/responses/ErrorResponse"},
-          "422": {"$ref": "#/components/responses/ErrorResponse"},
-          "500": {"$ref": "#/components/responses/ErrorResponse"}
+          "201": {
+            "description": "Created Run",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "commands.schema.json#/$defs/RunResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Unprocessable Entity",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
         }
       }
     },
     "/api/v1/runs/{run_id}/pause": {
       "post": {
-        "operationId": "pause_run_api_v1_runs__run_id__pause_post",
         "summary": "Pause Run",
-        "parameters": [{"$ref": "#/components/parameters/RunId"}],
+        "operationId": "pause_run_api_v1_runs__run_id__pause_post",
+        "parameters": [
+          {
+            "name": "run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$",
+              "title": "Run Id"
+            }
+          }
+        ],
         "requestBody": {
           "required": true,
           "content": {
             "application/json": {
-              "schema": {"$ref": "commands.schema.json#/$defs/PauseRunRequest"}
+              "schema": {
+                "$ref": "#/components/schemas/RunActionRequest"
+              }
             }
           }
         },
         "responses": {
-          "200": {"$ref": "#/components/responses/CommandRunResponse"},
-          "404": {"$ref": "#/components/responses/ErrorResponse"},
-          "409": {"$ref": "#/components/responses/ErrorResponse"},
-          "422": {"$ref": "#/components/responses/ErrorResponse"},
-          "500": {"$ref": "#/components/responses/ErrorResponse"}
+          "200": {
+            "description": "Run state",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "commands.schema.json#/$defs/RunResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
         }
       }
     },
     "/api/v1/runs/{run_id}/resume": {
       "post": {
-        "operationId": "resume_run_api_v1_runs__run_id__resume_post",
         "summary": "Resume Run",
-        "parameters": [{"$ref": "#/components/parameters/RunId"}],
+        "operationId": "resume_run_api_v1_runs__run_id__resume_post",
+        "parameters": [
+          {
+            "name": "run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$",
+              "title": "Run Id"
+            }
+          }
+        ],
         "requestBody": {
           "required": true,
           "content": {
             "application/json": {
-              "schema": {"$ref": "commands.schema.json#/$defs/ResumeRunRequest"}
+              "schema": {
+                "$ref": "#/components/schemas/RunActionRequest"
+              }
             }
           }
         },
         "responses": {
-          "200": {"$ref": "#/components/responses/CommandRunResponse"},
-          "404": {"$ref": "#/components/responses/ErrorResponse"},
-          "409": {"$ref": "#/components/responses/ErrorResponse"},
-          "422": {"$ref": "#/components/responses/ErrorResponse"},
-          "500": {"$ref": "#/components/responses/ErrorResponse"}
+          "200": {
+            "description": "Run state",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "commands.schema.json#/$defs/RunResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
         }
       }
     },
     "/api/v1/runs/{run_id}/cancel": {
       "post": {
-        "operationId": "cancel_run_api_v1_runs__run_id__cancel_post",
         "summary": "Cancel Run",
-        "parameters": [{"$ref": "#/components/parameters/RunId"}],
+        "operationId": "cancel_run_api_v1_runs__run_id__cancel_post",
+        "parameters": [
+          {
+            "name": "run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$",
+              "title": "Run Id"
+            }
+          }
+        ],
         "requestBody": {
           "required": true,
           "content": {
             "application/json": {
-              "schema": {"$ref": "commands.schema.json#/$defs/CancelRunRequest"}
+              "schema": {
+                "$ref": "#/components/schemas/CancelRunRequest"
+              }
             }
           }
         },
         "responses": {
-          "200": {"$ref": "#/components/responses/CommandRunResponse"},
-          "404": {"$ref": "#/components/responses/ErrorResponse"},
-          "409": {"$ref": "#/components/responses/ErrorResponse"},
-          "422": {"$ref": "#/components/responses/ErrorResponse"},
-          "500": {"$ref": "#/components/responses/ErrorResponse"}
+          "200": {
+            "description": "Run state",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "commands.schema.json#/$defs/RunResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
         }
       }
     },
     "/api/v1/runs/{run_id}": {
       "get": {
-        "operationId": "get_run_api_v1_runs__run_id__get",
         "summary": "Get Run",
-        "parameters": [{"$ref": "#/components/parameters/RunId"}],
+        "operationId": "get_run_api_v1_runs__run_id__get",
+        "parameters": [
+          {
+            "name": "run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$",
+              "title": "Run Id"
+            }
+          }
+        ],
         "responses": {
-          "200": {"$ref": "#/components/responses/RunResponse"},
-          "404": {"$ref": "#/components/responses/ErrorResponse"},
-          "422": {"$ref": "#/components/responses/ErrorResponse"},
-          "500": {"$ref": "#/components/responses/ErrorResponse"}
+          "200": {
+            "description": "Current Run state",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "queries.schema.json#/$defs/RunResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
         }
       }
     },
     "/api/v1/plans/{plan_revision_id}": {
       "get": {
-        "operationId": "get_plan_graph_api_v1_plans__plan_revision_id__get",
         "summary": "Get Plan Graph",
-        "parameters": [{"$ref": "#/components/parameters/PlanRevisionId"}],
+        "operationId": "get_plan_graph_api_v1_plans__plan_revision_id__get",
+        "parameters": [
+          {
+            "name": "plan_revision_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$",
+              "title": "Plan Revision Id"
+            }
+          }
+        ],
         "responses": {
-          "200": {"$ref": "#/components/responses/PlanGraphResponse"},
-          "404": {"$ref": "#/components/responses/ErrorResponse"},
-          "422": {"$ref": "#/components/responses/ErrorResponse"},
-          "500": {"$ref": "#/components/responses/ErrorResponse"}
+          "200": {
+            "description": "Versioned PlanGraph",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "queries.schema.json#/$defs/PlanGraphResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
         }
       }
     },
     "/api/v1/runs/{run_id}/trace": {
       "get": {
-        "operationId": "get_execution_trace_api_v1_runs__run_id__trace_get",
         "summary": "Get Execution Trace",
-        "parameters": [{"$ref": "#/components/parameters/RunId"}],
+        "operationId": "get_execution_trace_api_v1_runs__run_id__trace_get",
+        "parameters": [
+          {
+            "name": "run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$",
+              "title": "Run Id"
+            }
+          }
+        ],
         "responses": {
-          "200": {"$ref": "#/components/responses/ExecutionTraceResponse"},
-          "404": {"$ref": "#/components/responses/ErrorResponse"},
-          "422": {"$ref": "#/components/responses/ErrorResponse"},
-          "500": {"$ref": "#/components/responses/ErrorResponse"}
+          "200": {
+            "description": "ExecutionTrace",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "queries.schema.json#/$defs/ExecutionTraceResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
         }
       }
     },
     "/api/v1/plans/{plan_revision_id}/checks": {
       "get": {
-        "operationId": "list_check_specs_api_v1_plans__plan_revision_id__checks_get",
         "summary": "List Check Specs",
-        "parameters": [{"$ref": "#/components/parameters/PlanRevisionId"}],
+        "operationId": "list_check_specs_api_v1_plans__plan_revision_id__checks_get",
+        "parameters": [
+          {
+            "name": "plan_revision_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$",
+              "title": "Plan Revision Id"
+            }
+          }
+        ],
         "responses": {
-          "200": {"$ref": "#/components/responses/CheckSpecListResponse"},
-          "404": {"$ref": "#/components/responses/ErrorResponse"},
-          "422": {"$ref": "#/components/responses/ErrorResponse"},
-          "500": {"$ref": "#/components/responses/ErrorResponse"}
+          "200": {
+            "description": "Plan CheckSpecs",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "queries.schema.json#/$defs/CheckSpecListResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
         }
       }
     },
     "/api/v1/runs/{run_id}/checks": {
       "get": {
-        "operationId": "list_checks_api_v1_runs__run_id__checks_get",
         "summary": "List Checks",
-        "parameters": [{"$ref": "#/components/parameters/RunId"}],
+        "operationId": "list_checks_api_v1_runs__run_id__checks_get",
+        "parameters": [
+          {
+            "name": "run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$",
+              "title": "Run Id"
+            }
+          }
+        ],
         "responses": {
-          "200": {"$ref": "#/components/responses/CheckRunListResponse"},
-          "404": {"$ref": "#/components/responses/ErrorResponse"},
-          "422": {"$ref": "#/components/responses/ErrorResponse"},
-          "500": {"$ref": "#/components/responses/ErrorResponse"}
+          "200": {
+            "description": "Run CheckRuns",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "queries.schema.json#/$defs/CheckRunListResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
         }
       }
     },
     "/api/v1/runs/{run_id}/checkpoints": {
       "get": {
-        "operationId": "list_checkpoints_api_v1_runs__run_id__checkpoints_get",
         "summary": "List Checkpoints",
-        "parameters": [{"$ref": "#/components/parameters/RunId"}],
+        "operationId": "list_checkpoints_api_v1_runs__run_id__checkpoints_get",
+        "parameters": [
+          {
+            "name": "run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$",
+              "title": "Run Id"
+            }
+          }
+        ],
         "responses": {
-          "200": {"$ref": "#/components/responses/CheckpointListResponse"},
-          "404": {"$ref": "#/components/responses/ErrorResponse"},
-          "422": {"$ref": "#/components/responses/ErrorResponse"},
-          "500": {"$ref": "#/components/responses/ErrorResponse"}
+          "200": {
+            "description": "Run Checkpoints",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "queries.schema.json#/$defs/CheckpointListResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
         }
       }
     },
     "/api/v1/runs/{run_id}/artifacts": {
       "get": {
-        "operationId": "list_artifacts_api_v1_runs__run_id__artifacts_get",
         "summary": "List Artifacts",
-        "parameters": [{"$ref": "#/components/parameters/RunId"}],
+        "operationId": "list_artifacts_api_v1_runs__run_id__artifacts_get",
+        "parameters": [
+          {
+            "name": "run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$",
+              "title": "Run Id"
+            }
+          }
+        ],
         "responses": {
-          "200": {"$ref": "#/components/responses/ArtifactListResponse"},
-          "404": {"$ref": "#/components/responses/ErrorResponse"},
-          "422": {"$ref": "#/components/responses/ErrorResponse"},
-          "500": {"$ref": "#/components/responses/ErrorResponse"}
+          "200": {
+            "description": "Run Artifacts",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "queries.schema.json#/$defs/ArtifactListResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
         }
       }
     },
     "/api/v1/artifacts/{artifact_id}": {
       "get": {
-        "operationId": "get_artifact_api_v1_artifacts__artifact_id__get",
         "summary": "Get Artifact",
-        "parameters": [{"$ref": "#/components/parameters/ArtifactId"}],
+        "operationId": "get_artifact_api_v1_artifacts__artifact_id__get",
+        "parameters": [
+          {
+            "name": "artifact_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$",
+              "title": "Artifact Id"
+            }
+          }
+        ],
         "responses": {
-          "200": {"$ref": "#/components/responses/ArtifactResponse"},
-          "404": {"$ref": "#/components/responses/ErrorResponse"},
-          "422": {"$ref": "#/components/responses/ErrorResponse"},
-          "500": {"$ref": "#/components/responses/ErrorResponse"}
+          "200": {
+            "description": "Artifact metadata",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "queries.schema.json#/$defs/ArtifactResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
         }
       }
     },
     "/api/v1/events": {
       "get": {
-        "operationId": "list_events_api_v1_events_get",
         "summary": "List Events",
+        "operationId": "list_events_api_v1_events_get",
         "parameters": [
-          {"$ref": "#/components/parameters/AfterEventId"},
-          {"$ref": "#/components/parameters/EventLimit"}
+          {
+            "name": "after_event_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "pattern": "^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "After Event Id"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 1000,
+              "minimum": 1,
+              "default": 100,
+              "title": "Limit"
+            }
+          }
         ],
         "responses": {
-          "200": {"$ref": "#/components/responses/EventPageResponse"},
-          "404": {"$ref": "#/components/responses/ErrorResponse"},
-          "422": {"$ref": "#/components/responses/ErrorResponse"},
-          "500": {"$ref": "#/components/responses/ErrorResponse"}
+          "200": {
+            "description": "Durable Event page",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "queries.schema.json#/$defs/EventPageResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
         }
       }
     },
     "/api/v1/events/stream": {
       "get": {
+        "summary": "Event-Stream",
         "operationId": "event_stream_api_v1_events_stream_get",
-        "summary": "Event Stream",
         "parameters": [
-          {"$ref": "#/components/parameters/AfterEventId"},
-          {"$ref": "#/components/parameters/LastEventId"}
+          {
+            "name": "after_event_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "pattern": "^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "After Event Id"
+            }
+          },
+          {
+            "name": "Last-Event-ID",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "pattern": "^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Last-Event-Id"
+            }
+          }
         ],
         "responses": {
           "200": {
             "description": "Durable Events followed by heartbeat comments",
             "content": {
               "text/event-stream": {
-                "schema": {"type": "string"}
+                "schema": {
+                  "type": "string"
+                }
               }
             }
           },
-          "400": {"$ref": "#/components/responses/ErrorResponse"},
-          "404": {"$ref": "#/components/responses/ErrorResponse"},
-          "422": {"$ref": "#/components/responses/ErrorResponse"},
-          "500": {"$ref": "#/components/responses/ErrorResponse"}
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
         }
       }
     }
   },
   "components": {
-    "parameters": {
-      "RunId": {
-        "name": "run_id",
-        "in": "path",
-        "required": true,
-        "schema": {"$ref": "common.schema.json#/$defs/IdInput"}
+    "schemas": {
+      "ApprovePlanRequest": {
+        "properties": {
+          "idempotency_key": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Idempotency Key"
+          },
+          "plan_revision_id": {
+            "type": "string",
+            "pattern": "^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$",
+            "title": "Plan Revision Id"
+          },
+          "completion_contract_id": {
+            "type": "string",
+            "pattern": "^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$",
+            "title": "Completion Contract Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "idempotency_key",
+          "plan_revision_id",
+          "completion_contract_id"
+        ],
+        "title": "ApprovePlanRequest"
       },
-      "PlanRevisionId": {
-        "name": "plan_revision_id",
-        "in": "path",
-        "required": true,
-        "schema": {"$ref": "common.schema.json#/$defs/IdInput"}
+      "CancelRunRequest": {
+        "properties": {
+          "idempotency_key": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Idempotency Key"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "idempotency_key"
+        ],
+        "title": "CancelRunRequest"
       },
-      "ArtifactId": {
-        "name": "artifact_id",
-        "in": "path",
-        "required": true,
-        "schema": {"$ref": "common.schema.json#/$defs/IdInput"}
+      "CreateGoalRequest": {
+        "properties": {
+          "idempotency_key": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Idempotency Key"
+          },
+          "project_id": {
+            "type": "string",
+            "pattern": "^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$",
+            "title": "Project Id"
+          },
+          "objective": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Objective"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "idempotency_key",
+          "project_id",
+          "objective"
+        ],
+        "title": "CreateGoalRequest"
       },
-      "AfterEventId": {
-        "name": "after_event_id",
-        "in": "query",
-        "required": false,
-        "schema": {"$ref": "common.schema.json#/$defs/IdInput"}
+      "CreateProjectRequest": {
+        "properties": {
+          "idempotency_key": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Idempotency Key"
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Name"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "idempotency_key",
+          "name"
+        ],
+        "title": "CreateProjectRequest"
       },
-      "LastEventId": {
-        "name": "Last-Event-ID",
-        "in": "header",
-        "required": false,
-        "schema": {"$ref": "common.schema.json#/$defs/IdInput"}
-      },
-      "EventLimit": {
-        "name": "limit",
-        "in": "query",
-        "required": false,
-        "schema": {
-          "type": "integer",
-          "minimum": 1,
-          "maximum": 1000,
-          "default": 100
-        }
-      }
-    },
-    "responses": {
       "DataResponse": {
-        "description": "Command accepted",
-        "content": {
-          "application/json": {
-            "schema": {"$ref": "commands.schema.json#/$defs/DataResponse"}
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/JsonValue"
           }
-        }
+        },
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "DataResponse"
       },
-      "ProjectResponse": {
-        "description": "Created Project",
-        "content": {
-          "application/json": {
-            "schema": {"$ref": "commands.schema.json#/$defs/ProjectResponse"}
+      "ErrorDetail": {
+        "properties": {
+          "code": {
+            "type": "string",
+            "title": "Code"
+          },
+          "message": {
+            "type": "string",
+            "title": "Message"
           }
-        }
-      },
-      "GoalResponse": {
-        "description": "Created Goal",
-        "content": {
-          "application/json": {
-            "schema": {"$ref": "commands.schema.json#/$defs/GoalResponse"}
-          }
-        }
-      },
-      "CommandRunResponse": {
-        "description": "Command Run state",
-        "content": {
-          "application/json": {
-            "schema": {"$ref": "commands.schema.json#/$defs/RunResponse"}
-          }
-        }
-      },
-      "CommandPlanGraphResponse": {
-        "description": "Command PlanRevision state",
-        "content": {
-          "application/json": {
-            "schema": {"$ref": "commands.schema.json#/$defs/PlanGraphResponse"}
-          }
-        }
-      },
-      "RunResponse": {
-        "description": "Current Run state",
-        "content": {
-          "application/json": {
-            "schema": {"$ref": "queries.schema.json#/$defs/RunResponse"}
-          }
-        }
-      },
-      "PlanGraphResponse": {
-        "description": "Versioned plan structure",
-        "content": {
-          "application/json": {
-            "schema": {"$ref": "queries.schema.json#/$defs/PlanGraphResponse"}
-          }
-        }
-      },
-      "ExecutionTraceResponse": {
-        "description": "Actual execution facts",
-        "content": {
-          "application/json": {
-            "schema": {"$ref": "queries.schema.json#/$defs/ExecutionTraceResponse"}
-          }
-        }
-      },
-      "CheckSpecListResponse": {
-        "description": "Plan Check definitions",
-        "content": {
-          "application/json": {
-            "schema": {"$ref": "queries.schema.json#/$defs/CheckSpecListResponse"}
-          }
-        }
-      },
-      "CheckRunListResponse": {
-        "description": "Run Check executions",
-        "content": {
-          "application/json": {
-            "schema": {"$ref": "queries.schema.json#/$defs/CheckRunListResponse"}
-          }
-        }
-      },
-      "CheckpointListResponse": {
-        "description": "Run Checkpoints",
-        "content": {
-          "application/json": {
-            "schema": {"$ref": "queries.schema.json#/$defs/CheckpointListResponse"}
-          }
-        }
-      },
-      "ArtifactListResponse": {
-        "description": "Run Artifact metadata",
-        "content": {
-          "application/json": {
-            "schema": {"$ref": "queries.schema.json#/$defs/ArtifactListResponse"}
-          }
-        }
-      },
-      "ArtifactResponse": {
-        "description": "Artifact metadata",
-        "content": {
-          "application/json": {
-            "schema": {"$ref": "queries.schema.json#/$defs/ArtifactResponse"}
-          }
-        }
-      },
-      "EventPageResponse": {
-        "description": "Durable Event page",
-        "content": {
-          "application/json": {
-            "schema": {"$ref": "queries.schema.json#/$defs/EventPageResponse"}
-          }
-        }
+        },
+        "type": "object",
+        "required": [
+          "code",
+          "message"
+        ],
+        "title": "ErrorDetail"
       },
       "ErrorResponse": {
-        "description": "Versioned API error",
-        "content": {
-          "application/json": {
-            "schema": {"$ref": "common.schema.json#/$defs/ErrorResponse"}
+        "properties": {
+          "error": {
+            "$ref": "#/components/schemas/ErrorDetail"
           }
-        }
+        },
+        "type": "object",
+        "required": [
+          "error"
+        ],
+        "title": "ErrorResponse"
+      },
+      "JsonScalar": {
+        "anyOf": [
+          {
+            "type": "boolean"
+          },
+          {
+            "type": "integer"
+          },
+          {
+            "type": "number"
+          },
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "JsonValue": {
+        "anyOf": [
+          {
+            "$ref": "#/components/schemas/JsonScalar"
+          },
+          {
+            "items": {
+              "$ref": "#/components/schemas/JsonValue"
+            },
+            "type": "array"
+          },
+          {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JsonValue"
+            },
+            "type": "object"
+          }
+        ]
+      },
+      "ProposePlanRequest": {
+        "properties": {
+          "idempotency_key": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Idempotency Key"
+          },
+          "goal_id": {
+            "type": "string",
+            "pattern": "^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$",
+            "title": "Goal Id"
+          },
+          "criteria": {
+            "items": {
+              "type": "string",
+              "enum": [
+                "artifact:non-empty",
+                "command:exit-zero",
+                "semantic:required-terms"
+              ]
+            },
+            "type": "array",
+            "maxItems": 1,
+            "minItems": 1,
+            "title": "Criteria"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "idempotency_key",
+          "goal_id",
+          "criteria"
+        ],
+        "title": "ProposePlanRequest"
+      },
+      "ReplanPlanRequest": {
+        "properties": {
+          "idempotency_key": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Idempotency Key"
+          },
+          "base_plan_revision_id": {
+            "type": "string",
+            "pattern": "^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$",
+            "title": "Base Plan Revision Id"
+          },
+          "criteria": {
+            "items": {
+              "type": "string",
+              "enum": [
+                "artifact:non-empty",
+                "command:exit-zero",
+                "semantic:required-terms"
+              ]
+            },
+            "type": "array",
+            "maxItems": 1,
+            "minItems": 1,
+            "title": "Criteria"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "idempotency_key",
+          "base_plan_revision_id",
+          "criteria"
+        ],
+        "title": "ReplanPlanRequest"
+      },
+      "RunActionRequest": {
+        "properties": {
+          "idempotency_key": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Idempotency Key"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "idempotency_key"
+        ],
+        "title": "RunActionRequest"
+      },
+      "StartRunRequest": {
+        "properties": {
+          "idempotency_key": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Idempotency Key"
+          },
+          "plan_revision_id": {
+            "type": "string",
+            "pattern": "^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$",
+            "title": "Plan Revision Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "idempotency_key",
+          "plan_revision_id"
+        ],
+        "title": "StartRunRequest"
       }
     }
   }

@@ -7,9 +7,9 @@ import sys
 from collections.abc import Sequence
 from pathlib import Path
 
-from ehai import JsonValue, json_dumps, normalize_id
+from ehai import JsonValue, json_dumps, json_loads, normalize_id
 from ehai.application.checkpointing import RecoveryError, RecoveryService
-from ehai.application.checks import CheckRunner
+from ehai.application.checks import CheckAdapter, CheckRunner
 from ehai.application.commands import (
     ApprovePlan,
     CancelRun,
@@ -23,7 +23,9 @@ from ehai.application.commands import (
 )
 from ehai.application.orchestrator import OrchestrationError, Orchestrator
 from ehai.application.planner import (
-    NON_EMPTY_ARTIFACT_CRITERION,
+    COMMAND_EXIT_ZERO_CRITERION,
+    P1_COMPLETION_CRITERIA,
+    SEMANTIC_REQUIRED_TERMS_CRITERION,
     DeterministicExplorationPlanner,
     DeterministicPlanner,
     ExplorationBudget,
@@ -38,7 +40,13 @@ from ehai.domain.checking import CheckKind
 from ehai.domain.goal import Goal
 from ehai.domain.planning import PlanRevision
 from ehai.infrastructure.artifacts import FilesystemArtifactStore
-from ehai.infrastructure.checks import ArtifactCheckAdapter, ArtifactCheckRule
+from ehai.infrastructure.checks import (
+    ArtifactCheckAdapter,
+    ArtifactCheckRule,
+    CommandCheckAdapter,
+    SemanticCheckAdapter,
+    SemanticRubric,
+)
 from ehai.infrastructure.planners import CodexPlannerAdapter, CodexPlannerError
 from ehai.infrastructure.sqlite import SQLiteDatabase
 from ehai.infrastructure.workers import CodexWorkerAdapter, FakeWorker
@@ -84,6 +92,11 @@ def build_service(
     worker_workspace: Path | None = None,
     planner_kind: str = "single",
     planner_timeout_seconds: float = 120.0,
+    command_check_argv: Sequence[str] | None = None,
+    semantic_required_terms: Sequence[str] = (),
+    worker_timeout_seconds: float = 300.0,
+    codex_model: str | None = None,
+    codex_reasoning_effort: str | None = None,
 ) -> ExecutionService:
     """Build the local P1 service from concrete infrastructure Adapters."""
     database_path.parent.mkdir(parents=True, exist_ok=True)
@@ -93,7 +106,12 @@ def build_service(
     if worker_kind == "fake":
         worker = FakeWorker()
     elif worker_kind == "codex":
-        worker = CodexWorkerAdapter(workspace=worker_workspace or Path.cwd())
+        worker = CodexWorkerAdapter(
+            workspace=worker_workspace or Path.cwd(),
+            timeout_seconds=worker_timeout_seconds,
+            model=codex_model,
+            reasoning_effort=codex_reasoning_effort,
+        )
     else:
         raise ValueError(f"unsupported Worker: {worker_kind}")
     planner: Planner
@@ -108,14 +126,32 @@ def build_service(
         )
     else:
         raise ValueError(f"unsupported Planner: {planner_kind}")
+    adapters: dict[CheckKind, CheckAdapter] = {
+        CheckKind.ARTIFACT: ArtifactCheckAdapter(
+            artifact_store,
+            {},
+            default_rule=ArtifactCheckRule(minimum_count=1, require_non_empty=True),
+        )
+    }
+    if command_check_argv is not None:
+        adapters[CheckKind.COMMAND] = CommandCheckAdapter(
+            {},
+            store=artifact_store,
+            default_argv=tuple(command_check_argv),
+        )
+    semantic_terms = tuple(term.strip() for term in semantic_required_terms if term.strip())
+    if semantic_terms:
+        adapters[CheckKind.SEMANTIC] = SemanticCheckAdapter(
+            artifact_store,
+            {},
+            default_rubric=SemanticRubric(
+                description="required host-configured terms must appear",
+                required_terms=semantic_terms,
+                minimum_score=1.0,
+            ),
+        )
     check_runner = CheckRunner(
-        {
-            CheckKind.ARTIFACT: ArtifactCheckAdapter(
-                artifact_store,
-                {},
-                default_rule=ArtifactCheckRule(minimum_count=1, require_non_empty=True),
-            )
-        }
+        adapters,
     )
     orchestrator = Orchestrator(
         uow_factory=database.unit_of_work,
@@ -166,6 +202,34 @@ def create_parser() -> argparse.ArgumentParser:
         default=120.0,
         help="Codex Planner wall-clock timeout (default: 120)",
     )
+    parser.add_argument(
+        "--worker-timeout-seconds",
+        type=float,
+        default=300.0,
+        help="Codex Worker wall-clock timeout (default: 300)",
+    )
+    parser.add_argument("--codex-model", help="Codex model override for Worker invocations")
+    parser.add_argument(
+        "--codex-reasoning-effort",
+        choices=("none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"),
+        help="Codex reasoning effort override for Worker invocations",
+    )
+    parser.add_argument(
+        "--command-check-argv",
+        help=(
+            "trusted host Command Check argv as a JSON string array, for criterion "
+            f"{COMMAND_EXIT_ZERO_CRITERION}"
+        ),
+    )
+    parser.add_argument(
+        "--semantic-required-term",
+        action="append",
+        default=[],
+        help=(
+            "trusted term required by the Semantic Check; repeat for criterion "
+            f"{SEMANTIC_REQUIRED_TERMS_CRITERION}"
+        ),
+    )
     commands = parser.add_subparsers(dest="command", required=True)
 
     project = commands.add_parser("create-project", help="create a Project")
@@ -184,7 +248,7 @@ def create_parser() -> argparse.ArgumentParser:
         "--criterion",
         action="append",
         required=True,
-        help=f"P1 requires exactly one value: {NON_EMPTY_ARTIFACT_CRITERION}",
+        help="P1 requires exactly one value: " + ", ".join(sorted(P1_COMPLETION_CRITERIA)),
     )
 
     replan = commands.add_parser("replan-plan", help="create a new draft from an approved plan")
@@ -194,7 +258,7 @@ def create_parser() -> argparse.ArgumentParser:
         "--criterion",
         action="append",
         required=True,
-        help=f"P1 requires exactly one value: {NON_EMPTY_ARTIFACT_CRITERION}",
+        help="P1 requires exactly one value: " + ", ".join(sorted(P1_COMPLETION_CRITERIA)),
     )
 
     approve = commands.add_parser("approve-plan", help="confirm and approve a proposal")
@@ -241,6 +305,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             worker_workspace=args.worker_workspace,
             planner_kind=args.planner,
             planner_timeout_seconds=args.planner_timeout_seconds,
+            command_check_argv=_parse_command_argv(args.command_check_argv),
+            semantic_required_terms=tuple(args.semantic_required_term),
+            worker_timeout_seconds=args.worker_timeout_seconds,
+            codex_model=args.codex_model,
+            codex_reasoning_effort=args.codex_reasoning_effort,
         )
         output = _dispatch(service, args)
     except (
@@ -353,6 +422,19 @@ def _dispatch(service: ExecutionService, args: argparse.Namespace) -> dict[str, 
             "status": run.status.value,
         }
     raise RuntimeError(f"unsupported CLI command: {command}")
+
+
+def _parse_command_argv(value: str | None) -> tuple[str, ...] | None:
+    if value is None:
+        return None
+    decoded = json_loads(value)
+    if (
+        not isinstance(decoded, list)
+        or not decoded
+        or any(not isinstance(item, str) or not item for item in decoded)
+    ):
+        raise ValueError("--command-check-argv must be a non-empty JSON string array")
+    return tuple(item for item in decoded if isinstance(item, str))
 
 
 if __name__ == "__main__":  # pragma: no cover - exercised through the console script

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 
-from ehai import ID, json_dumps, normalize_id
+from ehai import ID, JsonValue, json_dumps, normalize_id
 from ehai.application.workers import (
     CandidateArtifact,
     WorkerExecutionError,
@@ -83,6 +83,92 @@ class FakeWorker:
 
     @staticmethod
     def _default_result(request: WorkerRequest) -> WorkerResult:
+        if request.plan_node.kind is PlanNodeKind.EVALUATOR:
+            context = request.context
+            branches = context.get("candidate_branches")
+            if not isinstance(branches, list) or len(branches) < 2:
+                raise _execution_error(request, "evaluator requires candidate Branch content")
+            branch_documents = [branch for branch in branches if isinstance(branch, dict)]
+            selected = None
+            for branch in branches:
+                if not isinstance(branch, dict):
+                    continue
+                artifacts = branch.get("artifacts")
+                if (
+                    branch.get("viable") is not True
+                    or not isinstance(artifacts, list)
+                    or not artifacts
+                ):
+                    continue
+                label = branch.get("label")
+                if isinstance(label, str) and label.casefold().endswith("b"):
+                    selected = branch
+                    break
+            if selected is None:
+                selected = next(
+                    (
+                        branch
+                        for branch in branch_documents
+                        if branch.get("viable") is True
+                        and isinstance(branch.get("artifacts"), list)
+                        and branch["artifacts"]
+                    ),
+                    None,
+                )
+            if selected is None:
+                raise _execution_error(request, "evaluator has no viable Branch candidate")
+            selected_branch_id = selected.get("branch_id")
+            if not isinstance(selected_branch_id, str):
+                raise _execution_error(request, "evaluator Branch is missing branch_id")
+            compared_artifact_ids: list[JsonValue] = []
+            selected_artifact_ids: list[JsonValue] = []
+            pruned_branch_ids: list[JsonValue] = []
+            for branch in branches:
+                if not isinstance(branch, dict):
+                    raise _execution_error(request, "evaluator Branch context is invalid")
+                branch_id = branch.get("branch_id")
+                artifacts = branch.get("artifacts")
+                if not isinstance(branch_id, str) or not isinstance(artifacts, list):
+                    raise _execution_error(request, "evaluator Branch context is incomplete")
+                branch_artifact_ids: list[JsonValue] = []
+                for artifact in artifacts:
+                    if not isinstance(artifact, dict):
+                        raise _execution_error(request, "evaluator Artifact context is invalid")
+                    artifact_id = artifact.get("artifact_id")
+                    if not isinstance(artifact_id, str):
+                        raise _execution_error(request, "evaluator Artifact context is invalid")
+                    branch_artifact_ids.append(artifact_id)
+                    compared_artifact_ids.append(artifact_id)
+                if branch_id == selected_branch_id:
+                    selected_artifact_ids.extend(branch_artifact_ids)
+                else:
+                    pruned_branch_ids.append(branch_id)
+            content = json_dumps(
+                {
+                    "selected_branch_id": selected_branch_id,
+                    "pruned_branch_ids": pruned_branch_ids,
+                    "criterion": "fake evaluator selected the branch-b candidate",
+                    "explanation": (
+                        "Compared every active Branch candidate Artifact and selected the "
+                        "branch whose label ends with b for deterministic P1 coverage."
+                    ),
+                    "compared_artifact_ids": compared_artifact_ids,
+                    "selected_artifact_ids": selected_artifact_ids,
+                }
+            ).encode("utf-8")
+            return WorkerResult(
+                artifacts=(
+                    CandidateArtifact(
+                        kind=ArtifactKind.CANDIDATE,
+                        name=f"{request.plan_node_id}-selection.json",
+                        media_type="application/json",
+                        content=content,
+                    ),
+                ),
+                summary="fake evaluator returned a structured BranchSelection proposal",
+                raw_output=content,
+                diagnostics=("deterministic fake evaluator result",),
+            )
         if request.plan_node.kind is PlanNodeKind.MERGE:
             context = request.context
             branch_selection = context.get("branch_selection")

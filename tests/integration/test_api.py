@@ -160,7 +160,11 @@ def test_all_command_routes_convert_models_and_preserve_idempotency() -> None:
         ),
         (
             "/api/v1/plans/propose",
-            {"idempotency_key": "plan-1", "goal_id": goal_id, "criteria": ["done"]},
+            {
+                "idempotency_key": "plan-1",
+                "goal_id": goal_id,
+                "criteria": [NON_EMPTY_ARTIFACT_CRITERION],
+            },
             201,
         ),
         (
@@ -168,7 +172,7 @@ def test_all_command_routes_convert_models_and_preserve_idempotency() -> None:
             {
                 "idempotency_key": "replan-1",
                 "base_plan_revision_id": plan_id,
-                "criteria": ["done"],
+                "criteria": [NON_EMPTY_ARTIFACT_CRITERION],
             },
             201,
         ),

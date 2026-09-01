@@ -17,6 +17,10 @@ P1 必须通过本机 `codex exec` 非交互式子进程调用 Codex。Connector
 - 指定受控工作目录与最小所需 sandbox；默认不得使用 `--dangerously-bypass-approvals-and-sandbox`。
 - 非交互运行并明确 approval policy；不得因等待人工 TTY 提示而无限挂起。
 - 使用 P1 自己的 wall-clock timeout 和输出大小上限；CLI 内部重试不替代 Orchestrator 的 Attempt 策略。
+- Worker timeout 与 Planner timeout 必须独立配置。P1 CLI/API composition root 可以显式传入
+  Worker `--worker-timeout-seconds`，以及 Codex Worker `--codex-model` 和
+  `--codex-reasoning-effort`；这些值只能作为本次 `codex exec` argv/config override 传递，不得修改
+  用户全局 `config.toml`。
 - 将 stdout JSONL、stderr、退出码、超时或取消原因映射为统一 `Event`/`Artifact`；写入前清理凭证、环境变量和其他秘密。
 - 在取消时先终止子进程并限时等待，随后强制结束仍存活的进程树。Windows 上不能假定 POSIX signal 语义。
 - 把 Codex 输出视为候选结果。Connector 不得将 `PlanNode`、`Run` 或 `Goal` 标记为完成；Checker 和 Gate 仍是完成状态的唯一入口。
@@ -30,6 +34,9 @@ Planner 在 P1 **复用同一个 `codex exec` 进程传输实现和本机认证�
 2026-08-31 在 Windows PowerShell、`codex-cli 0.147.0` 上进行了限时验证。结果记录在 [Codex CLI 本地通道技术验证](../spikes/codex-cli-local-channel.md)：
 
 - CLI 可启动，并提供 `exec`、stdin、`--json`、`--output-schema`、`--output-last-message`、sandbox 与 ephemeral 参数。
+- 2026-09-01 复查本机 `codex exec --help`，确认 Worker model 可通过 `--model` 传入；未发现专用
+  reasoning effort flag，因此 P1 使用 `--config model_reasoning_effort="<effort>"` 作为本次调用的
+  argv override。
 - stdin prompt 被接收，stdout 可捕获结构化的 `thread.started`、`turn.started`、错误项和 `turn.failed` JSONL；失败以非零退出码返回。
 - 交互 PTY 中按 Ctrl+C 能终止进程并得到非零退出码。
 - 本机保存的 API key 在验证时返回 HTTP 401，因此没有验证成功 final payload；这属于运行环境认证前置条件，不改变进程通道可行性。I5 的真实 smoke 必须在有效认证下补验成功路径。
