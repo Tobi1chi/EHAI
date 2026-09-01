@@ -123,6 +123,46 @@ P1 场景。首次运行暴露 Adapter 未传递 `--skip-git-repo-check`，Codex
 该运行覆盖 fork、两个探索分支、Evaluator、选择/剪枝、merge、最终 Gate 和 Checkpoint。摘要不含
 凭证、Artifact 内容、request ID、thread ID 或领域实体 ID。
 
+## App Server 创建 Desktop Project 内 Session 的观察
+
+2026-09-01 另做了一次只读 app-server 可见性验证，用独立 `codex app-server --stdio`
+子进程通过 JSON-RPC 创建一个非 ephemeral Thread，并让 Codex Desktop 任务索引刷新后确认其归属。
+该验证不修改源码、文档、配置或 Git 历史；临时脚本和日志位于 `$env:TEMP` 唯一目录。
+
+观察到的创建方式是：`thread/start` 不接收 `projectId` 参数；要让 Desktop 把新 Session 归入某个
+saved Project，应将 `cwd` 设为该 Project 的保存路径或其下目录，并创建非 ephemeral Thread。Desktop
+索引会根据 `cwd` 匹配 saved Project 路径，异步把 Thread 归属到对应 Project。
+
+最小请求形态如下：
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 2,
+  "method": "thread/start",
+  "params": {
+    "cwd": "D:\\workspace\\EHAI",
+    "ephemeral": false,
+    "approvalPolicy": "never",
+    "sandbox": "read-only",
+    "serviceName": "ehai_app_server_probe"
+  }
+}
+```
+
+随后可以用 `thread/name/set` 设置可人工识别的名称，再用 `turn/start` 提交受控 prompt。创建后应同时
+验证三件事，不能相互替代：
+
+- app-server `thread/read` 能按 `threadId` 读到 Thread，且 `ephemeral` 为 `false`、`cwd` 正确。
+- Codex Desktop `list_threads` 能找到同一 `threadId` 或同名任务。
+- Desktop 索引中的 `projectId` 等于目标 saved Project ID。
+
+本次验证的 EHAI Project ID 为 `a63840d0-6e2a-48c4-b5c8-ff5da307af59`。初次 Desktop
+`list_threads` 曾短暂显示该 Thread 的 `projectId` 为 `null`；执行只读 `read_thread` 后再次刷新，
+同一 Thread 显示 `projectId=a63840d0-6e2a-48c4-b5c8-ff5da307af59`。因此实现若依赖 Desktop
+Project 归属，应把它视为索引层的异步结果：创建成功、Desktop 可见、Project 归属需要分别检查，并给
+有限重试或延迟刷新窗口。
+
 ## 清理
 
 验证完成后确认目标仍位于系统临时目录且名称匹配，再删除：
