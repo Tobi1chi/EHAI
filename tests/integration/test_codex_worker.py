@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import asyncio
+import ctypes
 import json
 import os
+import subprocess
 import sys
 import threading
 import time
+from contextlib import suppress
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -190,6 +193,110 @@ def _wait_for_file(path: Path, timeout_seconds: float = 2.0) -> None:
     assert path.exists(), f"timed out waiting for {path}"
 
 
+def _create_kill_on_close_job() -> int:
+    from ctypes import wintypes
+
+    class IoCounters(ctypes.Structure):
+        _fields_ = [
+            ("read_operation_count", ctypes.c_uint64),
+            ("write_operation_count", ctypes.c_uint64),
+            ("other_operation_count", ctypes.c_uint64),
+            ("read_transfer_count", ctypes.c_uint64),
+            ("write_transfer_count", ctypes.c_uint64),
+            ("other_transfer_count", ctypes.c_uint64),
+        ]
+
+    class BasicLimitInformation(ctypes.Structure):
+        _fields_ = [
+            ("per_process_user_time_limit", ctypes.c_int64),
+            ("per_job_user_time_limit", ctypes.c_int64),
+            ("limit_flags", wintypes.DWORD),
+            ("minimum_working_set_size", ctypes.c_size_t),
+            ("maximum_working_set_size", ctypes.c_size_t),
+            ("active_process_limit", wintypes.DWORD),
+            ("affinity", ctypes.c_size_t),
+            ("priority_class", wintypes.DWORD),
+            ("scheduling_class", wintypes.DWORD),
+        ]
+
+    class ExtendedLimitInformation(ctypes.Structure):
+        _fields_ = [
+            ("basic_limit_information", BasicLimitInformation),
+            ("io_info", IoCounters),
+            ("process_memory_limit", ctypes.c_size_t),
+            ("job_memory_limit", ctypes.c_size_t),
+            ("peak_process_memory_used", ctypes.c_size_t),
+            ("peak_job_memory_used", ctypes.c_size_t),
+        ]
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.CreateJobObjectW.argtypes = [ctypes.c_void_p, ctypes.c_wchar_p]
+    kernel32.CreateJobObjectW.restype = ctypes.c_void_p
+    kernel32.SetInformationJobObject.argtypes = [
+        ctypes.c_void_p,
+        ctypes.c_int,
+        ctypes.c_void_p,
+        wintypes.DWORD,
+    ]
+    kernel32.SetInformationJobObject.restype = wintypes.BOOL
+    job = kernel32.CreateJobObjectW(None, None)
+    if not job:
+        raise OSError(ctypes.get_last_error(), "CreateJobObjectW failed")
+    information = ExtendedLimitInformation()
+    information.basic_limit_information.limit_flags = 0x00002000
+    configured = kernel32.SetInformationJobObject(
+        job,
+        9,
+        ctypes.byref(information),
+        ctypes.sizeof(information),
+    )
+    if not configured:
+        error = ctypes.get_last_error()
+        _close_windows_handle(int(job))
+        raise OSError(error, "SetInformationJobObject failed")
+    return int(job)
+
+
+def _assign_process_to_job(job: int, pid: int) -> None:
+    from ctypes import wintypes
+
+    if pid <= 0 or pid in {os.getpid(), os.getppid()}:
+        raise RuntimeError("helper PID was not safe for Job assignment")
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    kernel32.OpenProcess.restype = ctypes.c_void_p
+    kernel32.AssignProcessToJobObject.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+    kernel32.AssignProcessToJobObject.restype = wintypes.BOOL
+    process_handle = kernel32.OpenProcess(0x0001 | 0x0100 | 0x1000, False, pid)
+    if not process_handle:
+        raise OSError(ctypes.get_last_error(), "OpenProcess for Job assignment failed")
+    try:
+        if not kernel32.AssignProcessToJobObject(job, process_handle):
+            raise OSError(ctypes.get_last_error(), "AssignProcessToJobObject failed")
+    finally:
+        _close_windows_handle(int(process_handle))
+
+
+def _close_windows_handle(handle: int) -> None:
+    from ctypes import wintypes
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.CloseHandle.argtypes = [ctypes.c_void_p]
+    kernel32.CloseHandle.restype = wintypes.BOOL
+    if not kernel32.CloseHandle(handle):
+        raise OSError(ctypes.get_last_error(), "CloseHandle failed")
+
+
+def _terminate_windows_job(job: int) -> None:
+    from ctypes import wintypes
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.TerminateJobObject.argtypes = [ctypes.c_void_p, wintypes.UINT]
+    kernel32.TerminateJobObject.restype = wintypes.BOOL
+    if not kernel32.TerminateJobObject(job, 1):
+        raise OSError(ctypes.get_last_error(), "TerminateJobObject failed")
+
+
 def _all_result_text(result) -> str:
     return "\n".join(
         [
@@ -302,6 +409,70 @@ def test_codex_worker_cancel_stops_active_attempt_from_another_thread(tmp_path: 
     assert b"partial-stdout-secret" not in failures[0].raw_output
     assert b"[REDACTED]" in failures[0].log_output
     adapter.cancel(request.attempt_id)
+
+
+@pytest.mark.parametrize("mode", ["timeout", "cancel"])
+def test_windows_job_isolated_cleanup_terminates_real_descendant(
+    tmp_path: Path,
+    mode: str,
+) -> None:
+    if os.name != "nt":
+        pytest.skip("Windows Job Object cleanup probe")
+    helper = Path(__file__).parents[1] / "helpers" / "windows_codex_cleanup_probe.py"
+    job = _create_kill_on_close_job()
+    process: subprocess.Popen[str] | None = None
+    assigned = False
+    try:
+        process = subprocess.Popen(
+            [sys.executable, str(helper), "controller", mode],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding="utf-8",
+            creationflags=subprocess.CREATE_NEW_PROCESS_GROUP,
+            cwd=tmp_path,
+        )
+        _assign_process_to_job(job, process.pid)
+        assigned = True
+        if process.stdin is None:
+            raise RuntimeError("cleanup helper stdin was unavailable")
+        process.stdin.write("start\n")
+        process.stdin.flush()
+        stdout, stderr = process.communicate(timeout=25)
+    finally:
+        close_error: OSError | None = None
+        try:
+            _close_windows_handle(job)
+        except OSError as error:
+            close_error = error
+            try:
+                _terminate_windows_job(job)
+            finally:
+                with suppress(OSError):
+                    _close_windows_handle(job)
+        finally:
+            if process is not None and process.poll() is None:
+                if not assigned:
+                    if process.stdin is not None:
+                        process.stdin.close()
+                    process.kill()
+                process.wait(timeout=5)
+        if close_error is not None:
+            raise close_error
+
+    assert process is not None
+    assert process.returncode == 0
+    assert stderr == ""
+    lines = stdout.splitlines()
+    assert len(lines) == 1
+    result = json.loads(lines[0])
+    assert result == {
+        "descendant_exit": "signaled",
+        "mode": mode,
+        "result": "passed",
+        "worker_error": ("WorkerTimedOutError" if mode == "timeout" else "WorkerCancelledError"),
+    }
 
 
 def test_codex_worker_cancel_before_spawn_never_launches_process(
