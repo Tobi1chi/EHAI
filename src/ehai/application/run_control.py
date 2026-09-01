@@ -108,7 +108,7 @@ class RunController:
             return paused
 
     def resume(self, run_id: ID, *, receipt: CommandReceipt | None = None) -> Run:
-        """Resume a paused Run and ready the last failed Attempt's node."""
+        """Resume a paused Run and make its retryable work schedulable."""
         normalized_id = normalize_id(run_id)
         at = self._clock()
         with self._uow_factory() as uow:
@@ -130,24 +130,29 @@ class RunController:
             retry_attempt = _last_retryable_attempt(snapshot.attempts)
             if retry_attempt is not None:
                 node = _required_node(plan, retry_attempt.plan_node_id)
-                if node.status is not PlanNodeStatus.FAILED:
+                if node.status is PlanNodeStatus.FAILED:
+                    ready_node = node.retry()
+                    plan = _replace_node(plan, ready_node)
+                    uow.states.put_plan_revision(plan)
+                    uow.events.append(
+                        _event(
+                            EventType.PLAN_NODE_READIED,
+                            resumed,
+                            ready_node.plan_node_id,
+                            {"plan_node_id": ready_node.plan_node_id},
+                            at,
+                        )
+                    )
+                # Restore rewinds PlanGraph state but retains post-Checkpoint Attempts.
+                elif not (
+                    retry_attempt.status is AttemptStatus.INTERRUPTED
+                    and node.status is PlanNodeStatus.PENDING
+                ):
                     raise RunControlError(
                         f"run {snapshot.run.run_id} cannot resume Attempt "
                         f"{retry_attempt.attempt_id}: PlanNode {node.plan_node_id} is "
-                        f"{node.status.value}, not failed"
+                        f"{node.status.value}, not failed or restored pending"
                     )
-                ready_node = node.retry()
-                plan = _replace_node(plan, ready_node)
-                uow.states.put_plan_revision(plan)
-                uow.events.append(
-                    _event(
-                        EventType.PLAN_NODE_READIED,
-                        resumed,
-                        ready_node.plan_node_id,
-                        {"plan_node_id": ready_node.plan_node_id},
-                        at,
-                    )
-                )
 
             uow.states.put_run(resumed)
             uow.events.append(

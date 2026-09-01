@@ -9,12 +9,17 @@ from ehai.application.checkpointing import (
     RecoveryError,
     RecoveryService,
 )
+from ehai.application.checks import CheckRunner
+from ehai.application.orchestrator import Orchestrator
+from ehai.application.run_control import RunController
 from ehai.domain.artifacts import Artifact, ArtifactKind
 from ehai.domain.checking import (
+    CheckKind,
     Checkpoint,
     CheckResult,
     CheckRun,
     CheckRunStatus,
+    CheckSpec,
     Gate,
     GateDecision,
 )
@@ -22,7 +27,10 @@ from ehai.domain.events import Event, EventType
 from ehai.domain.execution import Attempt, AttemptStatus, Run, RunStatus
 from ehai.domain.goal import CompletionContract, Goal, Project
 from ehai.domain.planning import PlanNode, PlanNodeStatus, PlanRevision, PlanRevisionStatus
+from ehai.infrastructure.artifacts import FilesystemArtifactStore
+from ehai.infrastructure.checks import ArtifactCheckAdapter, ArtifactCheckRule
 from ehai.infrastructure.sqlite import PersistenceConflictError, SQLiteDatabase
+from ehai.infrastructure.workers import FakeWorker
 
 NOW = datetime(2026, 8, 31, 15, 0, tzinfo=UTC)
 RECOVERY_TIME = NOW + timedelta(minutes=1)
@@ -69,11 +77,22 @@ def _seed_recoverable(database: SQLiteDatabase) -> tuple[ID, ID, ID, ID, int]:
         created_at=NOW,
     ).confirm(confirmed_at=NOW)
     goal = goal.use_completion_contract(contract)
+    check_spec = CheckSpec(
+        "evidence",
+        CheckKind.ARTIFACT,
+        "evidence exists",
+        check_id=check_id,
+    )
     verified_node = _node(
         PlanNode(new_id(), "verified", "already complete", required_check_ids=(check_id,)),
         PlanNodeStatus.COMPLETED,
     )
-    later_node = PlanNode(new_id(), "later", "work after checkpoint")
+    later_node = PlanNode(
+        new_id(),
+        "later",
+        "work after checkpoint",
+        required_check_ids=(check_id,),
+    )
     plan = PlanRevision.rehydrate(
         plan_revision_id=new_id(),
         goal_id=goal.goal_id,
@@ -154,6 +173,7 @@ def _seed_recoverable(database: SQLiteDatabase) -> tuple[ID, ID, ID, ID, int]:
         uow.states.put_goal(goal)
         uow.states.put_completion_contract(contract)
         uow.states.put_plan_revision(plan)
+        uow.states.put_check_spec(plan.plan_revision_id, check_spec)
         uow.states.put_run(run)
         uow.states.put_attempt(verified_attempt)
         uow.states.put_artifact(artifact)
@@ -270,6 +290,84 @@ def test_restart_interrupts_then_restores_without_repeating_side_effects(tmp_pat
     assert tuple(item.offset for item in events_after) == tuple(range(1, len(events_after) + 1))
     assert events_after[-2].event.type is EventType.CHECKPOINT_RESTORED
     assert events_after[-1].event.type is EventType.CHECKPOINT_RESTORED
+
+
+def test_restored_checkpoint_resumes_with_new_attempt_without_replaying_prior_work(
+    tmp_path,
+) -> None:
+    path = tmp_path / "restore-and-continue.sqlite3"
+    run_id, interrupted_attempt_id, later_node_id, artifact_id, gate_offset = _seed_recoverable(
+        SQLiteDatabase(path)
+    )
+    restarted = SQLiteDatabase(path)
+    recovery = RecoveryService(uow_factory=restarted.unit_of_work, clock=lambda: RECOVERY_TIME)
+
+    report = recovery.recover_startup()
+    checkpoint = recovery.latest_checkpoint(run_id)
+    restored = recovery.restore_latest(run_id)
+
+    assert report.interrupted_attempt_ids == (interrupted_attempt_id,)
+    assert checkpoint is not None and checkpoint.event_offset == gate_offset
+    assert restored.status is RunStatus.PAUSED
+    with restarted.unit_of_work() as uow:
+        attempts_before_resume = uow.states.list_attempts(run_id)
+        artifacts_before_resume = uow.states.list_artifacts_for_run(run_id)
+        checks_before_resume = uow.states.list_check_runs(run_id)
+        checkpoints_before_resume = uow.states.list_checkpoints(run_id)
+    assert tuple(attempt.status for attempt in attempts_before_resume) == (
+        AttemptStatus.SUCCEEDED,
+        AttemptStatus.INTERRUPTED,
+    )
+    assert attempts_before_resume[1].attempt_id == interrupted_attempt_id
+    assert tuple(artifact.artifact_id for artifact in artifacts_before_resume) == (artifact_id,)
+    assert len(checks_before_resume) == 1
+    assert checkpoints_before_resume == (checkpoint,)
+
+    worker = FakeWorker()
+    artifact_store = FilesystemArtifactStore(tmp_path / "continued-artifacts")
+    controller = RunController(restarted.unit_of_work, worker, clock=lambda: RECOVERY_TIME)
+    orchestrator = Orchestrator(
+        uow_factory=restarted.unit_of_work,
+        worker=worker,
+        artifact_store=artifact_store,
+        check_runner=CheckRunner(
+            {
+                CheckKind.ARTIFACT: ArtifactCheckAdapter(
+                    artifact_store,
+                    {},
+                    default_rule=ArtifactCheckRule(),
+                )
+            },
+            clock=lambda: RECOVERY_TIME,
+        ),
+        workspace=tmp_path,
+        clock=lambda: RECOVERY_TIME,
+    )
+
+    resumed = controller.resume(run_id)
+    completed = orchestrator.execute(resumed.run_id)
+
+    assert completed.status is RunStatus.COMPLETED
+    assert len(worker.calls) == 1
+    assert worker.calls[0].plan_node_id == later_node_id
+    with restarted.unit_of_work() as uow:
+        attempts_after = uow.states.list_attempts(run_id)
+        artifacts_after = uow.states.list_artifacts_for_run(run_id)
+        checks_after = uow.states.list_check_runs(run_id)
+        checkpoints_after = uow.states.list_checkpoints(run_id)
+    assert tuple(attempt.sequence for attempt in attempts_after) == (1, 2, 3)
+    assert tuple(attempt.status for attempt in attempts_after) == (
+        AttemptStatus.SUCCEEDED,
+        AttemptStatus.INTERRUPTED,
+        AttemptStatus.SUCCEEDED,
+    )
+    assert attempts_after[:2] == attempts_before_resume
+    assert len(artifacts_after) == 2
+    assert artifacts_after[0] == artifacts_before_resume[0]
+    assert len(checks_after) == 2
+    assert checks_after[0] == checks_before_resume[0]
+    assert len(checkpoints_after) == 2
+    assert checkpoints_after[0] == checkpoint
 
 
 def test_explicit_restore_port_rejects_superseded_checkpoint(tmp_path) -> None:
