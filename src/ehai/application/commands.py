@@ -75,6 +75,39 @@ class ProposePlan:
 
 
 @dataclass(frozen=True, slots=True)
+class ReplanPlan:
+    """Request a new draft PlanRevision after an approved base revision."""
+
+    idempotency_key: str
+    base_plan_revision_id: ID
+    criteria: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        owner = type(self).__name__
+        _require_idempotency_key(self.idempotency_key, owner)
+        object.__setattr__(
+            self,
+            "base_plan_revision_id",
+            _normalized_id(self.base_plan_revision_id, "base_plan_revision_id", owner),
+        )
+        criteria = tuple(_non_empty_text(item, "criterion", owner) for item in self.criteria)
+        if not criteria:
+            raise ValueError(f"{owner} criteria must not be empty")
+        object.__setattr__(self, "criteria", criteria)
+
+    @property
+    def fingerprint(self) -> str:
+        """Return a deterministic fingerprint excluding the idempotency key."""
+        return _fingerprint(
+            type(self).__name__,
+            {
+                "base_plan_revision_id": self.base_plan_revision_id,
+                "criteria": list(self.criteria),
+            },
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class ApprovePlan:
     """Request approval of an exact PlanRevision and CompletionContract pair."""
 

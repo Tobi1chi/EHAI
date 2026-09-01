@@ -149,6 +149,20 @@
         }
       }
     },
+    "ReplanPlanRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["idempotency_key", "base_plan_revision_id", "criteria"],
+      "properties": {
+        "idempotency_key": {"$ref": "common.schema.json#/$defs/IdempotencyKey"},
+        "base_plan_revision_id": {"$ref": "common.schema.json#/$defs/IdInput"},
+        "criteria": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"type": "string", "minLength": 1, "pattern": "\\S"}
+        }
+      }
+    },
     "ApprovePlanRequest": {
       "type": "object",
       "additionalProperties": false,

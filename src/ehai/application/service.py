@@ -19,6 +19,7 @@ from ehai.application.commands import (
     CreateProject,
     PauseRun,
     ProposePlan,
+    ReplanPlan,
     ResumeRun,
     StartRun,
 )
@@ -180,6 +181,68 @@ class ExecutionService:
                         "completion_contract_id": proposal.contract.completion_contract_id,
                         "goal_id": goal.goal_id,
                         "plan_revision_id": proposal.plan_revision.plan_revision_id,
+                    },
+                )
+            )
+            self._record_receipt(
+                uow,
+                command.idempotency_key,
+                type(command).__name__,
+                command.fingerprint,
+                {
+                    "completion_contract_id": proposal.contract.completion_contract_id,
+                    "plan_revision_id": proposal.plan_revision.plan_revision_id,
+                },
+            )
+            uow.commit()
+            return proposal.plan_revision
+
+    def replan_plan(self, command: ReplanPlan) -> PlanRevision:
+        """Create a new draft revision without mutating its approved base or history."""
+        with self._uow_factory() as uow:
+            existing = self._existing_result(
+                uow,
+                command.idempotency_key,
+                type(command).__name__,
+                command.fingerprint,
+            )
+            if existing is not None:
+                return _required_plan(uow, _result_id(existing, "plan_revision_id"))
+            base = _required_plan(uow, command.base_plan_revision_id)
+            goal = _required_goal(uow, base.goal_id)
+
+        proposal = self._planner.replan(goal, base, command.criteria)
+        aligned_goal = goal.use_completion_contract(proposal.contract)
+        with self._uow_factory() as uow:
+            existing = self._existing_result(
+                uow,
+                command.idempotency_key,
+                type(command).__name__,
+                command.fingerprint,
+            )
+            if existing is not None:
+                return _required_plan(uow, _result_id(existing, "plan_revision_id"))
+            current_goal = _required_goal(uow, goal.goal_id)
+            current_base = _required_plan(uow, base.plan_revision_id)
+            if current_goal != goal or current_base != base:
+                raise ApplicationError(
+                    f"Goal {goal.goal_id} or base PlanRevision {base.plan_revision_id} "
+                    "changed while replanning"
+                )
+            uow.states.put_completion_contract(proposal.contract)
+            uow.states.put_goal(aligned_goal)
+            uow.states.put_plan_revision(proposal.plan_revision)
+            for check_spec in proposal.check_specs:
+                uow.states.put_check_spec(proposal.plan_revision.plan_revision_id, check_spec)
+            uow.events.append(
+                self._event(
+                    EventType.PLAN_REVISION_PROPOSED,
+                    proposal.plan_revision.plan_revision_id,
+                    {
+                        "completion_contract_id": proposal.contract.completion_contract_id,
+                        "goal_id": goal.goal_id,
+                        "plan_revision_id": proposal.plan_revision.plan_revision_id,
+                        "supersedes_plan_revision_id": base.plan_revision_id,
                     },
                 )
             )

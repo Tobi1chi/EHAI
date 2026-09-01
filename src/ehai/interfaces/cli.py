@@ -17,6 +17,7 @@ from ehai.application.commands import (
     CreateProject,
     PauseRun,
     ProposePlan,
+    ReplanPlan,
     ResumeRun,
     StartRun,
 )
@@ -35,6 +36,7 @@ from ehai.application.service import ApplicationError, ExecutionService
 from ehai.application.workers import WorkerAdapter
 from ehai.domain.checking import CheckKind
 from ehai.domain.goal import Goal
+from ehai.domain.planning import PlanRevision
 from ehai.infrastructure.artifacts import FilesystemArtifactStore
 from ehai.infrastructure.checks import ArtifactCheckAdapter, ArtifactCheckRule
 from ehai.infrastructure.sqlite import SQLiteDatabase
@@ -55,6 +57,21 @@ class _ExplorationPlannerAdapter:
                 criteria=criteria,
                 budget=self._budget,
             )
+        )
+
+    def replan(
+        self,
+        goal: Goal,
+        base: PlanRevision,
+        criteria: tuple[str, ...],
+    ) -> PlanProposal:
+        return self._planner.replan(
+            ExplorationPlanRequest(
+                goal=goal,
+                criteria=criteria,
+                budget=self._budget,
+            ),
+            base,
         )
 
 
@@ -157,6 +174,16 @@ def create_parser() -> argparse.ArgumentParser:
         help=f"P1 requires exactly one value: {NON_EMPTY_ARTIFACT_CRITERION}",
     )
 
+    replan = commands.add_parser("replan-plan", help="create a new draft from an approved plan")
+    replan.add_argument("--idempotency-key", required=True)
+    replan.add_argument("--base-plan-revision-id", required=True)
+    replan.add_argument(
+        "--criterion",
+        action="append",
+        required=True,
+        help=f"P1 requires exactly one value: {NON_EMPTY_ARTIFACT_CRITERION}",
+    )
+
     approve = commands.add_parser("approve-plan", help="confirm and approve a proposal")
     approve.add_argument("--idempotency-key", required=True)
     approve.add_argument("--plan-revision-id", required=True)
@@ -248,6 +275,21 @@ def _dispatch(service: ExecutionService, args: argparse.Namespace) -> dict[str, 
             "completion_contract_id": plan.completion_contract_id,
             "plan_revision_id": plan.plan_revision_id,
             "status": plan.status.value,
+        }
+    if command == "replan-plan":
+        plan = service.replan_plan(
+            ReplanPlan(
+                args.idempotency_key,
+                normalize_id(args.base_plan_revision_id),
+                tuple(args.criterion),
+            )
+        )
+        return {
+            "completion_contract_id": plan.completion_contract_id,
+            "plan_revision_id": plan.plan_revision_id,
+            "status": plan.status.value,
+            "supersedes_plan_revision_id": plan.supersedes_plan_revision_id,
+            "version": plan.version,
         }
     if command == "approve-plan":
         plan = service.approve_plan(

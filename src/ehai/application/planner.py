@@ -136,6 +136,15 @@ class Planner(Protocol):
         """Return an unapproved proposal for an open Goal."""
         ...
 
+    def replan(
+        self,
+        goal: Goal,
+        base: PlanRevision,
+        criteria: tuple[str, ...],
+    ) -> PlanProposal:
+        """Return a versioned replacement proposal for an approved base."""
+        ...
+
 
 @dataclass(frozen=True, slots=True)
 class DeterministicPlanner:
@@ -158,7 +167,30 @@ class DeterministicPlanner:
                 "DeterministicPlanner supports exactly one P1 completion criterion: "
                 f"{NON_EMPTY_ARTIFACT_CRITERION}"
             )
+        return self._build_proposal(goal, normalized_criteria)
 
+    def replan(
+        self,
+        goal: Goal,
+        base: PlanRevision,
+        criteria: tuple[str, ...],
+    ) -> PlanProposal:
+        """Create a single-node replacement through the explicit GraphPatch boundary."""
+        current_contract = _require_replan_context(goal, base)
+        normalized_criteria = tuple(criterion.strip() for criterion in criteria)
+        if normalized_criteria != (NON_EMPTY_ARTIFACT_CRITERION,):
+            raise ValueError(
+                "DeterministicPlanner supports exactly one P1 completion criterion: "
+                f"{NON_EMPTY_ARTIFACT_CRITERION}"
+            )
+        template = self._build_proposal(goal, normalized_criteria)
+        return _replan_from_template(base, current_contract, template)
+
+    def _build_proposal(
+        self,
+        goal: Goal,
+        normalized_criteria: tuple[str, ...],
+    ) -> PlanProposal:
         proposed_at = self.clock()
         check_spec = CheckSpec(
             name="completion-artifact",
@@ -217,7 +249,25 @@ class DeterministicExplorationPlanner:
                 "DeterministicExplorationPlanner supports exactly one P1 completion "
                 f"criterion: {NON_EMPTY_ARTIFACT_CRITERION}"
             )
+        return self._build_proposal(request)
 
+    def replan(
+        self,
+        request: ExplorationPlanRequest,
+        base: PlanRevision,
+    ) -> PlanProposal:
+        """Create an exploration replacement through the explicit GraphPatch boundary."""
+        current_contract = _require_replan_context(request.goal, base)
+        if request.criteria != (NON_EMPTY_ARTIFACT_CRITERION,):
+            raise ValueError(
+                "DeterministicExplorationPlanner supports exactly one P1 completion "
+                f"criterion: {NON_EMPTY_ARTIFACT_CRITERION}"
+            )
+        template = self._build_proposal(request)
+        return _replan_from_template(base, current_contract, template)
+
+    def _build_proposal(self, request: ExplorationPlanRequest) -> PlanProposal:
+        goal = request.goal
         usage = ExplorationUsage(width=2, depth=1, attempts=5)
         usage.require_within(request.budget)
         proposed_at = self.clock()
@@ -429,3 +479,64 @@ def _graph_usage(
     depth = max((len(branch.node_ids) for branch in branches), default=0)
     attempts = sum(bool(node.required_check_ids) for node in nodes)
     return ExplorationUsage(width=width, depth=depth, attempts=attempts)
+
+
+def _require_replan_context(goal: Goal, base: PlanRevision) -> CompletionContract:
+    if goal.status is not GoalStatus.OPEN:
+        raise ValueError(f"Goal {goal.goal_id} must be open before replanning")
+    current = goal.completion_contract
+    if current is None or not current.is_confirmed:
+        raise ValueError(f"Goal {goal.goal_id} requires a confirmed CompletionContract")
+    if base.status is not PlanRevisionStatus.APPROVED:
+        raise ValueError(f"base PlanRevision {base.plan_revision_id} must be approved")
+    if base.goal_id != goal.goal_id:
+        raise ValueError(f"base PlanRevision {base.plan_revision_id} belongs to another Goal")
+    if (
+        base.completion_contract_id != current.completion_contract_id
+        or base.completion_contract_version != current.version
+    ):
+        raise ValueError(
+            f"base PlanRevision {base.plan_revision_id} is not aligned to the current "
+            "CompletionContract"
+        )
+    return current
+
+
+def _replan_from_template(
+    base: PlanRevision,
+    current_contract: CompletionContract,
+    template: PlanProposal,
+) -> PlanProposal:
+    revised_contract = current_contract.revise(
+        template.contract.criteria,
+        template.contract.required_check_ids,
+        completion_contract_id=template.contract.completion_contract_id,
+        created_at=template.contract.created_at,
+    )
+    usage = template.usage or _graph_usage(
+        template.plan_revision.nodes,
+        template.plan_revision.branches,
+    )
+    budget = template.budget or ExplorationBudget(max_attempts=max(1, usage.attempts))
+    patch = GraphPatch(
+        base_plan_revision_id=base.plan_revision_id,
+        target_completion_contract_id=revised_contract.completion_contract_id,
+        nodes=template.plan_revision.nodes,
+        edges=template.plan_revision.edges,
+        branches=template.plan_revision.branches,
+        budget=budget,
+        usage=usage,
+    )
+    revised_plan = patch.apply(
+        base,
+        revised_contract,
+        plan_revision_id=template.plan_revision.plan_revision_id,
+        created_at=template.plan_revision.created_at,
+    )
+    return PlanProposal(
+        contract=revised_contract,
+        plan_revision=revised_plan,
+        check_specs=template.check_specs,
+        budget=template.budget,
+        usage=template.usage,
+    )

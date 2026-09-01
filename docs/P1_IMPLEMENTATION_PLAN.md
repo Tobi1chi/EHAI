@@ -157,6 +157,7 @@ Run:     pending → running ↔ paused → completed | failed | cancelled
 - 每个分支先通过局部 Gate；Evaluator 根据预先定义的准则生成选择结果和证据。
 - 未选择分支进入 `pruned`，但保留 Attempt、Event 和 Artifact。
 - 重新规划通过 GraphPatch 产生新的 PlanRevision，旧轨迹保持可查询。
+- `ReplanPlan` 必须引用已批准 base，通过 GraphPatch 创建 `version + 1` draft；若 CheckSpec 变化，则 CompletionContract 与 CheckSpec 使用 fresh ID 和显式 predecessor lineage，并要求再次批准，不能修改已确认版本。
 
 重点测试：两个分支均成功、一个分支失败、全部失败、选择证据缺失、分支预算耗尽。
 
@@ -167,7 +168,7 @@ Run:     pending → running ↔ paused → completed | failed | cancelled
 交付：
 
 - 用同一 application service 暴露 CLI 和最小 HTTP API，禁止在接口层复制业务规则。
-- Command：创建 Goal、生成/批准计划、启动、暂停、继续和取消 Run。
+- Command：创建 Goal、生成/重规划/批准计划、启动、暂停、继续和取消 Run。
 - Query：读取 PlanGraph、ExecutionTrace、Check、Checkpoint、Artifact 元数据和当前状态。
 - 提供基于 Event ID 的事件流及断线续传。
 - 将公开 Command、Event 和 Query 模型导出到 `schemas/v1/` 并进行契约测试。
@@ -211,6 +212,7 @@ Run:     pending → running ↔ paused → completed | failed | cancelled
 CreateProject
 CreateGoal
 ProposePlan
+ReplanPlan(base_plan_revision_id)
 ApprovePlan
 StartRun
 PauseRun / ResumeRun / CancelRun

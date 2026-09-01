@@ -1,9 +1,16 @@
 from pathlib import Path
+from types import SimpleNamespace
 
 from pytest import CaptureFixture, MonkeyPatch
 
-from ehai import json_loads
-from ehai.application.commands import CreateGoal, CreateProject, ProposePlan
+from ehai import json_loads, new_id
+from ehai.application.commands import (
+    ApprovePlan,
+    CreateGoal,
+    CreateProject,
+    ProposePlan,
+    ReplanPlan,
+)
 from ehai.application.orchestrator import OrchestrationError
 from ehai.application.planner import NON_EMPTY_ARTIFACT_CRITERION
 from ehai.application.service import ExecutionService
@@ -74,9 +81,19 @@ def test_build_service_selects_exploration_planner(tmp_path: Path) -> None:
     goal = service.create_goal(CreateGoal("goal", project.project_id, "explore goal"))
 
     plan = service.propose_plan(ProposePlan("plan", goal.goal_id, (NON_EMPTY_ARTIFACT_CRITERION,)))
+    approved = service.approve_plan(
+        ApprovePlan("approve", plan.plan_revision_id, plan.completion_contract_id)
+    )
+    replanned = service.replan_plan(
+        ReplanPlan("replan", approved.plan_revision_id, (NON_EMPTY_ARTIFACT_CRITERION,))
+    )
 
     assert len(plan.nodes) == 5
     assert len(plan.branches) == 2
+    assert replanned.version == 2
+    assert replanned.supersedes_plan_revision_id == approved.plan_revision_id
+    assert len(replanned.nodes) == 5
+    assert len(replanned.branches) == 2
 
 
 def test_parser_accepts_minimal_exploration_selection(tmp_path: Path) -> None:
@@ -97,3 +114,51 @@ def test_parser_accepts_minimal_exploration_selection(tmp_path: Path) -> None:
     )
 
     assert args.planner == "exploration"
+
+
+def test_parser_accepts_replan_product_command(tmp_path: Path) -> None:
+    base_plan_revision_id = new_id()
+    args = cli.create_parser().parse_args(
+        [
+            "--database",
+            str(tmp_path / "state.sqlite3"),
+            "--artifacts",
+            str(tmp_path / "artifacts"),
+            "replan-plan",
+            "--idempotency-key",
+            "replan",
+            "--base-plan-revision-id",
+            base_plan_revision_id,
+            "--criterion",
+            NON_EMPTY_ARTIFACT_CRITERION,
+        ]
+    )
+
+    assert args.command == "replan-plan"
+    assert args.idempotency_key == "replan"
+    assert args.base_plan_revision_id == base_plan_revision_id
+    assert args.criterion == [NON_EMPTY_ARTIFACT_CRITERION]
+
+    class _Service:
+        command: ReplanPlan | None = None
+
+        def replan_plan(self, command: ReplanPlan) -> object:
+            self.command = command
+            return SimpleNamespace(
+                completion_contract_id=new_id(),
+                plan_revision_id=new_id(),
+                status=SimpleNamespace(value="draft"),
+                supersedes_plan_revision_id=base_plan_revision_id,
+                version=2,
+            )
+
+    service = _Service()
+    output = cli._dispatch(service, args)  # type: ignore[arg-type]
+
+    assert service.command == ReplanPlan(
+        "replan",
+        base_plan_revision_id,
+        (NON_EMPTY_ARTIFACT_CRITERION,),
+    )
+    assert output["version"] == 2
+    assert output["supersedes_plan_revision_id"] == base_plan_revision_id

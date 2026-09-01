@@ -42,6 +42,12 @@ class ProposePlanRequest(_StrictRequest):
     criteria: list[NonBlank] = Field(min_length=1)
 
 
+class ReplanPlanRequest(_StrictRequest):
+    idempotency_key: NonBlank
+    base_plan_revision_id: UuidInput
+    criteria: list[NonBlank] = Field(min_length=1)
+
+
 class ApprovePlanRequest(_StrictRequest):
     idempotency_key: NonBlank
     plan_revision_id: UuidInput

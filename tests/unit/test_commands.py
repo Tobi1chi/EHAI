@@ -13,6 +13,7 @@ from ehai.application.commands import (
     CreateProject,
     PauseRun,
     ProposePlan,
+    ReplanPlan,
     ResumeRun,
     StartRun,
 )
@@ -23,6 +24,7 @@ def _command_factories(idempotency_key: str) -> tuple[Callable[[], object], ...]
         lambda: CreateProject(idempotency_key, "project"),
         lambda: CreateGoal(idempotency_key, new_id(), "goal"),
         lambda: ProposePlan(idempotency_key, new_id(), ("criterion",)),
+        lambda: ReplanPlan(idempotency_key, new_id(), ("criterion",)),
         lambda: ApprovePlan(idempotency_key, new_id(), new_id()),
         lambda: StartRun(idempotency_key, new_id()),
         lambda: PauseRun(idempotency_key, new_id()),
@@ -31,7 +33,7 @@ def _command_factories(idempotency_key: str) -> tuple[Callable[[], object], ...]
     )
 
 
-@pytest.mark.parametrize("command_index", range(8))
+@pytest.mark.parametrize("command_index", range(9))
 def test_every_command_requires_non_empty_idempotency_key(command_index: int) -> None:
     with pytest.raises(ValueError, match="idempotency_key"):
         _command_factories("   ")[command_index]()
@@ -41,10 +43,14 @@ def test_command_ids_are_normalized_and_text_is_trimmed() -> None:
     project_id = new_id()
     goal = CreateGoal("key", project_id.upper(), "  produce evidence  ")
     plan = ProposePlan("key", new_id().upper(), ["  first  ", "second"])  # type: ignore[arg-type]
+    replan_id = new_id()
+    replan = ReplanPlan("key", replan_id.upper(), ["  first  "])  # type: ignore[arg-type]
 
     assert goal.project_id == project_id
     assert goal.objective == "produce evidence"
     assert plan.criteria == ("first", "second")
+    assert replan.base_plan_revision_id == replan_id
+    assert replan.criteria == ("first",)
 
 
 def test_command_inputs_are_frozen_and_snapshot_mutable_criteria() -> None:
@@ -82,6 +88,7 @@ def test_fingerprint_includes_command_type() -> None:
     [
         lambda: CreateGoal("key", ID("not-a-uuid"), "goal"),
         lambda: ProposePlan("key", ID("not-a-uuid"), ("criterion",)),
+        lambda: ReplanPlan("key", ID("not-a-uuid"), ("criterion",)),
         lambda: ApprovePlan("key", ID("not-a-uuid"), new_id()),
         lambda: StartRun("key", ID("not-a-uuid")),
         lambda: PauseRun("key", ID("not-a-uuid")),
@@ -101,5 +108,7 @@ def test_commands_reject_empty_domain_text() -> None:
         CreateGoal("key", new_id(), " ")
     with pytest.raises(ValueError, match="criteria"):
         ProposePlan("key", new_id(), ())
+    with pytest.raises(ValueError, match="criteria"):
+        ReplanPlan("key", new_id(), ())
     with pytest.raises(ValueError, match="reason"):
         CancelRun("key", new_id(), " ")

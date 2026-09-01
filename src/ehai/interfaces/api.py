@@ -21,6 +21,7 @@ from ehai.application.commands import (
     CreateProject,
     PauseRun,
     ProposePlan,
+    ReplanPlan,
     ResumeRun,
     StartRun,
 )
@@ -47,6 +48,7 @@ from ehai.interfaces.http_models import (
     ErrorDetail,
     ErrorResponse,
     ProposePlanRequest,
+    ReplanPlanRequest,
     RunActionRequest,
     StartRunRequest,
     UuidInput,
@@ -186,6 +188,23 @@ def create_app(
                 ProposePlan(
                     request.idempotency_key,
                     _id(str(request.goal_id)),
+                    tuple(request.criteria),
+                )
+            )
+        )
+
+    @router.post(
+        "/plans/replan",
+        response_model=DataResponse,
+        responses=_PLAN_CREATED_RESPONSES,
+        status_code=201,
+    )
+    def replan_plan(request: ReplanPlanRequest) -> DataResponse:
+        return _response(
+            execution_service.replan_plan(
+                ReplanPlan(
+                    request.idempotency_key,
+                    _id(str(request.base_plan_revision_id)),
                     tuple(request.criteria),
                 )
             )

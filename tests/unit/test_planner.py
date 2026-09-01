@@ -281,3 +281,43 @@ def test_graph_patch_rejects_unapproved_base_and_budget_mismatch() -> None:
     )
     with pytest.raises(ValueError, match="must be approved"):
         patch.apply(base_proposal.plan_revision, base_proposal.contract)
+
+
+def test_deterministic_planners_replan_with_fresh_contract_and_check_lineage() -> None:
+    goal = _goal()
+    base_proposal = DeterministicPlanner(clock=lambda: NOW).propose(
+        goal,
+        (NON_EMPTY_ARTIFACT_CRITERION,),
+    )
+    confirmed = base_proposal.contract.confirm(confirmed_at=NOW)
+    aligned = goal.use_completion_contract(confirmed)
+    base = base_proposal.plan_revision.approve(confirmed, approved_at=NOW)
+
+    single = DeterministicPlanner(clock=lambda: NOW).replan(
+        aligned,
+        base,
+        (NON_EMPTY_ARTIFACT_CRITERION,),
+    )
+    exploration = DeterministicExplorationPlanner(clock=lambda: NOW).replan(
+        ExplorationPlanRequest(
+            goal=aligned,
+            criteria=(NON_EMPTY_ARTIFACT_CRITERION,),
+            budget=ExplorationBudget(max_attempts=5),
+        ),
+        base,
+    )
+
+    for proposal in (single, exploration):
+        assert proposal.contract.version == 2
+        assert (
+            proposal.contract.supersedes_completion_contract_id == confirmed.completion_contract_id
+        )
+        assert proposal.contract.completion_contract_id != confirmed.completion_contract_id
+        assert proposal.check_specs[0].check_id not in confirmed.required_check_ids
+        assert proposal.plan_revision.version == 2
+        assert proposal.plan_revision.supersedes_plan_revision_id == base.plan_revision_id
+        assert (
+            proposal.plan_revision.completion_contract_id
+            == proposal.contract.completion_contract_id
+        )
+        assert proposal.plan_revision.completion_contract_version == proposal.contract.version

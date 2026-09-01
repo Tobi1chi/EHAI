@@ -15,6 +15,7 @@ from ehai.application.commands import (
     CreateProject,
     PauseRun,
     ProposePlan,
+    ReplanPlan,
     ResumeRun,
     StartRun,
 )
@@ -50,6 +51,9 @@ class _CommandService:
         return self._record(command)
 
     def propose_plan(self, command: ProposePlan) -> object:
+        return self._record(command)
+
+    def replan_plan(self, command: ReplanPlan) -> object:
         return self._record(command)
 
     def approve_plan(self, command: ApprovePlan) -> object:
@@ -160,6 +164,15 @@ def test_all_command_routes_convert_models_and_preserve_idempotency() -> None:
             201,
         ),
         (
+            "/api/v1/plans/replan",
+            {
+                "idempotency_key": "replan-1",
+                "base_plan_revision_id": plan_id,
+                "criteria": ["done"],
+            },
+            201,
+        ),
+        (
             "/api/v1/plans/approve",
             {
                 "idempotency_key": "approve-1",
@@ -191,6 +204,7 @@ def test_all_command_routes_convert_models_and_preserve_idempotency() -> None:
         CreateProject,
         CreateGoal,
         ProposePlan,
+        ReplanPlan,
         ApprovePlan,
         StartRun,
         PauseRun,
@@ -201,6 +215,7 @@ def test_all_command_routes_convert_models_and_preserve_idempotency() -> None:
         "p-1",
         "g-1",
         "plan-1",
+        "replan-1",
         "approve-1",
         "start-1",
         "pause-1",
@@ -220,6 +235,10 @@ def test_all_command_routes_convert_models_and_preserve_idempotency() -> None:
         (
             "/api/v1/plans/propose",
             {"goal_id": new_id(), "criteria": ["done"]},
+        ),
+        (
+            "/api/v1/plans/replan",
+            {"base_plan_revision_id": new_id(), "criteria": ["done"]},
         ),
         (
             "/api/v1/plans/approve",

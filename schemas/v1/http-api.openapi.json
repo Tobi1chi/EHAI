@@ -67,6 +67,27 @@
         }
       }
     },
+    "/api/v1/plans/replan": {
+      "post": {
+        "operationId": "replan_plan_api_v1_plans_replan_post",
+        "summary": "Replan Plan",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {"$ref": "commands.schema.json#/$defs/ReplanPlanRequest"}
+            }
+          }
+        },
+        "responses": {
+          "201": {"$ref": "#/components/responses/CommandPlanGraphResponse"},
+          "404": {"$ref": "#/components/responses/ErrorResponse"},
+          "409": {"$ref": "#/components/responses/ErrorResponse"},
+          "422": {"$ref": "#/components/responses/ErrorResponse"},
+          "500": {"$ref": "#/components/responses/ErrorResponse"}
+        }
+      }
+    },
     "/api/v1/plans/approve": {
       "post": {
         "operationId": "approve_plan_api_v1_plans_approve_post",

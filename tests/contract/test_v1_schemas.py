@@ -41,6 +41,7 @@ from ehai.interfaces.http_models import (
     CreateGoalRequest,
     CreateProjectRequest,
     ProposePlanRequest,
+    ReplanPlanRequest,
     RunActionRequest,
     StartRunRequest,
 )
@@ -225,6 +226,7 @@ class _CommandService:
     create_project = _respond
     create_goal = _respond
     propose_plan = _respond
+    replan_plan = _respond
     approve_plan = _respond
     start_run = _respond
     pause_run = _respond
@@ -290,6 +292,14 @@ def _client() -> TestClient:
         (
             "ProposePlanRequest",
             ProposePlanRequest(idempotency_key="plan", goal_id=new_id(), criteria=["done"]),
+        ),
+        (
+            "ReplanPlanRequest",
+            ReplanPlanRequest(
+                idempotency_key="replan",
+                base_plan_revision_id=new_id(),
+                criteria=["done"],
+            ),
         ),
         (
             "ApprovePlanRequest",
@@ -384,11 +394,36 @@ def test_real_command_responses_match_typed_contracts(tmp_path: Path) -> None:
     assert approved.status_code == 200
     _validator("commands.schema.json", "PlanGraphResponse").validate(approved.json())
 
+    replanned = client.post(
+        "/api/v1/plans/replan",
+        json={
+            "idempotency_key": "replan",
+            "base_plan_revision_id": plan["plan_revision_id"],
+            "criteria": [NON_EMPTY_ARTIFACT_CRITERION],
+        },
+    )
+    assert replanned.status_code == 201
+    _validator("commands.schema.json", "PlanGraphResponse").validate(replanned.json())
+    revised_plan = replanned.json()["data"]
+    assert revised_plan["version"] == 2
+    assert revised_plan["supersedes_plan_revision_id"] == plan["plan_revision_id"]
+
+    approved_replan = client.post(
+        "/api/v1/plans/approve",
+        json={
+            "idempotency_key": "approve-replan",
+            "plan_revision_id": revised_plan["plan_revision_id"],
+            "completion_contract_id": revised_plan["completion_contract_id"],
+        },
+    )
+    assert approved_replan.status_code == 200
+    _validator("commands.schema.json", "PlanGraphResponse").validate(approved_replan.json())
+
     run = client.post(
         "/api/v1/runs/start",
         json={
             "idempotency_key": "start",
-            "plan_revision_id": plan["plan_revision_id"],
+            "plan_revision_id": revised_plan["plan_revision_id"],
         },
     )
     assert run.status_code == 201

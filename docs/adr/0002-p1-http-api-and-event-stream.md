@@ -14,11 +14,13 @@ P1 必须使用 FastAPI 构建 ASGI HTTP 接口，并使用 Uvicorn 作为本地
 
 HTTP 表面只覆盖 P1 Implementation Plan 已列出的能力：
 
-- Command：`CreateProject`、`CreateGoal`、`ProposePlan`、`ApprovePlan`、`StartRun`、`PauseRun`、`ResumeRun`、`CancelRun`。
+- Command：`CreateProject`、`CreateGoal`、`ProposePlan`、`ReplanPlan`、`ApprovePlan`、`StartRun`、`PauseRun`、`ResumeRun`、`CancelRun`。
 - Query：`GetRun`、`GetPlanGraph`、`GetExecutionTrace`、Check、Checkpoint、Artifact 元数据与当前状态。
 - Event：`ListEvents(after_event_id)` 和基于同一游标语义的 Server-Sent Events（SSE）订阅。
 
 具体路由使用版本前缀 `/api/v1`。写操作使用资源/动作明确的 REST 路由，并在请求中携带幂等键；查询使用 `GET`。P1 不为了表面上的纯 REST 风格隐藏领域 Command。
+
+`POST /plans/replan` 必须引用一个已批准的 base PlanRevision，且 Goal 仍须处于 open。它创建新的 draft PlanRevision 和未确认的下一版 CompletionContract/CheckSpec，保留 `supersedes` lineage；调用方仍须通过 `POST /plans/approve` 明确批准新版本。旧 PlanRevision、Run 和 ExecutionTrace 保持可查询，初次 `ProposePlan` 不承担隐式重规划语义。
 
 事件流使用 Starlette 自带的 `StreamingResponse`，媒体类型为 `text/event-stream`，不额外引入 SSE 扩展包。每个 SSE frame 必须至少包含：
 
