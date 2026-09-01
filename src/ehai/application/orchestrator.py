@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import time
+from base64 import b64encode
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 from hashlib import sha256
 from pathlib import Path
 
-from ehai import ID, JsonValue, new_id, utc_now
+from ehai import ID, JsonValue, new_id, normalize_id, utc_now
 from ehai.application.checks import CheckContext, CheckRunner
 from ehai.application.evaluation import (
     BranchEvaluationContext,
@@ -205,15 +206,16 @@ class Orchestrator:
                 _branch_containing(context.plan_revision, context.plan_node.plan_node_id)
                 is not None
             )
-            request = WorkerRequest(
-                run=context.run,
-                attempt=context.attempt,
-                plan_node=context.plan_node,
-                completion_contract=context.completion_contract,
-                context={},
-                artifact_inputs=self._worker_inputs(context),
-            )
             try:
+                artifact_inputs = self._worker_inputs(context)
+                request = WorkerRequest(
+                    run=context.run,
+                    attempt=context.attempt,
+                    plan_node=context.plan_node,
+                    completion_contract=context.completion_contract,
+                    context=self._worker_context(context, artifact_inputs),
+                    artifact_inputs=artifact_inputs,
+                )
                 result = self._worker.execute(request)
             except WorkerCancelledError as error:
                 try:
@@ -598,6 +600,12 @@ class Orchestrator:
                 if branch.status is BranchStatus.ACTIVE
                 for node_id in branch.node_ids
             }
+        elif context.plan_node.kind is PlanNodeKind.MERGE:
+            selected = _required_selected_branch(plan, context.plan_node.plan_node_id)
+            source_node_ids = {
+                *context.plan_node.required_dependency_ids,
+                *selected.node_ids,
+            }
         else:
             source_node_ids = set(context.plan_node.required_dependency_ids)
         if not source_node_ids:
@@ -609,6 +617,101 @@ class Orchestrator:
                 if artifact.plan_node_id in source_node_ids
                 and artifact.kind in {ArtifactKind.CANDIDATE, ArtifactKind.PATCH}
             )
+
+    def _worker_context(
+        self,
+        context: _ExecutionContext,
+        artifact_inputs: tuple[Artifact, ...],
+    ) -> dict[str, JsonValue]:
+        if context.plan_node.kind is not PlanNodeKind.MERGE:
+            return {}
+        selected = _required_selected_branch(
+            context.plan_revision,
+            context.plan_node.plan_node_id,
+        )
+        with self._uow_factory() as uow:
+            selected_event = next(
+                (
+                    stored.event
+                    for stored in reversed(uow.events.list_events())
+                    if stored.event.run_id == context.run.run_id
+                    and stored.event.type is EventType.BRANCH_SELECTED
+                    and stored.event.correlation_id == selected.branch_id
+                ),
+                None,
+            )
+        selected_artifacts = tuple(
+            artifact for artifact in artifact_inputs if artifact.plan_node_id in selected.node_ids
+        )
+        if selected_event is None:
+            raise OrchestrationError(
+                f"selected Branch {selected.branch_id} has no persisted selection Event"
+            )
+        selection = selected_event.payload
+        evidence_ids = selection.get("evidence_artifact_ids")
+        criterion = selection.get("criterion")
+        explanation = selection.get("explanation")
+        if (
+            selection.get("branch_id") != selected.branch_id
+            or selection.get("fork_node_id") != selected.fork_node_id
+            or not isinstance(evidence_ids, list)
+            or not evidence_ids
+            or not isinstance(criterion, str)
+            or not criterion.strip()
+            or not isinstance(explanation, str)
+            or not explanation.strip()
+        ):
+            raise OrchestrationError(
+                f"selected Branch {selected.branch_id} has invalid persisted selection evidence"
+            )
+        try:
+            evidence_artifact_ids = [
+                normalize_id(artifact_id)
+                for artifact_id in evidence_ids
+                if isinstance(artifact_id, str)
+            ]
+        except ValueError as error:
+            raise OrchestrationError(
+                f"selected Branch {selected.branch_id} has invalid evidence Artifact IDs"
+            ) from error
+        if len(evidence_artifact_ids) != len(evidence_ids):
+            raise OrchestrationError(
+                f"selected Branch {selected.branch_id} has invalid evidence Artifact IDs"
+            )
+        selected_artifact_ids = {artifact.artifact_id for artifact in selected_artifacts}
+        if not set(evidence_artifact_ids).issubset(selected_artifact_ids):
+            raise OrchestrationError(
+                f"selected Branch {selected.branch_id} evidence is outside its candidate Artifacts"
+            )
+        evidence_json: list[JsonValue] = [str(artifact_id) for artifact_id in evidence_artifact_ids]
+        contents: list[JsonValue] = []
+        for artifact in selected_artifacts:
+            content = self._artifact_store.read(artifact.artifact_id)
+            try:
+                encoded_content = content.decode("utf-8")
+                encoding = "utf-8"
+            except UnicodeDecodeError:
+                encoded_content = b64encode(content).decode("ascii")
+                encoding = "base64"
+            contents.append(
+                {
+                    "artifact_id": artifact.artifact_id,
+                    "sha256": artifact.sha256,
+                    "media_type": artifact.media_type,
+                    "encoding": encoding,
+                    "content": encoded_content,
+                }
+            )
+        return {
+            "branch_selection": {
+                "selected_branch_id": selected.branch_id,
+                "fork_node_id": selected.fork_node_id,
+                "criterion": criterion,
+                "explanation": explanation,
+                "evidence_artifact_ids": evidence_json,
+            },
+            "selected_artifacts": contents,
+        }
 
     def _store_candidate_artifacts(
         self,
@@ -1316,6 +1419,19 @@ def _selected_branch_mapping(plan: PlanRevision) -> dict[ID, ID]:
         for branch in plan.branches
         if branch.status is BranchStatus.SELECTED
     }
+
+
+def _required_selected_branch(plan: PlanRevision, merge_node_id: ID) -> Branch:
+    selected = tuple(
+        branch
+        for branch in plan.branches
+        if branch.merge_node_id == merge_node_id and branch.status is BranchStatus.SELECTED
+    )
+    if len(selected) != 1:
+        raise OrchestrationError(
+            f"Merge PlanNode {merge_node_id} requires exactly one selected Branch"
+        )
+    return selected[0]
 
 
 def _is_final_completion(plan: PlanRevision, completed_node: PlanNode) -> bool:

@@ -31,6 +31,7 @@ from ehai.infrastructure.artifacts import FilesystemArtifactStore
 from ehai.infrastructure.checks import ArtifactCheckAdapter, ArtifactCheckRule
 from ehai.infrastructure.sqlite import SQLiteDatabase
 from ehai.infrastructure.workers import FakeWorker
+from ehai.infrastructure.workers.codex_protocol import build_codex_prompt
 
 
 class _ExplorationPlannerAdapter:
@@ -138,9 +139,53 @@ def test_public_service_completes_and_reloads_exploration_trace(tmp_path: Path) 
     branch_node_ids = {node_id for branch in graph.branches for node_id in branch.node_ids}
     evaluator_call = worker.calls[3]
     assert {artifact.plan_node_id for artifact in evaluator_call.artifact_inputs} == branch_node_ids
-    assert worker.calls[-1].plan_node_id == graph.nodes[-1].plan_node_id
+    merge_call = worker.calls[-1]
+    assert merge_call.plan_node_id == graph.nodes[-1].plan_node_id
+
+    selected_branch, pruned_branch = graph.branches
+    selected_node_ids = set(selected_branch.node_ids)
+    pruned_node_ids = set(pruned_branch.node_ids)
+    merge_input_node_ids = {artifact.plan_node_id for artifact in merge_call.artifact_inputs}
+    assert selected_node_ids.issubset(merge_input_node_ids)
+    assert merge_input_node_ids.isdisjoint(pruned_node_ids)
+
+    merge_context = merge_call.context
+    branch_selection = merge_context["branch_selection"]
+    assert isinstance(branch_selection, dict)
+    assert branch_selection["selected_branch_id"] == selected_branch.branch_id
+    assert branch_selection["fork_node_id"] == selected_branch.fork_node_id
+    assert branch_selection["criterion"]
+    assert branch_selection["explanation"]
+    evidence_artifact_ids = branch_selection["evidence_artifact_ids"]
+    assert isinstance(evidence_artifact_ids, list)
+
+    selected_artifacts = merge_context["selected_artifacts"]
+    assert isinstance(selected_artifacts, list)
+    selected_content = "\n".join(
+        artifact["content"]
+        for artifact in selected_artifacts
+        if isinstance(artifact, dict)
+        and artifact["encoding"] == "utf-8"
+        and isinstance(artifact["content"], str)
+    )
+    assert selected_content
+    assert all(str(node_id) in selected_content for node_id in selected_node_ids)
+    assert all(str(node_id) not in selected_content for node_id in pruned_node_ids)
+    selected_artifact_ids = {
+        artifact["artifact_id"] for artifact in selected_artifacts if isinstance(artifact, dict)
+    }
+    assert set(evidence_artifact_ids).issubset(selected_artifact_ids)
+    merge_prompt = build_codex_prompt(merge_call)
+    assert all(str(node_id) in merge_prompt for node_id in selected_node_ids)
+    assert all(str(node_id) not in merge_prompt for node_id in pruned_node_ids)
 
     assert len(trace.artifacts) == 5
+    merge_artifact = next(
+        artifact for artifact in trace.artifacts if artifact.plan_node_id == merge_call.plan_node_id
+    )
+    merge_output = artifact_store.read(merge_artifact.artifact_id).decode("utf-8")
+    assert all(str(node_id) in merge_output for node_id in selected_node_ids)
+    assert all(str(node_id) not in merge_output for node_id in pruned_node_ids)
     assert len(trace.check_runs) == 5
     assert all(check.status is CheckRunStatus.COMPLETED for check in trace.check_runs)
     assert all(check.result is not None and check.result.passed for check in trace.check_runs)

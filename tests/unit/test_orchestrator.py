@@ -1,5 +1,6 @@
 import json
 import sys
+from base64 import b64encode
 from datetime import UTC, datetime
 
 import pytest
@@ -913,6 +914,50 @@ def test_orchestrator_executes_exploration_serially_and_completes_only_merge(tmp
     assert evaluator_completed_index < selection_index
     assert sum(event.type is EventType.GATE_PASSED for event in events[:selection_index]) == 4
     assert events[-1].type is EventType.RUN_COMPLETED
+
+
+def test_merge_snapshots_non_utf8_selected_candidate_as_base64(tmp_path) -> None:
+    database = SQLiteDatabase(tmp_path / "binary-selected.sqlite3")
+    _, _, run, nodes, _ = _seed_exploration(database)
+    selected_content = b"\xff\x00selected"
+    worker = FakeWorker(
+        results_by_node={
+            nodes["left"].plan_node_id: WorkerResult(
+                artifacts=(
+                    CandidateArtifact(
+                        ArtifactKind.CANDIDATE,
+                        "selected.bin",
+                        "application/octet-stream",
+                        selected_content,
+                    ),
+                ),
+                summary="binary selected candidate",
+            )
+        }
+    )
+    artifact_store = FilesystemArtifactStore(tmp_path / "binary-artifacts")
+    orchestrator = Orchestrator(
+        uow_factory=database.unit_of_work,
+        worker=worker,
+        artifact_store=artifact_store,
+        check_runner=_check_runner(artifact_store),
+        workspace=tmp_path,
+        clock=lambda: NOW,
+    )
+
+    completed = orchestrator.execute(run.run_id)
+
+    assert completed.status is RunStatus.COMPLETED
+    merge_context = worker.calls[-1].context
+    selected_artifacts = merge_context["selected_artifacts"]
+    assert isinstance(selected_artifacts, list)
+    binary_snapshot = next(
+        artifact
+        for artifact in selected_artifacts
+        if isinstance(artifact, dict) and artifact["media_type"] == "application/octet-stream"
+    )
+    assert binary_snapshot["encoding"] == "base64"
+    assert binary_snapshot["content"] == b64encode(selected_content).decode("ascii")
 
 
 @pytest.mark.parametrize("failure_kind", ["worker", "check"])

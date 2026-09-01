@@ -5,12 +5,12 @@ from datetime import UTC, datetime
 
 import pytest
 
-from ehai import json_dumps, json_loads, new_id
+from ehai import JsonValue, json_dumps, json_loads, new_id
 from ehai.application.workers import WorkerRequest, WorkerResult
 from ehai.domain.artifacts import Artifact, ArtifactKind
 from ehai.domain.execution import Attempt, Run
 from ehai.domain.goal import CompletionContract
-from ehai.domain.planning import PlanNode
+from ehai.domain.planning import PlanNode, PlanNodeKind
 from ehai.infrastructure.workers.codex_protocol import (
     CodexProtocolError,
     ParsedCodexResult,
@@ -22,7 +22,12 @@ from ehai.infrastructure.workers.codex_protocol import (
 NOW = datetime(2026, 8, 31, 17, 0, tzinfo=UTC)
 
 
-def _request(*, artifact_inputs: tuple[Artifact, ...] = ()) -> WorkerRequest:
+def _request(
+    *,
+    artifact_inputs: tuple[Artifact, ...] = (),
+    context: dict[str, JsonValue] | None = None,
+    node_kind: PlanNodeKind = PlanNodeKind.WORK,
+) -> WorkerRequest:
     goal_id = new_id()
     run = Run(goal_id, new_id(), run_id=new_id(), created_at=NOW).start(at=NOW)
     check_id = new_id()
@@ -38,6 +43,7 @@ def _request(*, artifact_inputs: tuple[Artifact, ...] = ()) -> WorkerRequest:
             new_id(),
             "produce candidate",
             "Write a concise candidate result.",
+            kind=node_kind,
             required_check_ids=(check_id,),
         )
         .mark_ready()
@@ -55,7 +61,7 @@ def _request(*, artifact_inputs: tuple[Artifact, ...] = ()) -> WorkerRequest:
         attempt=attempt,
         plan_node=node,
         completion_contract=contract,
-        context={"z": 2, "a": "context"},
+        context={"z": 2, "a": "context"} if context is None else context,
         artifact_inputs=artifact_inputs,
     )
 
@@ -112,6 +118,39 @@ def test_prompt_is_deterministic_separated_and_metadata_only(
     assert "must not mark the PlanNode, Run, or Goal completed" in prompt
     assert "must-not-leak" not in prompt
     assert "unavailable Artifact body sentinel" not in prompt
+
+
+def test_merge_prompt_explicitly_contains_selected_candidate_content_only() -> None:
+    selected_token = "SELECTED_BRANCH_CANDIDATE"
+    pruned_token = "PRUNED_BRANCH_CANDIDATE"
+    request = _request(
+        node_kind=PlanNodeKind.MERGE,
+        context={
+            "branch_selection": {
+                "selected_branch_id": new_id(),
+                "fork_node_id": new_id(),
+                "criterion": "first viable branch",
+                "explanation": "selected evidence passed",
+                "evidence_artifact_ids": [new_id()],
+            },
+            "selected_artifacts": [
+                {
+                    "artifact_id": new_id(),
+                    "sha256": "a" * 64,
+                    "media_type": "text/plain",
+                    "encoding": "utf-8",
+                    "content": selected_token,
+                }
+            ],
+        },
+    )
+
+    prompt = build_codex_prompt(request)
+
+    assert "--- SELECTED_BRANCH_JSON ---" in prompt
+    assert "--- SELECTED_ARTIFACT_CONTENTS_JSON ---" in prompt
+    assert selected_token in prompt
+    assert pruned_token not in prompt
 
 
 def test_output_schema_is_canonical_and_strict() -> None:

@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from ehai import JsonValue, json_dumps
 from ehai.application.workers import CandidateArtifact, WorkerRequest, WorkerResult
 from ehai.domain.artifacts import ArtifactKind
+from ehai.domain.planning import PlanNodeKind
 
 _OUTPUT_KEYS = frozenset({"summary", "artifacts"})
 _ARTIFACT_KEYS = frozenset({"kind", "name", "media_type", "content"})
@@ -66,7 +67,7 @@ class ParsedCodexResult:
 
 
 def build_codex_prompt(request: WorkerRequest) -> str:
-    """Build a deterministic prompt containing metadata but no Artifact bytes."""
+    """Build a deterministic prompt with selected Merge content and safe metadata."""
     if not isinstance(request, WorkerRequest):
         raise TypeError("request must be a WorkerRequest")
 
@@ -81,6 +82,27 @@ def build_codex_prompt(request: WorkerRequest) -> str:
         "title": request.plan_node.title,
     }
     artifact_metadata: JsonValue = [artifact.to_dict() for artifact in request.artifact_inputs]
+    context = request.context
+    general_context = dict(context)
+    merge_sections: tuple[str, ...] = ()
+    if request.plan_node.kind is PlanNodeKind.MERGE:
+        branch_selection = context.get("branch_selection")
+        selected_artifacts = context.get("selected_artifacts")
+        if (
+            not isinstance(branch_selection, dict)
+            or not isinstance(selected_artifacts, list)
+            or not selected_artifacts
+        ):
+            raise CodexProtocolError("Merge request requires selected Branch content")
+        general_context.pop("branch_selection", None)
+        general_context.pop("selected_artifacts", None)
+        merge_sections = (
+            "Merge only the selected Branch artifacts below; ignore every pruned Branch.",
+            "--- SELECTED_BRANCH_JSON ---",
+            json_dumps(branch_selection),
+            "--- SELECTED_ARTIFACT_CONTENTS_JSON ---",
+            json_dumps(selected_artifacts),
+        )
     sections = (
         "EHAI CODEX WORKER PROTOCOL v1",
         "You are executing one Worker Attempt.",
@@ -89,11 +111,12 @@ def build_codex_prompt(request: WorkerRequest) -> str:
         "--- PLAN_NODE_JSON ---",
         json_dumps(node),
         "--- CONTEXT_JSON ---",
-        json_dumps(request.context),
+        json_dumps(general_context),
         "--- CONFIRMED_COMPLETION_CONTRACT_JSON ---",
         json_dumps(contract),
         "--- INPUT_ARTIFACT_METADATA_JSON ---",
         json_dumps(artifact_metadata),
+        *merge_sections,
         "--- OUTPUT_REQUIREMENTS ---",
         "Return exactly one JSON object matching the supplied output schema.",
         "Artifact content must be UTF-8 text; do not add fields outside the schema.",

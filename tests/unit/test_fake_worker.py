@@ -17,13 +17,18 @@ from ehai.application.workers import (
 from ehai.domain.artifacts import Artifact, ArtifactKind
 from ehai.domain.execution import Attempt, Run
 from ehai.domain.goal import CompletionContract
-from ehai.domain.planning import PlanNode
+from ehai.domain.planning import PlanNode, PlanNodeKind
 from ehai.infrastructure.workers import FakeWorker
 
 NOW = datetime(2026, 8, 31, 14, tzinfo=UTC)
 
 
-def make_request(*, artifact_inputs: tuple[Artifact, ...] = ()) -> WorkerRequest:
+def make_request(
+    *,
+    artifact_inputs: tuple[Artifact, ...] = (),
+    context: dict[str, JsonValue] | None = None,
+    node_kind: PlanNodeKind = PlanNodeKind.WORK,
+) -> WorkerRequest:
     goal_id = new_id()
     run = Run(goal_id, new_id(), created_at=NOW).start(at=NOW)
     contract = CompletionContract.draft(
@@ -32,7 +37,12 @@ def make_request(*, artifact_inputs: tuple[Artifact, ...] = ()) -> WorkerRequest
         (new_id(),),
         created_at=NOW,
     ).confirm(confirmed_at=NOW)
-    node = PlanNode(new_id(), "produce candidate", "return deterministic candidate").mark_ready()
+    node = PlanNode(
+        new_id(),
+        "produce candidate",
+        "return deterministic candidate",
+        kind=node_kind,
+    ).mark_ready()
     node = node.start()
     attempt = Attempt(run.run_id, node.plan_node_id, 1, created_at=NOW).start(at=NOW)
     return WorkerRequest(
@@ -40,7 +50,7 @@ def make_request(*, artifact_inputs: tuple[Artifact, ...] = ()) -> WorkerRequest
         attempt=attempt,
         plan_node=node,
         completion_contract=contract,
-        context={"prior": ["fact"]},
+        context={"prior": ["fact"]} if context is None else context,
         artifact_inputs=artifact_inputs,
     )
 
@@ -174,6 +184,32 @@ def test_fake_worker_default_is_deterministic_and_records_calls() -> None:
     assert first.artifacts[0].kind is ArtifactKind.CANDIDATE
     assert request.attempt_id.encode() in first.artifacts[0].content
     assert worker.calls == (request, request)
+
+
+def test_fake_worker_merge_output_depends_on_selected_candidate_context() -> None:
+    selected_token = "SELECTED_BRANCH_CANDIDATE"
+    pruned_token = "PRUNED_BRANCH_CANDIDATE"
+    request = make_request(
+        node_kind=PlanNodeKind.MERGE,
+        context={
+            "branch_selection": {
+                "selected_branch_id": new_id(),
+                "evidence_artifact_ids": [new_id()],
+            },
+            "selected_artifacts": [
+                {
+                    "artifact_id": new_id(),
+                    "encoding": "utf-8",
+                    "content": selected_token,
+                }
+            ],
+        },
+    )
+
+    merged = FakeWorker().execute(request)
+
+    assert selected_token.encode() in merged.artifacts[0].content
+    assert pruned_token.encode() not in merged.artifacts[0].content
 
 
 def test_fake_worker_attempt_result_overrides_node_result() -> None:

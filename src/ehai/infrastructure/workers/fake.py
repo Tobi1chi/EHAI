@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 
-from ehai import ID, normalize_id
+from ehai import ID, json_dumps, normalize_id
 from ehai.application.workers import (
     CandidateArtifact,
     WorkerExecutionError,
@@ -12,6 +12,7 @@ from ehai.application.workers import (
     WorkerResult,
 )
 from ehai.domain.artifacts import ArtifactKind
+from ehai.domain.planning import PlanNodeKind
 
 
 class FakeWorker:
@@ -82,6 +83,35 @@ class FakeWorker:
 
     @staticmethod
     def _default_result(request: WorkerRequest) -> WorkerResult:
+        if request.plan_node.kind is PlanNodeKind.MERGE:
+            context = request.context
+            branch_selection = context.get("branch_selection")
+            selected_artifacts = context.get("selected_artifacts")
+            if (
+                not isinstance(branch_selection, dict)
+                or not isinstance(selected_artifacts, list)
+                or not selected_artifacts
+            ):
+                raise _execution_error(request, "merge requires selected Branch content")
+            content = json_dumps(
+                {
+                    "branch_selection": branch_selection,
+                    "selected_artifacts": selected_artifacts,
+                }
+            ).encode("utf-8")
+            return WorkerResult(
+                artifacts=(
+                    CandidateArtifact(
+                        kind=ArtifactKind.CANDIDATE,
+                        name=f"{request.plan_node_id}.txt",
+                        media_type="application/json",
+                        content=content,
+                    ),
+                ),
+                summary="fake worker merged the selected Branch candidate",
+                raw_output=content,
+                diagnostics=("deterministic fake merge result",),
+            )
         content = (
             f"fake candidate for run={request.run_id} attempt={request.attempt_id} "
             f"node={request.plan_node_id}"
