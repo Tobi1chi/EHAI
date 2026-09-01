@@ -7,7 +7,11 @@ from datetime import datetime
 from threading import Lock
 
 from ehai import ID, JsonValue, new_id, normalize_id, utc_now
-from ehai.application.checkpointing import RecoveryReport, RecoveryService
+from ehai.application.checkpointing import (
+    STARTUP_PAUSE_REASONS,
+    RecoveryReport,
+    RecoveryService,
+)
 from ehai.application.commands import (
     ApprovePlan,
     CancelRun,
@@ -424,10 +428,6 @@ class ExecutionService:
             return any(node.status is PlanNodeStatus.READY for node in plan.nodes)
 
     def _was_paused_by_startup(self, run_id: ID) -> bool:
-        startup_reasons = {
-            "running Attempts were interrupted",
-            "running Run had no active Attempt at startup",
-        }
         with self._uow_factory() as uow:
             pause_events = tuple(
                 stored.event
@@ -437,7 +437,7 @@ class ExecutionService:
         if not pause_events:
             return False
         reason = pause_events[-1].payload.get("reason")
-        return isinstance(reason, str) and reason in startup_reasons
+        return isinstance(reason, str) and reason in STARTUP_PAUSE_REASONS
 
     @staticmethod
     def _existing_result(

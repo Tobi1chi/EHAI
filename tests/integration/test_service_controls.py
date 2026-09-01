@@ -10,7 +10,7 @@ from ehai.application.ports import CommandReceipt
 from ehai.application.run_control import RunController
 from ehai.application.service import ExecutionService
 from ehai.domain.checking import CheckKind, CheckSpec
-from ehai.domain.events import Event, EventType
+from ehai.domain.events import EventType
 from ehai.domain.execution import Attempt, AttemptStatus, Run, RunStatus
 from ehai.domain.goal import CompletionContract, Goal, Project
 from ehai.domain.planning import (
@@ -53,7 +53,7 @@ def test_resume_command_retries_once_and_is_idempotent(tmp_path) -> None:
         kind=PlanNodeKind.WORK,
         required_dependency_ids=(),
         required_check_ids=contract.required_check_ids,
-        status=PlanNodeStatus.FAILED,
+        status=PlanNodeStatus.RUNNING,
     )
     plan = PlanRevision.rehydrate(
         plan_revision_id=new_id(),
@@ -75,7 +75,6 @@ def test_resume_command_retries_once_and_is_idempotent(tmp_path) -> None:
         run_id=new_id(),
         created_at=NOW,
     ).start(at=NOW)
-    run = run.pause()
     first_attempt = Attempt(
         run_id=run.run_id,
         plan_node_id=node.plan_node_id,
@@ -84,6 +83,13 @@ def test_resume_command_retries_once_and_is_idempotent(tmp_path) -> None:
         created_at=NOW,
     ).start(at=NOW)
     first_attempt = first_attempt.cancel("interrupted", at=NOW)
+    interrupted_attempt = Attempt(
+        run_id=run.run_id,
+        plan_node_id=node.plan_node_id,
+        sequence=2,
+        attempt_id=new_id(),
+        created_at=NOW,
+    ).start(at=NOW)
     with database.unit_of_work() as uow:
         uow.states.put_project(project)
         uow.states.put_goal(goal)
@@ -92,6 +98,7 @@ def test_resume_command_retries_once_and_is_idempotent(tmp_path) -> None:
         uow.states.put_check_spec(plan.plan_revision_id, check_spec)
         uow.states.put_run(run)
         uow.states.put_attempt(first_attempt)
+        uow.states.put_attempt(interrupted_attempt)
         uow.commit()
 
     worker = FakeWorker()
@@ -124,18 +131,6 @@ def test_resume_command_retries_once_and_is_idempotent(tmp_path) -> None:
     )
     command = ResumeRun("resume-once", run.run_id)
     with database.unit_of_work() as uow:
-        uow.events.append(
-            Event(
-                type=EventType.RUN_PAUSED,
-                correlation_id=run.run_id,
-                run_id=run.run_id,
-                payload={
-                    "run_id": run.run_id,
-                    "reason": "running Attempts were interrupted",
-                },
-                occurred_at=NOW,
-            )
-        )
         uow.command_receipts.put(
             CommandReceipt(
                 idempotency_key=command.idempotency_key,
@@ -147,17 +142,32 @@ def test_resume_command_retries_once_and_is_idempotent(tmp_path) -> None:
         )
         uow.commit()
 
+    report = service.recover_startup()
+    assert report.paused_run_ids == (run.run_id,)
+    assert report.interrupted_attempt_ids == (interrupted_attempt.attempt_id,)
+    with database.unit_of_work() as uow:
+        pause_event = next(
+            item.event
+            for item in uow.events.list_events()
+            if item.event.type is EventType.RUN_PAUSED
+        )
+    assert pause_event.payload["reason"] == "active execution was interrupted"
+
     completed = service.resume_run(command)
+    calls_after_completion = worker.calls
     retried = service.resume_run(command)
 
     assert completed.status is RunStatus.COMPLETED
     assert retried == completed
+    assert len(worker.calls) == 1
+    assert worker.calls == calls_after_completion
     with database.unit_of_work() as uow:
         attempts = uow.states.list_attempts(run.run_id)
         receipt = uow.command_receipts.get("resume-once")
         checkpoints = uow.states.list_checkpoints(run.run_id)
     assert tuple(attempt.status for attempt in attempts) == (
         AttemptStatus.CANCELLED,
+        AttemptStatus.INTERRUPTED,
         AttemptStatus.SUCCEEDED,
     )
     assert receipt is not None and receipt.result == {"run_id": run.run_id}

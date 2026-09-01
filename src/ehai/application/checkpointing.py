@@ -15,6 +15,15 @@ from ehai.domain.planning import PlanNode, PlanNodeStatus, PlanRevision
 
 UnitOfWorkFactory = Callable[[], UnitOfWork]
 
+STARTUP_ACTIVE_EXECUTION_PAUSE_REASON = "active execution was interrupted"
+STARTUP_IDLE_RUN_PAUSE_REASON = "running Run had no active Attempt at startup"
+STARTUP_PAUSE_REASONS = frozenset(
+    {
+        STARTUP_ACTIVE_EXECUTION_PAUSE_REASON,
+        STARTUP_IDLE_RUN_PAUSE_REASON,
+    }
+)
+
 
 class RecoveryError(RuntimeError):
     """Base class for fail-closed recovery failures."""
@@ -179,9 +188,9 @@ class RecoveryService:
                                 {
                                     "run_id": run.run_id,
                                     "reason": (
-                                        "active execution was interrupted"
+                                        STARTUP_ACTIVE_EXECUTION_PAUSE_REASON
                                         if running_attempts or running_check_runs
-                                        else "running Run had no active Attempt at startup"
+                                        else STARTUP_IDLE_RUN_PAUSE_REASON
                                     ),
                                 },
                             )
