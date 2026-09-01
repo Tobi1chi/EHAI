@@ -94,9 +94,21 @@ class PlanProposal:
     check_specs: tuple[CheckSpec, ...]
     budget: ExplorationBudget | None = None
     usage: ExplorationUsage | None = None
+    planner_diagnostics: tuple[str, ...] = ()
+    planner_event_types: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "check_specs", tuple(self.check_specs))
+        object.__setattr__(
+            self,
+            "planner_diagnostics",
+            _planner_messages(self.planner_diagnostics, "planner_diagnostics"),
+        )
+        object.__setattr__(
+            self,
+            "planner_event_types",
+            _planner_messages(self.planner_event_types, "planner_event_types"),
+        )
         owner = f"PlanProposal {self.plan_revision.plan_revision_id}"
         if self.contract.is_confirmed:
             raise ValueError(f"{owner} contract must remain unconfirmed")
@@ -176,7 +188,7 @@ class DeterministicPlanner:
         criteria: tuple[str, ...],
     ) -> PlanProposal:
         """Create a single-node replacement through the explicit GraphPatch boundary."""
-        current_contract = _require_replan_context(goal, base)
+        current_contract = require_replan_context(goal, base)
         normalized_criteria = tuple(criterion.strip() for criterion in criteria)
         if normalized_criteria != (NON_EMPTY_ARTIFACT_CRITERION,):
             raise ValueError(
@@ -257,7 +269,7 @@ class DeterministicExplorationPlanner:
         base: PlanRevision,
     ) -> PlanProposal:
         """Create an exploration replacement through the explicit GraphPatch boundary."""
-        current_contract = _require_replan_context(request.goal, base)
+        current_contract = require_replan_context(request.goal, base)
         if request.criteria != (NON_EMPTY_ARTIFACT_CRITERION,):
             raise ValueError(
                 "DeterministicExplorationPlanner supports exactly one P1 completion "
@@ -481,7 +493,15 @@ def _graph_usage(
     return ExplorationUsage(width=width, depth=depth, attempts=attempts)
 
 
-def _require_replan_context(goal: Goal, base: PlanRevision) -> CompletionContract:
+def _planner_messages(values: tuple[str, ...], field_name: str) -> tuple[str, ...]:
+    snapshot = tuple(values)
+    if any(not isinstance(value, str) or not value.strip() for value in snapshot):
+        raise ValueError(f"PlanProposal {field_name} must contain non-blank strings")
+    return snapshot
+
+
+def require_replan_context(goal: Goal, base: PlanRevision) -> CompletionContract:
+    """Validate the approved base and return its confirmed current contract."""
     if goal.status is not GoalStatus.OPEN:
         raise ValueError(f"Goal {goal.goal_id} must be open before replanning")
     current = goal.completion_contract
@@ -539,4 +559,16 @@ def _replan_from_template(
         check_specs=template.check_specs,
         budget=template.budget,
         usage=template.usage,
+        planner_diagnostics=template.planner_diagnostics,
+        planner_event_types=template.planner_event_types,
     )
+
+
+def replan_from_template(
+    goal: Goal,
+    base: PlanRevision,
+    template: PlanProposal,
+) -> PlanProposal:
+    """Apply a validated Planner template through the versioned GraphPatch boundary."""
+    current_contract = require_replan_context(goal, base)
+    return _replan_from_template(base, current_contract, template)

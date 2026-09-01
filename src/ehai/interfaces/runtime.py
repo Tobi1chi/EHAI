@@ -22,6 +22,7 @@ def create_local_app(
     worker_kind: str = "fake",
     worker_workspace: Path | None = None,
     planner_kind: str = "single",
+    planner_timeout_seconds: float = 120.0,
 ) -> FastAPI:
     """Construct one long-lived Command service and short-lived read sessions."""
     execution_service = build_service(
@@ -30,6 +31,7 @@ def create_local_app(
         worker_kind=worker_kind,
         worker_workspace=worker_workspace,
         planner_kind=planner_kind,
+        planner_timeout_seconds=planner_timeout_seconds,
     )
     execution_service.recover_startup()
     query_database = SQLiteDatabase(database_path)
@@ -44,7 +46,12 @@ def create_parser() -> argparse.ArgumentParser:
     parser.add_argument("--artifacts", type=Path, default=Path(".ehai/artifacts"))
     parser.add_argument("--worker", choices=("fake", "codex"), default="fake")
     parser.add_argument("--worker-workspace", type=Path)
-    parser.add_argument("--planner", choices=("single", "exploration"), default="single")
+    parser.add_argument(
+        "--planner",
+        choices=("single", "exploration", "codex"),
+        default="single",
+    )
+    parser.add_argument("--planner-timeout-seconds", type=float, default=120.0)
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8000)
     return parser
@@ -59,6 +66,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         worker_kind=args.worker,
         worker_workspace=args.worker_workspace,
         planner_kind=args.planner,
+        planner_timeout_seconds=args.planner_timeout_seconds,
     )
     uvicorn.run(app, host=args.host, port=args.port)
     return 0

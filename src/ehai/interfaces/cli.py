@@ -39,6 +39,7 @@ from ehai.domain.goal import Goal
 from ehai.domain.planning import PlanRevision
 from ehai.infrastructure.artifacts import FilesystemArtifactStore
 from ehai.infrastructure.checks import ArtifactCheckAdapter, ArtifactCheckRule
+from ehai.infrastructure.planners import CodexPlannerAdapter, CodexPlannerError
 from ehai.infrastructure.sqlite import SQLiteDatabase
 from ehai.infrastructure.workers import CodexWorkerAdapter, FakeWorker
 
@@ -82,6 +83,7 @@ def build_service(
     worker_kind: str = "fake",
     worker_workspace: Path | None = None,
     planner_kind: str = "single",
+    planner_timeout_seconds: float = 120.0,
 ) -> ExecutionService:
     """Build the local P1 service from concrete infrastructure Adapters."""
     database_path.parent.mkdir(parents=True, exist_ok=True)
@@ -99,6 +101,11 @@ def build_service(
         planner = DeterministicPlanner()
     elif planner_kind == "exploration":
         planner = _ExplorationPlannerAdapter()
+    elif planner_kind == "codex":
+        planner = CodexPlannerAdapter(
+            workspace=worker_workspace or Path.cwd(),
+            timeout_seconds=planner_timeout_seconds,
+        )
     else:
         raise ValueError(f"unsupported Planner: {planner_kind}")
     check_runner = CheckRunner(
@@ -149,9 +156,15 @@ def create_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--planner",
-        choices=("single", "exploration"),
+        choices=("single", "exploration", "codex"),
         default="single",
         help="Planner implementation (default: single)",
+    )
+    parser.add_argument(
+        "--planner-timeout-seconds",
+        type=float,
+        default=120.0,
+        help="Codex Planner wall-clock timeout (default: 120)",
     )
     commands = parser.add_subparsers(dest="command", required=True)
 
@@ -227,10 +240,12 @@ def main(argv: Sequence[str] | None = None) -> int:
             worker_kind=args.worker,
             worker_workspace=args.worker_workspace,
             planner_kind=args.planner,
+            planner_timeout_seconds=args.planner_timeout_seconds,
         )
         output = _dispatch(service, args)
     except (
         ApplicationError,
+        CodexPlannerError,
         OrchestrationError,
         RecoveryError,
         RunControlError,

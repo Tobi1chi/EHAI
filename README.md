@@ -37,12 +37,17 @@ $Run = (uv run ehai --database $Db --artifacts $Artifacts --worker fake --planne
 uv run ehai --database $Db --artifacts $Artifacts --worker fake --planner $Planner get-run --run-id $Run.run_id
 ```
 
-Planner 选择是显式的全局参数，必须放在子命令前。两种形式分别是：
+Planner 选择是显式的全局参数，必须放在子命令前。可选值为 `single`、`exploration` 和
+`codex`；前两者是确定性实现，`codex` 使用独立 Planner 协议调用本地 `codex exec`：
 
 ```powershell
 uv run ehai --database .ehai/single.sqlite3 --artifacts .ehai/single-artifacts --planner single propose-plan --idempotency-key plan-1 --goal-id <GOAL_UUID> --criterion "artifact:non-empty"
 uv run ehai --database .ehai/exploration.sqlite3 --artifacts .ehai/exploration-artifacts --planner exploration propose-plan --idempotency-key plan-1 --goal-id <GOAL_UUID> --criterion "artifact:non-empty"
+uv run ehai --database .ehai/codex-planner.sqlite3 --artifacts .ehai/codex-planner-artifacts --planner codex --planner-timeout-seconds 120 propose-plan --idempotency-key plan-1 --goal-id <GOAL_UUID> --criterion "artifact:non-empty"
 ```
+
+`--planner-timeout-seconds` 只控制 Planner 调用期限，与 Worker Attempt 的期限相互独立。
+自动化测试使用受控假进程验证 Codex Planner；当前真实 Codex smoke 仅覆盖 Worker connector。
 
 每个 Goal 只能对齐一个当前 CompletionContract；比较两种 Planner 时请使用不同 Goal 或独立演示数据库。
 CLI 还提供 `pause-run`、`resume-run`、`cancel-run`、`restore-run` 和启动恢复用的 `recover`；

@@ -1,15 +1,60 @@
 from datetime import UTC, datetime
 
 from fastapi.testclient import TestClient
+from pytest import MonkeyPatch
 
 from ehai import new_id
 from ehai.domain.execution import Attempt, AttemptStatus, Run, RunStatus
 from ehai.domain.goal import CompletionContract, Goal, Project
 from ehai.domain.planning import PlanNode, PlanNodeStatus, PlanRevision, PlanRevisionStatus
 from ehai.infrastructure.sqlite import SQLiteDatabase
+from ehai.interfaces import runtime
 from ehai.interfaces.runtime import create_local_app
 
 NOW = datetime(2026, 8, 31, 12, 0, tzinfo=UTC)
+
+
+def test_runtime_composes_codex_planner_with_independent_timeout(
+    tmp_path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    args = runtime.create_parser().parse_args(
+        [
+            "--planner",
+            "codex",
+            "--planner-timeout-seconds",
+            "19",
+        ]
+    )
+    captured: dict[str, object] = {}
+
+    class _Service:
+        def recover_startup(self) -> None:
+            captured["recovered"] = True
+
+    def build_service(*_args: object, **options: object) -> _Service:
+        captured.update(options)
+        return _Service()
+
+    def create_app(service: object, query_service: object):
+        captured["service"] = service
+        captured["query_service"] = query_service
+        return runtime.FastAPI()
+
+    monkeypatch.setattr(runtime, "build_service", build_service)
+    monkeypatch.setattr(runtime, "create_app", create_app)
+
+    app = runtime.create_local_app(
+        tmp_path / "state.sqlite3",
+        tmp_path / "artifacts",
+        planner_kind=args.planner,
+        planner_timeout_seconds=args.planner_timeout_seconds,
+    )
+
+    assert isinstance(app, runtime.FastAPI)
+    assert captured["planner_kind"] == "codex"
+    assert captured["planner_timeout_seconds"] == 19
+    assert captured["recovered"] is True
 
 
 def test_local_runtime_shares_commands_queries_and_event_log(tmp_path) -> None:

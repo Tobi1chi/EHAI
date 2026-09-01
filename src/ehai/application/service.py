@@ -181,6 +181,8 @@ class ExecutionService:
                         "completion_contract_id": proposal.contract.completion_contract_id,
                         "goal_id": goal.goal_id,
                         "plan_revision_id": proposal.plan_revision.plan_revision_id,
+                        "planner_diagnostics": list(proposal.planner_diagnostics),
+                        "planner_event_types": list(proposal.planner_event_types),
                     },
                 )
             )
@@ -242,6 +244,8 @@ class ExecutionService:
                         "completion_contract_id": proposal.contract.completion_contract_id,
                         "goal_id": goal.goal_id,
                         "plan_revision_id": proposal.plan_revision.plan_revision_id,
+                        "planner_diagnostics": list(proposal.planner_diagnostics),
+                        "planner_event_types": list(proposal.planner_event_types),
                         "supersedes_plan_revision_id": base.plan_revision_id,
                     },
                 )

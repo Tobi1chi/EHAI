@@ -14,6 +14,7 @@ from ehai.application.commands import (
 from ehai.application.orchestrator import OrchestrationError
 from ehai.application.planner import NON_EMPTY_ARTIFACT_CRITERION
 from ehai.application.service import ExecutionService
+from ehai.infrastructure.planners import CodexPlannerError
 from ehai.interfaces import cli
 
 
@@ -29,9 +30,11 @@ def test_cli_maps_orchestration_errors_to_json(
         worker_kind: str,
         worker_workspace: Path | None,
         planner_kind: str,
+        planner_timeout_seconds: float,
     ) -> ExecutionService:
         del worker_kind, worker_workspace
         assert planner_kind == "single"
+        assert planner_timeout_seconds == 120.0
         raise OrchestrationError("controlled orchestration failure")
 
     monkeypatch.setattr(cli, "build_service", fail_to_build)
@@ -56,6 +59,43 @@ def test_cli_maps_orchestration_errors_to_json(
     assert error == {
         "error": "controlled orchestration failure",
         "error_type": "OrchestrationError",
+    }
+    assert captured.out == ""
+
+
+def test_cli_maps_codex_planner_errors_to_json(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+    capsys: CaptureFixture[str],
+) -> None:
+    def fail_to_build(
+        _database: Path,
+        _artifacts: Path,
+        **_options: object,
+    ) -> ExecutionService:
+        raise CodexPlannerError("controlled planner failure")
+
+    monkeypatch.setattr(cli, "build_service", fail_to_build)
+
+    result = cli.main(
+        [
+            "--database",
+            str(tmp_path / "state.sqlite3"),
+            "--artifacts",
+            str(tmp_path / "artifacts"),
+            "create-project",
+            "--idempotency-key",
+            "project",
+            "--name",
+            "project",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert result == 2
+    assert json_loads(captured.err.strip()) == {
+        "error": "controlled planner failure",
+        "error_type": "CodexPlannerError",
     }
     assert captured.out == ""
 
@@ -114,6 +154,29 @@ def test_parser_accepts_minimal_exploration_selection(tmp_path: Path) -> None:
     )
 
     assert args.planner == "exploration"
+
+
+def test_parser_accepts_codex_planner_with_independent_timeout(tmp_path: Path) -> None:
+    args = cli.create_parser().parse_args(
+        [
+            "--database",
+            str(tmp_path / "state.sqlite3"),
+            "--artifacts",
+            str(tmp_path / "artifacts"),
+            "--planner",
+            "codex",
+            "--planner-timeout-seconds",
+            "17",
+            "create-project",
+            "--idempotency-key",
+            "project",
+            "--name",
+            "project",
+        ]
+    )
+
+    assert args.planner == "codex"
+    assert args.planner_timeout_seconds == 17
 
 
 def test_parser_accepts_replan_product_command(tmp_path: Path) -> None:
