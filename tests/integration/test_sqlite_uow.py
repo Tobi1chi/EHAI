@@ -102,6 +102,7 @@ def test_p1_backup_migrates_with_legacy_plan_nodes_and_attempts(tmp_path) -> Non
         "progress_at",
         "deadline_at",
         "lease_expires_at",
+        "queue_reason",
     ):
         attempt_document.pop(key)
 

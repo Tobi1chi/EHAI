@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from typing import Protocol, runtime_checkable
 
@@ -154,12 +154,18 @@ class SingleSlotRuntime:
         self._endpoint = endpoint
         self._clock = clock
         self._id_factory = id_factory
+        self._claim_owner = f"runtime:{self._id_factory()}"
 
     async def run_once(self) -> Run | None:
         """Claim the oldest pending work and advance its Run to a terminal state."""
         with self._uow_factory() as uow:
             self._persist_registry(uow)
-            work = uow.states.claim_next_dispatch_work(at=self._clock())
+            claimed_at = self._clock()
+            work = uow.states.claim_next_dispatch_work(
+                owner=self._claim_owner,
+                at=claimed_at,
+                lease_expires_at=claimed_at + timedelta(minutes=5),
+            )
             uow.commit()
         if work is None:
             return None
@@ -217,6 +223,18 @@ class SingleSlotRuntime:
             if works:
                 self._complete_work(works[0])
         return run
+
+    async def execute_started_request(self, request: WorkerRequest) -> Run:
+        """Execute one already-started queued Attempt through this Endpoint."""
+        execution = await self._connector.start(ConnectorStartRequest(request))
+        if execution.attempt_id != request.attempt_id:
+            raise RuntimeError("Connector start returned another Attempt ID")
+        bound = self._bind_execution(request.attempt, execution)
+        return await self._consume_events(bound, execution)
+
+    def finish_dispatch_work(self, work: DispatchWork) -> None:
+        """Complete claimed Run-level work after its Run reaches a terminal state."""
+        self._complete_work(work)
 
     async def _process_work(
         self,

@@ -335,6 +335,172 @@ class Orchestrator:
             artifact_inputs=artifact_inputs,
         )
 
+    def queue_ready_attempts(self, run_id: ID, *, limit: int) -> tuple[Attempt, ...]:
+        """Persist ready PlanNodes as queued Attempts without consuming capacity."""
+        if type(limit) is not int or limit < 1:
+            raise ValueError("queue limit must be a positive integer")
+        while self._evaluate_completed_evaluator(run_id):
+            pass
+        with self._uow_factory() as uow:
+            run, plan, _, _ = self._load_run_context(uow, run_id)
+            if run.status is RunStatus.PENDING:
+                run = run.start(at=self._clock())
+                uow.states.put_run(run)
+                uow.events.append(
+                    self._event(EventType.RUN_STARTED, run, run.run_id, {"run_id": run.run_id})
+                )
+            if run.status is not RunStatus.RUNNING:
+                return ()
+            attempts = uow.states.list_attempts(run.run_id)
+            attempted_nodes = {attempt.plan_node_id for attempt in attempts}
+            candidates = tuple(
+                node
+                for node in (
+                    tuple(node for node in plan.nodes if node.status is PlanNodeStatus.READY)
+                    or ready_nodes(plan)
+                )
+                if node.plan_node_id not in attempted_nodes
+            )[:limit]
+            queued: list[Attempt] = []
+            for candidate in candidates:
+                ready = (
+                    candidate.mark_ready()
+                    if candidate.status is PlanNodeStatus.PENDING
+                    else candidate
+                )
+                plan = _replace_node(plan, ready)
+                if candidate.status is PlanNodeStatus.PENDING:
+                    uow.events.append(
+                        self._event(
+                            EventType.PLAN_NODE_READIED,
+                            run,
+                            ready.plan_node_id,
+                            {"plan_node_id": ready.plan_node_id},
+                        )
+                    )
+                attempt = Attempt(
+                    run_id=run.run_id,
+                    plan_node_id=ready.plan_node_id,
+                    sequence=len(attempts) + len(queued) + 1,
+                    attempt_id=self._id_factory(),
+                    created_at=self._clock(),
+                ).queue("awaiting capacity and dispatch")
+                uow.states.put_attempt(attempt)
+                uow.events.append(
+                    self._event(
+                        EventType.ATTEMPT_QUEUED,
+                        run,
+                        attempt.attempt_id,
+                        {
+                            "attempt_id": attempt.attempt_id,
+                            "plan_node_id": attempt.plan_node_id,
+                            "reason": attempt.queue_reason,
+                        },
+                    )
+                )
+                queued.append(attempt)
+            if queued:
+                uow.states.put_plan_revision(plan)
+            uow.commit()
+            return tuple(queued)
+
+    def start_queued_attempt(self, attempt_id: ID) -> WorkerRequest:
+        """Start one queued Attempt after Scheduler capacity is reserved."""
+        with self._uow_factory() as uow:
+            attempt = _required_attempt(uow, attempt_id)
+            run, plan, goal, contract = self._load_run_context(uow, attempt.run_id)
+            node = _required_node(plan, attempt.plan_node_id)
+            if (
+                attempt.status is not AttemptStatus.PENDING
+                or node.status is not PlanNodeStatus.READY
+            ):
+                raise OrchestrationError(f"attempt {attempt.attempt_id} is not queued and ready")
+            running_attempt = attempt.start(at=self._clock())
+            running_node = node.start()
+            plan = _replace_node(plan, running_node)
+            check_specs = _required_check_specs(uow, plan, running_node)
+            uow.states.put_attempt(running_attempt)
+            uow.states.put_plan_revision(plan)
+            uow.events.append(
+                self._event(
+                    EventType.PLAN_NODE_STARTED,
+                    run,
+                    running_node.plan_node_id,
+                    {"plan_node_id": running_node.plan_node_id},
+                )
+            )
+            uow.events.append(
+                self._event(
+                    EventType.ATTEMPT_DISPATCHED,
+                    run,
+                    running_attempt.attempt_id,
+                    {"attempt_id": running_attempt.attempt_id},
+                )
+            )
+            uow.events.append(
+                self._event(
+                    EventType.ATTEMPT_STARTED,
+                    run,
+                    running_attempt.attempt_id,
+                    {
+                        "attempt_id": running_attempt.attempt_id,
+                        "plan_node_id": running_attempt.plan_node_id,
+                    },
+                )
+            )
+            uow.commit()
+        context = _ExecutionContext(
+            run,
+            plan,
+            goal,
+            contract,
+            running_node,
+            running_attempt,
+            check_specs,
+        )
+        artifact_inputs = self._worker_inputs(context)
+        worker_context = self._worker_context(context, artifact_inputs)
+        if running_node.kind is PlanNodeKind.MERGE:
+            artifact_inputs = _selected_merge_inputs(worker_context, artifact_inputs)
+        return WorkerRequest(
+            run=run,
+            attempt=running_attempt,
+            plan_node=running_node,
+            completion_contract=contract,
+            context=worker_context,
+            artifact_inputs=artifact_inputs,
+        )
+
+    def cancel_queued_attempt(self, attempt_id: ID) -> Run:
+        """Cancel queued work without starting a Connector or consuming capacity."""
+        with self._uow_factory() as uow:
+            attempt = _required_attempt(uow, attempt_id)
+            run = _required_run(uow, attempt.run_id)
+            if attempt.status is not AttemptStatus.PENDING:
+                raise OrchestrationError(f"attempt {attempt.attempt_id} is not queued")
+            cancelled_attempt = attempt.cancel("cancelled while queued", at=self._clock())
+            cancelled_run = run.cancel("queued Attempt cancelled", at=self._clock())
+            uow.states.put_attempt(cancelled_attempt)
+            uow.states.put_run(cancelled_run)
+            uow.events.append(
+                self._event(
+                    EventType.ATTEMPT_CANCELLED,
+                    run,
+                    attempt.attempt_id,
+                    {"attempt_id": attempt.attempt_id, "reason": "cancelled while queued"},
+                )
+            )
+            uow.events.append(
+                self._event(
+                    EventType.RUN_CANCELLED,
+                    cancelled_run,
+                    run.run_id,
+                    {"run_id": run.run_id, "reason": "queued Attempt cancelled"},
+                )
+            )
+            uow.commit()
+            return cancelled_run
+
     def accept_worker_result(self, attempt_id: ID, result: WorkerResult) -> Run:
         """Persist one Worker candidate and advance existing Check/Gate semantics."""
         context = self._load_attempt_context(attempt_id)

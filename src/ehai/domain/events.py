@@ -48,6 +48,8 @@ class EventType(StrEnum):
     RUN_FAILED = "RunFailed"
     RUN_CANCELLED = "RunCancelled"
     ATTEMPT_STARTED = "AttemptStarted"
+    ATTEMPT_QUEUED = "AttemptQueued"
+    ATTEMPT_DISPATCHED = "AttemptDispatched"
     ATTEMPT_SUCCEEDED = "AttemptSucceeded"
     ATTEMPT_FAILED = "AttemptFailed"
     ATTEMPT_TIMED_OUT = "AttemptTimedOut"

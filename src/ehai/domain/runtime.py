@@ -30,6 +30,8 @@ class DispatchWork:
     created_at: datetime = field(default_factory=utc_now)
     claimed_at: datetime | None = None
     completed_at: datetime | None = None
+    claim_owner: str | None = None
+    lease_expires_at: datetime | None = None
     _rehydrate_token: InitVar[object | None] = None
 
     def __post_init__(self, _rehydrate_token: object | None) -> None:
@@ -39,15 +41,36 @@ class DispatchWork:
         object.__setattr__(self, "created_at", _utc(self.created_at))
         object.__setattr__(self, "claimed_at", _optional_utc(self.claimed_at))
         object.__setattr__(self, "completed_at", _optional_utc(self.completed_at))
+        object.__setattr__(self, "lease_expires_at", _optional_utc(self.lease_expires_at))
+        if self.claim_owner is not None and not self.claim_owner.strip():
+            raise ValueError("DispatchWork claim_owner must not be blank")
         if self.status is not DispatchWorkStatus.PENDING and _rehydrate_token is not _REHYDRATE:
             raise ValueError("non-pending DispatchWork must use a transition or rehydrate")
         if self.status is DispatchWorkStatus.PENDING:
-            if self.claimed_at is not None or self.completed_at is not None:
+            if any(
+                value is not None
+                for value in (
+                    self.claimed_at,
+                    self.completed_at,
+                    self.claim_owner,
+                    self.lease_expires_at,
+                )
+            ):
                 raise ValueError("pending DispatchWork cannot have transition timestamps")
         elif self.status is DispatchWorkStatus.CLAIMED:
-            if self.claimed_at is None or self.completed_at is not None:
-                raise ValueError("claimed DispatchWork requires only claimed_at")
-        elif self.claimed_at is None or self.completed_at is None:
+            if (
+                self.claimed_at is None
+                or self.claim_owner is None
+                or self.lease_expires_at is None
+                or self.completed_at is not None
+            ):
+                raise ValueError("claimed DispatchWork requires owner and lease")
+        elif (
+            self.claimed_at is None
+            or self.completed_at is None
+            or self.claim_owner is None
+            or self.lease_expires_at is None
+        ):
             raise ValueError("completed DispatchWork requires claim and completion timestamps")
 
     @classmethod
@@ -60,6 +83,8 @@ class DispatchWork:
         created_at: datetime,
         claimed_at: datetime | None,
         completed_at: datetime | None,
+        claim_owner: str | None = None,
+        lease_expires_at: datetime | None = None,
     ) -> Self:
         return cls(
             run_id=run_id,
@@ -68,16 +93,28 @@ class DispatchWork:
             created_at=created_at,
             claimed_at=claimed_at,
             completed_at=completed_at,
+            claim_owner=claim_owner,
+            lease_expires_at=lease_expires_at,
             _rehydrate_token=_REHYDRATE,
         )
 
-    def claim(self, *, at: datetime | None = None) -> Self:
+    def claim(
+        self,
+        owner: str,
+        lease_expires_at: datetime,
+        *,
+        at: datetime | None = None,
+    ) -> Self:
         if self.status is not DispatchWorkStatus.PENDING:
             raise ValueError(f"DispatchWork {self.dispatch_work_id} is not pending")
+        if not owner.strip():
+            raise ValueError("DispatchWork claim owner must not be blank")
         return replace(
             self,
             status=DispatchWorkStatus.CLAIMED,
             claimed_at=_utc(at or utc_now()),
+            claim_owner=owner,
+            lease_expires_at=_utc(lease_expires_at),
             _rehydrate_token=_REHYDRATE,
         )
 

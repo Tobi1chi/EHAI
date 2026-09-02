@@ -25,6 +25,8 @@
         "RunCompleted",
         "RunFailed",
         "RunCancelled",
+        "AttemptQueued",
+        "AttemptDispatched",
         "AttemptStarted",
         "AttemptSucceeded",
         "AttemptFailed",

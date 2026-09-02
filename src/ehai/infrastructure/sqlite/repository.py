@@ -201,8 +201,8 @@ class SQLiteWorkerRegistry:
             """
             INSERT INTO worker_profiles(
                 worker_profile_id, worker_kind, model, session_policy,
-                credential_ref, snapshot_json
-            ) VALUES (?, ?, ?, ?, ?, ?)
+                credential_ref, priority, snapshot_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 profile.worker_profile_id,
@@ -210,6 +210,7 @@ class SQLiteWorkerRegistry:
                 profile.model,
                 profile.session_policy.value,
                 profile.credential_ref,
+                profile.priority,
                 snapshot,
             ),
         )
@@ -623,7 +624,8 @@ class SQLiteCurrentStateRepository:
                 worker_profile_id, worker_endpoint_id, agent_session_ref_id,
                 execution_kind, provider_execution_id, activity, event_cursor,
                 heartbeat_at, progress_at, deadline_at, lease_expires_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                , queue_reason
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(attempt_id) DO UPDATE SET
                 snapshot_json = excluded.snapshot_json,
                 worker_profile_id = excluded.worker_profile_id,
@@ -637,6 +639,7 @@ class SQLiteCurrentStateRepository:
                 progress_at = excluded.progress_at,
                 deadline_at = excluded.deadline_at,
                 lease_expires_at = excluded.lease_expires_at
+                , queue_reason = excluded.queue_reason
             """,
             (
                 attempt.attempt_id,
@@ -655,6 +658,7 @@ class SQLiteCurrentStateRepository:
                 _format_optional_datetime(attempt.progress_at),
                 _format_optional_datetime(attempt.deadline_at),
                 _format_optional_datetime(attempt.lease_expires_at),
+                attempt.queue_reason,
             ),
         )
 
@@ -700,10 +704,13 @@ class SQLiteCurrentStateRepository:
         self._connection.execute(
             """
             INSERT INTO dispatch_work(
-                dispatch_work_id, run_id, status, created_at, snapshot_json
-            ) VALUES (?, ?, ?, ?, ?)
+                dispatch_work_id, run_id, status, created_at,
+                claim_owner, lease_expires_at, snapshot_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(dispatch_work_id) DO UPDATE SET
                 status = excluded.status,
+                claim_owner = excluded.claim_owner,
+                lease_expires_at = excluded.lease_expires_at,
                 snapshot_json = excluded.snapshot_json
             """,
             (
@@ -711,6 +718,8 @@ class SQLiteCurrentStateRepository:
                 work.run_id,
                 work.status.value,
                 format_utc_datetime(work.created_at),
+                work.claim_owner,
+                _format_optional_datetime(work.lease_expires_at),
                 encode_dispatch_work(work),
             ),
         )
@@ -739,7 +748,13 @@ class SQLiteCurrentStateRepository:
             decode_dispatch_work(snapshot) for snapshot in self._snapshots(sql, parameters)
         )
 
-    def claim_next_dispatch_work(self, *, at: datetime) -> DispatchWork | None:
+    def claim_next_dispatch_work(
+        self,
+        *,
+        owner: str,
+        at: datetime,
+        lease_expires_at: datetime,
+    ) -> DispatchWork | None:
         row = self._connection.execute(
             """
             SELECT snapshot_json FROM dispatch_work
@@ -748,7 +763,11 @@ class SQLiteCurrentStateRepository:
         ).fetchone()
         if row is None:
             return None
-        claimed = decode_dispatch_work(_row_index_string(row, 0)).claim(at=at)
+        claimed = decode_dispatch_work(_row_index_string(row, 0)).claim(
+            owner,
+            lease_expires_at,
+            at=at,
+        )
         self.put_dispatch_work(claimed)
         return claimed
 

@@ -48,10 +48,10 @@ Goal + CompletionContract
 | P2 | 进行中 | 异步调度、Built-in/Codex Worker、Agent Session、并发与资源管理 |
 | P3+ | 已规划 | TypeScript Control Plane、可复用 Workflow 和开放扩展生态 |
 
-P2-I0–I4 已固定执行契约和 Worker 路由，提供可恢复 Built-in Agent、OpenAI Responses ModelClient
-及单槽位后台 Runtime。后台 StartRun、进程重启恢复和事件去重已由 TestConnector 验证；多 Endpoint
-调度与并发尚未实现。真实 Responses Smoke 仍需显式 API key/model，当前 CLI/API 命令仍保持
-P1/P1.1 串行语义。
+P2-I0–I5 已提供可恢复 Built-in Agent、OpenAI Responses ModelClient、后台 Runtime，以及按
+capability、Profile priority、Endpoint 状态和五层 capacity 约束的单进程并发 Scheduler。真实写任务
+的 Workspace/Session 隔离尚未实现，因此真实 Connector 仍不并发运行。Responses Smoke 仍需显式
+API key/model，当前 CLI/API 命令保持 P1/P1.1 串行语义。
 
 ## Quick Start
 

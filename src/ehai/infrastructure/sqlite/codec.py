@@ -189,6 +189,7 @@ def encode_attempt(attempt: Attempt) -> str:
             "progress_at": _format_optional_datetime(attempt.progress_at),
             "deadline_at": _format_optional_datetime(attempt.deadline_at),
             "lease_expires_at": _format_optional_datetime(attempt.lease_expires_at),
+            "queue_reason": attempt.queue_reason,
         }
     )
 
@@ -222,6 +223,7 @@ def decode_attempt(snapshot: str) -> Attempt:
         progress_at=_optional_datetime(document, "progress_at"),
         deadline_at=_optional_datetime(document, "deadline_at"),
         lease_expires_at=_optional_datetime(document, "lease_expires_at"),
+        queue_reason=_optional_string(document, "queue_reason"),
     )
 
 
@@ -234,6 +236,8 @@ def encode_dispatch_work(work: DispatchWork) -> str:
             "created_at": format_utc_datetime(work.created_at),
             "claimed_at": _format_optional_datetime(work.claimed_at),
             "completed_at": _format_optional_datetime(work.completed_at),
+            "claim_owner": work.claim_owner,
+            "lease_expires_at": _format_optional_datetime(work.lease_expires_at),
         }
     )
 
@@ -247,6 +251,8 @@ def decode_dispatch_work(snapshot: str) -> DispatchWork:
         created_at=parse_utc_datetime(_string(document, "created_at")),
         claimed_at=_optional_datetime(document, "claimed_at"),
         completed_at=_optional_datetime(document, "completed_at"),
+        claim_owner=_optional_string(document, "claim_owner"),
+        lease_expires_at=_optional_datetime(document, "lease_expires_at"),
     )
 
 
@@ -262,6 +268,7 @@ def encode_worker_profile(profile: WorkerProfile) -> str:
             "session_policy": profile.session_policy.value,
             "budget_ref": profile.budget_ref,
             "credential_ref": profile.credential_ref,
+            "priority": profile.priority,
         }
     )
 
@@ -279,6 +286,7 @@ def decode_worker_profile(snapshot: str) -> WorkerProfile:
         session_policy=SessionPolicy(_string(document, "session_policy")),
         budget_ref=_optional_string(document, "budget_ref"),
         credential_ref=_optional_string(document, "credential_ref"),
+        priority=_integer(document, "priority") if "priority" in document else 0,
     )
 
 

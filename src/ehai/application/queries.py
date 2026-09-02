@@ -273,6 +273,7 @@ class WorkerProfileView:
     session_policy: SessionPolicy
     budget_ref: str | None
     credential_ref: str | None
+    priority: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -306,6 +307,7 @@ class AttemptRuntimeView:
     progress_at: datetime | None
     deadline_at: datetime | None
     lease_expires_at: datetime | None
+    queue_reason: str | None
 
 
 class QueryService:
@@ -334,6 +336,7 @@ class QueryService:
                     session_policy=profile.session_policy,
                     budget_ref=profile.budget_ref,
                     credential_ref=profile.credential_ref,
+                    priority=profile.priority,
                 )
                 for profile in session.worker_registry.list_worker_profiles()
             )
@@ -388,6 +391,7 @@ class QueryService:
                 progress_at=attempt.progress_at,
                 deadline_at=attempt.deadline_at,
                 lease_expires_at=attempt.lease_expires_at,
+                queue_reason=attempt.queue_reason,
             )
 
     def get_plan_graph(self, plan_revision_id: ID) -> PlanGraphView:

@@ -295,6 +295,7 @@ class Attempt:
     progress_at: datetime | None = None
     deadline_at: datetime | None = None
     lease_expires_at: datetime | None = None
+    queue_reason: str | None = None
     _rehydrate_token: InitVar[object | None] = None
 
     def __post_init__(self, _rehydrate_token: object | None) -> None:
@@ -343,6 +344,8 @@ class Attempt:
             not isinstance(self.event_cursor, str) or not self.event_cursor.strip()
         ):
             raise ValueError(f"attempt {self.attempt_id}: event_cursor must not be blank")
+        if self.queue_reason is not None and not self.queue_reason.strip():
+            raise ValueError(f"attempt {self.attempt_id}: queue_reason must not be blank")
         _validate_reason(self.outcome_reason, "outcome_reason")
         if self.status is not AttemptStatus.PENDING and _rehydrate_token is not _REHYDRATE:
             raise ValueError(
@@ -375,6 +378,7 @@ class Attempt:
         progress_at: datetime | None = None,
         deadline_at: datetime | None = None,
         lease_expires_at: datetime | None = None,
+        queue_reason: str | None = None,
     ) -> Self:
         """Restore a persisted Attempt snapshot through an explicit validation boundary."""
         return cls(
@@ -398,6 +402,20 @@ class Attempt:
             progress_at=progress_at,
             deadline_at=deadline_at,
             lease_expires_at=lease_expires_at,
+            queue_reason=queue_reason,
+            _rehydrate_token=_REHYDRATE,
+        )
+
+    def queue(self, reason: str) -> Self:
+        """Observe a pending Attempt waiting without consuming Worker capacity."""
+        if self.status is not AttemptStatus.PENDING:
+            raise ValueError(f"attempt {self.attempt_id}: only pending work can be queued")
+        if not reason.strip():
+            raise ValueError("queue reason must not be blank")
+        return replace(
+            self,
+            activity=AttemptActivity.QUEUED,
+            queue_reason=reason,
             _rehydrate_token=_REHYDRATE,
         )
 
@@ -432,6 +450,7 @@ class Attempt:
             activity=AttemptActivity.QUEUED,
             deadline_at=deadline_at,
             lease_expires_at=lease_expires_at,
+            queue_reason=self.queue_reason,
             _rehydrate_token=_REHYDRATE,
         )
 
@@ -485,6 +504,7 @@ class Attempt:
             started_at=_utc(at or utc_now(), "at"),
             ended_at=None,
             outcome_reason=None,
+            queue_reason=None,
             _rehydrate_token=_REHYDRATE,
         )
 
@@ -504,6 +524,7 @@ class Attempt:
             outcome_reason=None,
             activity=None,
             lease_expires_at=None,
+            queue_reason=None,
             _rehydrate_token=_REHYDRATE,
         )
 
@@ -528,6 +549,7 @@ class Attempt:
             outcome_reason=reason,
             activity=None,
             lease_expires_at=None,
+            queue_reason=None,
             _rehydrate_token=_REHYDRATE,
         )
 
@@ -550,6 +572,7 @@ class Attempt:
             outcome_reason=reason,
             activity=None,
             lease_expires_at=None,
+            queue_reason=None,
             _rehydrate_token=_REHYDRATE,
         )
 
@@ -622,7 +645,11 @@ class Attempt:
                 raise ValueError(f"attempt {self.attempt_id}: execution belongs to another Attempt")
             if self.execution_handle.agent_session_ref_id != self.agent_session_ref_id:
                 raise ValueError(f"attempt {self.attempt_id}: execution belongs to another Session")
-        if self.activity is not None and self.worker_profile_id is None:
+        if (
+            self.activity is not None
+            and self.activity is not AttemptActivity.QUEUED
+            and self.worker_profile_id is None
+        ):
             raise ValueError(f"attempt {self.attempt_id}: activity requires assignment")
         if self.status not in {AttemptStatus.PENDING, AttemptStatus.RUNNING} and self.activity:
             raise ValueError(f"attempt {self.attempt_id}: terminal work has no live activity")

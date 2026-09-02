@@ -98,6 +98,7 @@ class WorkerProfile:
     session_policy: SessionPolicy = SessionPolicy.NEW
     budget_ref: str | None = None
     credential_ref: str | None = None
+    priority: int = 0
     worker_profile_id: ID = field(default_factory=new_id)
 
     def __post_init__(self) -> None:
@@ -118,6 +119,8 @@ class WorkerProfile:
                 "credential_ref",
                 _text(self.credential_ref, "credential_ref"),
             )
+        if type(self.priority) is not int:
+            raise ValueError("WorkerProfile priority must be an integer")
 
 
 @dataclass(frozen=True, slots=True)

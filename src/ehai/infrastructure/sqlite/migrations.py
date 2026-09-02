@@ -6,7 +6,7 @@ import sqlite3
 from collections.abc import Sequence
 
 P1_SCHEMA_VERSION = 2
-LATEST_SCHEMA_VERSION = 6
+LATEST_SCHEMA_VERSION = 8
 
 
 class SchemaVersionError(RuntimeError):
@@ -399,6 +399,24 @@ _MIGRATION_6: tuple[str, ...] = (
     """,
 )
 
+_MIGRATION_7: tuple[str, ...] = (
+    """
+    ALTER TABLE worker_profiles ADD COLUMN priority INTEGER NOT NULL DEFAULT 0
+    """,
+    """
+    ALTER TABLE attempts ADD COLUMN queue_reason TEXT
+    """,
+)
+
+_MIGRATION_8: tuple[str, ...] = (
+    """
+    ALTER TABLE dispatch_work ADD COLUMN claim_owner TEXT
+    """,
+    """
+    ALTER TABLE dispatch_work ADD COLUMN lease_expires_at TEXT
+    """,
+)
+
 _MIGRATIONS: dict[int, Sequence[str]] = {
     1: _MIGRATION_1,
     2: _MIGRATION_2,
@@ -406,6 +424,8 @@ _MIGRATIONS: dict[int, Sequence[str]] = {
     4: _MIGRATION_4,
     5: _MIGRATION_5,
     6: _MIGRATION_6,
+    7: _MIGRATION_7,
+    8: _MIGRATION_8,
 }
 
 
