@@ -58,6 +58,12 @@ from ehai.domain.workers import (
     WorkerKind,
     WorkerProfile,
 )
+from ehai.domain.workspaces import (
+    WorkspaceKind,
+    WorkspaceLease,
+    WorkspaceLeaseStatus,
+    WorkspaceRef,
+)
 
 __all__ = [
     "EVENT_SCHEMA_VERSION",
@@ -112,4 +118,8 @@ __all__ = [
     "WorkerEndpointType",
     "WorkerKind",
     "WorkerProfile",
+    "WorkspaceKind",
+    "WorkspaceLease",
+    "WorkspaceLeaseStatus",
+    "WorkspaceRef",
 ]

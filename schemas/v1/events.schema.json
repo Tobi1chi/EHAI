@@ -42,6 +42,7 @@
         "GateFailed",
         "CheckpointCreated",
         "CheckpointRestored"
+        , "WorkspacePreserved"
       ]
     },
     "EventEnvelope": {

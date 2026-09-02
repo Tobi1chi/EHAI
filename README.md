@@ -48,10 +48,10 @@ Goal + CompletionContract
 | P2 | 进行中 | 异步调度、Built-in/Codex Worker、Agent Session、并发与资源管理 |
 | P3+ | 已规划 | TypeScript Control Plane、可复用 Workflow 和开放扩展生态 |
 
-P2-I0–I5 已提供可恢复 Built-in Agent、OpenAI Responses ModelClient、后台 Runtime，以及按
-capability、Profile priority、Endpoint 状态和五层 capacity 约束的单进程并发 Scheduler。真实写任务
-的 Workspace/Session 隔离尚未实现，因此真实 Connector 仍不并发运行。Responses Smoke 仍需显式
-API key/model，当前 CLI/API 命令保持 P1/P1.1 串行语义。
+P2-I0–I6 已提供可恢复 Built-in Agent、OpenAI Responses ModelClient、受控并发 Scheduler，以及
+EHAI-owned Git worktree 和显式 SessionPolicy 隔离。Git 分支写任务使用独立 worktree；非 Git 写任务
+串行，dirty EHAI worktree 会保留并产生 Event。Codex App Server Connector 尚未实现；Responses Smoke
+仍需显式 API key/model，当前 CLI/API 命令保持 P1/P1.1 串行语义。
 
 ## Quick Start
 

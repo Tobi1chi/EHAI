@@ -64,6 +64,7 @@ class EventType(StrEnum):
     GATE_FAILED = "GateFailed"
     CHECKPOINT_CREATED = "CheckpointCreated"
     CHECKPOINT_RESTORED = "CheckpointRestored"
+    WORKSPACE_PRESERVED = "WorkspacePreserved"
 
 
 @dataclass(frozen=True, slots=True, init=False)

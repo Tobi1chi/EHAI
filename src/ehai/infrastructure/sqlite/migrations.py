@@ -6,7 +6,7 @@ import sqlite3
 from collections.abc import Sequence
 
 P1_SCHEMA_VERSION = 2
-LATEST_SCHEMA_VERSION = 8
+LATEST_SCHEMA_VERSION = 9
 
 
 class SchemaVersionError(RuntimeError):
@@ -417,6 +417,35 @@ _MIGRATION_8: tuple[str, ...] = (
     """,
 )
 
+_MIGRATION_9: tuple[str, ...] = (
+    """
+    CREATE TABLE workspace_refs (
+        workspace_ref_id TEXT PRIMARY KEY,
+        run_id TEXT NOT NULL REFERENCES runs(run_id) ON DELETE CASCADE,
+        path TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        ehai_owned INTEGER NOT NULL CHECK (ehai_owned IN (0, 1)),
+        ownership_token TEXT,
+        snapshot_json TEXT NOT NULL CHECK (json_valid(snapshot_json))
+    )
+    """,
+    """
+    CREATE TABLE workspace_leases (
+        workspace_lease_id TEXT PRIMARY KEY,
+        attempt_id TEXT NOT NULL REFERENCES attempts(attempt_id) ON DELETE CASCADE,
+        workspace_ref_id TEXT NOT NULL REFERENCES workspace_refs(workspace_ref_id),
+        write_capable INTEGER NOT NULL CHECK (write_capable IN (0, 1)),
+        status TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        snapshot_json TEXT NOT NULL CHECK (json_valid(snapshot_json))
+    )
+    """,
+    """
+    CREATE INDEX workspace_leases_status_idx
+        ON workspace_leases(status, workspace_ref_id, workspace_lease_id)
+    """,
+)
+
 _MIGRATIONS: dict[int, Sequence[str]] = {
     1: _MIGRATION_1,
     2: _MIGRATION_2,
@@ -426,6 +455,7 @@ _MIGRATIONS: dict[int, Sequence[str]] = {
     6: _MIGRATION_6,
     7: _MIGRATION_7,
     8: _MIGRATION_8,
+    9: _MIGRATION_9,
 }
 
 
