@@ -5,7 +5,8 @@ from __future__ import annotations
 import sqlite3
 from collections.abc import Sequence
 
-LATEST_SCHEMA_VERSION = 2
+P1_SCHEMA_VERSION = 2
+LATEST_SCHEMA_VERSION = 3
 
 
 class SchemaVersionError(RuntimeError):
@@ -238,10 +239,129 @@ _MIGRATION_2: tuple[str, ...] = (
     """,
 )
 
-_MIGRATIONS: dict[int, Sequence[str]] = {1: _MIGRATION_1, 2: _MIGRATION_2}
+_MIGRATION_3: tuple[str, ...] = (
+    """
+    CREATE TABLE worker_profiles (
+        worker_profile_id TEXT PRIMARY KEY,
+        worker_kind TEXT NOT NULL,
+        model TEXT NOT NULL,
+        session_policy TEXT NOT NULL,
+        snapshot_json TEXT NOT NULL CHECK (json_valid(snapshot_json))
+    )
+    """,
+    """
+    CREATE INDEX worker_profiles_kind_idx
+        ON worker_profiles(worker_kind, worker_profile_id)
+    """,
+    """
+    CREATE TABLE worker_endpoints (
+        worker_endpoint_id TEXT PRIMARY KEY,
+        worker_kind TEXT NOT NULL,
+        endpoint_type TEXT NOT NULL,
+        capacity INTEGER NOT NULL CHECK (capacity > 0),
+        status TEXT NOT NULL,
+        snapshot_json TEXT NOT NULL CHECK (json_valid(snapshot_json))
+    )
+    """,
+    """
+    CREATE INDEX worker_endpoints_kind_idx
+        ON worker_endpoints(worker_kind, status, worker_endpoint_id)
+    """,
+    """
+    CREATE TABLE agent_session_refs (
+        agent_session_ref_id TEXT PRIMARY KEY,
+        run_id TEXT NOT NULL REFERENCES runs(run_id) ON DELETE CASCADE,
+        worker_profile_id TEXT NOT NULL REFERENCES worker_profiles(worker_profile_id),
+        worker_endpoint_id TEXT NOT NULL REFERENCES worker_endpoints(worker_endpoint_id),
+        provider_session_id TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        snapshot_json TEXT NOT NULL CHECK (json_valid(snapshot_json)),
+        UNIQUE(worker_endpoint_id, provider_session_id)
+    )
+    """,
+    """
+    CREATE INDEX agent_session_refs_run_idx
+        ON agent_session_refs(run_id, agent_session_ref_id)
+    """,
+    """
+    CREATE TABLE external_execution_refs (
+        external_execution_ref_id TEXT PRIMARY KEY,
+        attempt_id TEXT NOT NULL UNIQUE
+            REFERENCES attempts(attempt_id) ON DELETE CASCADE,
+        agent_session_ref_id TEXT NOT NULL
+            REFERENCES agent_session_refs(agent_session_ref_id),
+        provider_execution_id TEXT NOT NULL,
+        snapshot_json TEXT NOT NULL CHECK (json_valid(snapshot_json)),
+        UNIQUE(agent_session_ref_id, provider_execution_id)
+    )
+    """,
+    """
+    CREATE TABLE builtin_execution_refs (
+        builtin_execution_ref_id TEXT PRIMARY KEY,
+        builtin_execution_id TEXT NOT NULL UNIQUE,
+        attempt_id TEXT NOT NULL UNIQUE
+            REFERENCES attempts(attempt_id) ON DELETE CASCADE,
+        agent_session_ref_id TEXT NOT NULL
+            REFERENCES agent_session_refs(agent_session_ref_id),
+        snapshot_json TEXT NOT NULL CHECK (json_valid(snapshot_json))
+    )
+    """,
+    """
+    ALTER TABLE attempts ADD COLUMN worker_profile_id TEXT
+        REFERENCES worker_profiles(worker_profile_id)
+    """,
+    """
+    ALTER TABLE attempts ADD COLUMN worker_endpoint_id TEXT
+        REFERENCES worker_endpoints(worker_endpoint_id)
+    """,
+    """
+    ALTER TABLE attempts ADD COLUMN agent_session_ref_id TEXT
+        REFERENCES agent_session_refs(agent_session_ref_id)
+    """,
+    """
+    ALTER TABLE attempts ADD COLUMN execution_kind TEXT
+        CHECK (execution_kind IS NULL OR execution_kind IN ('builtin_turn', 'external_execution'))
+    """,
+    """
+    ALTER TABLE attempts ADD COLUMN provider_execution_id TEXT
+    """,
+    """
+    ALTER TABLE attempts ADD COLUMN activity TEXT
+        CHECK (activity IS NULL OR activity IN ('queued', 'running', 'waiting', 'stalled'))
+    """,
+    """
+    ALTER TABLE attempts ADD COLUMN event_cursor TEXT
+    """,
+    """
+    ALTER TABLE attempts ADD COLUMN heartbeat_at TEXT
+    """,
+    """
+    ALTER TABLE attempts ADD COLUMN progress_at TEXT
+    """,
+    """
+    ALTER TABLE attempts ADD COLUMN deadline_at TEXT
+    """,
+    """
+    ALTER TABLE attempts ADD COLUMN lease_expires_at TEXT
+    """,
+    """
+    CREATE INDEX attempts_assignment_idx
+        ON attempts(worker_endpoint_id, activity, lease_expires_at, attempt_id)
+    """,
+)
+
+_MIGRATIONS: dict[int, Sequence[str]] = {
+    1: _MIGRATION_1,
+    2: _MIGRATION_2,
+    3: _MIGRATION_3,
+}
 
 
-def migrate(connection: sqlite3.Connection) -> None:
+def migrate(
+    connection: sqlite3.Connection,
+    *,
+    target_version: int = LATEST_SCHEMA_VERSION,
+) -> None:
     """Apply every pending migration atomically and reject future schemas."""
     current = int(connection.execute("PRAGMA user_version").fetchone()[0])
     if current > LATEST_SCHEMA_VERSION:
@@ -249,8 +369,12 @@ def migrate(connection: sqlite3.Connection) -> None:
             f"database schema version {current} is newer than supported "
             f"version {LATEST_SCHEMA_VERSION}"
         )
+    if target_version < current or target_version > LATEST_SCHEMA_VERSION:
+        raise SchemaVersionError(
+            f"cannot migrate schema version {current} to unsupported target {target_version}"
+        )
 
-    for version in range(current + 1, LATEST_SCHEMA_VERSION + 1):
+    for version in range(current + 1, target_version + 1):
         statements = _MIGRATIONS.get(version)
         if statements is None:
             raise SchemaVersionError(f"missing migration for schema version {version}")

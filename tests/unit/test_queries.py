@@ -8,7 +8,12 @@ from typing import cast
 import pytest
 
 from ehai import ID, new_id
-from ehai.application.ports import CurrentStateReader, EventReader, StoredEvent
+from ehai.application.ports import (
+    CurrentStateReader,
+    EventReader,
+    StoredEvent,
+    WorkerRegistryReader,
+)
 from ehai.application.queries import QueryNotFoundError, QueryService
 from ehai.domain.artifacts import Artifact, ArtifactKind
 from ehai.domain.checking import CheckKind, CheckSpec
@@ -102,6 +107,7 @@ class _ReadSession:
     def __init__(self, states: _States, events: _Events) -> None:
         self.states = cast(CurrentStateReader, states)
         self.events = cast(EventReader, events)
+        self.worker_registry = cast(WorkerRegistryReader, object())
         self.closed = False
 
     def __enter__(self) -> _ReadSession:

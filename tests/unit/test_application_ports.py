@@ -14,6 +14,7 @@ from ehai.application import (
     EventLog,
     StoredEvent,
     UnitOfWork,
+    WorkerRegistryRepository,
 )
 from ehai.domain import Event, EventType
 
@@ -128,6 +129,7 @@ class _UnitOfWork:
         self.states = cast(CurrentStateRepository, object())
         self.events = _EventLog()
         self.command_receipts = _CommandReceipts()
+        self.worker_registry = cast(WorkerRegistryRepository, object())
         self.committed = False
         self.rolled_back = False
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
+from datetime import datetime
 
 from ehai import ID, format_utc_datetime, json_dumps, json_loads, parse_utc_datetime
 from ehai.application.ports import CommandReceipt, StoredEvent
@@ -18,33 +19,50 @@ from ehai.domain.planning import (
     PlanRevision,
     PlanRevisionStatus,
 )
+from ehai.domain.workers import (
+    AgentSessionRef,
+    BuiltinExecutionRef,
+    ExternalExecutionRef,
+    WorkerEndpoint,
+    WorkerProfile,
+)
 from ehai.infrastructure.sqlite.codec import (
+    decode_agent_session_ref,
     decode_artifact,
     decode_attempt,
     decode_branch,
+    decode_builtin_execution_ref,
     decode_check_run,
     decode_check_spec,
     decode_checkpoint,
     decode_completion_contract,
     decode_edge,
+    decode_external_execution_ref,
     decode_goal,
     decode_plan_node,
     decode_plan_revision,
     decode_project,
     decode_run,
+    decode_worker_endpoint,
+    decode_worker_profile,
+    encode_agent_session_ref,
     encode_artifact,
     encode_attempt,
     encode_branch,
+    encode_builtin_execution_ref,
     encode_check_run,
     encode_check_spec,
     encode_checkpoint,
     encode_completion_contract,
     encode_edge,
+    encode_external_execution_ref,
     encode_goal,
     encode_plan_node,
     encode_plan_revision,
     encode_project,
     encode_run,
+    encode_worker_endpoint,
+    encode_worker_profile,
 )
 
 
@@ -159,6 +177,96 @@ _CHECK_RUN_STATUS_TRANSITIONS = {
     CheckRunStatus.CANCELLED: frozenset({CheckRunStatus.CANCELLED}),
     CheckRunStatus.INTERRUPTED: frozenset({CheckRunStatus.INTERRUPTED}),
 }
+
+
+class SQLiteWorkerRegistry:
+    """Configured Worker Profiles and Endpoints without discovery or installation."""
+
+    def __init__(self, connection: sqlite3.Connection) -> None:
+        self._connection = connection
+
+    def put_worker_profile(self, profile: WorkerProfile) -> None:
+        snapshot = encode_worker_profile(profile)
+        existing = self.get_worker_profile(profile.worker_profile_id)
+        if existing is not None:
+            if existing != profile:
+                raise PersistenceConflictError(
+                    f"WorkerProfile {profile.worker_profile_id} is immutable"
+                )
+            return
+        self._connection.execute(
+            """
+            INSERT INTO worker_profiles(
+                worker_profile_id, worker_kind, model, session_policy, snapshot_json
+            ) VALUES (?, ?, ?, ?, ?)
+            """,
+            (
+                profile.worker_profile_id,
+                profile.kind.value,
+                profile.model,
+                profile.session_policy.value,
+                snapshot,
+            ),
+        )
+
+    def get_worker_profile(self, worker_profile_id: ID) -> WorkerProfile | None:
+        row = self._connection.execute(
+            "SELECT snapshot_json FROM worker_profiles WHERE worker_profile_id = ?",
+            (worker_profile_id,),
+        ).fetchone()
+        return None if row is None else decode_worker_profile(_row_index_string(row, 0))
+
+    def list_worker_profiles(self) -> tuple[WorkerProfile, ...]:
+        return tuple(
+            decode_worker_profile(_row_index_string(row, 0))
+            for row in self._connection.execute(
+                "SELECT snapshot_json FROM worker_profiles ORDER BY worker_profile_id"
+            ).fetchall()
+        )
+
+    def put_worker_endpoint(self, endpoint: WorkerEndpoint) -> None:
+        snapshot = encode_worker_endpoint(endpoint)
+        existing = self.get_worker_endpoint(endpoint.worker_endpoint_id)
+        if existing is not None and _worker_endpoint_identity(
+            existing
+        ) != _worker_endpoint_identity(endpoint):
+            raise PersistenceConflictError(
+                f"WorkerEndpoint {endpoint.worker_endpoint_id} identity changed"
+            )
+        self._connection.execute(
+            """
+            INSERT INTO worker_endpoints(
+                worker_endpoint_id, worker_kind, endpoint_type,
+                capacity, status, snapshot_json
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(worker_endpoint_id) DO UPDATE SET
+                status = excluded.status,
+                snapshot_json = excluded.snapshot_json
+            """,
+            (
+                endpoint.worker_endpoint_id,
+                endpoint.worker_kind.value,
+                endpoint.endpoint_type.value,
+                endpoint.capacity,
+                endpoint.status.value,
+                snapshot,
+            ),
+        )
+
+    def get_worker_endpoint(self, worker_endpoint_id: ID) -> WorkerEndpoint | None:
+        row = self._connection.execute(
+            "SELECT snapshot_json FROM worker_endpoints WHERE worker_endpoint_id = ?",
+            (worker_endpoint_id,),
+        ).fetchone()
+        return None if row is None else decode_worker_endpoint(_row_index_string(row, 0))
+
+    def list_worker_endpoints(self) -> tuple[WorkerEndpoint, ...]:
+        return tuple(
+            decode_worker_endpoint(_row_index_string(row, 0))
+            for row in self._connection.execute(
+                "SELECT snapshot_json FROM worker_endpoints ORDER BY worker_endpoint_id"
+            ).fetchall()
+        )
 
 
 class SQLiteCurrentStateRepository:
@@ -479,16 +587,51 @@ class SQLiteCurrentStateRepository:
         if existing is not None:
             if _attempt_identity(existing) != _attempt_identity(attempt):
                 raise PersistenceConflictError(f"Attempt {attempt.attempt_id} identity changed")
+            if existing.worker_profile_id is not None and _attempt_assignment(
+                existing
+            ) != _attempt_assignment(attempt):
+                raise PersistenceConflictError(f"Attempt {attempt.attempt_id} assignment changed")
+            if (
+                existing.execution_handle is not None
+                and existing.execution_handle != attempt.execution_handle
+            ):
+                raise PersistenceConflictError(
+                    f"Attempt {attempt.attempt_id} execution binding changed"
+                )
             if attempt.status not in _ATTEMPT_STATUS_TRANSITIONS[existing.status]:
                 raise PersistenceConflictError(
                     f"Attempt {attempt.attempt_id} status transition is illegal"
                 )
+        self._validate_attempt_runtime_refs(attempt)
+        execution_kind = (
+            None if attempt.execution_handle is None else attempt.execution_handle.kind.value
+        )
+        provider_execution_id = (
+            None
+            if attempt.execution_handle is None
+            else attempt.execution_handle.provider_execution_id
+        )
         self._connection.execute(
             """
             INSERT INTO attempts(
-                attempt_id, run_id, plan_node_id, sequence, snapshot_json
-            ) VALUES (?, ?, ?, ?, ?)
-            ON CONFLICT(attempt_id) DO UPDATE SET snapshot_json = excluded.snapshot_json
+                attempt_id, run_id, plan_node_id, sequence, snapshot_json,
+                worker_profile_id, worker_endpoint_id, agent_session_ref_id,
+                execution_kind, provider_execution_id, activity, event_cursor,
+                heartbeat_at, progress_at, deadline_at, lease_expires_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(attempt_id) DO UPDATE SET
+                snapshot_json = excluded.snapshot_json,
+                worker_profile_id = excluded.worker_profile_id,
+                worker_endpoint_id = excluded.worker_endpoint_id,
+                agent_session_ref_id = excluded.agent_session_ref_id,
+                execution_kind = excluded.execution_kind,
+                provider_execution_id = excluded.provider_execution_id,
+                activity = excluded.activity,
+                event_cursor = excluded.event_cursor,
+                heartbeat_at = excluded.heartbeat_at,
+                progress_at = excluded.progress_at,
+                deadline_at = excluded.deadline_at,
+                lease_expires_at = excluded.lease_expires_at
             """,
             (
                 attempt.attempt_id,
@@ -496,6 +639,17 @@ class SQLiteCurrentStateRepository:
                 attempt.plan_node_id,
                 attempt.sequence,
                 encode_attempt(attempt),
+                attempt.worker_profile_id,
+                attempt.worker_endpoint_id,
+                attempt.agent_session_ref_id,
+                execution_kind,
+                provider_execution_id,
+                None if attempt.activity is None else attempt.activity.value,
+                attempt.event_cursor,
+                _format_optional_datetime(attempt.heartbeat_at),
+                _format_optional_datetime(attempt.progress_at),
+                _format_optional_datetime(attempt.deadline_at),
+                _format_optional_datetime(attempt.lease_expires_at),
             ),
         )
 
@@ -514,6 +668,230 @@ class SQLiteCurrentStateRepository:
                 (run_id,),
             )
         )
+
+    def put_agent_session_ref(self, session: AgentSessionRef) -> None:
+        self._required_run(session.run_id)
+        registry = SQLiteWorkerRegistry(self._connection)
+        profile = registry.get_worker_profile(session.worker_profile_id)
+        endpoint = registry.get_worker_endpoint(session.worker_endpoint_id)
+        if profile is None:
+            raise PersistenceConflictError(
+                f"WorkerProfile {session.worker_profile_id} is not persisted"
+            )
+        if endpoint is None:
+            raise PersistenceConflictError(
+                f"WorkerEndpoint {session.worker_endpoint_id} is not persisted"
+            )
+        if profile.kind != endpoint.worker_kind:
+            raise PersistenceConflictError(
+                f"AgentSessionRef {session.agent_session_ref_id} Worker kinds do not match"
+            )
+        snapshot = encode_agent_session_ref(session)
+        existing = self.get_agent_session_ref(session.agent_session_ref_id)
+        if existing is not None:
+            if existing != session:
+                raise PersistenceConflictError(
+                    f"AgentSessionRef {session.agent_session_ref_id} is immutable"
+                )
+            return
+        self._connection.execute(
+            """
+            INSERT INTO agent_session_refs(
+                agent_session_ref_id, run_id, worker_profile_id, worker_endpoint_id,
+                provider_session_id, created_at, snapshot_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                session.agent_session_ref_id,
+                session.run_id,
+                session.worker_profile_id,
+                session.worker_endpoint_id,
+                session.provider_session_id,
+                format_utc_datetime(session.created_at),
+                snapshot,
+            ),
+        )
+
+    def get_agent_session_ref(self, agent_session_ref_id: ID) -> AgentSessionRef | None:
+        snapshot = self._snapshot(
+            "agent_session_refs", "agent_session_ref_id", agent_session_ref_id
+        )
+        return None if snapshot is None else decode_agent_session_ref(snapshot)
+
+    def list_agent_session_refs(self, run_id: ID) -> tuple[AgentSessionRef, ...]:
+        return tuple(
+            decode_agent_session_ref(snapshot)
+            for snapshot in self._snapshots(
+                """
+                SELECT snapshot_json FROM agent_session_refs
+                WHERE run_id = ? ORDER BY created_at, agent_session_ref_id
+                """,
+                (run_id,),
+            )
+        )
+
+    def put_external_execution_ref(self, reference: ExternalExecutionRef) -> None:
+        self._validate_execution_reference(
+            reference.attempt_id,
+            reference.agent_session_ref_id,
+            expected_builtin=False,
+        )
+        snapshot = encode_external_execution_ref(reference)
+        existing = self.get_external_execution_ref(reference.external_execution_ref_id)
+        if existing is not None:
+            if existing != reference:
+                raise PersistenceConflictError(
+                    f"ExternalExecutionRef {reference.external_execution_ref_id} is immutable"
+                )
+            return
+        self._connection.execute(
+            """
+            INSERT INTO external_execution_refs(
+                external_execution_ref_id, attempt_id, agent_session_ref_id,
+                provider_execution_id, snapshot_json
+            ) VALUES (?, ?, ?, ?, ?)
+            """,
+            (
+                reference.external_execution_ref_id,
+                reference.attempt_id,
+                reference.agent_session_ref_id,
+                reference.provider_execution_id,
+                snapshot,
+            ),
+        )
+
+    def get_external_execution_ref(
+        self, external_execution_ref_id: ID
+    ) -> ExternalExecutionRef | None:
+        snapshot = self._snapshot(
+            "external_execution_refs",
+            "external_execution_ref_id",
+            external_execution_ref_id,
+        )
+        return None if snapshot is None else decode_external_execution_ref(snapshot)
+
+    def put_builtin_execution_ref(self, reference: BuiltinExecutionRef) -> None:
+        self._validate_execution_reference(
+            reference.attempt_id,
+            reference.agent_session_ref_id,
+            expected_builtin=True,
+        )
+        snapshot = encode_builtin_execution_ref(reference)
+        existing = self.get_builtin_execution_ref(reference.builtin_execution_ref_id)
+        if existing is not None:
+            if existing != reference:
+                raise PersistenceConflictError(
+                    f"BuiltinExecutionRef {reference.builtin_execution_ref_id} is immutable"
+                )
+            return
+        self._connection.execute(
+            """
+            INSERT INTO builtin_execution_refs(
+                builtin_execution_ref_id, builtin_execution_id, attempt_id,
+                agent_session_ref_id, snapshot_json
+            ) VALUES (?, ?, ?, ?, ?)
+            """,
+            (
+                reference.builtin_execution_ref_id,
+                reference.builtin_execution_id,
+                reference.attempt_id,
+                reference.agent_session_ref_id,
+                snapshot,
+            ),
+        )
+
+    def get_builtin_execution_ref(self, builtin_execution_ref_id: ID) -> BuiltinExecutionRef | None:
+        snapshot = self._snapshot(
+            "builtin_execution_refs",
+            "builtin_execution_ref_id",
+            builtin_execution_ref_id,
+        )
+        return None if snapshot is None else decode_builtin_execution_ref(snapshot)
+
+    def _validate_attempt_runtime_refs(self, attempt: Attempt) -> None:
+        if attempt.worker_profile_id is None:
+            return
+        assert attempt.worker_endpoint_id is not None
+        assert attempt.agent_session_ref_id is not None
+        registry = SQLiteWorkerRegistry(self._connection)
+        profile = registry.get_worker_profile(attempt.worker_profile_id)
+        endpoint = registry.get_worker_endpoint(attempt.worker_endpoint_id)
+        session = self.get_agent_session_ref(attempt.agent_session_ref_id)
+        if profile is None or endpoint is None or session is None:
+            raise PersistenceConflictError(
+                f"Attempt {attempt.attempt_id} assignment references missing registry state"
+            )
+        if (
+            session.run_id != attempt.run_id
+            or session.worker_profile_id != profile.worker_profile_id
+            or session.worker_endpoint_id != endpoint.worker_endpoint_id
+        ):
+            raise PersistenceConflictError(
+                f"Attempt {attempt.attempt_id} assignment crosses execution scope"
+            )
+        run = self._required_run(attempt.run_id)
+        plan = self._required_plan_revision(run.plan_revision_id)
+        node = _required_plan_node(plan, attempt.plan_node_id)
+        if not node.required_capabilities.issubset(profile.capabilities):
+            raise PersistenceConflictError(
+                f"Attempt {attempt.attempt_id} WorkerProfile lacks required capabilities"
+            )
+        if node.session_policy != profile.session_policy:
+            raise PersistenceConflictError(
+                f"Attempt {attempt.attempt_id} SessionPolicy does not match PlanNode"
+            )
+        if attempt.execution_handle is None:
+            return
+        handle = attempt.execution_handle
+        if handle.external is not None:
+            stored: ExternalExecutionRef | BuiltinExecutionRef | None = (
+                self.get_external_execution_ref(handle.external.external_execution_ref_id)
+            )
+        else:
+            assert handle.builtin is not None
+            stored = self.get_builtin_execution_ref(handle.builtin.builtin_execution_ref_id)
+        expected = handle.external if handle.external is not None else handle.builtin
+        if stored != expected:
+            raise PersistenceConflictError(
+                f"Attempt {attempt.attempt_id} execution reference is not persisted"
+            )
+
+    def _validate_execution_reference(
+        self,
+        attempt_id: ID,
+        agent_session_ref_id: ID,
+        *,
+        expected_builtin: bool,
+    ) -> None:
+        attempt = self._required_attempt(attempt_id)
+        session = self.get_agent_session_ref(agent_session_ref_id)
+        if session is None:
+            raise PersistenceConflictError(
+                f"AgentSessionRef {agent_session_ref_id} is not persisted"
+            )
+        if session.run_id != attempt.run_id:
+            raise PersistenceConflictError(
+                f"Attempt {attempt_id} and Session {agent_session_ref_id} belong to different Runs"
+            )
+        registry = SQLiteWorkerRegistry(self._connection)
+        profile = registry.get_worker_profile(session.worker_profile_id)
+        if profile is None:
+            raise PersistenceConflictError(
+                f"WorkerProfile {session.worker_profile_id} is not persisted"
+            )
+        if expected_builtin != (profile.kind.value == "builtin"):
+            raise PersistenceConflictError(
+                f"Attempt {attempt_id} execution kind does not match WorkerProfile"
+            )
+        opposite_table = "external_execution_refs" if expected_builtin else "builtin_execution_refs"
+        opposite = self._connection.execute(
+            f"SELECT 1 FROM {opposite_table} WHERE attempt_id = ?",
+            (attempt_id,),
+        ).fetchone()
+        if opposite is not None:
+            raise PersistenceConflictError(
+                f"Attempt {attempt_id} already has another execution kind"
+            )
 
     def put_check_spec(self, plan_revision_id: ID, check_spec: CheckSpec) -> None:
         plan = self._required_plan_revision(plan_revision_id)
@@ -1253,6 +1631,8 @@ def _plan_structure(plan_revision: PlanRevision) -> tuple[object, ...]:
             node.kind,
             node.required_dependency_ids,
             node.required_check_ids,
+            node.required_capabilities,
+            node.session_policy,
         )
         for node in plan_revision.nodes
     )
@@ -1303,6 +1683,29 @@ def _attempt_identity(attempt: Attempt) -> tuple[object, ...]:
         attempt.sequence,
         attempt.created_at,
     )
+
+
+def _attempt_assignment(attempt: Attempt) -> tuple[object, ...]:
+    return (
+        attempt.worker_profile_id,
+        attempt.worker_endpoint_id,
+        attempt.agent_session_ref_id,
+    )
+
+
+def _worker_endpoint_identity(endpoint: WorkerEndpoint) -> tuple[object, ...]:
+    return (
+        endpoint.worker_endpoint_id,
+        endpoint.name,
+        endpoint.worker_kind,
+        endpoint.endpoint_type,
+        endpoint.endpoint_ref,
+        endpoint.capacity,
+    )
+
+
+def _format_optional_datetime(value: datetime | None) -> str | None:
+    return None if value is None else format_utc_datetime(value)
 
 
 def _check_run_identity(check_run: CheckRun) -> tuple[object, ...]:

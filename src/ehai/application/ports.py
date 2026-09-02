@@ -15,6 +15,13 @@ from ehai.domain.events import Event
 from ehai.domain.execution import Attempt, Run
 from ehai.domain.goal import CompletionContract, Goal, Project
 from ehai.domain.planning import PlanRevision
+from ehai.domain.workers import (
+    AgentSessionRef,
+    BuiltinExecutionRef,
+    ExternalExecutionRef,
+    WorkerEndpoint,
+    WorkerProfile,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -135,6 +142,24 @@ class CurrentStateReader(Protocol):
         """List Attempts for one Run in sequence order."""
         ...
 
+    def get_agent_session_ref(self, agent_session_ref_id: ID) -> AgentSessionRef | None:
+        """Return one durable Agent Session reference."""
+        ...
+
+    def list_agent_session_refs(self, run_id: ID) -> tuple[AgentSessionRef, ...]:
+        """List Agent Session references scoped to one Run."""
+        ...
+
+    def get_external_execution_ref(
+        self, external_execution_ref_id: ID
+    ) -> ExternalExecutionRef | None:
+        """Return one external provider execution reference."""
+        ...
+
+    def get_builtin_execution_ref(self, builtin_execution_ref_id: ID) -> BuiltinExecutionRef | None:
+        """Return one Built-in Agent execution reference."""
+        ...
+
     def get_check_spec(self, check_id: ID) -> CheckSpec | None:
         """Return one CheckSpec by ID."""
         ...
@@ -194,6 +219,18 @@ class CurrentStateRepository(CurrentStateReader, Protocol):
 
     def put_attempt(self, attempt: Attempt) -> None:
         """Insert or replace an Attempt snapshot by ID."""
+        ...
+
+    def put_agent_session_ref(self, session: AgentSessionRef) -> None:
+        """Persist one immutable Agent Session reference."""
+        ...
+
+    def put_external_execution_ref(self, reference: ExternalExecutionRef) -> None:
+        """Persist one immutable external execution reference."""
+        ...
+
+    def put_builtin_execution_ref(self, reference: BuiltinExecutionRef) -> None:
+        """Persist one immutable Built-in execution reference."""
         ...
 
     def put_check_spec(self, plan_revision_id: ID, check_spec: CheckSpec) -> None:
@@ -258,6 +295,40 @@ class EventLog(EventReader, Protocol):
 
 
 @runtime_checkable
+class WorkerRegistryReader(Protocol):
+    """Read-only access to explicitly configured Worker routing entries."""
+
+    def get_worker_profile(self, worker_profile_id: ID) -> WorkerProfile | None:
+        """Return one WorkerProfile by ID."""
+        ...
+
+    def list_worker_profiles(self) -> tuple[WorkerProfile, ...]:
+        """List configured WorkerProfiles in stable order."""
+        ...
+
+    def get_worker_endpoint(self, worker_endpoint_id: ID) -> WorkerEndpoint | None:
+        """Return one WorkerEndpoint by ID."""
+        ...
+
+    def list_worker_endpoints(self) -> tuple[WorkerEndpoint, ...]:
+        """List configured WorkerEndpoints in stable order."""
+        ...
+
+
+@runtime_checkable
+class WorkerRegistryRepository(WorkerRegistryReader, Protocol):
+    """Mutable Worker registry used only inside a Unit of Work."""
+
+    def put_worker_profile(self, profile: WorkerProfile) -> None:
+        """Persist one immutable WorkerProfile."""
+        ...
+
+    def put_worker_endpoint(self, endpoint: WorkerEndpoint) -> None:
+        """Persist a WorkerEndpoint and its management status."""
+        ...
+
+
+@runtime_checkable
 class ReadSession(Protocol):
     """One short-lived, consistent, read-only persistence snapshot."""
 
@@ -269,6 +340,11 @@ class ReadSession(Protocol):
     @property
     def events(self) -> EventReader:
         """Return the Event reader bound to this snapshot."""
+        ...
+
+    @property
+    def worker_registry(self) -> WorkerRegistryReader:
+        """Return configured Worker routing entries in this snapshot."""
         ...
 
     def __enter__(self) -> Self:
@@ -315,6 +391,11 @@ class UnitOfWork(Protocol):
     @property
     def command_receipts(self) -> CommandReceiptStore:
         """Return the idempotency store bound to this transaction."""
+        ...
+
+    @property
+    def worker_registry(self) -> WorkerRegistryRepository:
+        """Return the Worker registry bound to this transaction."""
         ...
 
     def commit(self) -> None:

@@ -38,7 +38,7 @@ from ehai.domain.checking import InvalidCheckRunTransition
 from ehai.domain.events import Event
 from ehai.domain.execution import InvalidAttemptTransition, InvalidRunTransition
 from ehai.domain.goal import GoalInvariantError
-from ehai.domain.planning import PlanInvariantError, PlanTransitionError
+from ehai.domain.planning import PlanInvariantError, PlanNode, PlanTransitionError
 from ehai.interfaces.http_models import (
     ApprovePlanRequest,
     CancelRunRequest,
@@ -382,10 +382,13 @@ def _json_value(value: object) -> JsonValue:
     if value is None or isinstance(value, (bool, int, float, str)):
         return cast(JsonValue, value)
     if is_dataclass(value) and not isinstance(value, type):
+        hidden_fields = (
+            {"required_capabilities", "session_policy"} if isinstance(value, PlanNode) else set()
+        )
         return {
             item.name: _json_value(getattr(value, item.name))
             for item in fields(value)
-            if not item.name.startswith("_")
+            if not item.name.startswith("_") and item.name not in hidden_fields
         }
     if isinstance(value, Mapping):
         if not all(isinstance(key, str) for key in value):

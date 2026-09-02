@@ -13,6 +13,16 @@ from ehai.domain.execution import (
     Run,
     RunStatus,
 )
+from ehai.domain.workers import (
+    AgentSessionRef,
+    BuiltinExecutionRef,
+    ExecutionHandle,
+    ExternalExecutionRef,
+    WorkerEndpoint,
+    WorkerEndpointType,
+    WorkerKind,
+    WorkerProfile,
+)
 
 NOW = datetime(2026, 8, 31, 10, 0, tzinfo=UTC)
 
@@ -232,3 +242,63 @@ def test_attempt_terminal_constructor_requires_explicit_rehydrate_boundary() -> 
         outcome_reason="process restarted",
     )
     assert restored.status is AttemptStatus.INTERRUPTED
+
+
+@pytest.mark.parametrize("worker_kind", [WorkerKind.BUILTIN, WorkerKind.CODEX_CLI])
+def test_attempt_binding_is_single_use_and_run_scoped(worker_kind: WorkerKind) -> None:
+    run_id = new_id()
+    attempt = Attempt(run_id=run_id, plan_node_id=new_id(), sequence=1, created_at=NOW)
+    profile = WorkerProfile("worker", worker_kind, "model")
+    endpoint = WorkerEndpoint(
+        "endpoint",
+        worker_kind,
+        (
+            WorkerEndpointType.IN_PROCESS
+            if worker_kind is WorkerKind.BUILTIN
+            else WorkerEndpointType.COMMAND
+        ),
+        "worker-ref",
+        1,
+    )
+    session = AgentSessionRef(
+        run_id=run_id,
+        worker_profile_id=profile.worker_profile_id,
+        worker_endpoint_id=endpoint.worker_endpoint_id,
+        provider_session_id="session-1",
+        recoverable=True,
+        created_at=NOW,
+    )
+    assigned = attempt.assign(profile=profile, endpoint=endpoint, session=session)
+    reference = (
+        BuiltinExecutionRef(attempt.attempt_id, session.agent_session_ref_id)
+        if worker_kind is WorkerKind.BUILTIN
+        else ExternalExecutionRef(
+            attempt.attempt_id,
+            session.agent_session_ref_id,
+            "turn-1",
+        )
+    )
+    bound = assigned.bind_execution(
+        ExecutionHandle(
+            builtin=reference if isinstance(reference, BuiltinExecutionRef) else None,
+            external=reference if isinstance(reference, ExternalExecutionRef) else None,
+        )
+    )
+
+    assert bound.execution_handle is not None
+    assert bound.execution_handle.attempt_id == attempt.attempt_id
+    with pytest.raises(ValueError, match="assignment is immutable"):
+        assigned.assign(profile=profile, endpoint=endpoint, session=session)
+    with pytest.raises(ValueError, match="execution binding is immutable"):
+        bound.bind_execution(bound.execution_handle)
+
+    foreign_session = AgentSessionRef(
+        run_id=new_id(),
+        worker_profile_id=profile.worker_profile_id,
+        worker_endpoint_id=endpoint.worker_endpoint_id,
+        provider_session_id="session-2",
+        recoverable=True,
+        created_at=NOW,
+    )
+    with pytest.raises(ValueError, match="another Run"):
+        attempt.assign(profile=profile, endpoint=endpoint, session=foreign_session)

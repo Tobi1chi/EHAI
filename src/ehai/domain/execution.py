@@ -8,6 +8,13 @@ from enum import StrEnum
 from typing import TYPE_CHECKING, Self
 
 from ehai import ID, new_id, normalize_id, utc_now
+from ehai.domain.workers import (
+    AgentSessionRef,
+    AttemptActivity,
+    ExecutionHandle,
+    WorkerEndpoint,
+    WorkerProfile,
+)
 
 if TYPE_CHECKING:
     from ehai.domain.checking import GateDecision
@@ -278,12 +285,42 @@ class Attempt:
     started_at: datetime | None = None
     ended_at: datetime | None = None
     outcome_reason: str | None = None
+    worker_profile_id: ID | None = None
+    worker_endpoint_id: ID | None = None
+    agent_session_ref_id: ID | None = None
+    execution_handle: ExecutionHandle | None = None
+    activity: AttemptActivity | None = None
+    event_cursor: str | None = None
+    heartbeat_at: datetime | None = None
+    progress_at: datetime | None = None
+    deadline_at: datetime | None = None
+    lease_expires_at: datetime | None = None
     _rehydrate_token: InitVar[object | None] = None
 
     def __post_init__(self, _rehydrate_token: object | None) -> None:
         object.__setattr__(self, "run_id", _validated_id(self.run_id, "run_id"))
         object.__setattr__(self, "plan_node_id", _validated_id(self.plan_node_id, "plan_node_id"))
         object.__setattr__(self, "attempt_id", _validated_id(self.attempt_id, "attempt_id"))
+        object.__setattr__(
+            self,
+            "worker_profile_id",
+            _optional_validated_id(self.worker_profile_id, "worker_profile_id"),
+        )
+        object.__setattr__(
+            self,
+            "worker_endpoint_id",
+            _optional_validated_id(self.worker_endpoint_id, "worker_endpoint_id"),
+        )
+        object.__setattr__(
+            self,
+            "agent_session_ref_id",
+            _optional_validated_id(self.agent_session_ref_id, "agent_session_ref_id"),
+        )
+        object.__setattr__(
+            self,
+            "activity",
+            None if self.activity is None else AttemptActivity(self.activity),
+        )
         if self.sequence < 1:
             raise ValueError(f"attempt {self.attempt_id}: sequence must be positive")
         object.__setattr__(
@@ -294,12 +331,25 @@ class Attempt:
         object.__setattr__(self, "created_at", _utc(self.created_at, "created_at"))
         object.__setattr__(self, "started_at", _optional_utc(self.started_at, "started_at"))
         object.__setattr__(self, "ended_at", _optional_utc(self.ended_at, "ended_at"))
+        object.__setattr__(self, "heartbeat_at", _optional_utc(self.heartbeat_at, "heartbeat_at"))
+        object.__setattr__(self, "progress_at", _optional_utc(self.progress_at, "progress_at"))
+        object.__setattr__(self, "deadline_at", _optional_utc(self.deadline_at, "deadline_at"))
+        object.__setattr__(
+            self,
+            "lease_expires_at",
+            _optional_utc(self.lease_expires_at, "lease_expires_at"),
+        )
+        if self.event_cursor is not None and (
+            not isinstance(self.event_cursor, str) or not self.event_cursor.strip()
+        ):
+            raise ValueError(f"attempt {self.attempt_id}: event_cursor must not be blank")
         _validate_reason(self.outcome_reason, "outcome_reason")
         if self.status is not AttemptStatus.PENDING and _rehydrate_token is not _REHYDRATE:
             raise ValueError(
                 f"attempt {self.attempt_id}: non-pending state must use a transition or rehydrate()"
             )
         self._validate_lifecycle()
+        self._validate_runtime_binding()
 
     @classmethod
     def rehydrate(
@@ -315,6 +365,16 @@ class Attempt:
         started_at: datetime | None,
         ended_at: datetime | None,
         outcome_reason: str | None = None,
+        worker_profile_id: ID | None = None,
+        worker_endpoint_id: ID | None = None,
+        agent_session_ref_id: ID | None = None,
+        execution_handle: ExecutionHandle | None = None,
+        activity: AttemptActivity | None = None,
+        event_cursor: str | None = None,
+        heartbeat_at: datetime | None = None,
+        progress_at: datetime | None = None,
+        deadline_at: datetime | None = None,
+        lease_expires_at: datetime | None = None,
     ) -> Self:
         """Restore a persisted Attempt snapshot through an explicit validation boundary."""
         return cls(
@@ -328,6 +388,90 @@ class Attempt:
             started_at=started_at,
             ended_at=ended_at,
             outcome_reason=outcome_reason,
+            worker_profile_id=worker_profile_id,
+            worker_endpoint_id=worker_endpoint_id,
+            agent_session_ref_id=agent_session_ref_id,
+            execution_handle=execution_handle,
+            activity=activity,
+            event_cursor=event_cursor,
+            heartbeat_at=heartbeat_at,
+            progress_at=progress_at,
+            deadline_at=deadline_at,
+            lease_expires_at=lease_expires_at,
+            _rehydrate_token=_REHYDRATE,
+        )
+
+    def assign(
+        self,
+        *,
+        profile: WorkerProfile,
+        endpoint: WorkerEndpoint,
+        session: AgentSessionRef,
+        deadline_at: datetime | None = None,
+        lease_expires_at: datetime | None = None,
+    ) -> Self:
+        """Bind an immutable Worker, Endpoint, and Session allocation once."""
+        if self.status is not AttemptStatus.PENDING:
+            raise ValueError(f"attempt {self.attempt_id}: only pending work can be assigned")
+        if self.worker_profile_id is not None:
+            raise ValueError(f"attempt {self.attempt_id}: assignment is immutable")
+        if session.run_id != self.run_id:
+            raise ValueError(f"attempt {self.attempt_id}: Session belongs to another Run")
+        if (
+            session.worker_profile_id != profile.worker_profile_id
+            or session.worker_endpoint_id != endpoint.worker_endpoint_id
+        ):
+            raise ValueError(f"attempt {self.attempt_id}: Session allocation does not match")
+        if profile.kind != endpoint.worker_kind:
+            raise ValueError(f"attempt {self.attempt_id}: Worker and Endpoint kinds do not match")
+        return replace(
+            self,
+            worker_profile_id=profile.worker_profile_id,
+            worker_endpoint_id=endpoint.worker_endpoint_id,
+            agent_session_ref_id=session.agent_session_ref_id,
+            activity=AttemptActivity.QUEUED,
+            deadline_at=deadline_at,
+            lease_expires_at=lease_expires_at,
+            _rehydrate_token=_REHYDRATE,
+        )
+
+    def bind_execution(self, execution_handle: ExecutionHandle) -> Self:
+        """Attach exactly one provider execution to an assigned Attempt."""
+        if self.worker_profile_id is None or self.agent_session_ref_id is None:
+            raise ValueError(f"attempt {self.attempt_id}: execution requires an assignment")
+        if self.execution_handle is not None:
+            raise ValueError(f"attempt {self.attempt_id}: execution binding is immutable")
+        if execution_handle.attempt_id != self.attempt_id:
+            raise ValueError(f"attempt {self.attempt_id}: execution belongs to another Attempt")
+        if execution_handle.agent_session_ref_id != self.agent_session_ref_id:
+            raise ValueError(f"attempt {self.attempt_id}: execution belongs to another Session")
+        return replace(
+            self,
+            execution_handle=execution_handle,
+            _rehydrate_token=_REHYDRATE,
+        )
+
+    def observe(
+        self,
+        activity: AttemptActivity,
+        *,
+        event_cursor: str | None = None,
+        heartbeat_at: datetime | None = None,
+        progress_at: datetime | None = None,
+        lease_expires_at: datetime | None = None,
+    ) -> Self:
+        """Record provider activity without changing the Attempt lifecycle."""
+        if self.status not in {AttemptStatus.PENDING, AttemptStatus.RUNNING}:
+            raise ValueError(f"attempt {self.attempt_id}: terminal work has no live activity")
+        if self.worker_profile_id is None:
+            raise ValueError(f"attempt {self.attempt_id}: activity requires an assignment")
+        return replace(
+            self,
+            activity=AttemptActivity(activity),
+            event_cursor=event_cursor,
+            heartbeat_at=heartbeat_at,
+            progress_at=progress_at,
+            lease_expires_at=lease_expires_at,
             _rehydrate_token=_REHYDRATE,
         )
 
@@ -337,6 +481,7 @@ class Attempt:
         return replace(
             self,
             status=AttemptStatus.RUNNING,
+            activity=(None if self.worker_profile_id is None else AttemptActivity.RUNNING),
             started_at=_utc(at or utc_now(), "at"),
             ended_at=None,
             outcome_reason=None,
@@ -357,6 +502,8 @@ class Attempt:
             artifact_ids=_validated_ids(artifact_ids, "artifact_ids", allow_empty=True),
             ended_at=_utc(at or utc_now(), "at"),
             outcome_reason=None,
+            activity=None,
+            lease_expires_at=None,
             _rehydrate_token=_REHYDRATE,
         )
 
@@ -379,6 +526,8 @@ class Attempt:
             status=AttemptStatus.CANCELLED,
             ended_at=_utc(at or utc_now(), "at"),
             outcome_reason=reason,
+            activity=None,
+            lease_expires_at=None,
             _rehydrate_token=_REHYDRATE,
         )
 
@@ -399,6 +548,8 @@ class Attempt:
             status=status,
             ended_at=_utc(at or utc_now(), "at"),
             outcome_reason=reason,
+            activity=None,
+            lease_expires_at=None,
             _rehydrate_token=_REHYDRATE,
         )
 
@@ -454,12 +605,47 @@ class Attempt:
                 f"attempt {self.attempt_id}: only a succeeded attempt can reference artifacts"
             )
 
+    def _validate_runtime_binding(self) -> None:
+        assignment = (
+            self.worker_profile_id,
+            self.worker_endpoint_id,
+            self.agent_session_ref_id,
+        )
+        if any(value is None for value in assignment) and any(
+            value is not None for value in assignment
+        ):
+            raise ValueError(f"attempt {self.attempt_id}: assignment must be complete")
+        if self.execution_handle is not None:
+            if self.agent_session_ref_id is None:
+                raise ValueError(f"attempt {self.attempt_id}: execution requires assignment")
+            if self.execution_handle.attempt_id != self.attempt_id:
+                raise ValueError(f"attempt {self.attempt_id}: execution belongs to another Attempt")
+            if self.execution_handle.agent_session_ref_id != self.agent_session_ref_id:
+                raise ValueError(f"attempt {self.attempt_id}: execution belongs to another Session")
+        if self.activity is not None and self.worker_profile_id is None:
+            raise ValueError(f"attempt {self.attempt_id}: activity requires assignment")
+        if self.status not in {AttemptStatus.PENDING, AttemptStatus.RUNNING} and self.activity:
+            raise ValueError(f"attempt {self.attempt_id}: terminal work has no live activity")
+        for field_name in (
+            "heartbeat_at",
+            "progress_at",
+            "deadline_at",
+            "lease_expires_at",
+        ):
+            timestamp = getattr(self, field_name)
+            if timestamp is not None and timestamp < self.created_at:
+                raise ValueError(f"attempt {self.attempt_id}: {field_name} precedes created_at")
+
 
 def _validated_id(value: ID, field_name: str) -> ID:
     try:
         return normalize_id(value)
     except ValueError as error:
         raise ValueError(f"{field_name}: {error}") from error
+
+
+def _optional_validated_id(value: ID | None, field_name: str) -> ID | None:
+    return None if value is None else _validated_id(value, field_name)
 
 
 def _validated_ids(

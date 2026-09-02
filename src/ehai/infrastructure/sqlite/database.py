@@ -12,6 +12,7 @@ from ehai.infrastructure.sqlite.repository import (
     SQLiteCommandReceiptStore,
     SQLiteCurrentStateRepository,
     SQLiteEventLog,
+    SQLiteWorkerRegistry,
 )
 
 
@@ -70,6 +71,7 @@ class SQLiteReadSession:
         self._connection: sqlite3.Connection | None = None
         self._states: SQLiteCurrentStateRepository | None = None
         self._events: SQLiteEventLog | None = None
+        self._worker_registry: SQLiteWorkerRegistry | None = None
 
     @property
     def states(self) -> SQLiteCurrentStateRepository:
@@ -85,6 +87,13 @@ class SQLiteReadSession:
             raise RuntimeError("Read session is not active")
         return self._events
 
+    @property
+    def worker_registry(self) -> SQLiteWorkerRegistry:
+        """Return configured Worker routing entries in this snapshot."""
+        if self._worker_registry is None or self._connection is None:
+            raise RuntimeError("Read session is not active")
+        return self._worker_registry
+
     def __enter__(self) -> Self:
         if self._connection is not None:
             raise RuntimeError("Read session cannot be entered more than once")
@@ -97,6 +106,7 @@ class SQLiteReadSession:
         self._connection = connection
         self._states = SQLiteCurrentStateRepository(connection)
         self._events = SQLiteEventLog(connection)
+        self._worker_registry = SQLiteWorkerRegistry(connection)
         return self
 
     def __exit__(
@@ -116,6 +126,7 @@ class SQLiteReadSession:
             self._connection = None
             self._states = None
             self._events = None
+            self._worker_registry = None
 
 
 class SQLiteUnitOfWork:
@@ -127,6 +138,7 @@ class SQLiteUnitOfWork:
         self._states: SQLiteCurrentStateRepository | None = None
         self._events: SQLiteEventLog | None = None
         self._command_receipts: SQLiteCommandReceiptStore | None = None
+        self._worker_registry: SQLiteWorkerRegistry | None = None
         self._finished = False
 
     @property
@@ -150,6 +162,13 @@ class SQLiteUnitOfWork:
             raise RuntimeError("Unit of Work is not active")
         return self._command_receipts
 
+    @property
+    def worker_registry(self) -> SQLiteWorkerRegistry:
+        """Return the Worker registry bound to this transaction."""
+        if self._worker_registry is None or self._finished:
+            raise RuntimeError("Unit of Work is not active")
+        return self._worker_registry
+
     def __enter__(self) -> Self:
         if self._connection is not None:
             raise RuntimeError("Unit of Work cannot be entered more than once")
@@ -163,6 +182,7 @@ class SQLiteUnitOfWork:
         self._states = SQLiteCurrentStateRepository(connection)
         self._events = SQLiteEventLog(connection)
         self._command_receipts = SQLiteCommandReceiptStore(connection)
+        self._worker_registry = SQLiteWorkerRegistry(connection)
         return self
 
     def commit(self) -> None:

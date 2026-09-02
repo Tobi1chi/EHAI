@@ -29,6 +29,20 @@ from ehai.domain.planning import (
     PlanRevision,
     PlanRevisionStatus,
 )
+from ehai.domain.workers import (
+    AgentSessionRef,
+    AttemptActivity,
+    BuiltinExecutionRef,
+    ExecutionHandle,
+    ExternalExecutionRef,
+    SessionPolicy,
+    WorkerCapability,
+    WorkerEndpoint,
+    WorkerEndpointStatus,
+    WorkerEndpointType,
+    WorkerKind,
+    WorkerProfile,
+)
 
 
 def encode_project(project: Project) -> str:
@@ -160,12 +174,28 @@ def encode_attempt(attempt: Attempt) -> str:
             "started_at": _format_optional_datetime(attempt.started_at),
             "ended_at": _format_optional_datetime(attempt.ended_at),
             "outcome_reason": attempt.outcome_reason,
+            "worker_profile_id": attempt.worker_profile_id,
+            "worker_endpoint_id": attempt.worker_endpoint_id,
+            "agent_session_ref_id": attempt.agent_session_ref_id,
+            "execution_handle": (
+                None
+                if attempt.execution_handle is None
+                else _execution_handle_document(attempt.execution_handle)
+            ),
+            "activity": None if attempt.activity is None else attempt.activity.value,
+            "event_cursor": attempt.event_cursor,
+            "heartbeat_at": _format_optional_datetime(attempt.heartbeat_at),
+            "progress_at": _format_optional_datetime(attempt.progress_at),
+            "deadline_at": _format_optional_datetime(attempt.deadline_at),
+            "lease_expires_at": _format_optional_datetime(attempt.lease_expires_at),
         }
     )
 
 
 def decode_attempt(snapshot: str) -> Attempt:
     document = _load_object(snapshot, "Attempt")
+    handle_document = document.get("execution_handle")
+    activity = _optional_string(document, "activity")
     return Attempt.rehydrate(
         attempt_id=ID(_string(document, "attempt_id")),
         run_id=ID(_string(document, "run_id")),
@@ -177,7 +207,121 @@ def decode_attempt(snapshot: str) -> Attempt:
         started_at=_optional_datetime(document, "started_at"),
         ended_at=_optional_datetime(document, "ended_at"),
         outcome_reason=_optional_string(document, "outcome_reason"),
+        worker_profile_id=_optional_id(document, "worker_profile_id"),
+        worker_endpoint_id=_optional_id(document, "worker_endpoint_id"),
+        agent_session_ref_id=_optional_id(document, "agent_session_ref_id"),
+        execution_handle=(
+            None
+            if handle_document is None
+            else _decode_execution_handle_document(_object(handle_document, "ExecutionHandle"))
+        ),
+        activity=None if activity is None else AttemptActivity(activity),
+        event_cursor=_optional_string(document, "event_cursor"),
+        heartbeat_at=_optional_datetime(document, "heartbeat_at"),
+        progress_at=_optional_datetime(document, "progress_at"),
+        deadline_at=_optional_datetime(document, "deadline_at"),
+        lease_expires_at=_optional_datetime(document, "lease_expires_at"),
     )
+
+
+def encode_worker_profile(profile: WorkerProfile) -> str:
+    capabilities: list[JsonValue] = [item.name for item in sorted(profile.capabilities)]
+    return json_dumps(
+        {
+            "worker_profile_id": profile.worker_profile_id,
+            "name": profile.name,
+            "kind": profile.kind.value,
+            "model": profile.model,
+            "capabilities": capabilities,
+            "session_policy": profile.session_policy.value,
+            "budget_ref": profile.budget_ref,
+        }
+    )
+
+
+def decode_worker_profile(snapshot: str) -> WorkerProfile:
+    document = _load_object(snapshot, "WorkerProfile")
+    return WorkerProfile(
+        worker_profile_id=ID(_string(document, "worker_profile_id")),
+        name=_string(document, "name"),
+        kind=WorkerKind(_string(document, "kind")),
+        model=_string(document, "model"),
+        capabilities=frozenset(
+            WorkerCapability(item) for item in _strings(document, "capabilities")
+        ),
+        session_policy=SessionPolicy(_string(document, "session_policy")),
+        budget_ref=_optional_string(document, "budget_ref"),
+    )
+
+
+def encode_worker_endpoint(endpoint: WorkerEndpoint) -> str:
+    return json_dumps(
+        {
+            "worker_endpoint_id": endpoint.worker_endpoint_id,
+            "name": endpoint.name,
+            "worker_kind": endpoint.worker_kind.value,
+            "endpoint_type": endpoint.endpoint_type.value,
+            "endpoint_ref": endpoint.endpoint_ref,
+            "capacity": endpoint.capacity,
+            "status": endpoint.status.value,
+        }
+    )
+
+
+def decode_worker_endpoint(snapshot: str) -> WorkerEndpoint:
+    document = _load_object(snapshot, "WorkerEndpoint")
+    return WorkerEndpoint(
+        worker_endpoint_id=ID(_string(document, "worker_endpoint_id")),
+        name=_string(document, "name"),
+        worker_kind=WorkerKind(_string(document, "worker_kind")),
+        endpoint_type=WorkerEndpointType(_string(document, "endpoint_type")),
+        endpoint_ref=_string(document, "endpoint_ref"),
+        capacity=_integer(document, "capacity"),
+        status=WorkerEndpointStatus(_string(document, "status")),
+    )
+
+
+def encode_agent_session_ref(session: AgentSessionRef) -> str:
+    return json_dumps(
+        {
+            "agent_session_ref_id": session.agent_session_ref_id,
+            "run_id": session.run_id,
+            "worker_profile_id": session.worker_profile_id,
+            "worker_endpoint_id": session.worker_endpoint_id,
+            "provider_session_id": session.provider_session_id,
+            "recoverable": session.recoverable,
+            "created_at": format_utc_datetime(session.created_at),
+        }
+    )
+
+
+def decode_agent_session_ref(snapshot: str) -> AgentSessionRef:
+    document = _load_object(snapshot, "AgentSessionRef")
+    return AgentSessionRef(
+        agent_session_ref_id=ID(_string(document, "agent_session_ref_id")),
+        run_id=ID(_string(document, "run_id")),
+        worker_profile_id=ID(_string(document, "worker_profile_id")),
+        worker_endpoint_id=ID(_string(document, "worker_endpoint_id")),
+        provider_session_id=_string(document, "provider_session_id"),
+        recoverable=_boolean(document, "recoverable"),
+        created_at=parse_utc_datetime(_string(document, "created_at")),
+    )
+
+
+def encode_external_execution_ref(reference: ExternalExecutionRef) -> str:
+    return json_dumps(_external_execution_document(reference))
+
+
+def decode_external_execution_ref(snapshot: str) -> ExternalExecutionRef:
+    return _decode_external_execution_document(_load_object(snapshot, "ExternalExecutionRef"))
+
+
+def encode_builtin_execution_ref(reference: BuiltinExecutionRef) -> str:
+    return json_dumps(_builtin_execution_document(reference))
+
+
+def decode_builtin_execution_ref(snapshot: str) -> BuiltinExecutionRef:
+    return _decode_builtin_execution_document(_load_object(snapshot, "BuiltinExecutionRef"))
 
 
 def encode_check_spec(check_spec: CheckSpec) -> str:
@@ -380,6 +524,7 @@ def _decode_plan_revision_document(
 
 
 def _plan_node_document(node: PlanNode) -> dict[str, JsonValue]:
+    capabilities: list[JsonValue] = [item.name for item in sorted(node.required_capabilities)]
     return {
         "plan_node_id": node.plan_node_id,
         "title": node.title,
@@ -387,11 +532,17 @@ def _plan_node_document(node: PlanNode) -> dict[str, JsonValue]:
         "kind": node.kind.value,
         "required_dependency_ids": list(node.required_dependency_ids),
         "required_check_ids": list(node.required_check_ids),
+        "required_capabilities": capabilities,
+        "session_policy": node.session_policy.value,
         "status": node.status.value,
     }
 
 
 def _decode_plan_node_document(document: Mapping[str, JsonValue]) -> PlanNode:
+    capability_names = (
+        _strings(document, "required_capabilities") if "required_capabilities" in document else ()
+    )
+    session_policy = _optional_string(document, "session_policy")
     return PlanNode.rehydrate(
         plan_node_id=ID(_string(document, "plan_node_id")),
         title=_string(document, "title"),
@@ -399,7 +550,81 @@ def _decode_plan_node_document(document: Mapping[str, JsonValue]) -> PlanNode:
         kind=PlanNodeKind(_string(document, "kind")),
         required_dependency_ids=_ids(document, "required_dependency_ids"),
         required_check_ids=_ids(document, "required_check_ids"),
+        required_capabilities=tuple(WorkerCapability(item) for item in capability_names),
+        session_policy=(
+            SessionPolicy.NEW if session_policy is None else SessionPolicy(session_policy)
+        ),
         status=PlanNodeStatus(_string(document, "status")),
+    )
+
+
+def _execution_handle_document(handle: ExecutionHandle) -> dict[str, JsonValue]:
+    return {
+        "builtin": (
+            None if handle.builtin is None else _builtin_execution_document(handle.builtin)
+        ),
+        "external": (
+            None if handle.external is None else _external_execution_document(handle.external)
+        ),
+    }
+
+
+def _decode_execution_handle_document(
+    document: Mapping[str, JsonValue],
+) -> ExecutionHandle:
+    builtin = document.get("builtin")
+    external = document.get("external")
+    return ExecutionHandle(
+        builtin=(
+            None
+            if builtin is None
+            else _decode_builtin_execution_document(_object(builtin, "BuiltinExecutionRef"))
+        ),
+        external=(
+            None
+            if external is None
+            else _decode_external_execution_document(_object(external, "ExternalExecutionRef"))
+        ),
+    )
+
+
+def _external_execution_document(reference: ExternalExecutionRef) -> dict[str, JsonValue]:
+    return {
+        "external_execution_ref_id": reference.external_execution_ref_id,
+        "attempt_id": reference.attempt_id,
+        "agent_session_ref_id": reference.agent_session_ref_id,
+        "provider_execution_id": reference.provider_execution_id,
+    }
+
+
+def _decode_external_execution_document(
+    document: Mapping[str, JsonValue],
+) -> ExternalExecutionRef:
+    return ExternalExecutionRef(
+        external_execution_ref_id=ID(_string(document, "external_execution_ref_id")),
+        attempt_id=ID(_string(document, "attempt_id")),
+        agent_session_ref_id=ID(_string(document, "agent_session_ref_id")),
+        provider_execution_id=_string(document, "provider_execution_id"),
+    )
+
+
+def _builtin_execution_document(reference: BuiltinExecutionRef) -> dict[str, JsonValue]:
+    return {
+        "builtin_execution_ref_id": reference.builtin_execution_ref_id,
+        "builtin_execution_id": reference.builtin_execution_id,
+        "attempt_id": reference.attempt_id,
+        "agent_session_ref_id": reference.agent_session_ref_id,
+    }
+
+
+def _decode_builtin_execution_document(
+    document: Mapping[str, JsonValue],
+) -> BuiltinExecutionRef:
+    return BuiltinExecutionRef(
+        builtin_execution_ref_id=ID(_string(document, "builtin_execution_ref_id")),
+        builtin_execution_id=ID(_string(document, "builtin_execution_id")),
+        attempt_id=ID(_string(document, "attempt_id")),
+        agent_session_ref_id=ID(_string(document, "agent_session_ref_id")),
     )
 
 

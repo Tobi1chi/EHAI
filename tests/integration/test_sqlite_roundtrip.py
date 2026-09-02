@@ -4,6 +4,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from ehai import ID, new_id
+from ehai.application.queries import QueryService
 from ehai.domain.artifacts import Artifact, ArtifactKind
 from ehai.domain.checking import CheckKind, Checkpoint, CheckResult, CheckRun, CheckSpec, Gate
 from ehai.domain.events import Event, EventType
@@ -18,6 +19,18 @@ from ehai.domain.planning import (
     PlanNodeStatus,
     PlanRevision,
     PlanRevisionStatus,
+)
+from ehai.domain.workers import (
+    AgentSessionRef,
+    AttemptActivity,
+    BuiltinExecutionRef,
+    ExecutionHandle,
+    ExternalExecutionRef,
+    WorkerCapability,
+    WorkerEndpoint,
+    WorkerEndpointType,
+    WorkerKind,
+    WorkerProfile,
 )
 from ehai.infrastructure.sqlite import PersistenceConflictError, SQLiteDatabase
 
@@ -121,6 +134,144 @@ def _rehydrate_plan(
         approved_at=plan.approved_at,
         supersedes_plan_revision_id=plan.supersedes_plan_revision_id,
     )
+
+
+def test_p2_worker_registry_and_execution_bindings_round_trip_together(tmp_path) -> None:
+    database = SQLiteDatabase(tmp_path / "p2-routing.sqlite3")
+    _, goal, _, plan = _persist_plan_context(database)
+    run = Run(
+        goal_id=goal.goal_id,
+        plan_revision_id=plan.plan_revision_id,
+        created_at=NOW,
+    )
+    builtin_attempt = Attempt(run.run_id, plan.nodes[1].plan_node_id, 1, created_at=NOW)
+    external_attempt = Attempt(run.run_id, plan.nodes[2].plan_node_id, 2, created_at=NOW)
+    capability = WorkerCapability("workspace.read")
+    builtin_profile = WorkerProfile(
+        "builtin",
+        WorkerKind.BUILTIN,
+        "gpt-test",
+        frozenset({capability}),
+    )
+    external_profile = WorkerProfile(
+        "codex",
+        WorkerKind.CODEX_CLI,
+        "gpt-test",
+        frozenset({capability}),
+    )
+    builtin_endpoint = WorkerEndpoint(
+        "builtin",
+        WorkerKind.BUILTIN,
+        WorkerEndpointType.IN_PROCESS,
+        "builtin",
+        1,
+    )
+    external_endpoint = WorkerEndpoint(
+        "codex",
+        WorkerKind.CODEX_CLI,
+        WorkerEndpointType.COMMAND,
+        "config:codex-cli",
+        1,
+    )
+    builtin_session = AgentSessionRef(
+        run.run_id,
+        builtin_profile.worker_profile_id,
+        builtin_endpoint.worker_endpoint_id,
+        "builtin-session",
+        True,
+        created_at=NOW,
+    )
+    external_session = AgentSessionRef(
+        run.run_id,
+        external_profile.worker_profile_id,
+        external_endpoint.worker_endpoint_id,
+        "codex-thread",
+        False,
+        created_at=NOW,
+    )
+    builtin_ref = BuiltinExecutionRef(
+        builtin_attempt.attempt_id,
+        builtin_session.agent_session_ref_id,
+    )
+    external_ref = ExternalExecutionRef(
+        external_attempt.attempt_id,
+        external_session.agent_session_ref_id,
+        "codex-turn",
+    )
+
+    with database.unit_of_work() as uow:
+        uow.worker_registry.put_worker_profile(builtin_profile)
+        uow.worker_registry.put_worker_profile(external_profile)
+        uow.worker_registry.put_worker_endpoint(builtin_endpoint)
+        uow.worker_registry.put_worker_endpoint(external_endpoint)
+        uow.states.put_run(run)
+        uow.states.put_attempt(builtin_attempt)
+        uow.states.put_attempt(external_attempt)
+        uow.states.put_agent_session_ref(builtin_session)
+        uow.states.put_agent_session_ref(external_session)
+        uow.states.put_builtin_execution_ref(builtin_ref)
+        uow.states.put_external_execution_ref(external_ref)
+        builtin_attempt = builtin_attempt.assign(
+            profile=builtin_profile,
+            endpoint=builtin_endpoint,
+            session=builtin_session,
+            deadline_at=NOW + timedelta(minutes=5),
+            lease_expires_at=NOW + timedelta(seconds=30),
+        ).bind_execution(ExecutionHandle(builtin=builtin_ref))
+        external_attempt = external_attempt.assign(
+            profile=external_profile,
+            endpoint=external_endpoint,
+            session=external_session,
+            deadline_at=NOW + timedelta(minutes=5),
+            lease_expires_at=NOW + timedelta(seconds=30),
+        ).bind_execution(ExecutionHandle(external=external_ref))
+        external_attempt = external_attempt.observe(
+            AttemptActivity.WAITING,
+            event_cursor="cursor-1",
+            heartbeat_at=NOW + timedelta(seconds=1),
+            progress_at=NOW + timedelta(seconds=1),
+            lease_expires_at=NOW + timedelta(seconds=30),
+        )
+        uow.states.put_attempt(builtin_attempt)
+        uow.states.put_attempt(external_attempt)
+        uow.commit()
+
+    with database.read_session() as session:
+        assert session.worker_registry.list_worker_profiles() == tuple(
+            sorted(
+                (builtin_profile, external_profile),
+                key=lambda item: item.worker_profile_id,
+            )
+        )
+        assert session.worker_registry.list_worker_endpoints() == tuple(
+            sorted(
+                (builtin_endpoint, external_endpoint),
+                key=lambda item: item.worker_endpoint_id,
+            )
+        )
+        assert session.states.get_agent_session_ref(builtin_session.agent_session_ref_id) == (
+            builtin_session
+        )
+        assert (
+            session.states.get_builtin_execution_ref(builtin_ref.builtin_execution_ref_id)
+            == builtin_ref
+        )
+        assert (
+            session.states.get_external_execution_ref(external_ref.external_execution_ref_id)
+            == external_ref
+        )
+        assert session.states.list_attempts(run.run_id) == (
+            builtin_attempt,
+            external_attempt,
+        )
+
+    queries = QueryService(read_session_factory=database.read_session)
+    assert len(queries.list_worker_profiles()) == 2
+    assert len(queries.list_worker_endpoints()) == 2
+    runtime = queries.get_attempt_runtime(external_attempt.attempt_id)
+    assert runtime.provider_session_id == "codex-thread"
+    assert runtime.provider_execution_id == "codex-turn"
+    assert runtime.activity is AttemptActivity.WAITING
 
 
 def test_contract_history_allows_confirmation_but_rejects_content_rewrite(tmp_path) -> None:

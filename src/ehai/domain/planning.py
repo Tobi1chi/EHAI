@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Self
 
 from ehai import ID, new_id, normalize_id, utc_now
 from ehai.domain.goal import CompletionContract
+from ehai.domain.workers import SessionPolicy, WorkerCapability
 
 if TYPE_CHECKING:
     from ehai.domain.checking import GateDecision
@@ -82,12 +83,15 @@ class PlanNode:
     kind: PlanNodeKind = PlanNodeKind.WORK
     required_dependency_ids: tuple[ID, ...] = ()
     required_check_ids: tuple[ID, ...] = ()
+    required_capabilities: frozenset[WorkerCapability] = frozenset()
+    session_policy: SessionPolicy = SessionPolicy.NEW
     status: PlanNodeStatus = PlanNodeStatus.PENDING
     _state_token: InitVar[object | None] = None
 
     def __post_init__(self, _state_token: object | None) -> None:
         object.__setattr__(self, "kind", PlanNodeKind(self.kind))
         object.__setattr__(self, "status", PlanNodeStatus(self.status))
+        object.__setattr__(self, "session_policy", SessionPolicy(self.session_policy))
         object.__setattr__(
             self,
             "plan_node_id",
@@ -110,6 +114,12 @@ class PlanNode:
                 for check_id in self.required_check_ids
             ),
         )
+        capabilities = frozenset(self.required_capabilities)
+        if not all(isinstance(item, WorkerCapability) for item in capabilities):
+            raise PlanInvariantError(
+                f"{owner} required_capabilities must contain WorkerCapability values"
+            )
+        object.__setattr__(self, "required_capabilities", capabilities)
         if not self.title.strip() or not self.instruction.strip():
             raise PlanInvariantError(f"{owner} requires a title and instruction")
         if len(set(self.required_dependency_ids)) != len(self.required_dependency_ids):
@@ -132,6 +142,8 @@ class PlanNode:
         required_dependency_ids: Iterable[ID],
         required_check_ids: Iterable[ID],
         status: PlanNodeStatus,
+        required_capabilities: Iterable[WorkerCapability] = (),
+        session_policy: SessionPolicy = SessionPolicy.NEW,
     ) -> Self:
         """Restore a validated PlanNode snapshot from trusted persistence data."""
         return cls(
@@ -141,6 +153,8 @@ class PlanNode:
             kind=kind,
             required_dependency_ids=tuple(required_dependency_ids),
             required_check_ids=tuple(required_check_ids),
+            required_capabilities=frozenset(required_capabilities),
+            session_policy=session_policy,
             status=status,
             _state_token=_CONTROLLED_STATE,
         )

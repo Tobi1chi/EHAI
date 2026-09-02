@@ -17,6 +17,8 @@ from ehai.application.ports import (
     EventLog,
     StoredEvent,
     UnitOfWork,
+    WorkerRegistryReader,
+    WorkerRegistryRepository,
 )
 
 __all__ = [
@@ -32,6 +34,8 @@ __all__ = [
     "SessionPolicy",
     "StoredEvent",
     "UnitOfWork",
+    "WorkerRegistryReader",
+    "WorkerRegistryRepository",
     "normalize_capabilities",
     "supports_capabilities",
 ]

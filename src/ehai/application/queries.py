@@ -30,6 +30,14 @@ from ehai.domain.planning import (
     PlanRevision,
     PlanRevisionStatus,
 )
+from ehai.domain.workers import (
+    AttemptActivity,
+    AttemptExecutionKind,
+    SessionPolicy,
+    WorkerEndpointStatus,
+    WorkerEndpointType,
+    WorkerKind,
+)
 
 ReadSessionFactory = Callable[[], ReadSession]
 
@@ -253,6 +261,52 @@ class EventPage:
     has_more: bool
 
 
+@dataclass(frozen=True, slots=True)
+class WorkerProfileView:
+    """Configured Worker routing profile without credentials."""
+
+    worker_profile_id: ID
+    name: str
+    kind: WorkerKind
+    model: str
+    capabilities: tuple[str, ...]
+    session_policy: SessionPolicy
+    budget_ref: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class WorkerEndpointView:
+    """Configured Worker endpoint and its management state."""
+
+    worker_endpoint_id: ID
+    name: str
+    worker_kind: WorkerKind
+    endpoint_type: WorkerEndpointType
+    endpoint_ref: str
+    capacity: int
+    status: WorkerEndpointStatus
+
+
+@dataclass(frozen=True, slots=True)
+class AttemptRuntimeView:
+    """Complete persisted Worker allocation and provider execution binding."""
+
+    attempt_id: ID
+    worker_profile_id: ID | None
+    worker_endpoint_id: ID | None
+    agent_session_ref_id: ID | None
+    provider_session_id: str | None
+    session_recoverable: bool | None
+    execution_kind: AttemptExecutionKind | None
+    provider_execution_id: str | None
+    activity: AttemptActivity | None
+    event_cursor: str | None
+    heartbeat_at: datetime | None
+    progress_at: datetime | None
+    deadline_at: datetime | None
+    lease_expires_at: datetime | None
+
+
 class QueryService:
     """Build P1 read models from one short-lived snapshot per query."""
 
@@ -265,6 +319,74 @@ class QueryService:
         with self._read_session_factory() as session:
             run = _required_run(session.states.get_run(normalized_id), normalized_id)
             return _run_view(run)
+
+    def list_worker_profiles(self) -> tuple[WorkerProfileView, ...]:
+        """List configured WorkerProfiles without provider secrets."""
+        with self._read_session_factory() as session:
+            return tuple(
+                WorkerProfileView(
+                    worker_profile_id=profile.worker_profile_id,
+                    name=profile.name,
+                    kind=profile.kind,
+                    model=profile.model,
+                    capabilities=tuple(sorted(item.name for item in profile.capabilities)),
+                    session_policy=profile.session_policy,
+                    budget_ref=profile.budget_ref,
+                )
+                for profile in session.worker_registry.list_worker_profiles()
+            )
+
+    def list_worker_endpoints(self) -> tuple[WorkerEndpointView, ...]:
+        """List configured WorkerEndpoints in stable registry order."""
+        with self._read_session_factory() as session:
+            return tuple(
+                WorkerEndpointView(
+                    worker_endpoint_id=endpoint.worker_endpoint_id,
+                    name=endpoint.name,
+                    worker_kind=endpoint.worker_kind,
+                    endpoint_type=endpoint.endpoint_type,
+                    endpoint_ref=endpoint.endpoint_ref,
+                    capacity=endpoint.capacity,
+                    status=endpoint.status,
+                )
+                for endpoint in session.worker_registry.list_worker_endpoints()
+            )
+
+    def get_attempt_runtime(self, attempt_id: ID) -> AttemptRuntimeView:
+        """Return the persisted assignment and execution binding for one Attempt."""
+        normalized_id = normalize_id(attempt_id)
+        with self._read_session_factory() as session:
+            attempt = session.states.get_attempt(normalized_id)
+            if attempt is None:
+                raise QueryNotFoundError("Attempt", normalized_id)
+            session_ref = (
+                None
+                if attempt.agent_session_ref_id is None
+                else session.states.get_agent_session_ref(attempt.agent_session_ref_id)
+            )
+            if attempt.agent_session_ref_id is not None and session_ref is None:
+                raise RuntimeError(
+                    f"Attempt {attempt.attempt_id} references a missing AgentSessionRef"
+                )
+            handle = attempt.execution_handle
+            return AttemptRuntimeView(
+                attempt_id=attempt.attempt_id,
+                worker_profile_id=attempt.worker_profile_id,
+                worker_endpoint_id=attempt.worker_endpoint_id,
+                agent_session_ref_id=attempt.agent_session_ref_id,
+                provider_session_id=(
+                    None if session_ref is None else session_ref.provider_session_id
+                ),
+                session_recoverable=(None if session_ref is None else session_ref.recoverable),
+                execution_kind=None if handle is None else handle.kind,
+                provider_execution_id=(None if handle is None else handle.provider_execution_id),
+                activity=attempt.activity,
+                event_cursor=attempt.event_cursor,
+                heartbeat_at=attempt.heartbeat_at,
+                progress_at=attempt.progress_at,
+                deadline_at=attempt.deadline_at,
+                lease_expires_at=attempt.lease_expires_at,
+            )
 
     def get_plan_graph(self, plan_revision_id: ID) -> PlanGraphView:
         """Return only versioned plan metadata and graph structure."""
