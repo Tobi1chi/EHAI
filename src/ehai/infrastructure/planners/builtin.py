@@ -159,8 +159,7 @@ class BuiltinPlannerAdapter:
                                     "branches, evaluator, then merge.",
                                     "Checks and Gates outside this process retain all "
                                     "completion authority.",
-                                    "Return the plan by calling submit_plan, or as exactly "
-                                    "one JSON object matching that tool schema.",
+                                    "Return the plan by calling submit_plan exactly once.",
                                     "--- PLANNER_INPUT_JSON ---",
                                     json_dumps(dict(input_document)),
                                 )
@@ -175,12 +174,9 @@ class BuiltinPlannerAdapter:
 
     def _parse_response(self, goal_id: ID, response: ModelResponse) -> ParsedCodexPlan:
         try:
-            if response.tool_calls:
-                if len(response.tool_calls) != 1 or response.tool_calls[0].name != "submit_plan":
-                    raise CodexPlannerProtocolError("Planner must call only submit_plan")
-                return parse_codex_planner_result(json_dumps(response.tool_calls[0].arguments))
-            document = response.final_text or response.content
-            return parse_codex_planner_result(document)
+            if len(response.tool_calls) != 1 or response.tool_calls[0].name != "submit_plan":
+                raise CodexPlannerProtocolError("Planner must call exactly one submit_plan tool")
+            return parse_codex_planner_result(json_dumps(response.tool_calls[0].arguments))
         except (ValueError, CodexPlannerProtocolError) as error:
             raise BuiltinPlannerError(
                 f"Goal {goal_id} Built-in Planner returned an invalid structured result: {error}"

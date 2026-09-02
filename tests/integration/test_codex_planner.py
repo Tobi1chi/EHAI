@@ -18,6 +18,7 @@ from ehai.application.commands import (
 from ehai.application.planner import (
     COMMAND_EXIT_ZERO_CRITERION,
     NON_EMPTY_ARTIFACT_CRITERION,
+    SEMANTIC_REQUIRED_TERMS_CRITERION,
     DeterministicExplorationPlanner,
     DeterministicPlanner,
     ExplorationBudget,
@@ -32,6 +33,7 @@ from ehai.domain.planning import PlanRevisionStatus
 from ehai.infrastructure.codex_transport import CodexProcessTransport
 from ehai.infrastructure.planners import (
     BuiltinPlannerAdapter,
+    BuiltinPlannerError,
     CodexPlannerAdapter,
     CodexPlannerError,
     CodexPlannerTimedOutError,
@@ -193,20 +195,32 @@ def test_codex_planner_uses_independent_protocol_transport_and_event_mapping(
     ]
 
 
-def test_codex_planner_accepts_command_completion_criterion(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    ("criterion", "expected_kind"),
+    [
+        (NON_EMPTY_ARTIFACT_CRITERION, CheckKind.ARTIFACT),
+        (COMMAND_EXIT_ZERO_CRITERION, CheckKind.COMMAND),
+        (SEMANTIC_REQUIRED_TERMS_CRITERION, CheckKind.SEMANTIC),
+    ],
+)
+def test_codex_planner_uses_shared_builder_for_p1_criteria(
+    tmp_path: Path,
+    criterion: str,
+    expected_kind: CheckKind,
+) -> None:
     planner, record_path = _adapter(tmp_path)
 
-    proposal = planner.propose(_goal(), (COMMAND_EXIT_ZERO_CRITERION,))
+    proposal = planner.propose(_goal(), (criterion,))
 
-    assert proposal.contract.criteria == (COMMAND_EXIT_ZERO_CRITERION,)
-    assert proposal.check_specs[0].kind is CheckKind.COMMAND
-    assert proposal.check_specs[0].description == COMMAND_EXIT_ZERO_CRITERION
+    assert proposal.contract.criteria == (criterion,)
+    assert proposal.check_specs[0].kind is expected_kind
+    assert proposal.check_specs[0].description == criterion
     assert all(
         node.required_check_ids == proposal.contract.required_check_ids
         for node in proposal.plan_revision.nodes
     )
     record = json.loads(record_path.read_text(encoding="utf-8"))
-    assert record["input"]["completion_criteria"] == [COMMAND_EXIT_ZERO_CRITERION]
+    assert record["input"]["completion_criteria"] == [criterion]
 
 
 def test_builtin_planner_uses_responses_model_client_without_worker_state() -> None:
@@ -239,10 +253,152 @@ def test_builtin_planner_uses_responses_model_client_without_worker_state() -> N
     request = client.requests[0]
     assert request.tools[0].name == "submit_plan"
     assert "EHAI BUILT-IN PLANNER PROTOCOL v1" in request.messages[1].content
+    assert "or as exactly one JSON object" not in request.messages[1].content
     assert COMMAND_EXIT_ZERO_CRITERION in request.messages[1].content
     assert proposal.check_specs[0].kind is CheckKind.COMMAND
     assert len(proposal.plan_revision.branches) == 2
     assert proposal.planner_event_types == ("planner.responses.completed",)
+
+
+@pytest.mark.parametrize(
+    "response",
+    [
+        ModelResponse(
+            json.dumps(_planner_document()),
+            final_text=json.dumps(_planner_document()),
+            provider_response_id="resp-final-json",
+        ),
+        ModelResponse(
+            "ordinary text plan",
+            final_text="ordinary text plan",
+            provider_response_id="resp-final-text",
+        ),
+    ],
+)
+def test_builtin_planner_rejects_no_tool_call_response(response: ModelResponse) -> None:
+    client = _PlannerModelClient(response)
+    planner = BuiltinPlannerAdapter(
+        model="gpt-test",
+        model_client_factory=lambda _profile: client,
+    )
+
+    with pytest.raises(BuiltinPlannerError, match="exactly one submit_plan"):
+        planner.propose(_goal(), (NON_EMPTY_ARTIFACT_CRITERION,))
+
+    assert client.closed
+
+
+@pytest.mark.parametrize(
+    "tool_calls",
+    [
+        (ToolCall("wrong", "submit_candidate", _planner_document()),),
+        (
+            ToolCall("plan-1", "submit_plan", _planner_document()),
+            ToolCall("plan-2", "submit_plan", _planner_document()),
+        ),
+    ],
+)
+def test_builtin_planner_rejects_wrong_or_multiple_tool_calls(
+    tool_calls: tuple[ToolCall, ...],
+) -> None:
+    client = _PlannerModelClient(ModelResponse("", tool_calls, provider_response_id="resp-plan"))
+    planner = BuiltinPlannerAdapter(
+        model="gpt-test",
+        model_client_factory=lambda _profile: client,
+    )
+
+    with pytest.raises(BuiltinPlannerError, match="exactly one submit_plan"):
+        planner.propose(_goal(), (NON_EMPTY_ARTIFACT_CRITERION,))
+
+    assert client.closed
+
+
+def test_builtin_planner_replans_with_fresh_contract_check_ids_and_base_lineage() -> None:
+    goal = _goal()
+    base_proposal = DeterministicExplorationPlanner().propose(
+        ExplorationPlanRequest(
+            goal,
+            (NON_EMPTY_ARTIFACT_CRITERION,),
+            ExplorationBudget(max_attempts=5),
+        )
+    )
+    confirmed = base_proposal.contract.confirm()
+    aligned = goal.use_completion_contract(confirmed)
+    base = base_proposal.plan_revision.approve(confirmed)
+    client = _PlannerModelClient(
+        ModelResponse(
+            "",
+            (ToolCall("plan-1", "submit_plan", _planner_document()),),
+            provider_response_id="resp-replan",
+        )
+    )
+    planner = BuiltinPlannerAdapter(
+        model="gpt-test",
+        model_client_factory=lambda _profile: client,
+    )
+
+    replanned = planner.replan(aligned, base, (NON_EMPTY_ARTIFACT_CRITERION,))
+
+    assert replanned.plan_revision.version == 2
+    assert replanned.plan_revision.supersedes_plan_revision_id == base.plan_revision_id
+    assert replanned.contract.version == 2
+    assert replanned.contract.supersedes_completion_contract_id == confirmed.completion_contract_id
+    assert replanned.contract.completion_contract_id != confirmed.completion_contract_id
+    assert set(replanned.contract.required_check_ids).isdisjoint(confirmed.required_check_ids)
+    assert tuple(check.check_id for check in replanned.check_specs) == (
+        *replanned.contract.required_check_ids,
+    )
+
+
+def test_builtin_planner_semantic_criterion_uses_semantic_check_kind() -> None:
+    client = _PlannerModelClient(
+        ModelResponse(
+            "",
+            (ToolCall("plan-1", "submit_plan", _planner_document()),),
+            provider_response_id="resp-semantic",
+        )
+    )
+    planner = BuiltinPlannerAdapter(
+        model="gpt-test",
+        model_client_factory=lambda _profile: client,
+    )
+
+    proposal = planner.propose(_goal(), (SEMANTIC_REQUIRED_TERMS_CRITERION,))
+
+    assert proposal.contract.criteria == (SEMANTIC_REQUIRED_TERMS_CRITERION,)
+    assert proposal.check_specs[0].kind is CheckKind.SEMANTIC
+    assert proposal.check_specs[0].description == SEMANTIC_REQUIRED_TERMS_CRITERION
+
+
+def test_builtin_planner_invalid_result_does_not_persist_plan_revision(tmp_path: Path) -> None:
+    database_path = tmp_path / "state.sqlite3"
+    service = cli.build_service(database_path, tmp_path / "artifacts")
+    client = _PlannerModelClient(
+        ModelResponse(
+            json.dumps(_planner_document()),
+            final_text=json.dumps(_planner_document()),
+            provider_response_id="resp-final-json",
+        )
+    )
+    service._planner = BuiltinPlannerAdapter(  # type: ignore[assignment]
+        model="gpt-test",
+        model_client_factory=lambda _profile: client,
+    )
+    project = service.create_project(CreateProject("project", "planner persistence"))
+    goal = service.create_goal(CreateGoal("goal", project.project_id, "reject bad planner output"))
+
+    with pytest.raises(BuiltinPlannerError):
+        service.propose_plan(ProposePlan("plan", goal.goal_id, (NON_EMPTY_ARTIFACT_CRITERION,)))
+
+    database = SQLiteDatabase(database_path)
+    with database.unit_of_work() as uow:
+        stored_goal = uow.states.get_goal(goal.goal_id)
+        plans = uow.states.list_plan_revisions(goal.goal_id)
+        events = tuple(stored.event for stored in uow.events.list_events())
+
+    assert stored_goal is not None and stored_goal.completion_contract is None
+    assert plans == ()
+    assert all(event.type is not EventType.PLAN_REVISION_PROPOSED for event in events)
 
 
 @pytest.mark.parametrize(

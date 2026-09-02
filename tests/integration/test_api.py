@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from ehai import ID, new_id
+from ehai import ID, json_loads, new_id
 from ehai.application.builtin_agent import ModelRequest, ModelResponse, ToolCall
 from ehai.application.checks import CheckRunner
 from ehai.application.commands import (
@@ -34,6 +34,7 @@ from ehai.domain.execution import RunStatus
 from ehai.domain.goal import GoalStatus
 from ehai.infrastructure.artifacts import FilesystemArtifactStore
 from ehai.infrastructure.checks import ArtifactCheckAdapter, ArtifactCheckRule
+from ehai.infrastructure.planners import BuiltinPlannerAdapter
 from ehai.infrastructure.sqlite import SQLiteDatabase
 from ehai.interfaces.api import create_app
 from ehai.interfaces.runtime import create_local_app
@@ -60,6 +61,55 @@ class _ApiBuiltinModelClient:
                 ),
             ),
             provider_response_id="api-response",
+        )
+
+    async def aclose(self) -> None:
+        self.closed = True
+
+
+class _ApiScriptedPlannerModelClient:
+    def __init__(self) -> None:
+        self.requests: list[ModelRequest] = []
+        self.closed = False
+
+    async def complete(self, request: ModelRequest) -> ModelResponse:
+        self.requests.append(request)
+        return ModelResponse(
+            "",
+            (
+                ToolCall(
+                    "submit-plan",
+                    "submit_plan",
+                    {
+                        "summary": "two bounded approaches",
+                        "fork": {
+                            "title": "Fork",
+                            "instruction": "Start both approaches.",
+                        },
+                        "branches": [
+                            {
+                                "label": "alpha",
+                                "title": "Alpha",
+                                "instruction": "Try alpha.",
+                            },
+                            {
+                                "label": "beta",
+                                "title": "Beta",
+                                "instruction": "Try beta.",
+                            },
+                        ],
+                        "evaluator": {
+                            "title": "Evaluate",
+                            "instruction": "Compare evidence.",
+                        },
+                        "merge": {
+                            "title": "Merge",
+                            "instruction": "Merge the selected result.",
+                        },
+                    },
+                ),
+            ),
+            provider_response_id="api-planner-response",
         )
 
     async def aclose(self) -> None:
@@ -495,6 +545,84 @@ def test_api_cannot_start_unapproved_plan_or_bypass_final_gate(tmp_path: Path) -
     assert invalid_pause.json()["error"]["code"] == "state_conflict"
 
 
+def test_api_execution_service_builtin_planner_proposes_and_approves_offline(
+    tmp_path: Path,
+) -> None:
+    database = SQLiteDatabase(tmp_path / "builtin-planner-api.sqlite3")
+    artifact_store = FilesystemArtifactStore(tmp_path / "builtin-planner-artifacts")
+    planner_model = _ApiScriptedPlannerModelClient()
+    orchestrator = Orchestrator(
+        uow_factory=database.unit_of_work,
+        worker=_LogOnlyWorker(),
+        artifact_store=artifact_store,
+        check_runner=CheckRunner(
+            {
+                CheckKind.ARTIFACT: ArtifactCheckAdapter(
+                    artifact_store,
+                    {},
+                    default_rule=ArtifactCheckRule(),
+                )
+            }
+        ),
+        workspace=tmp_path,
+    )
+    service = ExecutionService(
+        uow_factory=database.unit_of_work,
+        planner=BuiltinPlannerAdapter(
+            model="gpt-test",
+            model_client_factory=lambda _profile: planner_model,
+        ),
+        orchestrator=orchestrator,
+        run_controller=RunController(database.unit_of_work, _LogOnlyWorker()),
+    )
+    client = TestClient(
+        create_app(
+            service,
+            QueryService(read_session_factory=database.read_session),
+        )
+    )
+
+    project = client.post(
+        "/api/v1/projects",
+        json={"idempotency_key": "project", "name": "API planner"},
+    ).json()["data"]
+    goal = client.post(
+        "/api/v1/goals",
+        json={
+            "idempotency_key": "goal",
+            "project_id": project["project_id"],
+            "objective": "offline built-in planner",
+        },
+    ).json()["data"]
+    proposed = client.post(
+        "/api/v1/plans/propose",
+        json={
+            "idempotency_key": "plan",
+            "goal_id": goal["goal_id"],
+            "criteria": [NON_EMPTY_ARTIFACT_CRITERION],
+        },
+    )
+    assert proposed.status_code == 201, proposed.text
+    plan = proposed.json()["data"]
+    approved = client.post(
+        "/api/v1/plans/approve",
+        json={
+            "idempotency_key": "approve",
+            "plan_revision_id": plan["plan_revision_id"],
+            "completion_contract_id": plan["completion_contract_id"],
+        },
+    )
+
+    assert approved.status_code == 200, approved.text
+    assert approved.json()["data"]["status"] == "approved"
+    assert planner_model.closed and len(planner_model.requests) == 1
+    assert planner_model.requests[0].tools[0].name == "submit_plan"
+    with database.read_session() as session:
+        check_specs = session.states.list_check_specs(plan["plan_revision_id"])
+    assert len(check_specs) == 1
+    assert check_specs[0].kind is CheckKind.ARTIFACT
+
+
 def test_local_p2_api_start_run_returns_then_background_runtime_completes(
     tmp_path: Path,
 ) -> None:
@@ -633,3 +761,14 @@ def test_local_p2_api_runs_standalone_builtin_worker(tmp_path: Path) -> None:
         assert any(artifact["name"] == "api-builtin.txt" for artifact in artifacts)
 
     assert model.closed and len(model.requests) == 1
+    prompt = json_loads(model.requests[0].messages[1].content)
+    assert isinstance(prompt, dict)
+    context = prompt["context"]
+    assert isinstance(context, dict)
+    contract = context["confirmed_completion_contract"]
+    required_checks = context["required_checks"]
+    assert isinstance(contract, dict)
+    assert isinstance(required_checks, list)
+    assert contract["criteria"] == [NON_EMPTY_ARTIFACT_CRITERION]
+    assert contract["required_check_ids"] == [required_checks[0]["check_id"]]
+    assert required_checks[0]["kind"] == "artifact"
