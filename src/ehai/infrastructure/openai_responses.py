@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import cast
 
-from openai import AsyncOpenAI
+from openai import AsyncOpenAI, omit
 from openai.types.responses import (
     FunctionToolParam,
     ResponseInputParam,
@@ -66,7 +66,9 @@ class OpenAIResponsesModelClient(ModelClient):
             instructions=_instructions(request.messages),
             input=_response_input(request.input_messages),
             tools=_function_tools(request),
-            previous_response_id=request.previous_response_id,
+            previous_response_id=(
+                omit if request.previous_response_id is None else request.previous_response_id
+            ),
             parallel_tool_calls=False,
             store=True,
             stream=True,

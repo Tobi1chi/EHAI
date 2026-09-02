@@ -8,7 +8,7 @@ from types import SimpleNamespace
 from typing import cast
 
 import pytest
-from openai import AsyncOpenAI
+from openai import AsyncOpenAI, omit
 
 from ehai import JsonValue, json_loads, new_id
 from ehai.application.builtin_agent import (
@@ -484,6 +484,7 @@ def test_openai_responses_protocol_streams_function_result_continuation_and_fina
     assert fake.responses.requests[0]["stream"] is True
     assert fake.responses.requests[0]["store"] is True
     assert fake.responses.requests[0]["parallel_tool_calls"] is False
+    assert fake.responses.requests[0]["previous_response_id"] is omit
     tools = cast(list[dict[str, object]], fake.responses.requests[0]["tools"])
     assert tools[0]["strict"] is True
     assert fake.responses.requests[1]["previous_response_id"] == "resp-1"
