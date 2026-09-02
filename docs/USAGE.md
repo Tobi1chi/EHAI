@@ -6,7 +6,9 @@ Query/SSE 观察进展。
 
 ## 安装与前置条件
 
-需要 Python 3.12 和 `uv`。真实 Agent 执行还要求本机 `codex` 可执行文件已经完成认证。
+需要 Python 3.12 和 `uv`。Standalone Built-in Agent 通过官方 OpenAI Python SDK 调用 Responses
+API，只需要 `OPENAI_API_KEY`；自定义兼容端点可另外设置 `OPENAI_BASE_URL`，不需要安装 Codex。
+Codex CLI 和 Codex App Server Worker 才要求本机 `codex` 可执行文件已经完成认证。
 
 ```powershell
 uv sync
@@ -16,6 +18,33 @@ codex --version
 ```
 
 所有 Python 命令均通过 `uv run` 执行，不使用裸 `python` 或 `pip`。
+
+## Standalone Built-in Agent
+
+Built-in Agent 是 EHAI 自带的 Session、Agent Loop、固定 Tool Runtime 和 Responses ModelClient，
+不是 Codex 的包装层。以下命令启动一个 capacity 为 2 的本地后台 Runtime；每个并发 Attempt 使用
+独立 Session，Git 写任务使用 EHAI-owned worktree，非 Git 写任务自动串行：
+
+```powershell
+$env:OPENAI_API_KEY = Read-Host -MaskInput "OpenAI API key"
+# 使用兼容端点时再设置：$env:OPENAI_BASE_URL = "https://api.example.com"
+uv run ehai-api `
+    --database .ehai/builtin.sqlite3 `
+    --artifacts .ehai/builtin-artifacts `
+    --worker builtin `
+    --worker-workspace (Get-Location).Path `
+    --builtin-model gpt-5.6-luna `
+    --builtin-reasoning-effort high `
+    --builtin-capacity 2 `
+    --builtin-allowed-command uv `
+    --p2-runtime `
+    --host 127.0.0.1 `
+    --port 8000
+```
+
+Built-in Agent 只能通过严格 `submit_candidate` Tool 产生候选 Artifact；普通 assistant 文本不会被
+当作执行结果。`Fake` Worker 仅用于离线测试，Codex CLI 是每 Attempt 一个外部进程，Codex App
+Server Connector 则管理持久 Thread/Turn；三者不共享 Agent 框架。
 
 ## 真实 Codex CLI 闭环
 
@@ -180,15 +209,18 @@ Remove-Item Env:EHAI_RUN_CODEX_SMOKE
 ## 真实 OpenAI Responses Smoke
 
 Built-in Agent 只从 `OPENAI_API_KEY` 读取凭证；数据库保存的是引用
-`env:OPENAI_API_KEY`，不会保存 key。真实 Smoke 还要求显式提供当前账号有权使用的模型：
+`env:OPENAI_API_KEY`，不会保存 key。显式 Smoke 固定使用 `gpt-5.6-luna` 和 `high`，并验证
+Runtime、Responses、Workspace Tool、Artifact、Gate 与 Checkpoint 的完整链路：
 
 ```powershell
 $env:EHAI_RUN_OPENAI_SMOKE = "1"
-$env:EHAI_OPENAI_SMOKE_MODEL = "<authorized-model>"
 uv run pytest tests/smoke/test_openai_responses_smoke.py -q
 Remove-Item Env:EHAI_RUN_OPENAI_SMOKE
-Remove-Item Env:EHAI_OPENAI_SMOKE_MODEL
 ```
+
+请求优先使用持久化的 `previous_response_id`。兼容端点若明确拒绝该字段，Adapter 会省略该句柄并从
+durable Session Event 重放 function call/result；`store=true`、streaming 和严格 Tool Schema 保持
+不变。
 
 不要把 `OPENAI_API_KEY` 写入命令历史、配置文件、Event、Artifact 或数据库。
 
@@ -227,8 +259,9 @@ npm.cmd run build
 ## 当前基线限制
 
 - P2 只支持单 Execution Plane 进程；SQLite lease 用于崩溃恢复，不宣称分布式一致性。
-- 本地 `ehai-api --p2-runtime` 是单 Endpoint/单槽位组合；多 Endpoint 并发由应用层
-  `ConcurrentRuntime` 组合，不是 P3 Dashboard。
+- 本地 Built-in `ehai-api --p2-runtime` 使用单 Endpoint `ConcurrentRuntime`，并发上限由
+  `--builtin-capacity` 控制；本地 Fake/Codex CLI 组合仍为单槽位。多 Endpoint 路由由应用层组合，
+  不是 P3 Dashboard。
 - 不支持 OpenCode、Claude Code、DSH Connector、动态插件、P4 Workflow 或 P3 UI。
 - Provider 不报告 cost 时公开为 unavailable，不进行虚假估算。
 - Artifact、日志、Worker context 和诊断均有边界，超限会 fail closed。

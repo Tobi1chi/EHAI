@@ -57,14 +57,19 @@ Git 分支写任务使用独立 worktree；非 Git 写任务串行，dirty EHAI 
 
 ## Quick Start
 
-需要 Python 3.12、[uv](https://docs.astral.sh/uv/)；运行真实 Agent 还需要本机已安装并登录
-Codex CLI。
+需要 Python 3.12 和 [uv](https://docs.astral.sh/uv/)。Standalone Built-in Agent 只需要
+`OPENAI_API_KEY`（自定义兼容端点可设置 `OPENAI_BASE_URL`），不需要安装 Codex；Codex CLI/App
+Server Worker 才要求本机安装并登录 Codex。
 
 ```powershell
 uv sync
 uv run ehai --help
 uv run ehai-api --help
-uv run ehai-api --database .ehai/p2.sqlite3 --artifacts .ehai/p2-artifacts --p2-runtime
+$env:OPENAI_API_KEY = Read-Host -MaskInput "OpenAI API key"
+uv run ehai-api --database .ehai/p2.sqlite3 --artifacts .ehai/p2-artifacts `
+    --worker builtin --worker-workspace (Get-Location).Path `
+    --builtin-model gpt-5.6-luna --builtin-reasoning-effort high `
+    --builtin-capacity 2 --p2-runtime
 
 Set-Location control-plane
 npm.cmd ci
