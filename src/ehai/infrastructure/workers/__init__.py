@@ -8,6 +8,7 @@ from ehai.infrastructure.workers.codex_app_server import (
     StdioAppServerTransport,
 )
 from ehai.infrastructure.workers.fake import FakeWorker
+from ehai.infrastructure.workers.runtime_adapter import WorkerAdapterConnector
 
 __all__ = [
     "CodexAppServerConnector",
@@ -16,4 +17,5 @@ __all__ = [
     "CodexWorkerAdapter",
     "FakeWorker",
     "StdioAppServerTransport",
+    "WorkerAdapterConnector",
 ]

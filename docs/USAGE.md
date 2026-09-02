@@ -1,7 +1,8 @@
 # EHAI Usage Guide
 
-本文档记录当前 P1/P1.1 稳定基线的本地运行方式。该基线一次只运行一个 Worker Attempt；P2 的
-异步调度、多 Worker 路由和持久 Agent Session 尚未进入可用命令面。
+本文档记录 P1/P1.1 兼容命令与 P2 稳定执行面的本地运行方式。普通 `ehai` 命令保持同步兼容；
+`ehai-api --p2-runtime` 使用持久 dispatch work 和后台 Runtime，使 `StartRun` 快速返回并通过
+Query/SSE 观察进展。
 
 ## 安装与前置条件
 
@@ -86,6 +87,7 @@ uv run ehai-api `
     --worker-workspace (Get-Location).Path `
     --planner exploration `
     --worker-timeout-seconds 600 `
+    --p2-runtime `
     --host 127.0.0.1 `
     --port 8000
 ```
@@ -120,7 +122,31 @@ Invoke-RestMethod "$Api/runs/$($Run.data.run_id)/trace"
 Invoke-RestMethod "$Api/runs/$($Run.data.run_id)/checks"
 Invoke-RestMethod "$Api/runs/$($Run.data.run_id)/checkpoints"
 Invoke-RestMethod "$Api/runs/$($Run.data.run_id)/artifacts"
+Invoke-RestMethod "$Api/workers/profiles"
+Invoke-RestMethod "$Api/workers/endpoints"
 $Events = Invoke-RestMethod "$Api/events?limit=100"
+```
+
+从 ExecutionTrace 取得 `attempt_id` 后，可以读取分配、Session/Execution、活动、heartbeat、progress、
+deadline、lease 和有界诊断：
+
+```powershell
+$Trace = Invoke-RestMethod "$Api/runs/$($Run.data.run_id)/trace"
+$AttemptId = $Trace.data.attempts[0].attempt_id
+Invoke-RestMethod "$Api/attempts/$AttemptId/runtime"
+Invoke-RestMethod "$Api/attempts/$AttemptId/worker-requests"
+```
+
+运行中的 Attempt 可以显式延长 deadline 或取消；waiting request 必须由用户显式 resolve/decline，
+Connector 不会自动同意：
+
+```powershell
+Invoke-RestMethod -Method Post -Uri "$Api/attempts/$AttemptId/deadline" `
+    -ContentType "application/json" `
+    -Body (@{ idempotency_key = "deadline-1"; deadline_at = "2026-09-02T14:00:00.000000Z" } | ConvertTo-Json)
+Invoke-RestMethod -Method Post -Uri "$Api/attempts/$AttemptId/cancel" `
+    -ContentType "application/json" `
+    -Body (@{ idempotency_key = "cancel-attempt-1" } | ConvertTo-Json)
 ```
 
 SSE 支持按 Event ID 断线续传：
@@ -166,6 +192,32 @@ Remove-Item Env:EHAI_OPENAI_SMOKE_MODEL
 
 不要把 `OPENAI_API_KEY` 写入命令历史、配置文件、Event、Artifact 或数据库。
 
+## 真实 Codex App Server 双 Session Smoke
+
+App Server Connector 只使用一个 Endpoint 对应一个 `codex app-server --listen stdio://` JSONL 连接。
+显式 Smoke 会启动两个独立 Thread/Turn，并精确中断其中一个：
+
+```powershell
+$env:EHAI_RUN_CODEX_APP_SERVER_SMOKE = "1"
+uv run pytest tests/smoke/test_codex_app_server_smoke.py -q
+Remove-Item Env:EHAI_RUN_CODEX_APP_SERVER_SMOKE
+```
+
+该 Connector 不使用 WebSocket、远程 listener、Review、Skills、Apps 或 Auth 登录接口，也不修改用户
+全局 Codex 配置。
+
+## TypeScript API Client
+
+`control-plane/` 仅包含由 `schemas/v1/` 生成的严格类型和 API Client，不包含 P3 UI：
+
+```powershell
+Set-Location control-plane
+npm.cmd ci
+npm.cmd run generate
+npm.cmd run typecheck
+npm.cmd run build
+```
+
 ## 离线确定性验证
 
 开发或 CI 环境不应默认依赖网络、认证和模型额度。需要验证 EHAI 自身闭环时，可将 CLI 示例中的
@@ -174,8 +226,9 @@ Remove-Item Env:EHAI_OPENAI_SMOKE_MODEL
 
 ## 当前基线限制
 
-- 一个进程内同一时刻只执行一个 Attempt，探索分支按稳定顺序串行运行。
-- 每个应用实例只选择一个 Worker Connector，不支持 Worker 池和动态 Worker 路由。
-- `ehai-api` 按单进程运行，不要使用多个 Uvicorn Worker 共享 P1 SQLite 状态。
-- 持久 Agent Session、异步 Scheduler、Dispatcher 和多 Worker 能力仍属于 P2 开发范围。
-- Artifact 输入受单文件和总输入预算限制，超限会 fail closed。
+- P2 只支持单 Execution Plane 进程；SQLite lease 用于崩溃恢复，不宣称分布式一致性。
+- 本地 `ehai-api --p2-runtime` 是单 Endpoint/单槽位组合；多 Endpoint 并发由应用层
+  `ConcurrentRuntime` 组合，不是 P3 Dashboard。
+- 不支持 OpenCode、Claude Code、DSH Connector、动态插件、P4 Workflow 或 P3 UI。
+- Provider 不报告 cost 时公开为 unavailable，不进行虚假估算。
+- Artifact、日志、Worker context 和诊断均有边界，超限会 fail closed。

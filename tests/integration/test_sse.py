@@ -232,6 +232,34 @@ def test_reader_session_is_closed_before_frame_is_yielded() -> None:
     assert not active
 
 
+def test_sse_redacts_internal_workspace_paths() -> None:
+    event = Event(
+        type=EventType.WORKSPACE_PRESERVED,
+        correlation_id=new_id(),
+        run_id=new_id(),
+        payload={"path": "C:\\private\\workspace", "reason": "dirty worktree"},
+        occurred_at=NOW,
+    )
+    calls = 0
+
+    def reader(*, after_event_id: ID | None, limit: int) -> tuple[StoredEvent, ...]:
+        del after_event_id, limit
+        nonlocal calls
+        calls += 1
+        return (StoredEvent(1, event),) if calls == 1 else ()
+
+    response = _call_endpoint(
+        create_event_stream_endpoint(reader),
+        _Request(disconnect_after=2),
+    )
+    assert isinstance(response, StreamingResponse)
+    frame = asyncio.run(_collect(response))[0].decode()
+    payload = json.loads(next(line[6:] for line in frame.splitlines() if line.startswith("data: ")))
+
+    assert "path" not in payload["payload"]
+    assert payload["payload"]["reason"] == "dirty worktree"
+
+
 def test_router_factory_is_mountable_and_configuration_is_bounded() -> None:
     def reader(*, after_event_id: ID | None, limit: int) -> tuple[StoredEvent, ...]:
         del after_event_id, limit

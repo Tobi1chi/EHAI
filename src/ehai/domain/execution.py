@@ -494,6 +494,21 @@ class Attempt:
             _rehydrate_token=_REHYDRATE,
         )
 
+    def extend_deadline(self, deadline_at: datetime) -> Self:
+        """Extend, but never shorten, the absolute deadline of running work."""
+        if self.status is not AttemptStatus.RUNNING:
+            raise ValueError(f"attempt {self.attempt_id}: only running work has a deadline")
+        deadline = _utc(deadline_at, "deadline_at")
+        if self.deadline_at is None:
+            raise ValueError(f"attempt {self.attempt_id}: deadline is not initialized")
+        if deadline <= self.deadline_at:
+            raise ValueError(f"attempt {self.attempt_id}: deadline extension must move forward")
+        return replace(
+            self,
+            deadline_at=deadline,
+            _rehydrate_token=_REHYDRATE,
+        )
+
     def start(self, *, at: datetime | None = None) -> Self:
         """Start a pending Attempt."""
         self._ensure_transition(AttemptStatus.RUNNING)

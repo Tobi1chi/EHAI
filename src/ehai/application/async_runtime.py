@@ -8,6 +8,7 @@ from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
+from pathlib import Path
 from typing import Protocol, runtime_checkable
 
 from ehai import ID, new_id, normalize_id, utc_now
@@ -94,6 +95,13 @@ class ConnectorStartRequest:
     """Start one execution using Attempt ID as the provider idempotency key."""
 
     request: WorkerRequest
+    workspace: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.workspace is not None and (
+            not isinstance(self.workspace, str) or not self.workspace.strip()
+        ):
+            raise ValueError("ConnectorStartRequest workspace must not be blank")
 
     @property
     def attempt_id(self) -> ID:
@@ -171,6 +179,7 @@ class SingleSlotRuntime:
         profile: WorkerProfile,
         endpoint: WorkerEndpoint,
         policy: ExecutionPolicy | None = None,
+        workspace: str | Path | None = None,
         clock: Callable[[], datetime] = utc_now,
         id_factory: Callable[[], ID] = new_id,
     ) -> None:
@@ -184,6 +193,7 @@ class SingleSlotRuntime:
         self._profile = profile
         self._endpoint = endpoint
         self._policy = ExecutionPolicy() if policy is None else policy
+        self._workspace = None if workspace is None else str(Path(workspace).resolve(strict=True))
         self._watchdog = ExecutionWatchdog(self._policy)
         self._clock = clock
         self._id_factory = id_factory
@@ -198,6 +208,16 @@ class SingleSlotRuntime:
     def endpoint_health(self) -> EndpointHealth:
         """Return the latest connection/health-derived Endpoint observation."""
         return self._endpoint_health
+
+    @property
+    def connector(self) -> RuntimeConnector:
+        """Return the Connector owned by this Endpoint Runtime."""
+        return self._connector
+
+    @property
+    def orchestrator(self) -> Orchestrator:
+        """Return the application Orchestrator used by Runtime Control."""
+        return self._orchestrator
 
     async def run_once(self) -> Run | None:
         """Claim the oldest pending work and advance its Run to a terminal state."""
@@ -391,7 +411,7 @@ class SingleSlotRuntime:
                 )
         try:
             execution = await asyncio.wait_for(
-                self._connector.start(ConnectorStartRequest(request)),
+                self._connector.start(ConnectorStartRequest(request, self._workspace)),
                 self._policy.start_timeout.total_seconds(),
             )
             if execution.attempt_id != request.attempt_id:

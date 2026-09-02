@@ -222,6 +222,29 @@
         }
       }
     },
+    "ExtendAttemptDeadlineRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["idempotency_key", "deadline_at"],
+      "properties": {
+        "idempotency_key": {"$ref": "common.schema.json#/$defs/IdempotencyKey"},
+        "deadline_at": {"$ref": "common.schema.json#/$defs/UtcDateTime"}
+      }
+    },
+    "ResolveWorkerRequestRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["idempotency_key", "resolution"],
+      "properties": {
+        "idempotency_key": {"$ref": "common.schema.json#/$defs/IdempotencyKey"},
+        "resolution": {
+          "type": "object",
+          "additionalProperties": {"$ref": "#/$defs/JsonValue"}
+        }
+      }
+    },
+    "DeclineWorkerRequestRequest": {"$ref": "#/$defs/RunActionRequest"},
+    "CancelAttemptRequest": {"$ref": "#/$defs/RunActionRequest"},
     "DataResponse": {
       "type": "object",
       "additionalProperties": false,

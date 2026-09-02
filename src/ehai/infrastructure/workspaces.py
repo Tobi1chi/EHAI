@@ -10,6 +10,7 @@ from datetime import datetime
 from pathlib import Path
 
 from ehai import ID, JsonValue, json_dumps, json_loads, new_id, utc_now
+from ehai.application.scheduler import WorkspaceAllocationPort
 from ehai.domain.events import Event, EventType
 from ehai.domain.workers import AgentSessionRef, SessionPolicy
 from ehai.domain.workspaces import (
@@ -93,7 +94,11 @@ class WorkspaceManager:
         self._store(reference, lease)
         return WorkspaceAllocation(reference, lease)
 
-    def cleanup(self, allocation: WorkspaceAllocation) -> WorkspaceLease:
+    def can_isolate_writes(self) -> bool:
+        """Return whether concurrent writers can receive Git worktrees."""
+        return self._is_git_workspace()
+
+    def cleanup(self, allocation: WorkspaceAllocationPort) -> WorkspaceLease:
         reference = allocation.reference
         lease = allocation.lease
         if not reference.ehai_owned:

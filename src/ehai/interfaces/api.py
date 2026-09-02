@@ -28,6 +28,7 @@ from ehai.application.commands import (
 from ehai.application.orchestrator import OrchestrationError
 from ehai.application.queries import QueryNotFoundError, QueryService
 from ehai.application.run_control import RunControlConflictError, RunControlError
+from ehai.application.runtime_control import RuntimeControlError, RuntimeControlService
 from ehai.application.service import (
     ApplicationError,
     EntityNotFoundError,
@@ -47,12 +48,15 @@ from ehai.interfaces.http_models import (
     DataResponse,
     ErrorDetail,
     ErrorResponse,
+    ExtendAttemptDeadlineRequest,
     ProposePlanRequest,
     ReplanPlanRequest,
+    ResolveWorkerRequestRequest,
     RunActionRequest,
     StartRunRequest,
     UuidInput,
 )
+from ehai.interfaces.public_events import public_event_document
 from ehai.interfaces.sse import create_event_stream_endpoint
 
 
@@ -135,9 +139,10 @@ def _read_responses(schema_definition: str, description: str) -> dict[int | str,
 def create_app(
     execution_service: ExecutionService,
     query_service: QueryService,
+    runtime_control: RuntimeControlService | None = None,
 ) -> FastAPI:
-    """Create the versioned P1 HTTP app around already-constructed services."""
-    app = FastAPI(title="EHAI Execution Plane", version="1")
+    """Create the additive P2 HTTP surface around already-constructed services."""
+    app = FastAPI(title="EHAI Execution Plane", version="2")
     router = APIRouter(prefix="/api/v1")
     event_stream_endpoint = create_event_stream_endpoint(
         lambda *, after_event_id, limit: (
@@ -280,6 +285,109 @@ def create_app(
         return _response(query_service.get_run(_id(str(run_id))))
 
     @router.get(
+        "/workers/profiles",
+        response_model=DataResponse,
+        responses=_read_responses("WorkerProfileListResponse", "Worker Profiles"),
+    )
+    def list_worker_profiles() -> DataResponse:
+        return _response(query_service.list_worker_profiles())
+
+    @router.get(
+        "/workers/endpoints",
+        response_model=DataResponse,
+        responses=_read_responses("WorkerEndpointListResponse", "Worker Endpoints"),
+    )
+    def list_worker_endpoints() -> DataResponse:
+        return _response(query_service.list_worker_endpoints())
+
+    @router.get(
+        "/attempts/{attempt_id}/runtime",
+        response_model=DataResponse,
+        responses=_read_responses("AttemptRuntimeResponse", "Attempt Runtime diagnostics"),
+    )
+    def get_attempt_runtime(attempt_id: UuidInput) -> DataResponse:
+        return _response(query_service.get_attempt_runtime(_id(str(attempt_id))))
+
+    @router.get(
+        "/attempts/{attempt_id}/worker-requests",
+        response_model=DataResponse,
+        responses=_read_responses("WorkerRequestListResponse", "Pending Worker requests"),
+    )
+    def list_worker_requests(attempt_id: UuidInput) -> DataResponse:
+        control = _required_runtime_control(runtime_control)
+        return _response(control.list_waiting_requests(_id(str(attempt_id))))
+
+    @router.post(
+        "/worker-requests/{worker_request_id}/resolve",
+        response_model=DataResponse,
+        responses=_read_responses("WorkerRequestResponse", "Resolved Worker request"),
+    )
+    async def resolve_worker_request(
+        worker_request_id: UuidInput,
+        request: ResolveWorkerRequestRequest,
+    ) -> DataResponse:
+        control = _required_runtime_control(runtime_control)
+        return _response(
+            await control.resolve_worker_request(
+                _id(str(worker_request_id)),
+                request.resolution,
+                idempotency_key=request.idempotency_key,
+            )
+        )
+
+    @router.post(
+        "/worker-requests/{worker_request_id}/decline",
+        response_model=DataResponse,
+        responses=_read_responses("WorkerRequestResponse", "Declined Worker request"),
+    )
+    async def decline_worker_request(
+        worker_request_id: UuidInput,
+        request: RunActionRequest,
+    ) -> DataResponse:
+        control = _required_runtime_control(runtime_control)
+        return _response(
+            await control.decline_worker_request(
+                _id(str(worker_request_id)),
+                idempotency_key=request.idempotency_key,
+            )
+        )
+
+    @router.post(
+        "/attempts/{attempt_id}/deadline",
+        response_model=DataResponse,
+        responses=_read_responses("AttemptRuntimeResponse", "Extended Attempt deadline"),
+    )
+    def extend_attempt_deadline(
+        attempt_id: UuidInput,
+        request: ExtendAttemptDeadlineRequest,
+    ) -> DataResponse:
+        control = _required_runtime_control(runtime_control)
+        normalized_id = _id(str(attempt_id))
+        control.extend_deadline(
+            normalized_id,
+            request.deadline_at,
+            idempotency_key=request.idempotency_key,
+        )
+        return _response(query_service.get_attempt_runtime(normalized_id))
+
+    @router.post(
+        "/attempts/{attempt_id}/cancel",
+        response_model=DataResponse,
+        responses=_RUN_WRITE_RESPONSES,
+    )
+    async def cancel_attempt(
+        attempt_id: UuidInput,
+        request: RunActionRequest,
+    ) -> DataResponse:
+        control = _required_runtime_control(runtime_control)
+        return _response(
+            await control.cancel_attempt(
+                _id(str(attempt_id)),
+                idempotency_key=request.idempotency_key,
+            )
+        )
+
+    @router.get(
         "/plans/{plan_revision_id}",
         response_model=DataResponse,
         responses=_read_responses("PlanGraphResponse", "Versioned PlanGraph"),
@@ -374,7 +482,7 @@ def _response(value: object) -> DataResponse:
 def _json_value(value: object) -> JsonValue:
     """Encode public DTOs with the repository's canonical cross-plane conventions."""
     if isinstance(value, Event):
-        return value.to_dict()
+        return public_event_document(value)
     if isinstance(value, datetime):
         return format_utc_datetime(value)
     if isinstance(value, Enum):
@@ -431,6 +539,7 @@ def _install_error_handlers(app: FastAPI) -> None:
 
     @app.exception_handler(ApplicationError)
     @app.exception_handler(RunControlError)
+    @app.exception_handler(RuntimeControlError)
     @app.exception_handler(OrchestrationError)
     @app.exception_handler(GoalInvariantError)
     @app.exception_handler(PlanInvariantError)
@@ -456,3 +565,11 @@ def _install_error_handlers(app: FastAPI) -> None:
 def _error_response(status_code: int, code: str, message: str) -> JSONResponse:
     payload = ErrorResponse(error=ErrorDetail(code=code, message=message))
     return JSONResponse(status_code=status_code, content=payload.model_dump(mode="json"))
+
+
+def _required_runtime_control(
+    runtime_control: RuntimeControlService | None,
+) -> RuntimeControlService:
+    if runtime_control is None:
+        raise RuntimeControlError("P2 Runtime Control is not configured for this process")
+    return runtime_control

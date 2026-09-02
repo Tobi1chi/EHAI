@@ -280,9 +280,10 @@ class CodexAppServerConnector:
             existing = self._attempt_executions.get(request.attempt_id)
             if existing is not None:
                 return existing
-            thread = await self.start_thread()
+            workspace = self._request_workspace(request.workspace)
+            thread = await self.start_thread(workspace=workspace)
             thread_id = _required_text(thread.get("id"), "thread.id")
-            execution = await self._start_turn(thread_id, request)
+            execution = await self._start_turn(thread_id, request, workspace)
             self._attempt_executions[request.attempt_id] = execution
             return execution
 
@@ -375,12 +376,13 @@ class CodexAppServerConnector:
             self._recover_terminal_turn(state, turn)
         return execution
 
-    async def start_thread(self) -> JsonObject:
+    async def start_thread(self, *, workspace: Path | None = None) -> JsonObject:
         """Create a new App Server Thread for a new Agent Session."""
+        cwd = self._workspace if workspace is None else workspace
         result = await self._rpc(
             "thread/start",
             {
-                "cwd": str(self._workspace),
+                "cwd": str(cwd),
                 "model": self._model,
                 "approvalPolicy": self._approval_policy,
                 "sandbox": self._sandbox,
@@ -492,16 +494,17 @@ class CodexAppServerConnector:
         self,
         thread_id: str,
         request: ConnectorStartRequest,
+        workspace: Path,
     ) -> ConnectorExecution:
         if thread_id in self._active_turns:
             raise CodexAppServerProtocolError(f"Thread {thread_id} already has an active Turn")
         params: JsonObject = {
             "threadId": thread_id,
             "input": [{"type": "text", "text": build_codex_prompt(request.request)}],
-            "cwd": str(self._workspace),
+            "cwd": str(workspace),
             "model": self._model,
             "approvalPolicy": self._approval_policy,
-            "sandboxPolicy": self._sandbox_policy(),
+            "sandboxPolicy": self._sandbox_policy(workspace),
             "outputSchema": json_loads(codex_output_schema_json()),
         }
         if self._reasoning_effort is not None:
@@ -733,17 +736,26 @@ class CodexAppServerConnector:
             )
         )
 
-    def _sandbox_policy(self) -> JsonObject:
+    def _sandbox_policy(self, workspace: Path | None = None) -> JsonObject:
+        root = self._workspace if workspace is None else workspace
         if self._sandbox == "read-only":
             return {"type": "readOnly", "access": {"type": "fullAccess"}}
         if self._sandbox == "workspace-write":
             return {
                 "type": "workspaceWrite",
-                "writableRoots": [str(self._workspace)],
+                "writableRoots": [str(root)],
                 "readOnlyAccess": {"type": "fullAccess"},
                 "networkAccess": False,
             }
         return {"type": "dangerFullAccess"}
+
+    def _request_workspace(self, value: str | None) -> Path:
+        if value is None:
+            return self._workspace
+        workspace = Path(value).resolve(strict=True)
+        if not workspace.is_dir():
+            raise ValueError("Connector request workspace must be a directory")
+        return workspace
 
     def _fail_pending_responses(self, reason: str) -> None:
         for future in tuple(self._pending_responses.values()):

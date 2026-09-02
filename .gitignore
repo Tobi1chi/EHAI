@@ -209,6 +209,10 @@ tempCodeRunnerFile.py
 # PyPI configuration file
 .pypirc
 
+# Node / generated TypeScript build output
+node_modules/
+control-plane/dist/
+
 # Marimo
 marimo/_static/
 marimo/_lsp/

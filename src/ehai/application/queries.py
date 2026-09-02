@@ -272,7 +272,6 @@ class WorkerProfileView:
     capabilities: tuple[str, ...]
     session_policy: SessionPolicy
     budget_ref: str | None
-    credential_ref: str | None
     priority: int
 
 
@@ -284,7 +283,6 @@ class WorkerEndpointView:
     name: str
     worker_kind: WorkerKind
     endpoint_type: WorkerEndpointType
-    endpoint_ref: str
     capacity: int
     status: WorkerEndpointStatus
 
@@ -308,6 +306,7 @@ class AttemptRuntimeView:
     deadline_at: datetime | None
     lease_expires_at: datetime | None
     queue_reason: str | None
+    diagnostics: tuple[str, ...]
 
 
 class QueryService:
@@ -335,7 +334,6 @@ class QueryService:
                     capabilities=tuple(sorted(item.name for item in profile.capabilities)),
                     session_policy=profile.session_policy,
                     budget_ref=profile.budget_ref,
-                    credential_ref=profile.credential_ref,
                     priority=profile.priority,
                 )
                 for profile in session.worker_registry.list_worker_profiles()
@@ -350,7 +348,6 @@ class QueryService:
                     name=endpoint.name,
                     worker_kind=endpoint.worker_kind,
                     endpoint_type=endpoint.endpoint_type,
-                    endpoint_ref=endpoint.endpoint_ref,
                     capacity=endpoint.capacity,
                     status=endpoint.status,
                 )
@@ -374,6 +371,11 @@ class QueryService:
                     f"Attempt {attempt.attempt_id} references a missing AgentSessionRef"
                 )
             handle = attempt.execution_handle
+            diagnostics = tuple(
+                stored.event.type.value
+                for stored in session.events.list_events()
+                if stored.event.correlation_id == attempt.attempt_id
+            )[-32:]
             return AttemptRuntimeView(
                 attempt_id=attempt.attempt_id,
                 worker_profile_id=attempt.worker_profile_id,
@@ -392,6 +394,7 @@ class QueryService:
                 deadline_at=attempt.deadline_at,
                 lease_expires_at=attempt.lease_expires_at,
                 queue_reason=attempt.queue_reason,
+                diagnostics=diagnostics,
             )
 
     def get_plan_graph(self, plan_revision_id: ID) -> PlanGraphView:

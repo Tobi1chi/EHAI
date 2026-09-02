@@ -16,6 +16,7 @@ from starlette.routing import Route, Router
 
 from ehai import ID, normalize_id
 from ehai.application.ports import StoredEvent
+from ehai.interfaces.public_events import public_event_json
 
 
 class EventBatchReader(Protocol):
@@ -182,7 +183,9 @@ def _optional_cursor(value: str | None, field_name: str) -> ID | None:
 
 def _frame(stored: StoredEvent) -> bytes:
     event = stored.event
-    return (f"id: {event.id}\nevent: {event.type.value}\ndata: {event.to_json()}\n\n").encode()
+    return (
+        f"id: {event.id}\nevent: {event.type.value}\ndata: {public_event_json(event)}\n\n"
+    ).encode()
 
 
 def _error_response(status_code: int, error_type: str, message: str) -> JSONResponse:

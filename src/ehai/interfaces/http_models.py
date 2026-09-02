@@ -2,11 +2,20 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Annotated, Literal
 
-from pydantic import AfterValidator, BaseModel, ConfigDict, Field, StringConstraints
+from pydantic import (
+    AfterValidator,
+    BaseModel,
+    ConfigDict,
+    Field,
+    StringConstraints,
+    field_serializer,
+    field_validator,
+)
 
-from ehai import JsonValue, normalize_id
+from ehai import JsonValue, format_utc_datetime, normalize_id
 
 NonBlank = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
 P1CompletionCriterion = Literal[
@@ -70,6 +79,27 @@ class RunActionRequest(_StrictRequest):
 
 class CancelRunRequest(RunActionRequest):
     reason: NonBlank | None = None
+
+
+class ExtendAttemptDeadlineRequest(_StrictRequest):
+    idempotency_key: NonBlank
+    deadline_at: datetime
+
+    @field_validator("deadline_at")
+    @classmethod
+    def require_timezone(cls, value: datetime) -> datetime:
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError("deadline_at must include a UTC offset")
+        return value
+
+    @field_serializer("deadline_at")
+    def serialize_deadline(self, value: datetime) -> str:
+        return format_utc_datetime(value)
+
+
+class ResolveWorkerRequestRequest(_StrictRequest):
+    idempotency_key: NonBlank
+    resolution: dict[str, JsonValue]
 
 
 class DataResponse(BaseModel):

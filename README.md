@@ -4,7 +4,7 @@ EHAI（Enhanced Human-Agent Interface）是一个面向人—Agent 协作的执�
 完成条件、探索计划和实际执行轨迹组织成可检查、可恢复的图运行过程，让 Agent 能够探索多种方案，
 但不能绕过预先确认的证据标准自行宣布任务完成。
 
-> 当前状态：P1/P1.1 已完成；P2 多 Worker 执行内核正在开发。
+> 当前状态：P1/P1.1 与 P2 多 Worker 执行内核已完成实现和自动化验收。
 
 ## Why EHAI
 
@@ -19,7 +19,9 @@ EHAI 将这些约束放入独立的 Execution Plane，使人类能够在执行�
 - 通过 Codex Planner 与 External Worker Connector 生成计划和候选结果。
 - 使用不可变 Artifact、Check 和 Gate 保存证据并决定状态转换。
 - 使用 Event、ExecutionTrace 和 Checkpoint 支持审计、中断恢复与轨迹查询。
-- 通过 CLI、HTTP API、OpenAPI/JSON Schema 和 SSE 暴露 P1 执行能力。
+- 使用后台 Runtime、Scheduler、capacity、lease、deadline 和安全重试管理执行。
+- 支持 Built-in Agent、Codex CLI 与 Codex App Server Thread/Turn Connector。
+- 通过 CLI、HTTP API、OpenAPI/JSON Schema、SSE 和严格 TypeScript Client 暴露执行能力。
 
 ## How It Works
 
@@ -45,13 +47,13 @@ Goal + CompletionContract
 | 阶段 | 状态 | 范围 |
 | --- | --- | --- |
 | P1/P1.1 | 已完成 | 单 Worker 串行闭环、Codex CLI、分支评估、Check/Gate、Checkpoint、API/SSE |
-| P2 | 进行中 | 异步调度、Built-in/Codex Worker、Agent Session、并发与资源管理 |
-| P3+ | 已规划 | TypeScript Control Plane、可复用 Workflow 和开放扩展生态 |
+| P2 | 已完成 | 异步调度、Built-in/Codex Worker、Agent Session、并发、恢复与资源管理 |
+| P3+ | 已规划 | Dashboard、可复用 Workflow 和开放扩展生态 |
 
-P2-I0–I6 已提供可恢复 Built-in Agent、OpenAI Responses ModelClient、受控并发 Scheduler，以及
-EHAI-owned Git worktree 和显式 SessionPolicy 隔离。Git 分支写任务使用独立 worktree；非 Git 写任务
-串行，dirty EHAI worktree 会保留并产生 Event。Codex App Server Connector 尚未实现；Responses Smoke
-仍需显式 API key/model，当前 CLI/API 命令保持 P1/P1.1 串行语义。
+P2-I0–I9 已提供可恢复 Built-in Agent、OpenAI Responses ModelClient、受控并发 Scheduler、
+Codex App Server 多 Session Connector、EHAI-owned Git worktree、超时/租约/安全重试与 Event Replay。
+Git 分支写任务使用独立 worktree；非 Git 写任务串行，dirty EHAI worktree 会保留并产生 Event。
+真实 Responses Smoke 仍需调用方显式提供有目标模型权限的 `OPENAI_API_KEY`；默认测试不访问外部服务。
 
 ## Quick Start
 
@@ -62,6 +64,12 @@ Codex CLI。
 uv sync
 uv run ehai --help
 uv run ehai-api --help
+uv run ehai-api --database .ehai/p2.sqlite3 --artifacts .ehai/p2-artifacts --p2-runtime
+
+Set-Location control-plane
+npm.cmd ci
+npm.cmd run generate
+npm.cmd run typecheck
 ```
 
 完整的真实 Codex 执行流程、CLI 参数、HTTP API 和 SSE 示例见
@@ -84,6 +92,11 @@ uv run pytest
 uv run ruff check .
 uv run ruff format --check .
 uv run mypy
+Set-Location control-plane
+npm.cmd ci
+npm.cmd run generate
+npm.cmd run typecheck
+npm.cmd run build
 ```
 
 开发期间先运行最小相关测试；准备提交时再运行受影响技术栈的完整测试。

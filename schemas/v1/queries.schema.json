@@ -458,6 +458,106 @@
         "has_more": {"type": "boolean"}
       }
     },
+    "WorkerProfile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "worker_profile_id", "name", "kind", "model", "capabilities",
+        "session_policy", "budget_ref", "priority"
+      ],
+      "properties": {
+        "worker_profile_id": {"$ref": "common.schema.json#/$defs/Id"},
+        "name": {"type": "string", "minLength": 1},
+        "kind": {"enum": ["builtin", "codex_cli", "codex_app_server"]},
+        "model": {"type": "string", "minLength": 1},
+        "capabilities": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+        "session_policy": {"enum": ["new", "reuse", "fork"]},
+        "budget_ref": {"oneOf": [{"type": "string"}, {"type": "null"}]},
+        "priority": {"type": "integer"}
+      }
+    },
+    "WorkerEndpoint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "worker_endpoint_id", "name", "worker_kind", "endpoint_type",
+        "capacity", "status"
+      ],
+      "properties": {
+        "worker_endpoint_id": {"$ref": "common.schema.json#/$defs/Id"},
+        "name": {"type": "string", "minLength": 1},
+        "worker_kind": {"enum": ["builtin", "codex_cli", "codex_app_server"]},
+        "endpoint_type": {"enum": ["in_process", "command", "address"]},
+        "capacity": {"type": "integer", "minimum": 1},
+        "status": {"enum": ["enabled", "draining", "disabled"]}
+      }
+    },
+    "AttemptRuntime": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "attempt_id", "worker_profile_id", "worker_endpoint_id", "agent_session_ref_id",
+        "provider_session_id", "session_recoverable", "execution_kind",
+        "provider_execution_id", "activity", "event_cursor", "heartbeat_at",
+        "progress_at", "deadline_at", "lease_expires_at", "queue_reason", "diagnostics"
+      ],
+      "properties": {
+        "attempt_id": {"$ref": "common.schema.json#/$defs/Id"},
+        "worker_profile_id": {"$ref": "#/$defs/NullableId"},
+        "worker_endpoint_id": {"$ref": "#/$defs/NullableId"},
+        "agent_session_ref_id": {"$ref": "#/$defs/NullableId"},
+        "provider_session_id": {"oneOf": [{"type": "string"}, {"type": "null"}]},
+        "session_recoverable": {"oneOf": [{"type": "boolean"}, {"type": "null"}]},
+        "execution_kind": {
+          "oneOf": [
+            {"enum": ["builtin_turn", "external_execution"]},
+            {"type": "null"}
+          ]
+        },
+        "provider_execution_id": {"oneOf": [{"type": "string"}, {"type": "null"}]},
+        "activity": {
+          "oneOf": [
+            {"enum": ["queued", "running", "waiting", "stalled"]},
+            {"type": "null"}
+          ]
+        },
+        "event_cursor": {"oneOf": [{"type": "string"}, {"type": "null"}]},
+        "heartbeat_at": {"$ref": "#/$defs/NullableUtcDateTime"},
+        "progress_at": {"$ref": "#/$defs/NullableUtcDateTime"},
+        "deadline_at": {"$ref": "#/$defs/NullableUtcDateTime"},
+        "lease_expires_at": {"$ref": "#/$defs/NullableUtcDateTime"},
+        "queue_reason": {"oneOf": [{"type": "string"}, {"type": "null"}]},
+        "diagnostics": {"type": "array", "items": {"type": "string"}, "maxItems": 32}
+      }
+    },
+    "WorkerRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["worker_request_id", "attempt_id", "kind", "summary", "status"],
+      "properties": {
+        "worker_request_id": {"$ref": "common.schema.json#/$defs/Id"},
+        "attempt_id": {"$ref": "common.schema.json#/$defs/Id"},
+        "kind": {
+          "enum": [
+            "command_approval", "file_change_approval", "user_input", "permission_approval"
+          ]
+        },
+        "summary": {"type": "string", "minLength": 1, "maxLength": 500},
+        "status": {"enum": ["pending", "resolved", "declined"]}
+      }
+    },
+    "WorkerProfileList": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/WorkerProfile"}
+    },
+    "WorkerEndpointList": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/WorkerEndpoint"}
+    },
+    "WorkerRequestList": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/WorkerRequest"}
+    },
     "CheckSpecList": {
       "type": "array",
       "items": {"$ref": "#/$defs/CheckSpec"}
@@ -527,6 +627,36 @@
       "additionalProperties": false,
       "required": ["data"],
       "properties": {"data": {"$ref": "#/$defs/EventPage"}}
+    },
+    "WorkerProfileListResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["data"],
+      "properties": {"data": {"$ref": "#/$defs/WorkerProfileList"}}
+    },
+    "WorkerEndpointListResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["data"],
+      "properties": {"data": {"$ref": "#/$defs/WorkerEndpointList"}}
+    },
+    "AttemptRuntimeResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["data"],
+      "properties": {"data": {"$ref": "#/$defs/AttemptRuntime"}}
+    },
+    "WorkerRequestListResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["data"],
+      "properties": {"data": {"$ref": "#/$defs/WorkerRequestList"}}
+    },
+    "WorkerRequestResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["data"],
+      "properties": {"data": {"$ref": "#/$defs/WorkerRequest"}}
     }
   }
 }

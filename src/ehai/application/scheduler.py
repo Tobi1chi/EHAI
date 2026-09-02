@@ -6,6 +6,8 @@ import asyncio
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from datetime import timedelta
+from pathlib import Path
+from typing import Protocol
 
 from ehai import ID, utc_now
 from ehai.application.async_runtime import (
@@ -28,6 +30,27 @@ from ehai.domain.workers import (
     WorkerEndpointStatus,
     WorkerProfile,
 )
+from ehai.domain.workspaces import WorkspaceLease, WorkspaceRef
+
+
+class WorkspaceAllocationPort(Protocol):
+    reference: WorkspaceRef
+    lease: WorkspaceLease
+
+
+class WorkspaceManagerPort(Protocol):
+    def can_isolate_writes(self) -> bool: ...
+
+    def allocate(
+        self,
+        *,
+        run_id: ID,
+        attempt_id: ID,
+        write_capable: bool,
+        isolate: bool,
+    ) -> WorkspaceAllocationPort: ...
+
+    def cleanup(self, allocation: WorkspaceAllocationPort) -> WorkspaceLease: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -154,6 +177,7 @@ class _ActiveExecution:
     project_id: ID
     assignment: DispatchAssignment
     helper: SingleSlotRuntime
+    workspace: WorkspaceAllocationPort | None
 
 
 class ConcurrentRuntime:
@@ -167,6 +191,7 @@ class ConcurrentRuntime:
         dispatcher: Dispatcher,
         connectors: Mapping[ID, RuntimeConnector],
         policy: ExecutionPolicy | None = None,
+        workspace_manager: WorkspaceManagerPort | None = None,
     ) -> None:
         self._uow_factory = uow_factory
         self._orchestrator = orchestrator
@@ -181,6 +206,7 @@ class ConcurrentRuntime:
             endpoint.worker_endpoint_id: EndpointHealthStatus.UNKNOWN
             for endpoint in dispatcher.endpoints
         }
+        self._workspace_manager = workspace_manager
         self._claim_owner = f"scheduler:{utc_now().timestamp()}"
 
     async def run_until_idle(self) -> tuple[Run, ...]:
@@ -202,7 +228,11 @@ class ConcurrentRuntime:
                 self._endpoint_health[active.assignment.endpoint.worker_endpoint_id] = (
                     active.helper.endpoint_health.status
                 )
-                run = task.result()
+                try:
+                    run = task.result()
+                finally:
+                    if active.workspace is not None and self._workspace_manager is not None:
+                        self._workspace_manager.cleanup(active.workspace)
                 if run.status is not RunStatus.RUNNING:
                     active.helper.finish_dispatch_work(active.work)
                     works.pop(active.work.run_id, None)
@@ -246,23 +276,46 @@ class ConcurrentRuntime:
             candidate = self._next_assignment(works, tasks, usage)
             if candidate is None:
                 return scheduled
-            work, attempt, project_id, assignment = candidate
-            request = self._orchestrator.start_queued_attempt(attempt.attempt_id)
+            work, attempt, project_id, assignment, write_capable, isolate = candidate
             connector = self._connectors.get(assignment.endpoint.worker_endpoint_id)
             if connector is None:
                 raise RuntimeError(
                     f"WorkerEndpoint {assignment.endpoint.worker_endpoint_id} has no Connector"
                 )
-            helper = SingleSlotRuntime(
-                uow_factory=self._uow_factory,
-                orchestrator=self._orchestrator,
-                connector=connector,
-                profile=assignment.profile,
-                endpoint=_single_slot_endpoint(assignment.endpoint),
-                policy=self._policy,
+            workspace = (
+                None
+                if self._workspace_manager is None
+                else self._workspace_manager.allocate(
+                    run_id=attempt.run_id,
+                    attempt_id=attempt.attempt_id,
+                    write_capable=write_capable,
+                    isolate=isolate,
+                )
             )
-            task = asyncio.create_task(helper.execute_started_request(request))
-            tasks[task] = _ActiveExecution(work, request.attempt, project_id, assignment, helper)
+            try:
+                request = self._orchestrator.start_queued_attempt(attempt.attempt_id)
+                helper = SingleSlotRuntime(
+                    uow_factory=self._uow_factory,
+                    orchestrator=self._orchestrator,
+                    connector=connector,
+                    profile=assignment.profile,
+                    endpoint=_single_slot_endpoint(assignment.endpoint),
+                    policy=self._policy,
+                    workspace=(None if workspace is None else Path(workspace.reference.path)),
+                )
+                task = asyncio.create_task(helper.execute_started_request(request))
+            except BaseException:
+                if workspace is not None and self._workspace_manager is not None:
+                    self._workspace_manager.cleanup(workspace)
+                raise
+            tasks[task] = _ActiveExecution(
+                work,
+                request.attempt,
+                project_id,
+                assignment,
+                helper,
+                workspace,
+            )
             scheduled = True
 
     def _next_assignment(
@@ -270,7 +323,7 @@ class ConcurrentRuntime:
         works: dict[ID, DispatchWork],
         tasks: dict[asyncio.Task[Run], _ActiveExecution],
         usage: CapacityUsage,
-    ) -> tuple[DispatchWork, Attempt, ID, DispatchAssignment] | None:
+    ) -> tuple[DispatchWork, Attempt, ID, DispatchAssignment, bool, bool] | None:
         with self._uow_factory() as uow:
             for run_id in sorted(works):
                 run = uow.states.get_run(run_id)
@@ -293,17 +346,24 @@ class ConcurrentRuntime:
                         capability.name == "workspace.write"
                         for capability in node.required_capabilities
                     )
-                    workspace_conflict = write_capable and any(
-                        active.work.run_id == run_id
-                        and any(
-                            capability.name == "workspace.write"
-                            for capability in next(
-                                node
-                                for node in plan.nodes
-                                if node.plan_node_id == active.attempt.plan_node_id
-                            ).required_capabilities
+                    workspace_conflict = (
+                        write_capable
+                        and (
+                            self._workspace_manager is None
+                            or not self._workspace_manager.can_isolate_writes()
                         )
-                        for active in tasks.values()
+                        and any(
+                            active.work.run_id == run_id
+                            and any(
+                                capability.name == "workspace.write"
+                                for capability in next(
+                                    node
+                                    for node in plan.nodes
+                                    if node.plan_node_id == active.attempt.plan_node_id
+                                ).required_capabilities
+                            )
+                            for active in tasks.values()
+                        )
                     )
                     decision = self._dispatcher.select(
                         node,
@@ -314,7 +374,17 @@ class ConcurrentRuntime:
                         endpoint_health=self._endpoint_health,
                     )
                     if decision.assignment is not None:
-                        return works[run_id], attempt, goal.project_id, decision.assignment
+                        isolate = any(
+                            attempt.plan_node_id in branch.node_ids for branch in plan.branches
+                        )
+                        return (
+                            works[run_id],
+                            attempt,
+                            goal.project_id,
+                            decision.assignment,
+                            write_capable,
+                            isolate,
+                        )
                     uow.states.put_attempt(attempt.queue(decision.reason or "waiting for dispatch"))
             uow.commit()
         return None

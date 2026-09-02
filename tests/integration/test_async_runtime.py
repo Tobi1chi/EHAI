@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from ehai import ID, new_id
+from ehai import ID, JsonValue, new_id
 from ehai.application.async_runtime import (
     ConnectorExecution,
     ConnectorRecoveryRequest,
@@ -40,6 +40,7 @@ from ehai.application.planner import (
     ExplorationPlanRequest,
     PlanProposal,
 )
+from ehai.application.runtime_control import RuntimeControlService, WorkerRequestStatus
 from ehai.application.service import ExecutionService
 from ehai.application.workers import WorkerRequest
 from ehai.domain.checking import CheckKind
@@ -466,10 +467,10 @@ def test_watchdog_separates_heartbeat_progress_waiting_and_absolute_deadline(
         (
             "waiting",
             ExecutionPolicy(
-                heartbeat_lease=timedelta(milliseconds=30),
-                no_progress_timeout=timedelta(milliseconds=20),
-                absolute_attempt_timeout=timedelta(milliseconds=70),
-                cancel_grace=timedelta(milliseconds=10),
+                heartbeat_lease=timedelta(milliseconds=100),
+                no_progress_timeout=timedelta(milliseconds=100),
+                absolute_attempt_timeout=timedelta(milliseconds=300),
+                cancel_grace=timedelta(milliseconds=20),
             ),
             "absolute Attempt deadline",
         ),
@@ -582,6 +583,109 @@ def test_expired_dispatch_claim_is_reclaimed_without_duplicate_work(tmp_path: Pa
     assert reclaimed is not None
     assert reclaimed.dispatch_work_id == original.dispatch_work_id
     assert reclaimed.claim_owner == "runtime-new"
+
+
+class _PendingRequest:
+    def __init__(self, execution: ConnectorExecution) -> None:
+        self.request_id = 77
+        self.method = "item/commandExecution/requestApproval"
+        self.thread_id = execution.provider_session_id
+        self.turn_id = execution.provider_execution_id
+        self.item_id = "item-approval"
+
+    @property
+    def params(self) -> dict[str, JsonValue]:
+        return {"reason": "internal path C:\\private\\workspace"}
+
+
+class _InteractiveConnector:
+    def __init__(self) -> None:
+        self.execution: ConnectorExecution | None = None
+        self.resolutions: list[tuple[int | str, dict[str, JsonValue]]] = []
+
+    async def start(self, request: ConnectorStartRequest) -> ConnectorExecution:
+        self.execution = ConnectorExecution(
+            request.attempt_id,
+            f"session-{request.attempt_id}",
+            str(new_id()),
+            True,
+        )
+        return self.execution
+
+    async def events(
+        self,
+        execution: ConnectorExecution,
+        *,
+        after_cursor: str | None = None,
+    ) -> AsyncIterator[WorkerEvent]:
+        del execution, after_cursor
+        raise RuntimeError("hold execution for Runtime Control")
+        yield
+
+    async def inspect(self, execution: ConnectorExecution) -> AttemptActivity:
+        del execution
+        return AttemptActivity.WAITING
+
+    async def cancel(self, execution: ConnectorExecution) -> None:
+        del execution
+
+    async def recover(self, request: ConnectorRecoveryRequest) -> ConnectorExecution | None:
+        del request
+        return self.execution
+
+    def pending_requests(
+        self,
+        execution: ConnectorExecution | None = None,
+    ) -> tuple[_PendingRequest, ...]:
+        assert execution == self.execution and execution is not None
+        return (_PendingRequest(execution),)
+
+    async def resolve_request(
+        self,
+        request_id: int | str,
+        result: dict[str, JsonValue],
+    ) -> None:
+        self.resolutions.append((request_id, dict(result)))
+
+
+def test_runtime_control_sanitizes_resolves_and_extends_waiting_attempt(
+    tmp_path: Path,
+) -> None:
+    connector = _InteractiveConnector()
+    policy = ExecutionPolicy(
+        heartbeat_lease=timedelta(seconds=1),
+        no_progress_timeout=timedelta(seconds=1),
+        absolute_attempt_timeout=timedelta(minutes=5),
+    )
+    service, runtime, database = _policy_runtime(tmp_path, connector, policy)
+    run_id, _ = _start(service)
+    with pytest.raises(RuntimeError, match="hold execution"):
+        asyncio.run(runtime.run_once())
+    with database.read_session() as session:
+        attempt = session.states.list_attempts(run_id)[0]
+    assert attempt.worker_endpoint_id is not None and attempt.deadline_at is not None
+    control = RuntimeControlService(
+        uow_factory=database.unit_of_work,
+        orchestrator=runtime.orchestrator,
+        runtimes={attempt.worker_endpoint_id: runtime},
+    )
+
+    waiting = control.list_waiting_requests(attempt.attempt_id)
+
+    assert len(waiting) == 1
+    assert waiting[0].summary == "command execution approval required"
+    assert "private" not in waiting[0].summary
+    resolved = asyncio.run(
+        control.resolve_worker_request(waiting[0].worker_request_id, {"decision": "accept"})
+    )
+    assert resolved.status is WorkerRequestStatus.RESOLVED
+    assert connector.resolutions == [(77, {"decision": "accept"})]
+
+    extended = control.extend_deadline(
+        attempt.attempt_id,
+        attempt.deadline_at + timedelta(minutes=1),
+    )
+    assert extended.deadline_at == attempt.deadline_at + timedelta(minutes=1)
 
 
 def _policy_runtime(

@@ -97,6 +97,7 @@ def build_service(
     worker_timeout_seconds: float = 300.0,
     codex_model: str | None = None,
     codex_reasoning_effort: str | None = None,
+    background_start: bool = False,
 ) -> ExecutionService:
     """Build the local P1 service from concrete infrastructure Adapters."""
     database_path.parent.mkdir(parents=True, exist_ok=True)
@@ -166,6 +167,7 @@ def build_service(
         orchestrator=orchestrator,
         run_controller=RunController(database.unit_of_work, worker),
         recovery_service=RecoveryService(uow_factory=database.unit_of_work),
+        background_start=background_start,
     )
 
 

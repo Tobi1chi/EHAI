@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncIterator
+from dataclasses import dataclass
 from pathlib import Path
+
+import pytest
 
 from ehai import ID, new_id
 from ehai.application.async_runtime import (
@@ -24,6 +27,7 @@ from ehai.application.orchestrator import Orchestrator
 from ehai.application.planner import (
     NON_EMPTY_ARTIFACT_CRITERION,
     DeterministicExplorationPlanner,
+    DeterministicPlanner,
     ExplorationBudget,
     ExplorationPlanRequest,
     PlanProposal,
@@ -33,6 +37,7 @@ from ehai.application.scheduler import (
     CapacityUsage,
     ConcurrentRuntime,
     Dispatcher,
+    WorkspaceAllocationPort,
 )
 from ehai.application.service import ExecutionService
 from ehai.application.workers import WorkerRequest
@@ -49,6 +54,7 @@ from ehai.domain.workers import (
     WorkerKind,
     WorkerProfile,
 )
+from ehai.domain.workspaces import WorkspaceKind, WorkspaceLease, WorkspaceRef
 from ehai.infrastructure.artifacts import FilesystemArtifactStore
 from ehai.infrastructure.checks import ArtifactCheckAdapter, ArtifactCheckRule
 from ehai.infrastructure.sqlite import SQLiteDatabase
@@ -137,6 +143,41 @@ class _BlockingConnector:
         return self.executions.get(request.attempt_id)
 
 
+@dataclass(frozen=True, slots=True)
+class _WorkspaceAllocation:
+    reference: WorkspaceRef
+    lease: WorkspaceLease
+
+
+class _RecordingWorkspaceManager:
+    def __init__(self, workspace: Path) -> None:
+        self.workspace = workspace
+        self.cleaned: list[_WorkspaceAllocation] = []
+
+    def can_isolate_writes(self) -> bool:
+        return True
+
+    def allocate(
+        self,
+        *,
+        run_id: ID,
+        attempt_id: ID,
+        write_capable: bool,
+        isolate: bool,
+    ) -> _WorkspaceAllocation:
+        del isolate
+        reference = WorkspaceRef(run_id, str(self.workspace), WorkspaceKind.DIRECTORY, False)
+        return _WorkspaceAllocation(
+            reference,
+            WorkspaceLease(attempt_id, reference.workspace_ref_id, write_capable),
+        )
+
+    def cleanup(self, allocation: WorkspaceAllocationPort) -> WorkspaceLease:
+        assert isinstance(allocation, _WorkspaceAllocation)
+        self.cleaned.append(allocation)
+        return allocation.lease.release()
+
+
 def test_dispatcher_filters_capability_state_capacity_and_uses_stable_order() -> None:
     capability = WorkerCapability("workspace.read")
     preferred = WorkerProfile(
@@ -202,6 +243,84 @@ def test_dispatcher_filters_capability_state_capacity_and_uses_stable_order() ->
         workspace_conflict=False,
     )
     assert exhausted.assignment is None and exhausted.reason == "global capacity exhausted"
+
+
+def test_scheduler_releases_workspace_when_attempt_start_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database = SQLiteDatabase(tmp_path / "scheduler-start-failure.sqlite3")
+    artifacts = FilesystemArtifactStore(tmp_path / "artifacts-start-failure")
+    worker = FakeWorker()
+    orchestrator = Orchestrator(
+        uow_factory=database.unit_of_work,
+        worker=worker,
+        artifact_store=artifacts,
+        check_runner=CheckRunner(
+            {
+                CheckKind.ARTIFACT: ArtifactCheckAdapter(
+                    artifacts,
+                    {},
+                    default_rule=ArtifactCheckRule(minimum_count=1, require_non_empty=True),
+                )
+            }
+        ),
+        workspace=tmp_path,
+        attempt_budget=5,
+    )
+    service = ExecutionService(
+        uow_factory=database.unit_of_work,
+        planner=DeterministicPlanner(),
+        orchestrator=orchestrator,
+        background_start=True,
+    )
+    project = service.create_project(CreateProject("project-start-failure", "scheduler"))
+    goal = service.create_goal(
+        CreateGoal("goal-start-failure", project.project_id, "release Workspace")
+    )
+    plan = service.propose_plan(
+        ProposePlan("plan-start-failure", goal.goal_id, (NON_EMPTY_ARTIFACT_CRITERION,))
+    )
+    approved = service.approve_plan(
+        ApprovePlan(
+            "approve-start-failure",
+            plan.plan_revision_id,
+            plan.completion_contract_id,
+        )
+    )
+    service.start_run(StartRun("run-start-failure", approved.plan_revision_id))
+
+    profile = WorkerProfile("start-failure", WorkerKind.BUILTIN, "scripted")
+    endpoint = WorkerEndpoint(
+        "start-failure",
+        WorkerKind.BUILTIN,
+        WorkerEndpointType.IN_PROCESS,
+        "start-failure",
+        1,
+    )
+    workspaces = _RecordingWorkspaceManager(tmp_path)
+    runtime = ConcurrentRuntime(
+        uow_factory=database.unit_of_work,
+        orchestrator=orchestrator,
+        dispatcher=Dispatcher(
+            profiles=(profile,),
+            endpoints=(endpoint,),
+            capacity=CapacityPolicy(1, 1, 1, {}, {}),
+        ),
+        connectors={endpoint.worker_endpoint_id: _BlockingConnector(worker)},
+        workspace_manager=workspaces,
+    )
+
+    def fail_start(attempt_id: ID) -> WorkerRequest:
+        raise RuntimeError(f"cannot start {attempt_id}")
+
+    monkeypatch.setattr(orchestrator, "start_queued_attempt", fail_start)
+
+    with pytest.raises(RuntimeError, match="cannot start"):
+        asyncio.run(runtime.run_until_idle())
+
+    assert len(workspaces.cleaned) == 1
+    assert workspaces.cleaned[0].lease.status.value == "active"
 
 
 def test_concurrent_branches_overlap_third_queues_and_queued_cancel_uses_no_slot(

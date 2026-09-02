@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -34,6 +35,7 @@ from ehai.infrastructure.artifacts import FilesystemArtifactStore
 from ehai.infrastructure.checks import ArtifactCheckAdapter, ArtifactCheckRule
 from ehai.infrastructure.sqlite import SQLiteDatabase
 from ehai.interfaces.api import create_app
+from ehai.interfaces.runtime import create_local_app
 
 
 class _CommandService:
@@ -463,3 +465,63 @@ def test_api_cannot_start_unapproved_plan_or_bypass_final_gate(tmp_path: Path) -
     )
     assert invalid_pause.status_code == 409
     assert invalid_pause.json()["error"]["code"] == "state_conflict"
+
+
+def test_local_p2_api_start_run_returns_then_background_runtime_completes(
+    tmp_path: Path,
+) -> None:
+    app = create_local_app(
+        tmp_path / "p2-api.sqlite3",
+        tmp_path / "p2-artifacts",
+        p2_runtime=True,
+    )
+    with TestClient(app) as client:
+        project = client.post(
+            "/api/v1/projects",
+            json={"idempotency_key": "p2-project", "name": "p2"},
+        ).json()["data"]
+        goal = client.post(
+            "/api/v1/goals",
+            json={
+                "idempotency_key": "p2-goal",
+                "project_id": project["project_id"],
+                "objective": "background completion",
+            },
+        ).json()["data"]
+        plan = client.post(
+            "/api/v1/plans/propose",
+            json={
+                "idempotency_key": "p2-plan",
+                "goal_id": goal["goal_id"],
+                "criteria": ["artifact:non-empty"],
+            },
+        ).json()["data"]
+        client.post(
+            "/api/v1/plans/approve",
+            json={
+                "idempotency_key": "p2-approve",
+                "plan_revision_id": plan["plan_revision_id"],
+                "completion_contract_id": plan["completion_contract_id"],
+            },
+        )
+        started = client.post(
+            "/api/v1/runs/start",
+            json={
+                "idempotency_key": "p2-run",
+                "plan_revision_id": plan["plan_revision_id"],
+            },
+        ).json()["data"]
+        assert started["status"] == "pending"
+
+        deadline = time.monotonic() + 5
+        current = started
+        while current["status"] != "completed" and time.monotonic() < deadline:
+            time.sleep(0.05)
+            current = client.get(f"/api/v1/runs/{started['run_id']}").json()["data"]
+
+        assert current["status"] == "completed"
+        trace = client.get(f"/api/v1/runs/{started['run_id']}/trace").json()["data"]
+        attempt_id = trace["attempts"][0]["attempt_id"]
+        runtime = client.get(f"/api/v1/attempts/{attempt_id}/runtime")
+        assert runtime.status_code == 200
+        assert runtime.json()["data"]["worker_profile_id"] is not None

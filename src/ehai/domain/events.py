@@ -53,6 +53,7 @@ class EventType(StrEnum):
     ATTEMPT_BOUND = "AttemptBound"
     ATTEMPT_HEARTBEAT_OBSERVED = "AttemptHeartbeatObserved"
     ATTEMPT_WAITING = "AttemptWaiting"
+    ATTEMPT_DEADLINE_EXTENDED = "AttemptDeadlineExtended"
     ATTEMPT_RETRY_SCHEDULED = "AttemptRetryScheduled"
     ATTEMPT_SUCCEEDED = "AttemptSucceeded"
     ATTEMPT_FAILED = "AttemptFailed"

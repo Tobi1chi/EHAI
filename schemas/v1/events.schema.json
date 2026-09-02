@@ -30,6 +30,7 @@
         "AttemptBound",
         "AttemptHeartbeatObserved",
         "AttemptWaiting",
+        "AttemptDeadlineExtended",
         "AttemptRetryScheduled",
         "AttemptStarted",
         "AttemptSucceeded",

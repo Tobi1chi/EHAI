@@ -73,6 +73,11 @@ class ExecutionService:
         self._background_start = background_start
         self._execution_lock = Lock()
 
+    @property
+    def orchestrator(self) -> Orchestrator:
+        """Return the shared application Orchestrator for local P2 Runtime composition."""
+        return self._orchestrator
+
     def create_project(self, command: CreateProject) -> Project:
         """Create a Project and its immutable fact Event atomically."""
         with self._uow_factory() as uow:

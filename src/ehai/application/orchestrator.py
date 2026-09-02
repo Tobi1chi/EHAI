@@ -200,6 +200,11 @@ class Orchestrator:
         self._branch_evaluator = branch_evaluator
         self._attempt_budget = attempt_budget
 
+    @property
+    def worker(self) -> WorkerAdapter:
+        """Return the configured Worker Adapter for local Runtime composition."""
+        return self._worker
+
     def execute(self, run_id: ID) -> Run:
         """Execute an approved P1 PlanGraph serially through its final merge Gate."""
         while True:

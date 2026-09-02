@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import cast
@@ -16,6 +17,7 @@ from ehai.application.planner import NON_EMPTY_ARTIFACT_CRITERION
 from ehai.application.ports import StoredEvent
 from ehai.application.queries import (
     ArtifactView,
+    AttemptRuntimeView,
     AttemptView,
     BranchSelectionView,
     CheckpointSummary,
@@ -28,20 +30,37 @@ from ehai.application.queries import (
     PlanGraphView,
     PlanNodeView,
     RunView,
+    WorkerEndpointView,
+    WorkerProfileView,
+)
+from ehai.application.runtime_control import (
+    WaitingWorkerRequestView,
+    WorkerRequestKind,
+    WorkerRequestStatus,
 )
 from ehai.domain.artifacts import ArtifactKind
 from ehai.domain.checking import CheckKind, CheckRunStatus
 from ehai.domain.events import Event, EventType
 from ehai.domain.execution import AttemptStatus, RunStatus
 from ehai.domain.planning import PlanNodeKind, PlanNodeStatus, PlanRevisionStatus
+from ehai.domain.workers import (
+    AttemptActivity,
+    AttemptExecutionKind,
+    SessionPolicy,
+    WorkerEndpointStatus,
+    WorkerEndpointType,
+    WorkerKind,
+)
 from ehai.interfaces.api import create_app
 from ehai.interfaces.http_models import (
     ApprovePlanRequest,
     CancelRunRequest,
     CreateGoalRequest,
     CreateProjectRequest,
+    ExtendAttemptDeadlineRequest,
     ProposePlanRequest,
     ReplanPlanRequest,
+    ResolveWorkerRequestRequest,
     RunActionRequest,
     StartRunRequest,
 )
@@ -217,6 +236,49 @@ TRACE = ExecutionTraceView(
     (STORED_EVENT,),
 )
 EVENT_PAGE = EventPage((STORED_EVENT,), None, STORED_EVENT.event.id, 1, False)
+PROFILE = WorkerProfileView(
+    new_id(),
+    "builtin",
+    WorkerKind.BUILTIN,
+    "test-model",
+    ("workspace.read",),
+    SessionPolicy.NEW,
+    None,
+    1,
+)
+ENDPOINT = WorkerEndpointView(
+    new_id(),
+    "local",
+    WorkerKind.BUILTIN,
+    WorkerEndpointType.IN_PROCESS,
+    1,
+    WorkerEndpointStatus.ENABLED,
+)
+ATTEMPT_RUNTIME = AttemptRuntimeView(
+    attempt_id=ATTEMPT_ID,
+    worker_profile_id=PROFILE.worker_profile_id,
+    worker_endpoint_id=ENDPOINT.worker_endpoint_id,
+    agent_session_ref_id=new_id(),
+    provider_session_id="session-safe-id",
+    session_recoverable=True,
+    execution_kind=AttemptExecutionKind.BUILTIN_TURN,
+    provider_execution_id=str(new_id()),
+    activity=AttemptActivity.WAITING,
+    event_cursor="cursor-1",
+    heartbeat_at=NOW,
+    progress_at=NOW,
+    deadline_at=NOW,
+    lease_expires_at=NOW,
+    queue_reason=None,
+    diagnostics=("AttemptWaiting",),
+)
+WAITING_REQUEST = WaitingWorkerRequestView(
+    new_id(),
+    ATTEMPT_ID,
+    WorkerRequestKind.COMMAND_APPROVAL,
+    "command execution approval required",
+    WorkerRequestStatus.PENDING,
+)
 
 
 class _CommandService:
@@ -234,6 +296,50 @@ class _CommandService:
     cancel_run = _respond
 
 
+class _RuntimeControl:
+    def list_waiting_requests(self, attempt_id: ID) -> tuple[WaitingWorkerRequestView, ...]:
+        del attempt_id
+        return (WAITING_REQUEST,)
+
+    async def resolve_worker_request(
+        self,
+        worker_request_id: ID,
+        resolution: object,
+        *,
+        idempotency_key: str | None = None,
+    ) -> WaitingWorkerRequestView:
+        del worker_request_id, resolution, idempotency_key
+        return replace(WAITING_REQUEST, status=WorkerRequestStatus.RESOLVED)
+
+    async def decline_worker_request(
+        self,
+        worker_request_id: ID,
+        *,
+        idempotency_key: str | None = None,
+    ) -> WaitingWorkerRequestView:
+        del worker_request_id, idempotency_key
+        return replace(WAITING_REQUEST, status=WorkerRequestStatus.DECLINED)
+
+    def extend_deadline(
+        self,
+        attempt_id: ID,
+        deadline_at: datetime,
+        *,
+        idempotency_key: str | None = None,
+    ) -> object:
+        del attempt_id, deadline_at, idempotency_key
+        return object()
+
+    async def cancel_attempt(
+        self,
+        attempt_id: ID,
+        *,
+        idempotency_key: str | None = None,
+    ) -> RunView:
+        del attempt_id, idempotency_key
+        return RUN
+
+
 class _QueryService:
     def get_run(self, run_id: ID) -> RunView:
         del run_id
@@ -242,6 +348,16 @@ class _QueryService:
     def get_plan_graph(self, plan_revision_id: ID) -> PlanGraphView:
         del plan_revision_id
         return PLAN_GRAPH
+
+    def list_worker_profiles(self) -> tuple[WorkerProfileView, ...]:
+        return (PROFILE,)
+
+    def list_worker_endpoints(self) -> tuple[WorkerEndpointView, ...]:
+        return (ENDPOINT,)
+
+    def get_attempt_runtime(self, attempt_id: ID) -> AttemptRuntimeView:
+        del attempt_id
+        return ATTEMPT_RUNTIME
 
     def get_execution_trace(self, run_id: ID) -> ExecutionTraceView:
         del run_id
@@ -278,7 +394,9 @@ class _QueryService:
 
 
 def _client() -> TestClient:
-    return TestClient(create_app(_CommandService(), _QueryService()))  # type: ignore[arg-type]
+    return TestClient(  # type: ignore[arg-type]
+        create_app(_CommandService(), _QueryService(), _RuntimeControl())
+    )
 
 
 @pytest.mark.parametrize(
@@ -320,6 +438,17 @@ def _client() -> TestClient:
         ("PauseRunRequest", RunActionRequest(idempotency_key="pause")),
         ("ResumeRunRequest", RunActionRequest(idempotency_key="resume")),
         ("CancelRunRequest", CancelRunRequest(idempotency_key="cancel", reason="stop")),
+        (
+            "ExtendAttemptDeadlineRequest",
+            ExtendAttemptDeadlineRequest(idempotency_key="deadline", deadline_at=NOW),
+        ),
+        (
+            "ResolveWorkerRequestRequest",
+            ResolveWorkerRequestRequest(
+                idempotency_key="resolve",
+                resolution={"decision": "accept"},
+            ),
+        ),
     ],
 )
 def test_command_request_schemas_match_http_models(definition: str, model: object) -> None:
@@ -346,11 +475,25 @@ def test_real_testclient_responses_match_query_and_command_contracts() -> None:
         (f"/api/v1/runs/{RUN_ID}/artifacts", "ArtifactListResponse"),
         (f"/api/v1/artifacts/{ARTIFACT_ID}", "ArtifactResponse"),
         ("/api/v1/events", "EventPageResponse"),
+        ("/api/v1/workers/profiles", "WorkerProfileListResponse"),
+        ("/api/v1/workers/endpoints", "WorkerEndpointListResponse"),
+        (f"/api/v1/attempts/{ATTEMPT_ID}/runtime", "AttemptRuntimeResponse"),
+        (
+            f"/api/v1/attempts/{ATTEMPT_ID}/worker-requests",
+            "WorkerRequestListResponse",
+        ),
     )
     for path, definition in cases:
         response = client.get(path)
         assert response.status_code == 200, response.text
         _validator("queries.schema.json", definition).validate(response.json())
+
+    resolved = client.post(
+        f"/api/v1/worker-requests/{WAITING_REQUEST.worker_request_id}/resolve",
+        json={"idempotency_key": "resolve", "resolution": {"decision": "accept"}},
+    )
+    assert resolved.status_code == 200
+    _validator("queries.schema.json", "WorkerRequestResponse").validate(resolved.json())
 
 
 def test_real_command_responses_match_typed_contracts(tmp_path: Path) -> None:
