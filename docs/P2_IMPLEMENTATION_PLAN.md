@@ -103,6 +103,8 @@ Endpoint  1 ── N 并发 Session（受 capacity 限制）
 
 ### P2-I0：执行契约与迁移基线
 
+固定契约见 [P2 执行契约与迁移基线](P2_EXECUTION_CONTRACT.md)。
+
 **前置**
 
 - P1/P1.1 全量测试、Ruff、格式和 mypy 通过。

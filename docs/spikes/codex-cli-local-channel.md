@@ -175,3 +175,18 @@ if ($resolved.StartsWith($tempRoot) -and
     Remove-Item -LiteralPath $resolved -Recurse -Force
 }
 ```
+
+## P2-I0 App Server 只读能力快照
+
+2026-09-02 在不启动 App Server、不生成文件且不修改 Codex 配置的前提下，运行：
+
+```powershell
+codex --version
+codex app-server --help
+codex app-server generate-json-schema --help
+codex app-server generate-ts --help
+```
+
+本机版本仍为 `codex-cli 0.147.0`。`app-server` 默认支持 `--listen stdio://`，并明确提供
+`generate-json-schema --out <DIR>` 与 `generate-ts --out <DIR>`；两个生成入口均可选择是否包含
+experimental 协议。I0 只确认能力存在，没有把生成物写入仓库，也没有启动、连接或实现 Connector。
