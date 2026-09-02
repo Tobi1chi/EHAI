@@ -45,7 +45,7 @@ Goal + CompletionContract
 | 阶段 | 状态 | 范围 |
 | --- | --- | --- |
 | P1/P1.1 | 已完成 | 单 Worker 串行闭环、Codex CLI、分支评估、Check/Gate、Checkpoint、API/SSE |
-| P2 | 进行中 | 异步调度、多 Worker、平台路由、Agent Session、并发与资源管理 |
+| P2 | 进行中 | 异步调度、Built-in/Codex Worker、Agent Session、并发与资源管理 |
 | P3+ | 已规划 | TypeScript Control Plane、可复用 Workflow 和开放扩展生态 |
 
 P2 表中的能力仍处于开发阶段；当前可运行命令保持 P1/P1.1 的串行语义。
@@ -69,6 +69,7 @@ uv run ehai-api --help
 - [Usage Guide](docs/USAGE.md)：真实 Codex、CLI、API、SSE 和离线验证。
 - [Roadmap](docs/ROADMAP.md)：P1 至 P5 的产品阶段、范围和退出条件。
 - [P1 Implementation Plan](docs/P1_IMPLEMENTATION_PLAN.md)：P1 增量、验收与完成记录。
+- [P2 Implementation Plan](docs/P2_IMPLEMENTATION_PLAN.md)：P2 增量、异步调度与多 Worker 验收计划。
 - [Development Guidelines](docs/DEVELOPMENT_GUIDELINES.md)：领域语言、模块边界和开发规范。
 - [Architecture Decision Records](docs/adr/)：持久化、接口和 Codex 通道等关键决策。
 - [Codex CLI Spike](docs/spikes/codex-cli-local-channel.md)：真实 Codex 通道与验收观察。

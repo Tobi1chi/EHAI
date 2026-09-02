@@ -29,7 +29,7 @@ Attempt 对应的一次 turn 或 job。平台原生 ID 通过这些引用保存�
 - Orchestrator 计算就绪节点并推进领域状态，但不负责平台容量与 Session 分配。
 - Scheduler 管理可运行 Attempt 的队列、并发、重试、超时和资源预算；Dispatcher 根据能力、容量、
   Project 隔离和 Session 策略选择 WorkerProfile 与 WorkerEndpoint。
-- Worker Connector 封装 Codex、OpenCode 等平台的启动、事件、状态查询、取消和恢复协议，不决定
+- Worker Connector 封装外部 Agent 平台的启动、事件、状态查询、取消和恢复协议，不决定
   PlanNode 或 Run 是否完成。
 - Worker 只提交候选结果、Artifact 和事件，不得直接标记节点或 Goal 完成。
 - Checker 产生带证据的 CheckResult；Gate 根据策略作出状态转换决定。

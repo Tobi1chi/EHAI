@@ -160,7 +160,7 @@ Remove-Item Env:EHAI_RUN_CODEX_SMOKE
 ## 当前基线限制
 
 - 一个进程内同一时刻只执行一个 Attempt，探索分支按稳定顺序串行运行。
-- 每个应用实例只选择一个 Worker Connector，不支持 Worker 池和动态平台路由。
+- 每个应用实例只选择一个 Worker Connector，不支持 Worker 池和动态 Worker 路由。
 - `ehai-api` 按单进程运行，不要使用多个 Uvicorn Worker 共享 P1 SQLite 状态。
 - 持久 Agent Session、异步 Scheduler、Dispatcher 和多 Worker 能力仍属于 P2 开发范围。
 - Artifact 输入受单文件和总输入预算限制，超限会 fail closed。

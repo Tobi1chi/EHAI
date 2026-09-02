@@ -44,11 +44,13 @@ EHAI（Enhanced Human-Agent Interface）用于建立可规划、可探索、可�
 
 **目标：** 将 P1 原型升级为可靠、可扩展的 Agent Runtime。
 
+详细编码顺序和验收方法见 [P2 Implementation Plan](P2_IMPLEMENTATION_PLAN.md)。
+
 范围：
 
 - Built-in Worker Agent Framework。
 - 统一 Worker Adapter 与能力声明协议。
-- Claude Code、OpenCode 等 External Worker Connectors。
+- Codex App Server External Worker Connector，并保留现有 Codex CLI Connector。
 - Orchestrator 保留就绪判断和领域状态推进；Scheduler 管理执行队列与并发；
   Dispatcher 根据能力与容量选择 Worker Endpoint。
 - 将每个 Attempt 持久化绑定到外部 Agent Session 和一次 provider execution，并通过事件、心跳、
@@ -56,7 +58,7 @@ EHAI（Enhanced Human-Agent Interface）用于建立可规划、可探索、可�
 - 并发、重试、超时、取消和资源预算。
 - 分支上下文与 Git worktree 隔离。
 - Artifact、日志、上下文摘要和 Event Replay。
-- Check Runner 插件化及恢复测试。
+- Check Runner 静态注册与恢复测试。
 - 稳定 OpenAPI/JSON Schema，并建立 TypeScript 类型和 API Client 的生成流程。
 
 退出条件：同一 PlanRevision 能混合调度多个 Worker；运行失败或进程重启后可恢复；每个决策均能追溯到事件和证据。完成首次系统性代码审查。
@@ -100,6 +102,7 @@ EHAI（Enhanced Human-Agent Interface）用于建立可规划、可探索、可�
 
 候选范围：
 
+- Claude Code、OpenCode External Worker Connectors。
 - External Assistance Agent Framework 与 OpenClaw 系列。
 - DSH 接入；其职责和边界明确后再固定具体位置。
 - Worker、Checker 和 Connector 插件 SDK。

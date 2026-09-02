@@ -15,7 +15,7 @@ P1 的 I0 至 I8 与后续 P1.1 修复均已完成，当前基线为提交 `a1a4
 
 自动化测试、Ruff、格式检查和 mypy 已通过；真实 Codex Worker smoke 与五节点探索闭环结果记录在
 README 和 Codex CLI Spike 中。P1 继续作为单 Worker、串行执行的稳定基线，后续并发、异步调度、
-多平台路由和 Agent Session 管理归入 P2。
+Worker 路由和 Agent Session 管理归入 P2。
 
 ## P1 技术边界
 
