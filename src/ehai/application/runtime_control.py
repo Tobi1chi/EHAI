@@ -9,7 +9,7 @@ from enum import StrEnum
 from typing import Protocol, runtime_checkable
 
 from ehai import ID, JsonValue, format_utc_datetime, new_id, normalize_id, utc_now
-from ehai.application.async_runtime import ConnectorExecution, SingleSlotRuntime
+from ehai.application.async_runtime import ConnectorExecution, RuntimeConnector
 from ehai.application.orchestrator import Orchestrator
 from ehai.application.ports import UnitOfWork
 from ehai.domain.events import Event, EventType
@@ -69,6 +69,15 @@ class InteractiveRuntimeConnector(Protocol):
     ) -> None: ...
 
 
+class ControllableRuntime(Protocol):
+    @property
+    def orchestrator(self) -> Orchestrator: ...
+
+    def connector_for(self, worker_endpoint_id: ID) -> RuntimeConnector | None: ...
+
+    async def cancel_attempt(self, attempt_id: ID) -> Run: ...
+
+
 class RuntimeControlService:
     """Coordinate explicit P2 commands with one single-process Runtime registry."""
 
@@ -77,7 +86,7 @@ class RuntimeControlService:
         *,
         uow_factory: Callable[[], UnitOfWork],
         orchestrator: Orchestrator,
-        runtimes: Mapping[ID, SingleSlotRuntime],
+        runtimes: Mapping[ID, ControllableRuntime],
         clock: Callable[[], datetime] = utc_now,
     ) -> None:
         self._uow_factory = uow_factory
@@ -96,7 +105,9 @@ class RuntimeControlService:
         runtime = self._runtimes.get(attempt.worker_endpoint_id)
         if runtime is None:
             return ()
-        connector = runtime.connector
+        connector = runtime.connector_for(attempt.worker_endpoint_id)
+        if connector is None:
+            return ()
         if not isinstance(connector, InteractiveRuntimeConnector):
             return ()
         execution = self._execution(attempt)

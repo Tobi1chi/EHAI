@@ -14,6 +14,7 @@ from ehai.application.async_runtime import (
     WorkerEvent,
     WorkerEventType,
 )
+from ehai.application.builtin_agent import ModelRequest, ModelResponse, ToolCall
 from ehai.application.checks import CheckRunner
 from ehai.application.commands import (
     ApprovePlan,
@@ -48,9 +49,10 @@ from ehai.domain.workers import (
     WorkerProfile,
 )
 from ehai.infrastructure.artifacts import FilesystemArtifactStore
+from ehai.infrastructure.builtin_sessions import SQLiteBuiltinSessionStore
 from ehai.infrastructure.checks import ArtifactCheckAdapter, ArtifactCheckRule
 from ehai.infrastructure.sqlite import SQLiteDatabase
-from ehai.infrastructure.workers import FakeWorker
+from ehai.infrastructure.workers import BuiltinAgentConnector, FakeWorker
 from ehai.infrastructure.workspaces import WorkspaceManager
 
 
@@ -65,7 +67,9 @@ class _RoutedPlanner:
         )
         nodes = []
         for node in proposal.plan_revision.nodes:
-            route = "worker.codex" if node.title == "Explore approach B" else "worker.builtin"
+            route = (
+                "worker.codex" if node.title == "Evaluate branch candidates" else "worker.builtin"
+            )
             capabilities = {WorkerCapability(route)}
             if node.kind is PlanNodeKind.WORK:
                 capabilities.add(WorkerCapability("workspace.write"))
@@ -143,6 +147,73 @@ class _RoutedConnector:
         return self.executions.get(request.attempt_id)
 
 
+class _BuiltinRoutedModelClient:
+    def __init__(
+        self,
+        request: WorkerRequest,
+        worker: FakeWorker,
+        barrier: _BranchBarrier,
+    ) -> None:
+        self.request = request
+        self.worker = worker
+        self.barrier = barrier
+        self.step = 0
+
+    async def complete(self, request: ModelRequest) -> ModelResponse:
+        del request
+        self.step += 1
+        if self.request.plan_node.kind is PlanNodeKind.WORK:
+            if self.step == 1:
+                self.barrier.active += 1
+                if self.barrier.active == 2:
+                    self.barrier.two_active.set()
+                await self.barrier.release.wait()
+                return ModelResponse(
+                    "patch isolated worktree",
+                    (
+                        ToolCall(
+                            "patch-1",
+                            "workspace_patch",
+                            {"path": "base.txt", "expected": "base", "replacement": "builtin"},
+                        ),
+                    ),
+                    provider_response_id="builtin-response-1",
+                )
+            if self.step == 2:
+                return ModelResponse(
+                    "restore clean worktree",
+                    (
+                        ToolCall(
+                            "patch-2",
+                            "workspace_patch",
+                            {"path": "base.txt", "expected": "builtin", "replacement": "base"},
+                        ),
+                    ),
+                    provider_response_id="builtin-response-2",
+                )
+            artifact = self.worker.execute(self.request).artifacts[0]
+        else:
+            artifact = self.worker.execute(self.request).artifacts[0]
+        return ModelResponse(
+            "submit candidate",
+            (
+                ToolCall(
+                    f"submit-{self.request.attempt_id}",
+                    "submit_candidate",
+                    {
+                        "name": artifact.name,
+                        "media_type": artifact.media_type,
+                        "content": artifact.content.decode("utf-8"),
+                    },
+                ),
+            ),
+            provider_response_id=f"builtin-response-{self.step}",
+        )
+
+    async def aclose(self) -> None:
+        return None
+
+
 def test_p2_mixed_workers_isolate_branches_gate_and_replay(tmp_path: Path) -> None:
     repository = tmp_path / "repository"
     repository.mkdir()
@@ -156,6 +227,7 @@ def test_p2_mixed_workers_isolate_branches_gate_and_replay(tmp_path: Path) -> No
     database = SQLiteDatabase(tmp_path / "p2.sqlite3")
     artifacts = FilesystemArtifactStore(tmp_path / "artifacts")
     worker = FakeWorker()
+    builtin_model_worker = FakeWorker()
     orchestrator = Orchestrator(
         uow_factory=database.unit_of_work,
         worker=worker,
@@ -225,12 +297,30 @@ def test_p2_mixed_workers_isolate_branches_gate_and_replay(tmp_path: Path) -> No
         1,
     )
     barrier = _BranchBarrier()
-    builtin_connector = _RoutedConnector("builtin", worker, barrier)
     codex_connector = _RoutedConnector("codex", worker, barrier)
     workspace_manager = WorkspaceManager(
         database=database,
         base_workspace=repository,
         owned_root=tmp_path / "owned-worktrees",
+    )
+    builtin_connector = BuiltinAgentConnector(
+        uow_factory=database.unit_of_work,
+        orchestrator=orchestrator,
+        session_store=SQLiteBuiltinSessionStore(database),
+        artifact_store=artifacts,
+        profile=builtin_profile,
+        default_workspace=repository,
+        allowed_commands=("uv",),
+        model_client_factory=lambda _profile, request: _BuiltinRoutedModelClient(
+            request,
+            builtin_model_worker,
+            barrier,
+        ),
+        workspace_resolver=lambda attempt_id: (
+            None
+            if (allocation := workspace_manager.allocation_for_attempt(attempt_id)) is None
+            else Path(allocation.reference.path)
+        ),
     )
     runtime = ConcurrentRuntime(
         uow_factory=database.unit_of_work,
@@ -250,11 +340,28 @@ def test_p2_mixed_workers_isolate_branches_gate_and_replay(tmp_path: Path) -> No
     async def scenario() -> tuple[RunStatus, ...]:
         running = asyncio.create_task(runtime.run_until_idle())
         await asyncio.wait_for(barrier.two_active.wait(), timeout=10)
+        with database.read_session() as session:
+            active_attempts = tuple(
+                attempt
+                for attempt in session.states.list_attempts(run.run_id)
+                if attempt.status.value == "running"
+            )
+            active_sessions = tuple(
+                session.states.get_agent_session_ref(attempt.agent_session_ref_id)
+                for attempt in active_attempts
+                if attempt.agent_session_ref_id is not None
+            )
+        assert len(active_attempts) == 2
+        assert all(
+            attempt.worker_profile_id == builtin_profile.worker_profile_id
+            for attempt in active_attempts
+        )
+        assert len({item.provider_session_id for item in active_sessions if item}) == 2
         branch_workspaces = tuple(
-            workspace
-            for connector in (builtin_connector, codex_connector)
-            for attempt_id, workspace in connector.workspaces.items()
-            if connector.requests[attempt_id].plan_node.kind is PlanNodeKind.WORK
+            allocation.reference.path
+            for attempt in active_attempts
+            if (allocation := workspace_manager.allocation_for_attempt(attempt.attempt_id))
+            is not None
         )
         assert len(branch_workspaces) == 2
         assert all(workspace is not None for workspace in branch_workspaces)
@@ -282,11 +389,15 @@ def test_p2_mixed_workers_isolate_branches_gate_and_replay(tmp_path: Path) -> No
     assert trace.checkpoints and trace.checkpoints[-1].gate_decision.passed
     replay = ExecutionReplay().replay(trace.events)
     assert set(replay.bindings) == {attempt.attempt_id for attempt in trace.attempts}
+    allocations = tuple(
+        allocation
+        for attempt in trace.attempts
+        if (allocation := workspace_manager.allocation_for_attempt(attempt.attempt_id)) is not None
+    )
     assert all(
-        not Path(workspace).exists()
-        for connector in (builtin_connector, codex_connector)
-        for workspace in connector.workspaces.values()
-        if workspace is not None and "owned-worktrees" in workspace
+        not Path(allocation.reference.path).exists()
+        for allocation in allocations
+        if "owned-worktrees" in allocation.reference.path
     )
 
 

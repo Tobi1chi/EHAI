@@ -7,8 +7,9 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import cast
 
+import httpx
 import pytest
-from openai import AsyncOpenAI, omit
+from openai import AsyncOpenAI, BadRequestError, omit
 
 from ehai import JsonValue, json_loads, new_id
 from ehai.application.builtin_agent import (
@@ -102,17 +103,20 @@ class _FakeStream:
 
 
 class _FakeResponses:
-    def __init__(self, streams: tuple[_FakeStream, ...]) -> None:
+    def __init__(self, streams: tuple[_FakeStream | Exception, ...]) -> None:
         self._streams = list(streams)
         self.requests: list[dict[str, object]] = []
 
     async def create(self, **kwargs: object) -> _FakeStream:
         self.requests.append(kwargs)
-        return self._streams.pop(0)
+        result = self._streams.pop(0)
+        if isinstance(result, Exception):
+            raise result
+        return result
 
 
 class _FakeOpenAI:
-    def __init__(self, streams: tuple[_FakeStream, ...]) -> None:
+    def __init__(self, streams: tuple[_FakeStream | Exception, ...]) -> None:
         self.responses = _FakeResponses(streams)
 
 
@@ -446,10 +450,14 @@ def test_openai_responses_protocol_streams_function_result_continuation_and_fina
     profile = WorkerProfile(
         "openai",
         WorkerKind.BUILTIN,
-        "gpt-test",
+        "gpt-5.6-luna",
         credential_ref=OPENAI_CREDENTIAL_REF,
     )
-    client = OpenAIResponsesModelClient(profile, client=cast(AsyncOpenAI, fake))
+    client = OpenAIResponsesModelClient(
+        profile,
+        client=cast(AsyncOpenAI, fake),
+        reasoning_effort="high",
+    )
     tool = _tool("inspect")
     system = ModelMessage(ModelRole.SYSTEM, "system")
     user = ModelMessage(ModelRole.USER, "user")
@@ -484,6 +492,7 @@ def test_openai_responses_protocol_streams_function_result_continuation_and_fina
     assert fake.responses.requests[0]["stream"] is True
     assert fake.responses.requests[0]["store"] is True
     assert fake.responses.requests[0]["parallel_tool_calls"] is False
+    assert fake.responses.requests[0]["reasoning"] == {"effort": "high"}
     assert fake.responses.requests[0]["previous_response_id"] is omit
     tools = cast(list[dict[str, object]], fake.responses.requests[0]["tools"])
     assert tools[0]["strict"] is True
@@ -491,6 +500,81 @@ def test_openai_responses_protocol_streams_function_result_continuation_and_fina
     response_input = cast(list[dict[str, object]], fake.responses.requests[1]["input"])
     assert response_input == [
         {"type": "function_call_output", "call_id": "call-1", "output": '{"ok":true}'}
+    ]
+
+
+def test_openai_responses_replays_durable_history_when_continuation_is_rejected() -> None:
+    final_item = _Dumpable(
+        type="message",
+        document={"type": "message", "role": "assistant", "content": []},
+    )
+    response = SimpleNamespace(
+        id="resp-replayed",
+        status="completed",
+        output_text="candidate",
+        usage=None,
+        output=(final_item,),
+    )
+    stream = _FakeStream(
+        (
+            SimpleNamespace(type="response.output_text.delta", delta="candidate"),
+            SimpleNamespace(type="response.completed", response=response),
+        )
+    )
+    rejection = BadRequestError(
+        "previous_response_id requires an OpenAI API-key account for HTTP requests",
+        response=httpx.Response(
+            400,
+            request=httpx.Request("POST", "https://example.invalid/responses"),
+        ),
+        body={"error": {"message": "previous_response_id rejected"}},
+    )
+    fake = _FakeOpenAI((rejection, stream))
+    profile = WorkerProfile(
+        "openai-replay",
+        WorkerKind.BUILTIN,
+        "gpt-5.6-luna",
+        credential_ref=OPENAI_CREDENTIAL_REF,
+    )
+    client = OpenAIResponsesModelClient(
+        profile,
+        client=cast(AsyncOpenAI, fake),
+        reasoning_effort="high",
+    )
+    system = ModelMessage(ModelRole.SYSTEM, "system")
+    user = ModelMessage(ModelRole.USER, "user")
+    assistant = ModelMessage(
+        ModelRole.ASSISTANT,
+        "",
+        tool_calls=(ToolCall("call-1", "inspect", {}),),
+    )
+    tool_result = ModelMessage(ModelRole.TOOL, '{"ok":true}', call_id="call-1")
+
+    result = asyncio.run(
+        client.complete(
+            ModelRequest(
+                (system, user, assistant, tool_result),
+                (_tool("inspect"),),
+                input_messages=(tool_result,),
+                previous_response_id="resp-1",
+            )
+        )
+    )
+
+    assert result.final_text == "candidate"
+    assert len(fake.responses.requests) == 2
+    assert fake.responses.requests[0]["previous_response_id"] == "resp-1"
+    assert fake.responses.requests[1]["previous_response_id"] is omit
+    replayed_input = cast(list[dict[str, object]], fake.responses.requests[1]["input"])
+    assert replayed_input == [
+        {"role": "user", "content": "user"},
+        {
+            "type": "function_call",
+            "call_id": "call-1",
+            "name": "inspect",
+            "arguments": "{}",
+        },
+        {"type": "function_call_output", "call_id": "call-1", "output": '{"ok":true}'},
     ]
 
 

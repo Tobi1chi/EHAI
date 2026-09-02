@@ -173,7 +173,7 @@ class Orchestrator:
         self,
         *,
         uow_factory: UnitOfWorkFactory,
-        worker: WorkerAdapter,
+        worker: WorkerAdapter | None,
         artifact_store: ArtifactStore,
         check_runner: CheckRunner,
         workspace: str | Path | None = None,
@@ -203,10 +203,13 @@ class Orchestrator:
     @property
     def worker(self) -> WorkerAdapter:
         """Return the configured Worker Adapter for local Runtime composition."""
+        if self._worker is None:
+            raise OrchestrationError("this Orchestrator has no synchronous WorkerAdapter")
         return self._worker
 
     def execute(self, run_id: ID) -> Run:
         """Execute an approved P1 PlanGraph serially through its final merge Gate."""
+        worker = self.worker
         while True:
             if self._evaluate_completed_evaluator(run_id):
                 continue
@@ -230,7 +233,7 @@ class Orchestrator:
                     context=worker_context,
                     artifact_inputs=artifact_inputs,
                 )
-                result = self._worker.execute(request)
+                result = worker.execute(request)
             except WorkerCancelledError as error:
                 try:
                     artifacts = self._store_worker_error_artifacts(context, error)
@@ -328,6 +331,22 @@ class Orchestrator:
         context = self._prepare(run_id)
         if context is None:  # pragma: no cover - retained for the existing private contract
             raise OrchestrationError(f"run {run_id} produced no execution context")
+        artifact_inputs = self._worker_inputs(context)
+        worker_context = self._worker_context(context, artifact_inputs)
+        if context.plan_node.kind is PlanNodeKind.MERGE:
+            artifact_inputs = _selected_merge_inputs(worker_context, artifact_inputs)
+        return WorkerRequest(
+            run=context.run,
+            attempt=context.attempt,
+            plan_node=context.plan_node,
+            completion_contract=context.completion_contract,
+            context=worker_context,
+            artifact_inputs=artifact_inputs,
+        )
+
+    def worker_request_for_attempt(self, attempt_id: ID) -> WorkerRequest:
+        """Rebuild one running Attempt request without creating or advancing work."""
+        context = self._load_attempt_context(normalize_id(attempt_id))
         artifact_inputs = self._worker_inputs(context)
         worker_context = self._worker_context(context, artifact_inputs)
         if context.plan_node.kind is PlanNodeKind.MERGE:

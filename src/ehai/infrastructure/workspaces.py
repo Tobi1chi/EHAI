@@ -9,13 +9,23 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
-from ehai import ID, JsonValue, json_dumps, json_loads, new_id, utc_now
+from ehai import (
+    ID,
+    JsonValue,
+    json_dumps,
+    json_loads,
+    new_id,
+    normalize_id,
+    parse_utc_datetime,
+    utc_now,
+)
 from ehai.application.scheduler import WorkspaceAllocationPort
 from ehai.domain.events import Event, EventType
 from ehai.domain.workers import AgentSessionRef, SessionPolicy
 from ehai.domain.workspaces import (
     WorkspaceKind,
     WorkspaceLease,
+    WorkspaceLeaseStatus,
     WorkspaceRef,
 )
 from ehai.infrastructure.sqlite.database import SQLiteDatabase
@@ -97,6 +107,27 @@ class WorkspaceManager:
     def can_isolate_writes(self) -> bool:
         """Return whether concurrent writers can receive Git worktrees."""
         return self._is_git_workspace()
+
+    def allocation_for_attempt(self, attempt_id: ID) -> WorkspaceAllocation | None:
+        """Load the latest persisted Workspace allocation for Runtime recovery."""
+        connection = self.database.connect()
+        try:
+            row = connection.execute(
+                """
+                SELECT r.snapshot_json, l.snapshot_json
+                FROM workspace_leases l
+                JOIN workspace_refs r ON r.workspace_ref_id = l.workspace_ref_id
+                WHERE l.attempt_id = ?
+                ORDER BY l.created_at DESC
+                LIMIT 1
+                """,
+                (normalize_id(attempt_id),),
+            ).fetchone()
+            if row is None:
+                return None
+            return WorkspaceAllocation(_decode_ref(row[0]), _decode_lease(row[1]))
+        finally:
+            connection.close()
 
     def cleanup(self, allocation: WorkspaceAllocationPort) -> WorkspaceLease:
         reference = allocation.reference
@@ -298,6 +329,27 @@ def _decode_ref(snapshot: str) -> WorkspaceRef:
         bool(value.get("ehai_owned")),
         ownership_token,
         ID(_string(value, "workspace_ref_id")),
+    )
+
+
+def _decode_lease(snapshot: str) -> WorkspaceLease:
+    value = json_loads(snapshot)
+    if not isinstance(value, dict):
+        raise ValueError("WorkspaceLease snapshot is not an object")
+    ended_value = value.get("ended_at")
+    if ended_value is not None and not isinstance(ended_value, str):
+        raise ValueError("WorkspaceLease snapshot ended_at must be text or null")
+    write_capable = value.get("write_capable")
+    if not isinstance(write_capable, bool):
+        raise ValueError("WorkspaceLease snapshot write_capable must be a boolean")
+    return WorkspaceLease.rehydrate(
+        attempt_id=ID(_string(value, "attempt_id")),
+        workspace_ref_id=ID(_string(value, "workspace_ref_id")),
+        write_capable=write_capable,
+        workspace_lease_id=ID(_string(value, "workspace_lease_id")),
+        status=WorkspaceLeaseStatus(_string(value, "status")),
+        created_at=parse_utc_datetime(_string(value, "created_at")),
+        ended_at=None if ended_value is None else parse_utc_datetime(ended_value),
     )
 
 

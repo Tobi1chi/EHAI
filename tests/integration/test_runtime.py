@@ -14,6 +14,31 @@ from ehai.interfaces.runtime import create_local_app
 NOW = datetime(2026, 8, 31, 12, 0, tzinfo=UTC)
 
 
+def test_runtime_parser_accepts_standalone_builtin_configuration() -> None:
+    args = runtime.create_parser().parse_args(
+        [
+            "--worker",
+            "builtin",
+            "--builtin-model",
+            "gpt-5.6-luna",
+            "--builtin-reasoning-effort",
+            "high",
+            "--builtin-capacity",
+            "3",
+            "--builtin-allowed-command",
+            "uv",
+            "--p2-runtime",
+        ]
+    )
+
+    assert args.worker == "builtin"
+    assert args.builtin_model == "gpt-5.6-luna"
+    assert args.builtin_reasoning_effort == "high"
+    assert args.builtin_capacity == 3
+    assert args.builtin_allowed_command == ["uv"]
+    assert args.p2_runtime
+
+
 def test_runtime_composes_codex_planner_with_independent_timeout(
     tmp_path,
     monkeypatch: MonkeyPatch,

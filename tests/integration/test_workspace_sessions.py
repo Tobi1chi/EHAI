@@ -100,6 +100,9 @@ def test_git_branch_workspaces_isolate_same_file_and_preserve_dirty_resources(
         write_capable=True,
         isolate=True,
     )
+    assert manager.allocation_for_attempt(attempts[0].attempt_id) == first
+    assert manager.allocation_for_attempt(attempts[1].attempt_id) == second
+    assert manager.allocation_for_attempt(attempts[2].attempt_id) is None
     first_file = Path(first.reference.path) / "shared.txt"
     second_file = Path(second.reference.path) / "shared.txt"
     first_file.write_text("selected", encoding="utf-8")
@@ -111,6 +114,9 @@ def test_git_branch_workspaces_isolate_same_file_and_preserve_dirty_resources(
     assert (repository / "shared.txt").read_text(encoding="utf-8") == "base"
     assert manager.cleanup(first).status is WorkspaceLeaseStatus.PRESERVED
     assert manager.cleanup(second).status is WorkspaceLeaseStatus.PRESERVED
+    restored_first = manager.allocation_for_attempt(attempts[0].attempt_id)
+    assert restored_first is not None
+    assert restored_first.lease.status is WorkspaceLeaseStatus.PRESERVED
     assert Path(first.reference.path).exists() and Path(second.reference.path).exists()
 
     clean = manager.allocate(

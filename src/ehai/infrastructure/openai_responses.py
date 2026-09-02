@@ -4,11 +4,13 @@ from __future__ import annotations
 
 from typing import cast
 
-from openai import AsyncOpenAI, omit
+from openai import AsyncOpenAI, AsyncStream, BadRequestError, omit
 from openai.types.responses import (
     FunctionToolParam,
     ResponseInputParam,
+    ResponseStreamEvent,
 )
+from openai.types.shared import ReasoningEffort
 
 from ehai import JsonValue, json_dumps, json_loads
 from ehai.application.builtin_agent import (
@@ -38,6 +40,7 @@ class OpenAIResponsesModelClient(ModelClient):
         client: AsyncOpenAI | None = None,
         max_output_tokens: int = 4096,
         timeout_seconds: float = 120.0,
+        reasoning_effort: ReasoningEffort = None,
     ) -> None:
         if profile.kind is not WorkerKind.BUILTIN:
             raise ValueError("OpenAIResponsesModelClient requires a Built-in WorkerProfile")
@@ -54,6 +57,7 @@ class OpenAIResponsesModelClient(ModelClient):
         self.profile = profile
         self.max_output_tokens = max_output_tokens
         self.timeout_seconds = float(timeout_seconds)
+        self.reasoning_effort = reasoning_effort
         self._client = AsyncOpenAI() if client is None else client
         self._owns_client = client is None
         self._closed = False
@@ -61,20 +65,20 @@ class OpenAIResponsesModelClient(ModelClient):
     async def complete(self, request: ModelRequest) -> ModelResponse:
         if self._closed:
             raise RuntimeError("OpenAIResponsesModelClient is closed")
-        stream = await self._client.responses.create(
-            model=self.profile.model,
-            instructions=_instructions(request.messages),
-            input=_response_input(request.input_messages),
-            tools=_function_tools(request),
-            previous_response_id=(
-                omit if request.previous_response_id is None else request.previous_response_id
-            ),
-            parallel_tool_calls=False,
-            store=True,
-            stream=True,
-            max_output_tokens=self.max_output_tokens,
-            timeout=self.timeout_seconds,
-        )
+        try:
+            stream = await self._create_stream(
+                request,
+                input_messages=request.input_messages,
+                previous_response_id=request.previous_response_id,
+            )
+        except BadRequestError as error:
+            if request.previous_response_id is None or not _rejects_continuation(error):
+                raise
+            stream = await self._create_stream(
+                request,
+                input_messages=request.messages,
+                previous_response_id=None,
+            )
         text_parts: list[str] = []
         tool_calls: list[ToolCall] = []
         completed = None
@@ -135,6 +139,29 @@ class OpenAIResponsesModelClient(ModelClient):
             output_items=output_items,
         )
 
+    async def _create_stream(
+        self,
+        request: ModelRequest,
+        *,
+        input_messages: tuple[ModelMessage, ...],
+        previous_response_id: str | None,
+    ) -> AsyncStream[ResponseStreamEvent]:
+        return await self._client.responses.create(
+            model=self.profile.model,
+            instructions=_instructions(request.messages),
+            input=_response_input(input_messages),
+            tools=_function_tools(request),
+            previous_response_id=(omit if previous_response_id is None else previous_response_id),
+            parallel_tool_calls=False,
+            store=True,
+            stream=True,
+            max_output_tokens=self.max_output_tokens,
+            reasoning=(
+                omit if self.reasoning_effort is None else {"effort": self.reasoning_effort}
+            ),
+            timeout=self.timeout_seconds,
+        )
+
     async def aclose(self) -> None:
         if self._closed:
             return
@@ -169,8 +196,16 @@ def _response_input(messages: tuple[ModelMessage, ...]) -> ResponseInputParam:
                 }
             )
         else:
-            raise OpenAIResponsesProtocolError(
-                "assistant history requires previous_response_id and must not be replayed as input"
+            if message.content:
+                items.append({"role": "assistant", "content": message.content})
+            items.extend(
+                {
+                    "type": "function_call",
+                    "call_id": call.call_id,
+                    "name": call.name,
+                    "arguments": json_dumps(call.arguments),
+                }
+                for call in message.tool_calls
             )
     if not items:
         raise OpenAIResponsesProtocolError("Responses input is empty")
@@ -195,3 +230,7 @@ def _json_object(value: object) -> dict[str, JsonValue]:
     if not isinstance(decoded, dict):
         raise OpenAIResponsesProtocolError("OpenAI response metadata is not a JSON object")
     return decoded
+
+
+def _rejects_continuation(error: BadRequestError) -> bool:
+    return "previous_response_id" in str(error)

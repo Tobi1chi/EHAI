@@ -17,6 +17,13 @@ from ehai.application.async_runtime import (
     WorkerEvent,
     WorkerEventType,
 )
+from ehai.application.builtin_agent import (
+    BuiltinSessionEventType,
+    ModelClient,
+    ModelRequest,
+    ModelResponse,
+    ToolCall,
+)
 from ehai.application.checks import CheckRunner
 from ehai.application.commands import (
     ApprovePlan,
@@ -25,6 +32,7 @@ from ehai.application.commands import (
     ProposePlan,
     StartRun,
 )
+from ehai.application.execution_contracts import OPENAI_CREDENTIAL_REF
 from ehai.application.execution_policy import (
     EndpointHealthStatus,
     ExecutionPolicy,
@@ -41,6 +49,7 @@ from ehai.application.planner import (
     PlanProposal,
 )
 from ehai.application.runtime_control import RuntimeControlService, WorkerRequestStatus
+from ehai.application.scheduler import CapacityPolicy, ConcurrentRuntime, Dispatcher
 from ehai.application.service import ExecutionService
 from ehai.application.workers import WorkerRequest
 from ehai.domain.checking import CheckKind
@@ -56,9 +65,10 @@ from ehai.domain.workers import (
     WorkerProfile,
 )
 from ehai.infrastructure.artifacts import FilesystemArtifactStore
+from ehai.infrastructure.builtin_sessions import SQLiteBuiltinSessionStore
 from ehai.infrastructure.checks import ArtifactCheckAdapter, ArtifactCheckRule
 from ehai.infrastructure.sqlite import SQLiteDatabase
-from ehai.infrastructure.workers import FakeWorker
+from ehai.infrastructure.workers import BuiltinAgentConnector, FakeWorker
 
 
 class _ExplorationPlanner:
@@ -686,6 +696,316 @@ def test_runtime_control_sanitizes_resolves_and_extends_waiting_attempt(
         attempt.deadline_at + timedelta(minutes=1),
     )
     assert extended.deadline_at == attempt.deadline_at + timedelta(minutes=1)
+
+
+class _BuiltinScriptedClient:
+    def __init__(self) -> None:
+        self.requests: list[ModelRequest] = []
+        self.closed = False
+
+    async def complete(self, request: ModelRequest) -> ModelResponse:
+        self.requests.append(request)
+        return ModelResponse(
+            "submit candidate",
+            (
+                ToolCall(
+                    "submit-1",
+                    "submit_candidate",
+                    {
+                        "name": "builtin-result.txt",
+                        "media_type": "text/plain",
+                        "content": "standalone built-in result",
+                    },
+                ),
+            ),
+            provider_response_id="response-1",
+        )
+
+    async def aclose(self) -> None:
+        self.closed = True
+
+
+class _BuiltinTextOnlyClient:
+    async def complete(self, request: ModelRequest) -> ModelResponse:
+        del request
+        return ModelResponse(
+            "ordinary text is not a candidate",
+            final_text="ordinary text is not a candidate",
+            provider_response_id="text-response",
+        )
+
+    async def aclose(self) -> None:
+        return None
+
+
+class _BlockingBuiltinClient:
+    def __init__(
+        self,
+        attempt_id: ID,
+        active: list[ID],
+        two_active: asyncio.Event,
+        releases: dict[ID, asyncio.Event],
+    ) -> None:
+        self.attempt_id = attempt_id
+        self.active = active
+        self.two_active = two_active
+        self.releases = releases
+
+    async def complete(self, request: ModelRequest) -> ModelResponse:
+        del request
+        self.active.append(self.attempt_id)
+        if len(self.active) == 2:
+            self.two_active.set()
+        await self.releases[self.attempt_id].wait()
+        return ModelResponse(
+            "submit candidate",
+            (
+                ToolCall(
+                    f"submit-{self.attempt_id}",
+                    "submit_candidate",
+                    {
+                        "name": f"{self.attempt_id}.txt",
+                        "media_type": "text/plain",
+                        "content": "independent result",
+                    },
+                ),
+            ),
+            provider_response_id=f"response-{self.attempt_id}",
+        )
+
+    async def aclose(self) -> None:
+        return None
+
+
+def _builtin_runtime(
+    tmp_path: Path,
+    model: ModelClient,
+) -> tuple[
+    ExecutionService,
+    SingleSlotRuntime,
+    SQLiteDatabase,
+    FakeWorker,
+    SQLiteBuiltinSessionStore,
+]:
+    database = SQLiteDatabase(tmp_path / "builtin-runtime.sqlite3")
+    artifacts = FilesystemArtifactStore(tmp_path / "builtin-artifacts")
+    legacy_worker = FakeWorker()
+    orchestrator = Orchestrator(
+        uow_factory=database.unit_of_work,
+        worker=legacy_worker,
+        artifact_store=artifacts,
+        check_runner=CheckRunner(
+            {
+                CheckKind.ARTIFACT: ArtifactCheckAdapter(
+                    artifacts,
+                    {},
+                    default_rule=ArtifactCheckRule(minimum_count=1, require_non_empty=True),
+                )
+            }
+        ),
+        workspace=tmp_path,
+    )
+    service = ExecutionService(
+        uow_factory=database.unit_of_work,
+        planner=DeterministicPlanner(),
+        orchestrator=orchestrator,
+        background_start=True,
+    )
+    profile = WorkerProfile(
+        "builtin",
+        WorkerKind.BUILTIN,
+        "scripted",
+        credential_ref=OPENAI_CREDENTIAL_REF,
+    )
+    endpoint = WorkerEndpoint(
+        "builtin",
+        WorkerKind.BUILTIN,
+        WorkerEndpointType.IN_PROCESS,
+        "builtin",
+        1,
+    )
+    sessions = SQLiteBuiltinSessionStore(database)
+    connector = BuiltinAgentConnector(
+        uow_factory=database.unit_of_work,
+        orchestrator=orchestrator,
+        session_store=sessions,
+        artifact_store=artifacts,
+        profile=profile,
+        default_workspace=tmp_path,
+        allowed_commands=("uv",),
+        model_client_factory=lambda _profile, _request: model,
+    )
+    runtime = SingleSlotRuntime(
+        uow_factory=database.unit_of_work,
+        orchestrator=orchestrator,
+        connector=connector,
+        profile=profile,
+        endpoint=endpoint,
+        workspace=tmp_path,
+    )
+    return service, runtime, database, legacy_worker, sessions
+
+
+def test_builtin_connector_runs_real_agent_loop_without_fake_worker(tmp_path: Path) -> None:
+    model = _BuiltinScriptedClient()
+    service, runtime, database, legacy_worker, sessions = _builtin_runtime(tmp_path, model)
+    run_id, _ = _start(service)
+
+    completed = asyncio.run(runtime.run_once())
+
+    assert completed is not None and completed.status is RunStatus.COMPLETED
+    assert legacy_worker.calls == ()
+    assert model.closed and len(model.requests) == 1
+    with database.read_session() as session:
+        stored_artifacts = session.states.list_artifacts_for_run(run_id)
+        refs = session.states.list_agent_session_refs(run_id)
+    assert any(artifact.name == "builtin-result.txt" for artifact in stored_artifacts)
+    assert len(refs) == 1
+    durable = sessions.load(refs[0].agent_session_ref_id)
+    assert [event.type for event in durable.events] == [
+        BuiltinSessionEventType.TURN_STARTED,
+        BuiltinSessionEventType.STEP_STARTED,
+        BuiltinSessionEventType.MODEL_MESSAGE,
+        BuiltinSessionEventType.TOOL_CALLED,
+        BuiltinSessionEventType.TOOL_RESULT,
+        BuiltinSessionEventType.FINAL,
+        BuiltinSessionEventType.STEP_ENDED,
+        BuiltinSessionEventType.TURN_ENDED,
+    ]
+
+
+def test_builtin_connector_rejects_plain_text_as_candidate(tmp_path: Path) -> None:
+    service, runtime, database, legacy_worker, sessions = _builtin_runtime(
+        tmp_path,
+        _BuiltinTextOnlyClient(),
+    )
+    run_id, _ = _start(service)
+
+    paused = asyncio.run(runtime.run_once())
+
+    assert paused is not None and paused.status is RunStatus.PAUSED
+    assert legacy_worker.calls == ()
+    with database.read_session() as session:
+        attempts = session.states.list_attempts(run_id)
+        artifacts = session.states.list_artifacts_for_run(run_id)
+        refs = session.states.list_agent_session_refs(run_id)
+    assert len(attempts) == 1 and attempts[0].status is AttemptStatus.INTERRUPTED
+    assert artifacts == ()
+    assert sessions.load(refs[0].agent_session_ref_id).final_text(attempts[0].attempt_id) == (
+        "ordinary text is not a candidate"
+    )
+
+
+def test_concurrent_builtin_cancel_isolated_to_one_session(tmp_path: Path) -> None:
+    database = SQLiteDatabase(tmp_path / "builtin-concurrent.sqlite3")
+    artifacts = FilesystemArtifactStore(tmp_path / "builtin-concurrent-artifacts")
+    orchestrator = Orchestrator(
+        uow_factory=database.unit_of_work,
+        worker=None,
+        artifact_store=artifacts,
+        check_runner=CheckRunner(
+            {
+                CheckKind.ARTIFACT: ArtifactCheckAdapter(
+                    artifacts,
+                    {},
+                    default_rule=ArtifactCheckRule(minimum_count=1, require_non_empty=True),
+                )
+            }
+        ),
+        workspace=tmp_path,
+    )
+    service = ExecutionService(
+        uow_factory=database.unit_of_work,
+        planner=DeterministicPlanner(),
+        orchestrator=orchestrator,
+        background_start=True,
+    )
+    run_ids: list[ID] = []
+    for index in range(2):
+        project = service.create_project(CreateProject(f"project-{index}", f"project-{index}"))
+        goal = service.create_goal(
+            CreateGoal(f"goal-{index}", project.project_id, f"builtin-{index}")
+        )
+        plan = service.propose_plan(
+            ProposePlan(f"plan-{index}", goal.goal_id, (NON_EMPTY_ARTIFACT_CRITERION,))
+        )
+        approved = service.approve_plan(
+            ApprovePlan(
+                f"approve-{index}",
+                plan.plan_revision_id,
+                plan.completion_contract_id,
+            )
+        )
+        run_ids.append(
+            service.start_run(StartRun(f"start-{index}", approved.plan_revision_id)).run_id
+        )
+    profile = WorkerProfile(
+        "builtin-concurrent",
+        WorkerKind.BUILTIN,
+        "scripted",
+        credential_ref=OPENAI_CREDENTIAL_REF,
+    )
+    endpoint = WorkerEndpoint(
+        "builtin-concurrent",
+        WorkerKind.BUILTIN,
+        WorkerEndpointType.IN_PROCESS,
+        "builtin-concurrent",
+        2,
+    )
+    active: list[ID] = []
+    two_active = asyncio.Event()
+    releases: dict[ID, asyncio.Event] = {}
+
+    def model_factory(_profile: WorkerProfile, request: WorkerRequest) -> ModelClient:
+        releases[request.attempt_id] = asyncio.Event()
+        return _BlockingBuiltinClient(request.attempt_id, active, two_active, releases)
+
+    connector = BuiltinAgentConnector(
+        uow_factory=database.unit_of_work,
+        orchestrator=orchestrator,
+        session_store=SQLiteBuiltinSessionStore(database),
+        artifact_store=artifacts,
+        profile=profile,
+        default_workspace=tmp_path,
+        allowed_commands=("uv",),
+        model_client_factory=model_factory,
+    )
+    runtime = ConcurrentRuntime(
+        uow_factory=database.unit_of_work,
+        orchestrator=orchestrator,
+        dispatcher=Dispatcher(
+            profiles=(profile,),
+            endpoints=(endpoint,),
+            capacity=CapacityPolicy(2, 2, 2, {}, {}),
+        ),
+        connectors={endpoint.worker_endpoint_id: connector},
+    )
+
+    async def scenario() -> None:
+        running = asyncio.create_task(runtime.run_until_idle())
+        await asyncio.wait_for(two_active.wait(), timeout=5)
+        with database.read_session() as session:
+            attempts = tuple(session.states.list_attempts(run_id)[0] for run_id in run_ids)
+            refs = tuple(
+                session.states.get_agent_session_ref(attempt.agent_session_ref_id)
+                for attempt in attempts
+                if attempt.agent_session_ref_id is not None
+            )
+        assert len({ref.provider_session_id for ref in refs if ref}) == 2
+        cancelled = await runtime.cancel_attempt(attempts[0].attempt_id)
+        assert cancelled.status is RunStatus.PAUSED
+        releases[attempts[1].attempt_id].set()
+        await asyncio.wait_for(running, timeout=10)
+
+    asyncio.run(scenario())
+
+    with database.read_session() as session:
+        runs = tuple(session.states.get_run(run_id) for run_id in run_ids)
+        first_artifacts = session.states.list_artifacts_for_run(run_ids[0])
+        second_artifacts = session.states.list_artifacts_for_run(run_ids[1])
+    assert [run.status for run in runs if run] == [RunStatus.PAUSED, RunStatus.COMPLETED]
+    assert first_artifacts == ()
+    assert len(second_artifacts) == 1
 
 
 def _policy_runtime(

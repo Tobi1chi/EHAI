@@ -214,6 +214,14 @@ class SingleSlotRuntime:
         """Return the Connector owned by this Endpoint Runtime."""
         return self._connector
 
+    def connector_for(self, worker_endpoint_id: ID) -> RuntimeConnector | None:
+        """Return this Runtime's Connector when the Endpoint identity matches."""
+        return (
+            self._connector
+            if normalize_id(worker_endpoint_id) == self._endpoint.worker_endpoint_id
+            else None
+        )
+
     @property
     def orchestrator(self) -> Orchestrator:
         """Return the application Orchestrator used by Runtime Control."""
@@ -293,6 +301,14 @@ class SingleSlotRuntime:
         if not running:
             return await self._process_work(work)
         attempt = running[-1]
+        run = await self.recover_attempt(attempt)
+        if run.status is RunStatus.RUNNING:
+            return await self._process_work(work)
+        self._complete_work(work)
+        return run
+
+    async def recover_attempt(self, attempt: Attempt) -> Run:
+        """Recover one already-bound Attempt without scheduling sibling work."""
         execution = self._execution_from_attempt(attempt)
         try:
             recovered = await self._connector.recover(
@@ -313,31 +329,23 @@ class SingleSlotRuntime:
                 attempt.attempt_id,
                 f"provider recovery state is unknown: {type(error).__name__}: {error}",
             )
-            self._complete_work(work)
             return run
         if recovered is None:
-            run = self._orchestrator.retry_attempt(
+            return self._orchestrator.retry_attempt(
                 attempt.attempt_id,
                 "original provider execution was not found during Runtime recovery",
                 retry_safety=RetrySafety.EXECUTION_NOT_FOUND,
             )
-            if run.status is RunStatus.RUNNING:
-                return await self._process_work(work)
-            self._complete_work(work)
-            return run
         await self._set_endpoint_health(
             EndpointHealthStatus.HEALTHY,
             run_id=attempt.run_id,
             reason=None,
         )
-        return await self._process_work(work, recovered=(attempt, recovered))
+        return await self._consume_events(attempt, recovered)
 
     async def cancel_attempt(self, attempt_id: ID) -> Run:
         """Let a completed provider result win a cancel/completed race."""
-        with self._uow_factory() as uow:
-            attempt = _required_attempt(uow, normalize_id(attempt_id))
-        execution = self._execution_from_attempt(attempt)
-        await self._connector.cancel(execution)
+        attempt, execution = await self.request_cancel(attempt_id)
         run = await self._consume_events(attempt, execution)
         if run.status is not RunStatus.RUNNING:
             with self._uow_factory() as uow:
@@ -349,6 +357,17 @@ class SingleSlotRuntime:
             if works:
                 self._complete_work(works[0])
         return run
+
+    async def request_cancel(
+        self,
+        attempt_id: ID,
+    ) -> tuple[Attempt, ConnectorExecution]:
+        """Request provider cancellation without opening a second event consumer."""
+        with self._uow_factory() as uow:
+            attempt = _required_attempt(uow, normalize_id(attempt_id))
+        execution = self._execution_from_attempt(attempt)
+        await self._connector.cancel(execution)
+        return attempt, execution
 
     async def execute_started_request(self, request: WorkerRequest) -> Run:
         """Execute one already-started queued Attempt through this Endpoint."""

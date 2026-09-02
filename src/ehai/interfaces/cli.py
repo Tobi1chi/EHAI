@@ -103,7 +103,7 @@ def build_service(
     database_path.parent.mkdir(parents=True, exist_ok=True)
     database = SQLiteDatabase(database_path)
     artifact_store = FilesystemArtifactStore(artifact_root)
-    worker: WorkerAdapter
+    worker: WorkerAdapter | None
     if worker_kind == "fake":
         worker = FakeWorker()
     elif worker_kind == "codex":
@@ -113,6 +113,10 @@ def build_service(
             model=codex_model,
             reasoning_effort=codex_reasoning_effort,
         )
+    elif worker_kind == "builtin":
+        if not background_start:
+            raise ValueError("Built-in Worker requires the P2 background Runtime")
+        worker = None
     else:
         raise ValueError(f"unsupported Worker: {worker_kind}")
     planner: Planner
@@ -165,7 +169,7 @@ def build_service(
         uow_factory=database.unit_of_work,
         planner=planner,
         orchestrator=orchestrator,
-        run_controller=RunController(database.unit_of_work, worker),
+        run_controller=(None if worker is None else RunController(database.unit_of_work, worker)),
         recovery_service=RecoveryService(uow_factory=database.unit_of_work),
         background_start=background_start,
     )

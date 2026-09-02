@@ -9,7 +9,7 @@ from datetime import timedelta
 from pathlib import Path
 from typing import Protocol
 
-from ehai import ID, utc_now
+from ehai import ID, normalize_id, utc_now
 from ehai.application.async_runtime import (
     HealthAwareConnector,
     RuntimeConnector,
@@ -34,8 +34,11 @@ from ehai.domain.workspaces import WorkspaceLease, WorkspaceRef
 
 
 class WorkspaceAllocationPort(Protocol):
-    reference: WorkspaceRef
-    lease: WorkspaceLease
+    @property
+    def reference(self) -> WorkspaceRef: ...
+
+    @property
+    def lease(self) -> WorkspaceLease: ...
 
 
 class WorkspaceManagerPort(Protocol):
@@ -51,6 +54,8 @@ class WorkspaceManagerPort(Protocol):
     ) -> WorkspaceAllocationPort: ...
 
     def cleanup(self, allocation: WorkspaceAllocationPort) -> WorkspaceLease: ...
+
+    def allocation_for_attempt(self, attempt_id: ID) -> WorkspaceAllocationPort | None: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -208,6 +213,24 @@ class ConcurrentRuntime:
         }
         self._workspace_manager = workspace_manager
         self._claim_owner = f"scheduler:{utc_now().timestamp()}"
+        self._active_helpers: dict[ID, SingleSlotRuntime] = {}
+        self._active_tasks: dict[ID, asyncio.Task[Run]] = {}
+
+    @property
+    def orchestrator(self) -> Orchestrator:
+        return self._orchestrator
+
+    def connector_for(self, worker_endpoint_id: ID) -> RuntimeConnector | None:
+        return self._connectors.get(worker_endpoint_id)
+
+    async def cancel_attempt(self, attempt_id: ID) -> Run:
+        normalized_id = normalize_id(attempt_id)
+        helper = self._active_helpers.get(normalized_id)
+        task = self._active_tasks.get(normalized_id)
+        if helper is None or task is None:
+            raise RuntimeError(f"Attempt {normalized_id} is not active in this Runtime")
+        await helper.request_cancel(normalized_id)
+        return await asyncio.shield(task)
 
     async def run_until_idle(self) -> tuple[Run, ...]:
         """Run until every dispatchable Run is terminal or only blocked work remains."""
@@ -225,6 +248,8 @@ class ConcurrentRuntime:
             done, _ = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
             for task in done:
                 active = tasks.pop(task)
+                self._active_helpers.pop(active.attempt.attempt_id, None)
+                self._active_tasks.pop(active.attempt.attempt_id, None)
                 self._endpoint_health[active.assignment.endpoint.worker_endpoint_id] = (
                     active.helper.endpoint_health.status
                 )
@@ -237,6 +262,79 @@ class ConcurrentRuntime:
                     active.helper.finish_dispatch_work(active.work)
                     works.pop(active.work.run_id, None)
                     terminal[run.run_id] = run
+        return tuple(terminal[key] for key in sorted(terminal))
+
+    async def recover_startup(self) -> tuple[Run, ...]:
+        """Recover every bound Attempt using its original Endpoint and Workspace."""
+        await self._refresh_endpoint_health()
+        works = self._claim_all_work()
+        tasks: dict[asyncio.Task[Run], _ActiveExecution] = {}
+        with self._uow_factory() as uow:
+            for work in works.values():
+                run = uow.states.get_run(work.run_id)
+                if run is None:
+                    continue
+                goal = uow.states.get_goal(run.goal_id)
+                if goal is None:
+                    raise RuntimeError(f"Run {run.run_id} Goal is missing")
+                for attempt in uow.states.list_attempts(run.run_id):
+                    if attempt.status is not AttemptStatus.RUNNING:
+                        continue
+                    assignment = self._persisted_assignment(attempt)
+                    connector = self._connectors.get(assignment.endpoint.worker_endpoint_id)
+                    if connector is None:
+                        raise RuntimeError(
+                            f"WorkerEndpoint {assignment.endpoint.worker_endpoint_id} "
+                            "has no Connector"
+                        )
+                    workspace = (
+                        None
+                        if self._workspace_manager is None
+                        else self._workspace_manager.allocation_for_attempt(attempt.attempt_id)
+                    )
+                    helper = SingleSlotRuntime(
+                        uow_factory=self._uow_factory,
+                        orchestrator=self._orchestrator,
+                        connector=connector,
+                        profile=assignment.profile,
+                        endpoint=_single_slot_endpoint(assignment.endpoint),
+                        policy=self._policy,
+                        workspace=(None if workspace is None else Path(workspace.reference.path)),
+                    )
+                    task = asyncio.create_task(helper.recover_attempt(attempt))
+                    active = _ActiveExecution(
+                        work,
+                        attempt,
+                        goal.project_id,
+                        assignment,
+                        helper,
+                        workspace,
+                    )
+                    tasks[task] = active
+                    self._active_helpers[attempt.attempt_id] = helper
+                    self._active_tasks[attempt.attempt_id] = task
+        if not tasks:
+            return ()
+        completed = await asyncio.gather(*tasks, return_exceptions=True)
+        terminal: dict[ID, Run] = {}
+        first_error: BaseException | None = None
+        for task, result in zip(tasks, completed, strict=True):
+            active = tasks[task]
+            self._active_helpers.pop(active.attempt.attempt_id, None)
+            self._active_tasks.pop(active.attempt.attempt_id, None)
+            try:
+                if isinstance(result, BaseException):
+                    if first_error is None:
+                        first_error = result
+                    continue
+                if result.status is not RunStatus.RUNNING:
+                    active.helper.finish_dispatch_work(active.work)
+                    terminal[result.run_id] = result
+            finally:
+                if active.workspace is not None and self._workspace_manager is not None:
+                    self._workspace_manager.cleanup(active.workspace)
+        if first_error is not None:
+            raise first_error
         return tuple(terminal[key] for key in sorted(terminal))
 
     async def _refresh_endpoint_health(self) -> None:
@@ -316,6 +414,8 @@ class ConcurrentRuntime:
                 helper,
                 workspace,
             )
+            self._active_helpers[request.attempt.attempt_id] = helper
+            self._active_tasks[request.attempt.attempt_id] = task
             scheduled = True
 
     def _next_assignment(
@@ -342,10 +442,7 @@ class ConcurrentRuntime:
                     node = next(
                         node for node in plan.nodes if node.plan_node_id == attempt.plan_node_id
                     )
-                    write_capable = any(
-                        capability.name == "workspace.write"
-                        for capability in node.required_capabilities
-                    )
+                    write_capable = _may_write_workspace(node, self._dispatcher.profiles)
                     workspace_conflict = (
                         write_capable
                         and (
@@ -353,14 +450,10 @@ class ConcurrentRuntime:
                             or not self._workspace_manager.can_isolate_writes()
                         )
                         and any(
-                            active.work.run_id == run_id
-                            and any(
-                                capability.name == "workspace.write"
-                                for capability in next(
-                                    node
-                                    for node in plan.nodes
-                                    if node.plan_node_id == active.attempt.plan_node_id
-                                ).required_capabilities
+                            _active_may_write_workspace(
+                                active,
+                                self._dispatcher.profiles,
+                                uow,
                             )
                             for active in tasks.values()
                         )
@@ -374,8 +467,9 @@ class ConcurrentRuntime:
                         endpoint_health=self._endpoint_health,
                     )
                     if decision.assignment is not None:
-                        isolate = any(
-                            attempt.plan_node_id in branch.node_ids for branch in plan.branches
+                        isolate = write_capable and (
+                            self._workspace_manager is not None
+                            and self._workspace_manager.can_isolate_writes()
                         )
                         return (
                             works[run_id],
@@ -439,6 +533,29 @@ class ConcurrentRuntime:
             policy=self._policy,
         )
 
+    def _persisted_assignment(self, attempt: Attempt) -> DispatchAssignment:
+        if attempt.worker_profile_id is None or attempt.worker_endpoint_id is None:
+            raise RuntimeError(f"Attempt {attempt.attempt_id} has no persisted assignment")
+        profile = next(
+            (
+                profile
+                for profile in self._dispatcher.profiles
+                if profile.worker_profile_id == attempt.worker_profile_id
+            ),
+            None,
+        )
+        endpoint = next(
+            (
+                endpoint
+                for endpoint in self._dispatcher.endpoints
+                if endpoint.worker_endpoint_id == attempt.worker_endpoint_id
+            ),
+            None,
+        )
+        if profile is None or endpoint is None:
+            raise RuntimeError(f"Attempt {attempt.attempt_id} assignment is not configured")
+        return DispatchAssignment(profile, endpoint)
+
 
 def _single_slot_endpoint(endpoint: WorkerEndpoint) -> WorkerEndpoint:
     if endpoint.capacity == 1:
@@ -468,3 +585,34 @@ def _capacity_usage(active: Iterable[_ActiveExecution]) -> CapacityUsage:
         profiles[profile_id] = profiles.get(profile_id, 0) + 1
         endpoints[endpoint_id] = endpoints.get(endpoint_id, 0) + 1
     return CapacityUsage(len(items), projects, runs, profiles, endpoints)
+
+
+def _may_write_workspace(
+    node: PlanNode,
+    profiles: tuple[WorkerProfile, ...],
+) -> bool:
+    if any(capability.name == "workspace.write" for capability in node.required_capabilities):
+        return True
+    return any(
+        node.required_capabilities.issubset(profile.capabilities)
+        and any(capability.name == "workspace.write" for capability in profile.capabilities)
+        for profile in profiles
+    )
+
+
+def _active_may_write_workspace(
+    active: _ActiveExecution,
+    profiles: tuple[WorkerProfile, ...],
+    uow: UnitOfWork,
+) -> bool:
+    run = uow.states.get_run(active.work.run_id)
+    if run is None:
+        return False
+    plan = uow.states.get_plan_revision(run.plan_revision_id)
+    if plan is None:
+        return False
+    node = next(
+        (item for item in plan.nodes if item.plan_node_id == active.attempt.plan_node_id),
+        None,
+    )
+    return node is not None and _may_write_workspace(node, profiles)

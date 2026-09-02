@@ -8,6 +8,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from ehai import ID, new_id
+from ehai.application.builtin_agent import ModelRequest, ModelResponse, ToolCall
 from ehai.application.checks import CheckRunner
 from ehai.application.commands import (
     ApprovePlan,
@@ -36,6 +37,33 @@ from ehai.infrastructure.checks import ArtifactCheckAdapter, ArtifactCheckRule
 from ehai.infrastructure.sqlite import SQLiteDatabase
 from ehai.interfaces.api import create_app
 from ehai.interfaces.runtime import create_local_app
+
+
+class _ApiBuiltinModelClient:
+    def __init__(self) -> None:
+        self.requests: list[ModelRequest] = []
+        self.closed = False
+
+    async def complete(self, request: ModelRequest) -> ModelResponse:
+        self.requests.append(request)
+        return ModelResponse(
+            "submit candidate",
+            (
+                ToolCall(
+                    "submit-api",
+                    "submit_candidate",
+                    {
+                        "name": "api-builtin.txt",
+                        "media_type": "text/plain",
+                        "content": "api built-in result",
+                    },
+                ),
+            ),
+            provider_response_id="api-response",
+        )
+
+    async def aclose(self) -> None:
+        self.closed = True
 
 
 class _CommandService:
@@ -525,3 +553,83 @@ def test_local_p2_api_start_run_returns_then_background_runtime_completes(
         runtime = client.get(f"/api/v1/attempts/{attempt_id}/runtime")
         assert runtime.status_code == 200
         assert runtime.json()["data"]["worker_profile_id"] is not None
+
+
+def test_local_p2_api_runs_standalone_builtin_worker(tmp_path: Path) -> None:
+    model = _ApiBuiltinModelClient()
+    app = create_local_app(
+        tmp_path / "builtin-api.sqlite3",
+        tmp_path / "builtin-artifacts",
+        worker_kind="builtin",
+        worker_workspace=tmp_path,
+        builtin_model="gpt-5.6-luna",
+        builtin_reasoning_effort="high",
+        builtin_capacity=2,
+        builtin_model_client_factory=lambda _profile, _request: model,
+        p2_runtime=True,
+    )
+    with TestClient(app) as client:
+        project = client.post(
+            "/api/v1/projects",
+            json={"idempotency_key": "builtin-project", "name": "builtin"},
+        ).json()["data"]
+        goal = client.post(
+            "/api/v1/goals",
+            json={
+                "idempotency_key": "builtin-goal",
+                "project_id": project["project_id"],
+                "objective": "standalone built-in execution",
+            },
+        ).json()["data"]
+        plan = client.post(
+            "/api/v1/plans/propose",
+            json={
+                "idempotency_key": "builtin-plan",
+                "goal_id": goal["goal_id"],
+                "criteria": ["artifact:non-empty"],
+            },
+        ).json()["data"]
+        client.post(
+            "/api/v1/plans/approve",
+            json={
+                "idempotency_key": "builtin-approve",
+                "plan_revision_id": plan["plan_revision_id"],
+                "completion_contract_id": plan["completion_contract_id"],
+            },
+        )
+        started = client.post(
+            "/api/v1/runs/start",
+            json={
+                "idempotency_key": "builtin-run",
+                "plan_revision_id": plan["plan_revision_id"],
+            },
+        ).json()["data"]
+
+        deadline = time.monotonic() + 5
+        current = started
+        while current["status"] != "completed" and time.monotonic() < deadline:
+            time.sleep(0.05)
+            current = client.get(f"/api/v1/runs/{started['run_id']}").json()["data"]
+
+        assert current["status"] == "completed"
+        profiles = client.get("/api/v1/workers/profiles").json()["data"]
+        assert profiles == [
+            {
+                "worker_profile_id": profiles[0]["worker_profile_id"],
+                "name": "local-builtin",
+                "kind": "builtin",
+                "model": "gpt-5.6-luna",
+                "capabilities": ["worker.builtin", "workspace.read", "workspace.write"],
+                "session_policy": "new",
+                "budget_ref": None,
+                "priority": 0,
+            }
+        ]
+        endpoints = client.get("/api/v1/workers/endpoints").json()["data"]
+        assert len(endpoints) == 1
+        assert endpoints[0]["name"] == "local-builtin"
+        assert endpoints[0]["capacity"] == 2
+        artifacts = client.get(f"/api/v1/runs/{started['run_id']}/artifacts").json()["data"]
+        assert any(artifact["name"] == "api-builtin.txt" for artifact in artifacts)
+
+    assert model.closed and len(model.requests) == 1
