@@ -241,7 +241,7 @@ def create_parser() -> argparse.ArgumentParser:
         "--builtin-allowed-command",
         action="append",
         default=[],
-        help="allowed executable basename for the Built-in command Tool",
+        help="trusted PATH executable basename for the Built-in command Tool",
     )
     parser.add_argument(
         "--builtin-capacity",

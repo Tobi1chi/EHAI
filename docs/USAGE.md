@@ -46,6 +46,10 @@ Built-in Agent 只能通过严格 `submit_candidate` Tool 产生候选 Artifact�
 当作执行结果。`Fake` Worker 仅用于离线测试，Codex CLI 是每 Attempt 一个外部进程，Codex App
 Server Connector 则管理持久 Thread/Turn；三者不共享 Agent 框架。
 
+`--builtin-allowed-command` 只接受 executable basename。Runtime 创建时从绝对 PATH/PATHEXT 目录解析
+并固定可信 executable；模型传入的 `argv[0]` 不得包含相对、绝对或其他 path-qualified 路径，执行时
+也不会从 Workspace cwd 再次搜索同名文件。
+
 ## 真实 Codex CLI 闭环
 
 以下 PowerShell 示例使用确定性的双分支 Planner 和真实 Codex Worker，完成

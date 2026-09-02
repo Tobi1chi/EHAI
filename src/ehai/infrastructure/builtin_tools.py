@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import os
 from collections.abc import Mapping
 from pathlib import Path
 from typing import cast
@@ -35,11 +36,10 @@ class BuiltinToolRuntime:
     ) -> None:
         self.artifact_store = artifact_store
         self.workspace = workspace.resolve()
-        self.allowed_commands = frozenset(
-            _non_empty_text(item, "allowed command").lower() for item in allowed_commands
-        )
-        if not self.allowed_commands:
+        if not allowed_commands:
             raise ValueError("BuiltinToolRuntime requires at least one allowed command")
+        self._command_paths = _resolve_allowed_commands(allowed_commands, self.workspace)
+        self.allowed_commands = frozenset(self._command_paths)
         if command_timeout_seconds <= 0:
             raise ValueError("command_timeout_seconds must be positive")
         self.command_timeout_seconds = command_timeout_seconds
@@ -64,7 +64,7 @@ class BuiltinToolRuntime:
                 ),
                 _array_definition(
                     "command",
-                    "Run an allowed argv command without a shell",
+                    "Run a trusted allowlisted argv command without a shell",
                 ),
                 _definition(
                     "submit_candidate",
@@ -202,11 +202,13 @@ class BuiltinToolRuntime:
         ):
             raise ValueError("command argv must be a non-empty string array")
         argv = tuple(cast(str, item) for item in argv_value)
-        executable = Path(argv[0]).name.lower()
-        if executable not in self.allowed_commands:
+        executable = _command_name(argv[0], "command executable")
+        trusted_path = self._command_paths.get(_command_key(executable))
+        if trusted_path is None:
             raise ValueError(f"command executable {executable!r} is not allowed")
         process = await asyncio.create_subprocess_exec(
-            *argv,
+            str(trusted_path),
+            *argv[1:],
             cwd=self.workspace,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
@@ -305,3 +307,84 @@ def _non_empty_text(value: str, name: str) -> str:
     if not value.strip():
         raise ValueError(f"{name} must not be blank")
     return value.strip()
+
+
+def _resolve_allowed_commands(
+    commands: tuple[str, ...],
+    workspace: Path,
+) -> dict[str, Path]:
+    resolved: dict[str, Path] = {}
+    for configured in commands:
+        name = _command_name(configured, "allowed command")
+        executable = _resolve_trusted_executable(name, workspace)
+        aliases = {_command_key(name), _command_key(executable.name)}
+        if os.name == "nt" and executable.suffix.lower() in _windows_executable_extensions():
+            aliases.add(_command_key(executable.stem))
+        for alias in aliases:
+            existing = resolved.get(alias)
+            if existing is not None and existing != executable:
+                raise ValueError(f"allowed command alias {alias!r} is ambiguous")
+            resolved[alias] = executable
+    return resolved
+
+
+def _resolve_trusted_executable(name: str, workspace: Path) -> Path:
+    candidates = _executable_candidates(name)
+    for value in os.environ.get("PATH", "").split(os.pathsep):
+        path_value = value.strip().strip('"')
+        if not path_value:
+            continue
+        configured_directory = Path(path_value).expanduser()
+        if not configured_directory.is_absolute():
+            continue
+        try:
+            directory = configured_directory.resolve(strict=True)
+        except OSError:
+            continue
+        if directory == workspace or directory.is_relative_to(workspace):
+            continue
+        for candidate_name in candidates:
+            try:
+                candidate = (directory / candidate_name).resolve(strict=True)
+            except OSError:
+                continue
+            if candidate == workspace or candidate.is_relative_to(workspace):
+                continue
+            if candidate.is_file() and (os.name == "nt" or os.access(candidate, os.X_OK)):
+                return candidate
+    raise ValueError(f"allowed command {name!r} was not found on the trusted PATH")
+
+
+def _executable_candidates(name: str) -> tuple[str, ...]:
+    if os.name != "nt":
+        return (name,)
+    extensions = _windows_executable_extensions()
+    suffix = Path(name).suffix.lower()
+    if suffix:
+        if suffix not in extensions:
+            raise ValueError(f"allowed command {name!r} does not use a PATHEXT extension")
+        return (name,)
+    return tuple(name + extension for extension in extensions)
+
+
+def _windows_executable_extensions() -> tuple[str, ...]:
+    raw = os.environ.get("PATHEXT", ".COM;.EXE;.BAT;.CMD")
+    extensions = tuple(
+        dict.fromkeys(
+            value.lower() if value.startswith(".") else f".{value.lower()}"
+            for item in raw.split(os.pathsep)
+            if (value := item.strip())
+        )
+    )
+    return extensions or (".com", ".exe", ".bat", ".cmd")
+
+
+def _command_name(value: str, label: str) -> str:
+    name = _non_empty_text(value, label)
+    if Path(name).is_absolute() or "/" in name or "\\" in name or name in {".", ".."}:
+        raise ValueError(f"{label} must be an unqualified executable name")
+    return name
+
+
+def _command_key(value: str) -> str:
+    return os.path.normcase(value)

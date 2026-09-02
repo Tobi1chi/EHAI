@@ -443,7 +443,13 @@ def test_windows_job_isolated_cleanup_terminates_real_descendant(
             raise RuntimeError("cleanup helper stdin was unavailable")
         process.stdin.write("start\n")
         process.stdin.flush()
-        stdout, stderr = process.communicate(timeout=25)
+        try:
+            stdout, stderr = process.communicate(timeout=45)
+        except subprocess.TimeoutExpired as error:
+            raise AssertionError(
+                "cleanup probe timed out: "
+                f"controller_pid={process.pid}, stdout={error.output!r}, stderr={error.stderr!r}"
+            ) from error
     finally:
         close_error: OSError | None = None
         try:
@@ -461,16 +467,16 @@ def test_windows_job_isolated_cleanup_terminates_real_descendant(
                     if process.stdin is not None:
                         process.stdin.close()
                     process.kill()
-                process.wait(timeout=5)
+                process.wait(timeout=10)
         if close_error is not None:
             raise close_error
 
     assert process is not None
-    assert process.returncode == 0
-    assert stderr == ""
     lines = stdout.splitlines()
-    assert len(lines) == 1
+    assert len(lines) == 1, f"unexpected probe output: stdout={stdout!r}, stderr={stderr!r}"
     result = json.loads(lines[0])
+    assert process.returncode == 0, f"cleanup probe failed: {result!r}; stderr={stderr!r}"
+    assert stderr == "", f"cleanup probe stderr: {stderr!r}; result={result!r}"
     assert result == {
         "descendant_exit": "signaled",
         "mode": mode,

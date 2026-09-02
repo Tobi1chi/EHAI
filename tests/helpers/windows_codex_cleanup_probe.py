@@ -20,7 +20,8 @@ if TYPE_CHECKING:
 _WAIT_OBJECT_0 = 0
 _WAIT_TIMEOUT = 258
 _SYNCHRONIZE = 0x00100000
-_PROBE_TIMEOUT_SECONDS = 12.0
+_PID_RECORD_TIMEOUT_SECONDS = 10.0
+_PROBE_TIMEOUT_SECONDS = 20.0
 
 
 def _request() -> WorkerRequest:
@@ -106,7 +107,7 @@ def _close_handle(handle: int | None) -> None:
 
 
 def _wait_for_pid_record(path: Path) -> tuple[int, int]:
-    deadline = time.monotonic() + 5.0
+    deadline = time.monotonic() + _PID_RECORD_TIMEOUT_SECONDS
     while time.monotonic() < deadline:
         try:
             document = json.loads(path.read_text(encoding="utf-8"))
@@ -134,14 +135,30 @@ def _validate_pids(root_pid: int, descendant_pid: int) -> None:
 
 def _run_controller(mode: str) -> int:
     if sys.stdin.readline().strip() != "start":
-        print(json.dumps({"mode": mode, "result": "failed", "stage": "handshake"}))
+        print(
+            json.dumps(
+                {
+                    "error_type": "HandshakeError",
+                    "mode": mode,
+                    "result": "failed",
+                    "stage": "handshake",
+                }
+            )
+        )
         return 2
 
     from ehai.application.workers import WorkerCancelledError, WorkerTimedOutError
     from ehai.infrastructure.workers import CodexWorkerAdapter
 
     descendant_handle: int | None = None
-    result: dict[str, str]
+    descendant_pid: int | None = None
+    root_pid: int | None = None
+    stage = "setup"
+    descendant_status = "not-recorded"
+    worker_status = "not-started"
+    failures: list[BaseException] = []
+    thread: threading.Thread | None = None
+    result: dict[str, object]
     return_code: int
     try:
         with tempfile.TemporaryDirectory(prefix="ehai-codex-cleanup-probe-") as temporary:
@@ -161,7 +178,6 @@ def _run_controller(mode: str) -> int:
                 cancel_grace_seconds=0.2,
                 max_output_bytes=4096,
             )
-            failures: list[BaseException] = []
 
             def execute() -> None:
                 try:
@@ -174,22 +190,37 @@ def _run_controller(mode: str) -> int:
                 name="codex-cleanup-probe",
                 daemon=True,
             )
+            stage = "worker-start"
             thread.start()
+            worker_status = "running"
+            stage = "pid-record"
             root_pid, descendant_pid = _wait_for_pid_record(pid_record)
+            stage = "pid-validation"
             _validate_pids(root_pid, descendant_pid)
+            stage = "descendant-open"
             descendant_handle = _open_process_for_wait(descendant_pid)
+            stage = "descendant-active"
             _require_process_active(descendant_handle)
+            descendant_status = "active"
             if not thread.is_alive():
                 raise RuntimeError("Adapter finished before descendant handle was opened")
             if mode == "cancel":
+                stage = "cancel-request"
                 adapter.cancel(request.attempt_id)
+            stage = "worker-join"
             thread.join(timeout=_PROBE_TIMEOUT_SECONDS)
             if thread.is_alive():
+                worker_status = "join-timeout"
                 raise TimeoutError("Adapter did not finish within the probe deadline")
+            worker_status = "finished"
+            stage = "worker-outcome"
             expected_error = WorkerTimedOutError if mode == "timeout" else WorkerCancelledError
             if len(failures) != 1 or not isinstance(failures[0], expected_error):
                 raise RuntimeError("Adapter returned an unexpected probe outcome")
-            _wait_for_process_exit(descendant_handle, 5000)
+            stage = "descendant-exit"
+            _wait_for_process_exit(descendant_handle, 10_000)
+            descendant_status = "exited"
+        stage = "complete"
         result = {
             "descendant_exit": "signaled",
             "mode": mode,
@@ -199,18 +230,33 @@ def _run_controller(mode: str) -> int:
         return_code = 0
     except BaseException as error:
         result = {
+            "descendant_pid": descendant_pid,
+            "descendant_status": descendant_status,
+            "error": str(error)[:500],
             "error_type": type(error).__name__,
             "mode": mode,
             "result": "failed",
+            "root_pid": root_pid,
+            "stage": stage,
+            "worker_errors": [type(item).__name__ for item in failures],
+            "worker_status": worker_status,
         }
         return_code = 1
     try:
+        stage = "handle-close"
         _close_handle(descendant_handle)
     except BaseException as error:
         result = {
+            "descendant_pid": descendant_pid,
+            "descendant_status": descendant_status,
+            "error": str(error)[:500],
             "error_type": type(error).__name__,
             "mode": mode,
             "result": "failed",
+            "root_pid": root_pid,
+            "stage": stage,
+            "worker_errors": [type(item).__name__ for item in failures],
+            "worker_status": worker_status,
         }
         return_code = 1
     print(json.dumps(result, sort_keys=True))

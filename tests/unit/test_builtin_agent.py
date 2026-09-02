@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import shutil
+import sys
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from pathlib import Path
@@ -588,7 +590,7 @@ def test_builtin_tool_runtime_fixes_controlled_patch_and_final_candidate(
     runtime = BuiltinToolRuntime(
         artifact_store=cast(ArtifactStore, object()),
         workspace=workspace,
-        allowed_commands=("git.exe",),
+        allowed_commands=(Path(sys.executable).name,),
     )
     definitions = {definition.name: definition for definition in runtime.tool_set.definitions}
 
@@ -633,6 +635,67 @@ def test_builtin_tool_runtime_fixes_controlled_patch_and_final_candidate(
         "content": "after",
     }
     assert target.read_text(encoding="utf-8") == "after"
+
+
+def test_builtin_command_uses_trusted_resolution_and_rejects_qualified_argv(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    executable_name = Path(sys.executable).name
+    workspace_executable = workspace / executable_name
+    shutil.copy2(sys.executable, workspace_executable)
+    runtime = BuiltinToolRuntime(
+        artifact_store=cast(ArtifactStore, object()),
+        workspace=workspace,
+        allowed_commands=(executable_name,),
+    )
+
+    async def invoke() -> JsonValue:
+        token = CancellationToken()
+        try:
+            result = await runtime.executor.execute(
+                ToolCall(
+                    "allowed",
+                    "command",
+                    {
+                        "argv": [
+                            executable_name,
+                            "-c",
+                            "import sys; print(sys.executable)",
+                        ]
+                    },
+                ),
+                token,
+            )
+            for index, value in enumerate(
+                (
+                    f".\\{executable_name}",
+                    f"subdir/{executable_name}",
+                    str(workspace_executable.resolve()),
+                )
+            ):
+                with pytest.raises(ValueError, match="unqualified executable name"):
+                    await runtime.executor.execute(
+                        ToolCall(f"qualified-{index}", "command", {"argv": [value]}),
+                        token,
+                    )
+            with pytest.raises(ValueError, match="not allowed"):
+                await runtime.executor.execute(
+                    ToolCall("denied", "command", {"argv": ["definitely-not-allowed"]}),
+                    token,
+                )
+            return result
+        finally:
+            await runtime.executor.aclose()
+
+    result = asyncio.run(invoke())
+
+    assert isinstance(result, dict)
+    assert result["exit_code"] == 0
+    stdout = result["stdout"]
+    assert isinstance(stdout, str)
+    assert Path(stdout.strip()).samefile(sys.executable)
 
 
 def test_scripted_builtin_agent_reads_modifies_runs_command_and_submits_candidate(
