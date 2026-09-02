@@ -24,6 +24,12 @@ _TRUNCATION_MARKER = b"\n...[truncated]...\n"
 _STREAM_CHUNK_BYTES = 8192
 _MAX_JSONL_LINE_BYTES = 65_536
 _MAX_JSONL_EVENT_TYPES = 16
+_WINDOWS_HELPER_TIMEOUT_SECONDS = 5.0
+_WINDOWS_DESCENDANT_EXIT_TIMEOUT_SECONDS = 5.0
+_WINDOWS_WAIT_OBJECT_0 = 0
+_WINDOWS_WAIT_TIMEOUT = 258
+_WINDOWS_SYNCHRONIZE = 0x00100000
+_WINDOWS_ERROR_INVALID_PARAMETER = 87
 _DEFAULT_ENVIRONMENT_NAMES = frozenset(
     {
         "APPDATA",
@@ -337,14 +343,15 @@ class CodexProcessTransport:
                 diagnostics.append(helper_diagnostic)
             with suppress(TimeoutError):
                 await asyncio.wait_for(process.wait(), timeout=self._cancel_grace_seconds)
+            if process.returncode is None or discovery_diagnostic is not None:
+                force_diagnostic = await self._taskkill(process.pid, force=True)
+                if force_diagnostic is not None:
+                    diagnostics.append(force_diagnostic)
             for descendant_pid in reversed(descendants):
                 descendant_diagnostic = await self._taskkill(descendant_pid, force=True)
                 if descendant_diagnostic is not None:
                     diagnostics.append(descendant_diagnostic)
-            if process.returncode is None:
-                force_diagnostic = await self._taskkill(process.pid, force=True)
-                if force_diagnostic is not None:
-                    diagnostics.append(force_diagnostic)
+            diagnostics.extend(await _wait_windows_pids(descendants))
         else:
             try:
                 os.kill(-process.pid, signal.SIGTERM)
@@ -392,13 +399,17 @@ class CodexProcessTransport:
             return (), f"Windows descendant discovery failed: {type(error).__name__}"
         try:
             stdout, stderr = await asyncio.wait_for(
-                helper.communicate(), timeout=max(self._cancel_grace_seconds, 1.0)
+                helper.communicate(),
+                timeout=max(self._cancel_grace_seconds, _WINDOWS_HELPER_TIMEOUT_SECONDS),
             )
         except TimeoutError:
             with suppress(ProcessLookupError):
                 helper.kill()
             with suppress(TimeoutError):
-                await asyncio.wait_for(helper.wait(), timeout=self._cancel_grace_seconds)
+                await asyncio.wait_for(
+                    helper.wait(),
+                    timeout=max(self._cancel_grace_seconds, _WINDOWS_HELPER_TIMEOUT_SECONDS),
+                )
             return (), "Windows descendant discovery failed: TimeoutError"
         if helper.returncode != 0:
             detail = bounded_codex_text(
@@ -419,7 +430,7 @@ class CodexProcessTransport:
     async def _taskkill(self, pid: int, *, force: bool) -> str | None:
         if pid <= 0 or pid == os.getpid():
             return f"refused unsafe Windows process-tree target PID {pid}"
-        helper_timeout = max(self._cancel_grace_seconds, 1.0)
+        helper_timeout = max(self._cancel_grace_seconds, _WINDOWS_HELPER_TIMEOUT_SECONDS)
         arguments = ["taskkill", "/PID", str(pid), "/T"]
         if force:
             arguments.append("/F")
@@ -562,6 +573,52 @@ async def _settle_io(
             if diagnostic is not None:
                 diagnostics.append(diagnostic)
     return tuple(diagnostics)
+
+
+async def _wait_windows_pids(pids: tuple[int, ...]) -> tuple[str, ...]:
+    if not pids:
+        return ()
+    results = await asyncio.gather(
+        *(
+            asyncio.to_thread(
+                _wait_windows_pid,
+                pid,
+                _WINDOWS_DESCENDANT_EXIT_TIMEOUT_SECONDS,
+            )
+            for pid in pids
+        )
+    )
+    return tuple(result for result in results if result is not None)
+
+
+def _wait_windows_pid(pid: int, timeout_seconds: float) -> str | None:
+    if pid <= 0 or pid == os.getpid():
+        return f"refused unsafe Windows process wait target PID {pid}"
+    import ctypes
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.OpenProcess.argtypes = [ctypes.c_uint32, ctypes.c_int, ctypes.c_uint32]
+    kernel32.OpenProcess.restype = ctypes.c_void_p
+    kernel32.WaitForSingleObject.argtypes = [ctypes.c_void_p, ctypes.c_uint32]
+    kernel32.WaitForSingleObject.restype = ctypes.c_uint32
+    kernel32.CloseHandle.argtypes = [ctypes.c_void_p]
+    kernel32.CloseHandle.restype = ctypes.c_int
+    handle = kernel32.OpenProcess(_WINDOWS_SYNCHRONIZE, False, pid)
+    if not handle:
+        error = ctypes.get_last_error()
+        if error == _WINDOWS_ERROR_INVALID_PARAMETER:
+            return None
+        return f"Windows process wait failed for PID {pid}: OpenProcess error {error}"
+    try:
+        timeout_milliseconds = max(1, int(timeout_seconds * 1000))
+        result = kernel32.WaitForSingleObject(handle, timeout_milliseconds)
+    finally:
+        kernel32.CloseHandle(handle)
+    if result == _WINDOWS_WAIT_OBJECT_0:
+        return None
+    if result == _WINDOWS_WAIT_TIMEOUT:
+        return f"Windows process PID {pid} did not exit within {timeout_seconds:g} seconds"
+    return f"Windows process wait for PID {pid} returned status {result}"
 
 
 def read_codex_final(path: Path, limit: int) -> str:

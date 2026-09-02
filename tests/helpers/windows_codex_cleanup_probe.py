@@ -169,7 +169,10 @@ def _run_controller(mode: str) -> int:
     result: dict[str, object]
     return_code: int
     try:
-        with tempfile.TemporaryDirectory(prefix="ehai-codex-cleanup-probe-") as temporary:
+        with tempfile.TemporaryDirectory(
+            prefix="ehai-codex-cleanup-probe-",
+            ignore_cleanup_errors=True,
+        ) as temporary:
             workspace = Path(temporary)
             pid_record = workspace / "pids.json"
             request = _request()
