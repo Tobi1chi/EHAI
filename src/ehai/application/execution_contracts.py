@@ -59,6 +59,6 @@ class Connector(Protocol[StartRequestT, RecoveryRequestT, ExecutionT, WorkerEven
         """Request cancellation without deciding Attempt or PlanNode completion."""
         ...
 
-    async def recover(self, request: RecoveryRequestT) -> ExecutionT:
+    async def recover(self, request: RecoveryRequestT) -> ExecutionT | None:
         """Recover the referenced execution without starting a replacement."""
         ...

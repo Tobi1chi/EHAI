@@ -15,6 +15,7 @@ from ehai.domain.events import Event
 from ehai.domain.execution import Attempt, Run
 from ehai.domain.goal import CompletionContract, Goal, Project
 from ehai.domain.planning import PlanRevision
+from ehai.domain.runtime import DispatchWork, DispatchWorkStatus
 from ehai.domain.workers import (
     AgentSessionRef,
     BuiltinExecutionRef,
@@ -146,6 +147,16 @@ class CurrentStateReader(Protocol):
         """Return one durable Agent Session reference."""
         ...
 
+    def get_dispatch_work(self, dispatch_work_id: ID) -> DispatchWork | None:
+        """Return one durable background dispatch request."""
+        ...
+
+    def list_dispatch_work(
+        self, status: DispatchWorkStatus | None = None
+    ) -> tuple[DispatchWork, ...]:
+        """List Run-level dispatch work in stable creation order."""
+        ...
+
     def list_agent_session_refs(self, run_id: ID) -> tuple[AgentSessionRef, ...]:
         """List Agent Session references scoped to one Run."""
         ...
@@ -223,6 +234,18 @@ class CurrentStateRepository(CurrentStateReader, Protocol):
 
     def put_agent_session_ref(self, session: AgentSessionRef) -> None:
         """Persist one immutable Agent Session reference."""
+        ...
+
+    def put_dispatch_work(self, work: DispatchWork) -> None:
+        """Persist one Run-level dispatch request."""
+        ...
+
+    def claim_next_dispatch_work(self, *, at: datetime) -> DispatchWork | None:
+        """Claim the oldest pending work in this single write transaction."""
+        ...
+
+    def record_worker_event(self, attempt_id: ID, worker_event_id: str, *, at: datetime) -> bool:
+        """Record a Worker event id once; return false for a duplicate."""
         ...
 
     def put_external_execution_ref(self, reference: ExternalExecutionRef) -> None:

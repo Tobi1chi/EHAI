@@ -19,6 +19,7 @@ from ehai.domain.planning import (
     PlanRevision,
     PlanRevisionStatus,
 )
+from ehai.domain.runtime import DispatchWork, DispatchWorkStatus
 from ehai.domain.workers import (
     AgentSessionRef,
     BuiltinExecutionRef,
@@ -36,6 +37,7 @@ from ehai.infrastructure.sqlite.codec import (
     decode_check_spec,
     decode_checkpoint,
     decode_completion_contract,
+    decode_dispatch_work,
     decode_edge,
     decode_external_execution_ref,
     decode_goal,
@@ -54,6 +56,7 @@ from ehai.infrastructure.sqlite.codec import (
     encode_check_spec,
     encode_checkpoint,
     encode_completion_contract,
+    encode_dispatch_work,
     encode_edge,
     encode_external_execution_ref,
     encode_goal,
@@ -670,6 +673,104 @@ class SQLiteCurrentStateRepository:
                 (run_id,),
             )
         )
+
+    def put_dispatch_work(self, work: DispatchWork) -> None:
+        self._required_run(work.run_id)
+        existing = self.get_dispatch_work(work.dispatch_work_id)
+        if existing is not None:
+            if existing.run_id != work.run_id or existing.created_at != work.created_at:
+                raise PersistenceConflictError(
+                    f"DispatchWork {work.dispatch_work_id} identity changed"
+                )
+            allowed = {
+                DispatchWorkStatus.PENDING: {
+                    DispatchWorkStatus.PENDING,
+                    DispatchWorkStatus.CLAIMED,
+                },
+                DispatchWorkStatus.CLAIMED: {
+                    DispatchWorkStatus.CLAIMED,
+                    DispatchWorkStatus.COMPLETED,
+                },
+                DispatchWorkStatus.COMPLETED: {DispatchWorkStatus.COMPLETED},
+            }
+            if work.status not in allowed[existing.status]:
+                raise PersistenceConflictError(
+                    f"DispatchWork {work.dispatch_work_id} status transition is illegal"
+                )
+        self._connection.execute(
+            """
+            INSERT INTO dispatch_work(
+                dispatch_work_id, run_id, status, created_at, snapshot_json
+            ) VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(dispatch_work_id) DO UPDATE SET
+                status = excluded.status,
+                snapshot_json = excluded.snapshot_json
+            """,
+            (
+                work.dispatch_work_id,
+                work.run_id,
+                work.status.value,
+                format_utc_datetime(work.created_at),
+                encode_dispatch_work(work),
+            ),
+        )
+
+    def get_dispatch_work(self, dispatch_work_id: ID) -> DispatchWork | None:
+        snapshot = self._snapshot("dispatch_work", "dispatch_work_id", dispatch_work_id)
+        return None if snapshot is None else decode_dispatch_work(snapshot)
+
+    def list_dispatch_work(
+        self,
+        status: DispatchWorkStatus | None = None,
+    ) -> tuple[DispatchWork, ...]:
+        if status is None:
+            sql = """
+                SELECT snapshot_json FROM dispatch_work
+                ORDER BY created_at, dispatch_work_id
+            """
+            parameters: tuple[object, ...] = ()
+        else:
+            sql = """
+                SELECT snapshot_json FROM dispatch_work
+                WHERE status = ? ORDER BY created_at, dispatch_work_id
+            """
+            parameters = (DispatchWorkStatus(status).value,)
+        return tuple(
+            decode_dispatch_work(snapshot) for snapshot in self._snapshots(sql, parameters)
+        )
+
+    def claim_next_dispatch_work(self, *, at: datetime) -> DispatchWork | None:
+        row = self._connection.execute(
+            """
+            SELECT snapshot_json FROM dispatch_work
+            WHERE status = 'pending' ORDER BY created_at, dispatch_work_id LIMIT 1
+            """
+        ).fetchone()
+        if row is None:
+            return None
+        claimed = decode_dispatch_work(_row_index_string(row, 0)).claim(at=at)
+        self.put_dispatch_work(claimed)
+        return claimed
+
+    def record_worker_event(
+        self,
+        attempt_id: ID,
+        worker_event_id: str,
+        *,
+        at: datetime,
+    ) -> bool:
+        self._required_attempt(attempt_id)
+        if not isinstance(worker_event_id, str) or not worker_event_id.strip():
+            raise ValueError("worker_event_id must not be blank")
+        cursor = self._connection.execute(
+            """
+            INSERT OR IGNORE INTO worker_event_receipts(
+                attempt_id, worker_event_id, received_at
+            ) VALUES (?, ?, ?)
+            """,
+            (attempt_id, worker_event_id, format_utc_datetime(at)),
+        )
+        return cursor.rowcount == 1
 
     def put_agent_session_ref(self, session: AgentSessionRef) -> None:
         self._required_run(session.run_id)

@@ -411,8 +411,8 @@ class Attempt:
         lease_expires_at: datetime | None = None,
     ) -> Self:
         """Bind an immutable Worker, Endpoint, and Session allocation once."""
-        if self.status is not AttemptStatus.PENDING:
-            raise ValueError(f"attempt {self.attempt_id}: only pending work can be assigned")
+        if self.status not in {AttemptStatus.PENDING, AttemptStatus.RUNNING}:
+            raise ValueError(f"attempt {self.attempt_id}: terminal work cannot be assigned")
         if self.worker_profile_id is not None:
             raise ValueError(f"attempt {self.attempt_id}: assignment is immutable")
         if session.run_id != self.run_id:

@@ -42,6 +42,7 @@ from ehai.domain.planning import (
     PlanRevisionStatus,
     PlanTransitionError,
 )
+from ehai.domain.runtime import DispatchWork, DispatchWorkStatus
 from ehai.domain.workers import (
     AgentSessionRef,
     AttemptActivity,
@@ -77,6 +78,8 @@ __all__ = [
     "CheckSpec",
     "Checkpoint",
     "CompletionContract",
+    "DispatchWork",
+    "DispatchWorkStatus",
     "Edge",
     "EdgeType",
     "Event",

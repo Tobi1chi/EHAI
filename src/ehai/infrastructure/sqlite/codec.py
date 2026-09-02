@@ -29,6 +29,7 @@ from ehai.domain.planning import (
     PlanRevision,
     PlanRevisionStatus,
 )
+from ehai.domain.runtime import DispatchWork, DispatchWorkStatus
 from ehai.domain.workers import (
     AgentSessionRef,
     AttemptActivity,
@@ -221,6 +222,31 @@ def decode_attempt(snapshot: str) -> Attempt:
         progress_at=_optional_datetime(document, "progress_at"),
         deadline_at=_optional_datetime(document, "deadline_at"),
         lease_expires_at=_optional_datetime(document, "lease_expires_at"),
+    )
+
+
+def encode_dispatch_work(work: DispatchWork) -> str:
+    return json_dumps(
+        {
+            "dispatch_work_id": work.dispatch_work_id,
+            "run_id": work.run_id,
+            "status": work.status.value,
+            "created_at": format_utc_datetime(work.created_at),
+            "claimed_at": _format_optional_datetime(work.claimed_at),
+            "completed_at": _format_optional_datetime(work.completed_at),
+        }
+    )
+
+
+def decode_dispatch_work(snapshot: str) -> DispatchWork:
+    document = _load_object(snapshot, "DispatchWork")
+    return DispatchWork.rehydrate(
+        dispatch_work_id=ID(_string(document, "dispatch_work_id")),
+        run_id=ID(_string(document, "run_id")),
+        status=DispatchWorkStatus(_string(document, "status")),
+        created_at=parse_utc_datetime(_string(document, "created_at")),
+        claimed_at=_optional_datetime(document, "claimed_at"),
+        completed_at=_optional_datetime(document, "completed_at"),
     )
 
 

@@ -315,6 +315,103 @@ class Orchestrator:
             if outcome.status is not RunStatus.RUNNING:
                 return outcome
 
+    def prepare_worker_request(self, run_id: ID) -> WorkerRequest:
+        """Persist and return the next runnable Attempt without invoking a Worker."""
+        while self._evaluate_completed_evaluator(run_id):
+            pass
+        context = self._prepare(run_id)
+        if context is None:  # pragma: no cover - retained for the existing private contract
+            raise OrchestrationError(f"run {run_id} produced no execution context")
+        artifact_inputs = self._worker_inputs(context)
+        worker_context = self._worker_context(context, artifact_inputs)
+        if context.plan_node.kind is PlanNodeKind.MERGE:
+            artifact_inputs = _selected_merge_inputs(worker_context, artifact_inputs)
+        return WorkerRequest(
+            run=context.run,
+            attempt=context.attempt,
+            plan_node=context.plan_node,
+            completion_contract=context.completion_contract,
+            context=worker_context,
+            artifact_inputs=artifact_inputs,
+        )
+
+    def accept_worker_result(self, attempt_id: ID, result: WorkerResult) -> Run:
+        """Persist one Worker candidate and advance existing Check/Gate semantics."""
+        context = self._load_attempt_context(attempt_id)
+        branch_local = (
+            _branch_containing(context.plan_revision, context.plan_node.plan_node_id) is not None
+        )
+        try:
+            artifacts = self._store_candidate_artifacts(context, result)
+        except Exception as error:
+            self._record_artifact_failure(context.attempt.attempt_id, result, error)
+            raise ArtifactPersistenceError(
+                f"attempt {context.attempt.attempt_id} produced a candidate but Artifact "
+                f"persistence failed: {type(error).__name__}: {error}"
+            ) from error
+        self._record_candidate(context.attempt.attempt_id, artifacts, result)
+        return self._check_and_complete(
+            context.run.run_id,
+            context.attempt.attempt_id,
+            artifacts,
+            context.check_specs,
+            branch_local=branch_local,
+        )
+
+    def interrupt_attempt(self, attempt_id: ID, reason: str) -> Run:
+        """Fail closed when Runtime recovery cannot find the original execution."""
+        with self._uow_factory() as uow:
+            attempt = _required_attempt(uow, attempt_id)
+            run = _required_run(uow, attempt.run_id)
+            if attempt.status is not AttemptStatus.RUNNING:
+                return run
+            plan = _required_plan(uow, run.plan_revision_id)
+            node = _required_node(plan, attempt.plan_node_id)
+            interrupted = attempt.interrupt(reason, at=self._clock())
+            failed_node = node.fail()
+            paused = run.pause()
+            uow.states.put_attempt(interrupted)
+            uow.states.put_plan_revision(_replace_node(plan, failed_node))
+            uow.states.put_run(paused)
+            uow.events.append(
+                self._event(
+                    EventType.ATTEMPT_INTERRUPTED,
+                    run,
+                    attempt.attempt_id,
+                    {"attempt_id": attempt.attempt_id, "reason": reason},
+                )
+            )
+            uow.events.append(
+                self._event(
+                    EventType.PLAN_NODE_FAILED,
+                    run,
+                    node.plan_node_id,
+                    {"plan_node_id": node.plan_node_id, "reason": reason},
+                )
+            )
+            uow.events.append(
+                self._event(
+                    EventType.RUN_PAUSED,
+                    paused,
+                    run.run_id,
+                    {"run_id": run.run_id, "reason": reason},
+                )
+            )
+            uow.commit()
+            return paused
+
+    def _load_attempt_context(self, attempt_id: ID) -> _ExecutionContext:
+        with self._uow_factory() as uow:
+            attempt = _required_attempt(uow, attempt_id)
+            run, plan, goal, contract = self._load_run_context(uow, attempt.run_id)
+            node = _required_node(plan, attempt.plan_node_id)
+            if attempt.status is not AttemptStatus.RUNNING:
+                raise OrchestrationError(f"attempt {attempt.attempt_id} is not running")
+            if node.status is not PlanNodeStatus.RUNNING:
+                raise OrchestrationError(f"PlanNode {node.plan_node_id} is not running")
+            check_specs = _required_check_specs(uow, plan, node)
+        return _ExecutionContext(run, plan, goal, contract, node, attempt, check_specs)
+
     def _prepare(self, run_id: ID) -> _ExecutionContext | None:
         with self._uow_factory() as uow:
             run, plan, goal, contract = self._load_run_context(uow, run_id)

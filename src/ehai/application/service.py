@@ -31,6 +31,7 @@ from ehai.domain.events import Event, EventType
 from ehai.domain.execution import AttemptStatus, Run, RunStatus
 from ehai.domain.goal import CompletionContract, Goal, Project
 from ehai.domain.planning import PlanNodeStatus, PlanRevision, PlanRevisionStatus
+from ehai.domain.runtime import DispatchWork
 
 UnitOfWorkFactory = Callable[[], UnitOfWork]
 
@@ -60,6 +61,7 @@ class ExecutionService:
         recovery_service: RecoveryService | None = None,
         clock: Callable[[], datetime] = utc_now,
         id_factory: Callable[[], ID] = new_id,
+        background_start: bool = False,
     ) -> None:
         self._uow_factory = uow_factory
         self._planner = planner
@@ -68,6 +70,7 @@ class ExecutionService:
         self._recovery_service = recovery_service
         self._clock = clock
         self._id_factory = id_factory
+        self._background_start = background_start
         self._execution_lock = Lock()
 
     def create_project(self, command: CreateProject) -> Project:
@@ -356,6 +359,14 @@ class ExecutionService:
                     created_at=self._clock(),
                 )
                 uow.states.put_run(run)
+                if self._background_start:
+                    uow.states.put_dispatch_work(
+                        DispatchWork(
+                            run_id=run.run_id,
+                            dispatch_work_id=self._id_factory(),
+                            created_at=self._clock(),
+                        )
+                    )
                 self._record_receipt(
                     uow,
                     command.idempotency_key,
@@ -365,7 +376,7 @@ class ExecutionService:
                 )
                 uow.commit()
 
-        if run.status is RunStatus.PENDING:
+        if run.status is RunStatus.PENDING and not self._background_start:
             return self._execute_serially(run.run_id)
         return run
 

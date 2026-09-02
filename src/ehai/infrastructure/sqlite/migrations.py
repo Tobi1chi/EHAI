@@ -6,7 +6,7 @@ import sqlite3
 from collections.abc import Sequence
 
 P1_SCHEMA_VERSION = 2
-LATEST_SCHEMA_VERSION = 5
+LATEST_SCHEMA_VERSION = 6
 
 
 class SchemaVersionError(RuntimeError):
@@ -375,12 +375,37 @@ _MIGRATION_5: tuple[str, ...] = (
     """,
 )
 
+_MIGRATION_6: tuple[str, ...] = (
+    """
+    CREATE TABLE dispatch_work (
+        dispatch_work_id TEXT PRIMARY KEY,
+        run_id TEXT NOT NULL UNIQUE REFERENCES runs(run_id) ON DELETE CASCADE,
+        status TEXT NOT NULL CHECK (status IN ('pending', 'claimed', 'completed')),
+        created_at TEXT NOT NULL,
+        snapshot_json TEXT NOT NULL CHECK (json_valid(snapshot_json))
+    )
+    """,
+    """
+    CREATE INDEX dispatch_work_status_idx
+        ON dispatch_work(status, created_at, dispatch_work_id)
+    """,
+    """
+    CREATE TABLE worker_event_receipts (
+        attempt_id TEXT NOT NULL REFERENCES attempts(attempt_id) ON DELETE CASCADE,
+        worker_event_id TEXT NOT NULL,
+        received_at TEXT NOT NULL,
+        PRIMARY KEY(attempt_id, worker_event_id)
+    )
+    """,
+)
+
 _MIGRATIONS: dict[int, Sequence[str]] = {
     1: _MIGRATION_1,
     2: _MIGRATION_2,
     3: _MIGRATION_3,
     4: _MIGRATION_4,
     5: _MIGRATION_5,
+    6: _MIGRATION_6,
 }
 
 
