@@ -16,6 +16,8 @@ EHAI（Enhanced Human-Agent Interface）用于建立可规划、可探索、可�
 
 ## P1：可运行的探索闭环
 
+**状态：** 已完成（包含真实端到端验收及 P1.1 语义修复）。
+
 **目标：** 验证从目标对齐到自动执行、检查和恢复的完整链路。
 
 详细编码顺序和验收方法见 [P1 Implementation Plan](P1_IMPLEMENTATION_PLAN.md)。
@@ -38,6 +40,8 @@ EHAI（Enhanced Human-Agent Interface）用于建立可规划、可探索、可�
 
 ## P2：稳定的多 Worker 执行内核
 
+**状态：** 当前开发阶段。
+
 **目标：** 将 P1 原型升级为可靠、可扩展的 Agent Runtime。
 
 范围：
@@ -45,6 +49,10 @@ EHAI（Enhanced Human-Agent Interface）用于建立可规划、可探索、可�
 - Built-in Worker Agent Framework。
 - 统一 Worker Adapter 与能力声明协议。
 - Claude Code、OpenCode 等 External Worker Connectors。
+- Orchestrator 保留就绪判断和领域状态推进；Scheduler 管理执行队列与并发；
+  Dispatcher 根据能力与容量选择 Worker Endpoint。
+- 将每个 Attempt 持久化绑定到外部 Agent Session 和一次 provider execution，并通过事件、心跳、
+  查询和租约跟踪运行状态。
 - 并发、重试、超时、取消和资源预算。
 - 分支上下文与 Git worktree 隔离。
 - Artifact、日志、上下文摘要和 Event Replay。

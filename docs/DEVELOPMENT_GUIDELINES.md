@@ -18,10 +18,19 @@
 
 `PlanGraph` 与 `ExecutionTrace` 必须分离：前者描述预期路径，后者描述实际发生的 Attempt、事件和结果。
 
+P2 路由术语：`WorkerProfile` 表示可调度的 Agent 配置；`WorkerEndpoint` 表示一个实际运行的
+平台服务；`AgentSessionRef` 引用平台的长期上下文；`ExternalExecutionRef` 引用 Session 中与一个
+Attempt 对应的一次 turn 或 job。平台原生 ID 通过这些引用保存，不进入 PlanGraph 语义。
+
 ## 职责边界与不变量
 
-- Planner 创建 PlanRevision、探索分支和 GraphPatch，但不直接执行节点。
-- Orchestrator 调度、重试、取消和推进状态，但不改变 Goal 或降低完成标准。
+- Planner 创建 PlanRevision、探索分支、GraphPatch 和节点能力要求，但不执行节点，也不选择运行时
+  Endpoint。
+- Orchestrator 计算就绪节点并推进领域状态，但不负责平台容量与 Session 分配。
+- Scheduler 管理可运行 Attempt 的队列、并发、重试、超时和资源预算；Dispatcher 根据能力、容量、
+  Project 隔离和 Session 策略选择 WorkerProfile 与 WorkerEndpoint。
+- Worker Connector 封装 Codex、OpenCode 等平台的启动、事件、状态查询、取消和恢复协议，不决定
+  PlanNode 或 Run 是否完成。
 - Worker 只提交候选结果、Artifact 和事件，不得直接标记节点或 Goal 完成。
 - Checker 产生带证据的 CheckResult；Gate 根据策略作出状态转换决定。
 - 没有通过必需 Gate，PlanNode 不得进入 `completed`。

@@ -6,6 +6,17 @@ P1 要交付一个可运行的 Python Execution Plane：用户创建 Goal，与 
 
 P1 验证的是端到端语义，不追求通用平台能力。TypeScript Control Plane、并发执行、多 Worker、分布式调度和通用插件系统不在本期范围内。
 
+## 当前状态
+
+P1 的 I0 至 I8 与后续 P1.1 修复均已完成，当前基线为提交 `a1a41b1`。P1.1 根据真实 Codex
+端到端演示补齐了以下语义：Evaluator 的结构化 Artifact 实际决定分支选择；普通依赖、Evaluator
+和 Merge 使用受控 Artifact 内容快照；Merge 只接收明确选中的 Artifact；Command/Semantic Check
+不再退化为 Artifact Check；Worker timeout、Codex model 和 reasoning effort 可独立配置。
+
+自动化测试、Ruff、格式检查和 mypy 已通过；真实 Codex Worker smoke 与五节点探索闭环结果记录在
+README 和 Codex CLI Spike 中。P1 继续作为单 Worker、串行执行的稳定基线，后续并发、异步调度、
+多平台路由和 Agent Session 管理归入 P2。
+
 ## P1 技术边界
 
 - Execution Plane 全部使用 Python，环境和命令统一通过 `uv`。
@@ -253,10 +264,11 @@ ListEvents(after_event_id)
 - **恢复时重复操作：** Command 使用幂等键，状态与 Event 原子提交，Checkpoint 记录 Event Offset。
 - **范围膨胀：** 新需求若不直接服务于 P1 退出条件，记录到 P2+，不进入当前实现。
 
-## 开始编码前仅需确认的决策
+## 已确认的 P1 实现决策
 
-1. Codex Connector 通过哪一种本地调用方式接入。
-2. P1 的最小 HTTP API/事件流采用哪一个 Python 实现方案。
-3. Planner 是否复用 Codex 通道，还是使用单独的模型 Provider；无论选择哪种方式，两种角色仍保持独立接口。
+1. Codex Connector 使用本地 `codex exec` 非交互进程通道，具体边界见 ADR 0003。
+2. P1 HTTP API 使用 FastAPI，实时事件使用可按 Event ID 恢复的 SSE，具体边界见 ADR 0002。
+3. Planner 与 Worker 复用 Codex 进程传输和本机认证配置，但保持独立 Port、协议、预算和超时，
+   不共享可变 Session 状态。
 
-这些决策不阻塞 I0 的仓库初始化、Domain 编码和 Fake Worker 纵向闭环。
+这些决策已随 P1 实现关闭；持久 Agent Session 和 App Server Connector 属于 P2 设计范围。

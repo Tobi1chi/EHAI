@@ -4,6 +4,9 @@ EHAI P1 是一个可运行的 Python Execution Plane。它把版本化 `PlanGrap
 `ExecutionTrace` 分开保存，由 Planner 提出计划、Orchestrator 顺序执行、Worker 只提交候选，
 最终由 Check/Gate 决定节点与 Run 是否完成。
 
+当前状态：P1 与 P1.1 已完成，保留为单 Worker、串行执行基线；当前开发阶段为 P2，重点是
+多 Worker、异步调度、平台路由、Agent Session 状态与恢复。
+
 ## 安装
 
 需要 Python 3.12 和 [uv](https://docs.astral.sh/uv/)。项目依赖及开发工具均由 uv 管理：
