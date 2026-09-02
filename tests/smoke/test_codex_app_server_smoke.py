@@ -16,6 +16,7 @@ from ehai.application.async_runtime import (
     WorkerEventType,
 )
 from ehai.application.workers import WorkerRequest
+from ehai.domain.checking import CheckKind, CheckSpec
 from ehai.domain.execution import Attempt, Run
 from ehai.domain.goal import CompletionContract
 from ehai.domain.planning import PlanNode
@@ -103,6 +104,12 @@ def _request(title: str, instruction: str) -> WorkerRequest:
     goal_id = new_id()
     run = Run(goal_id, new_id(), created_at=now).start(at=now)
     check_id = new_id()
+    check_spec = CheckSpec(
+        "completion-artifact",
+        CheckKind.ARTIFACT,
+        "artifact:non-empty",
+        check_id=check_id,
+    )
     contract = CompletionContract.draft(
         goal_id,
         ("artifact:non-empty",),
@@ -125,5 +132,6 @@ def _request(title: str, instruction: str) -> WorkerRequest:
         attempt=attempt,
         plan_node=node,
         completion_contract=contract,
+        required_check_specs=(check_spec,),
         context={},
     )

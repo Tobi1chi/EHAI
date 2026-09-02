@@ -10,16 +10,17 @@ from pathlib import Path
 
 from ehai import ID, new_id, utc_now
 from ehai.application.planner import (
-    NON_EMPTY_ARTIFACT_CRITERION,
     ExplorationBudget,
     ExplorationUsage,
     PlanProposal,
+    build_plan_proposal,
     replan_from_template,
+    require_p1_criteria,
     require_replan_context,
+    two_branch_plan_template,
 )
-from ehai.domain.checking import CheckKind, CheckSpec
-from ehai.domain.goal import CompletionContract, Goal, GoalStatus
-from ehai.domain.planning import Branch, Edge, EdgeType, PlanNode, PlanNodeKind, PlanRevision
+from ehai.domain.goal import Goal, GoalStatus
+from ehai.domain.planning import PlanRevision
 from ehai.infrastructure.codex_transport import (
     CodexCancellation,
     CodexProcessOutcome,
@@ -194,136 +195,29 @@ class CodexPlannerAdapter(CodexProcessTransport):
         diagnostics: tuple[str, ...],
         event_types: tuple[str, ...],
     ) -> PlanProposal:
-        proposed_at = self._clock()
-        check_spec = CheckSpec(
-            name="completion-artifact",
-            kind=CheckKind.ARTIFACT,
-            description=NON_EMPTY_ARTIFACT_CRITERION,
-            required=True,
-            check_id=self._id_factory(),
-        )
-        contract = CompletionContract.draft(
-            goal_id=goal.goal_id,
-            criteria=criteria,
-            required_check_ids=(check_spec.check_id,),
-            completion_contract_id=self._id_factory(),
-            created_at=proposed_at,
-        )
-        required_checks = (check_spec.check_id,)
-        fork = PlanNode(
-            plan_node_id=self._id_factory(),
-            title=parsed.fork.title,
-            instruction=parsed.fork.instruction,
-            kind=PlanNodeKind.FORK,
-            required_check_ids=required_checks,
-        )
-        first = PlanNode(
-            plan_node_id=self._id_factory(),
-            title=parsed.branches[0].title,
-            instruction=parsed.branches[0].instruction,
-            required_check_ids=required_checks,
-        )
-        second = PlanNode(
-            plan_node_id=self._id_factory(),
-            title=parsed.branches[1].title,
-            instruction=parsed.branches[1].instruction,
-            required_check_ids=required_checks,
-        )
-        evaluator = PlanNode(
-            plan_node_id=self._id_factory(),
-            title=parsed.evaluator.title,
-            instruction=parsed.evaluator.instruction,
-            kind=PlanNodeKind.EVALUATOR,
-            required_dependency_ids=(first.plan_node_id, second.plan_node_id),
-            required_check_ids=required_checks,
-        )
-        merge = PlanNode(
-            plan_node_id=self._id_factory(),
-            title=parsed.merge.title,
-            instruction=parsed.merge.instruction,
-            kind=PlanNodeKind.MERGE,
-            required_dependency_ids=(evaluator.plan_node_id,),
-            required_check_ids=required_checks,
-        )
-        first_branch = Branch(
-            branch_id=self._id_factory(),
-            label=parsed.branches[0].label,
-            fork_node_id=fork.plan_node_id,
-            node_ids=(first.plan_node_id,),
-            merge_node_id=merge.plan_node_id,
-        )
-        second_branch = Branch(
-            branch_id=self._id_factory(),
-            label=parsed.branches[1].label,
-            fork_node_id=fork.plan_node_id,
-            node_ids=(second.plan_node_id,),
-            merge_node_id=merge.plan_node_id,
-        )
-        edges = (
-            Edge(
-                self._id_factory(),
-                fork.plan_node_id,
-                first.plan_node_id,
-                EdgeType.EXPLORATION,
-                branch_id=first_branch.branch_id,
+        return build_plan_proposal(
+            goal,
+            criteria,
+            two_branch_plan_template(
+                fork_title=parsed.fork.title,
+                fork_instruction=parsed.fork.instruction,
+                first_label=parsed.branches[0].label,
+                first_title=parsed.branches[0].title,
+                first_instruction=parsed.branches[0].instruction,
+                second_label=parsed.branches[1].label,
+                second_title=parsed.branches[1].title,
+                second_instruction=parsed.branches[1].instruction,
+                evaluator_title=parsed.evaluator.title,
+                evaluator_instruction=parsed.evaluator.instruction,
+                merge_title=parsed.merge.title,
+                merge_instruction=parsed.merge.instruction,
+                budget=self._budget,
+                usage=_P1_USAGE,
+                planner_diagnostics=diagnostics,
+                planner_event_types=event_types,
             ),
-            Edge(
-                self._id_factory(),
-                first.plan_node_id,
-                merge.plan_node_id,
-                EdgeType.MERGE,
-                branch_id=first_branch.branch_id,
-            ),
-            Edge(
-                self._id_factory(),
-                fork.plan_node_id,
-                second.plan_node_id,
-                EdgeType.EXPLORATION,
-                branch_id=second_branch.branch_id,
-            ),
-            Edge(
-                self._id_factory(),
-                second.plan_node_id,
-                merge.plan_node_id,
-                EdgeType.MERGE,
-                branch_id=second_branch.branch_id,
-            ),
-            Edge(
-                self._id_factory(),
-                first.plan_node_id,
-                evaluator.plan_node_id,
-                EdgeType.DEPENDENCY,
-            ),
-            Edge(
-                self._id_factory(),
-                second.plan_node_id,
-                evaluator.plan_node_id,
-                EdgeType.DEPENDENCY,
-            ),
-            Edge(
-                self._id_factory(),
-                evaluator.plan_node_id,
-                merge.plan_node_id,
-                EdgeType.DEPENDENCY,
-            ),
-        )
-        revision = PlanRevision.draft(
-            goal_id=goal.goal_id,
-            completion_contract=contract,
-            nodes=(fork, first, second, evaluator, merge),
-            edges=edges,
-            branches=(first_branch, second_branch),
-            plan_revision_id=self._id_factory(),
-            created_at=proposed_at,
-        )
-        return PlanProposal(
-            contract=contract,
-            plan_revision=revision,
-            check_specs=(check_spec,),
-            budget=self._budget,
-            usage=_P1_USAGE,
-            planner_diagnostics=diagnostics,
-            planner_event_types=event_types,
+            id_factory=self._id_factory,
+            clock=self._clock,
         )
 
     @staticmethod
@@ -337,10 +231,4 @@ class CodexPlannerAdapter(CodexProcessTransport):
 
     @staticmethod
     def _criteria(criteria: tuple[str, ...]) -> tuple[str, ...]:
-        normalized = tuple(criterion.strip() for criterion in criteria)
-        if normalized != (NON_EMPTY_ARTIFACT_CRITERION,):
-            raise ValueError(
-                "CodexPlannerAdapter supports exactly one P1 completion criterion: "
-                f"{NON_EMPTY_ARTIFACT_CRITERION}"
-            )
-        return normalized
+        return require_p1_criteria(criteria, "CodexPlannerAdapter")

@@ -6,6 +6,9 @@ import argparse
 import sys
 from collections.abc import Sequence
 from pathlib import Path
+from typing import cast
+
+from openai.types.shared import ReasoningEffort
 
 from ehai import JsonValue, json_dumps, json_loads, normalize_id
 from ehai.application.checkpointing import RecoveryError, RecoveryService
@@ -47,7 +50,12 @@ from ehai.infrastructure.checks import (
     SemanticCheckAdapter,
     SemanticRubric,
 )
-from ehai.infrastructure.planners import CodexPlannerAdapter, CodexPlannerError
+from ehai.infrastructure.planners import (
+    BuiltinPlannerAdapter,
+    BuiltinPlannerError,
+    CodexPlannerAdapter,
+    CodexPlannerError,
+)
 from ehai.infrastructure.sqlite import SQLiteDatabase
 from ehai.infrastructure.workers import CodexWorkerAdapter, FakeWorker
 
@@ -92,6 +100,8 @@ def build_service(
     worker_workspace: Path | None = None,
     planner_kind: str = "single",
     planner_timeout_seconds: float = 120.0,
+    builtin_planner_model: str | None = None,
+    builtin_planner_reasoning_effort: str | None = None,
     command_check_argv: Sequence[str] | None = None,
     semantic_required_terms: Sequence[str] = (),
     worker_timeout_seconds: float = 300.0,
@@ -128,6 +138,13 @@ def build_service(
         planner = CodexPlannerAdapter(
             workspace=worker_workspace or Path.cwd(),
             timeout_seconds=planner_timeout_seconds,
+        )
+    elif planner_kind == "builtin":
+        if builtin_planner_model is None or not builtin_planner_model.strip():
+            raise ValueError("Built-in Planner requires --builtin-planner-model")
+        planner = BuiltinPlannerAdapter(
+            model=builtin_planner_model,
+            reasoning_effort=cast(ReasoningEffort, builtin_planner_reasoning_effort),
         )
     else:
         raise ValueError(f"unsupported Planner: {planner_kind}")
@@ -198,7 +215,7 @@ def create_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--planner",
-        choices=("single", "exploration", "codex"),
+        choices=("single", "exploration", "codex", "builtin"),
         default="single",
         help="Planner implementation (default: single)",
     )
@@ -207,6 +224,12 @@ def create_parser() -> argparse.ArgumentParser:
         type=float,
         default=120.0,
         help="Codex Planner wall-clock timeout (default: 120)",
+    )
+    parser.add_argument("--builtin-planner-model", help="OpenAI model for Built-in Planner")
+    parser.add_argument(
+        "--builtin-planner-reasoning-effort",
+        choices=("none", "minimal", "low", "medium", "high", "xhigh", "max"),
+        help="OpenAI reasoning effort for Built-in Planner",
     )
     parser.add_argument(
         "--worker-timeout-seconds",
@@ -311,6 +334,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             worker_workspace=args.worker_workspace,
             planner_kind=args.planner,
             planner_timeout_seconds=args.planner_timeout_seconds,
+            builtin_planner_model=args.builtin_planner_model,
+            builtin_planner_reasoning_effort=args.builtin_planner_reasoning_effort,
             command_check_argv=_parse_command_argv(args.command_check_argv),
             semantic_required_terms=tuple(args.semantic_required_term),
             worker_timeout_seconds=args.worker_timeout_seconds,
@@ -320,6 +345,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         output = _dispatch(service, args)
     except (
         ApplicationError,
+        BuiltinPlannerError,
         CodexPlannerError,
         OrchestrationError,
         RecoveryError,

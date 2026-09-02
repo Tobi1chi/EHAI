@@ -10,6 +10,7 @@ import pytest
 from ehai import JsonValue, json_dumps, json_loads, new_id
 from ehai.application.workers import ArtifactInputSnapshot, WorkerRequest, WorkerResult
 from ehai.domain.artifacts import ArtifactKind
+from ehai.domain.checking import CheckKind, CheckSpec
 from ehai.domain.execution import Attempt, Run
 from ehai.domain.goal import CompletionContract
 from ehai.domain.planning import PlanNode, PlanNodeKind
@@ -33,6 +34,12 @@ def _request(
     goal_id = new_id()
     run = Run(goal_id, new_id(), run_id=new_id(), created_at=NOW).start(at=NOW)
     check_id = new_id()
+    check_spec = CheckSpec(
+        "completion-artifact",
+        CheckKind.ARTIFACT,
+        "artifact:non-empty",
+        check_id=check_id,
+    )
     contract = CompletionContract.draft(
         goal_id,
         ("artifact:non-empty",),
@@ -63,6 +70,7 @@ def _request(
         attempt=attempt,
         plan_node=node,
         completion_contract=contract,
+        required_check_specs=(check_spec,),
         context={"z": 2, "a": "context"} if context is None else context,
         artifact_inputs=artifact_inputs,
     )
@@ -121,6 +129,9 @@ def test_prompt_is_deterministic_separated_and_contains_snapshotted_inputs(
     assert '--- CONTEXT_JSON ---\n{"a":"context","z":2}' in prompt
     assert "--- CONFIRMED_COMPLETION_CONTRACT_JSON ---" in prompt
     assert '"criteria":["artifact:non-empty"]' in prompt
+    assert '"required_check_ids":["' in prompt
+    assert "--- REQUIRED_CHECKS_JSON ---" in prompt
+    assert '"kind":"artifact"' in prompt
     assert "--- INPUT_ARTIFACTS_JSON ---" in prompt
     assert artifact.artifact_id in prompt
     assert artifact.sha256 in prompt

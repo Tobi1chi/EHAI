@@ -28,6 +28,8 @@ from ehai.application.workers import WorkerRequest
 from ehai.domain import (
     Attempt,
     AttemptStatus,
+    CheckKind,
+    CheckSpec,
     CompletionContract,
     PlanNode,
     Run,
@@ -356,6 +358,12 @@ def _worker_request(label: str) -> WorkerRequest:
     goal_id = new_id()
     run = Run(goal_id, new_id(), created_at=now).start(at=now)
     check_id = new_id()
+    check_spec = CheckSpec(
+        "completion-artifact",
+        CheckKind.ARTIFACT,
+        "artifact:non-empty",
+        check_id=check_id,
+    )
     contract = CompletionContract.draft(
         goal_id,
         ("artifact:non-empty",),
@@ -378,6 +386,7 @@ def _worker_request(label: str) -> WorkerRequest:
         attempt=attempt,
         plan_node=node,
         completion_contract=contract,
+        required_check_specs=(check_spec,),
         context={},
     )
 

@@ -6,7 +6,7 @@ Query/SSE 观察进展。
 
 ## 安装与前置条件
 
-需要 Python 3.12 和 `uv`。Standalone Built-in Agent 通过官方 OpenAI Python SDK 调用 Responses
+需要 Python 3.12 和 `uv`。Standalone Built-in Agent 和 Built-in Planner 通过官方 OpenAI Python SDK 调用 Responses
 API，只需要 `OPENAI_API_KEY`；自定义兼容端点可另外设置 `OPENAI_BASE_URL`，不需要安装 Codex。
 Codex CLI 和 Codex App Server Worker 才要求本机 `codex` 可执行文件已经完成认证。
 
@@ -33,6 +33,8 @@ uv run ehai-api `
     --artifacts .ehai/builtin-artifacts `
     --worker builtin `
     --worker-workspace (Get-Location).Path `
+    --planner builtin `
+    --builtin-planner-model gpt-5.6-luna `
     --builtin-model gpt-5.6-luna `
     --builtin-reasoning-effort high `
     --builtin-capacity 2 `
@@ -42,9 +44,10 @@ uv run ehai-api `
     --port 8000
 ```
 
-Built-in Agent 只能通过严格 `submit_candidate` Tool 产生候选 Artifact；普通 assistant 文本不会被
-当作执行结果。`Fake` Worker 仅用于离线测试，Codex CLI 是每 Attempt 一个外部进程，Codex App
-Server Connector 则管理持久 Thread/Turn；三者不共享 Agent 框架。
+Built-in Planner 使用同一 Responses ModelClient seam，但只生成 provider-neutral PlanTemplate；它不创建
+Worker Attempt、Workspace 或 Agent Session。Built-in Agent 只能通过严格 `submit_candidate` Tool 产生
+候选 Artifact；普通 assistant 文本不会被当作执行结果。`Fake` Worker 仅用于离线测试，Codex CLI 是每
+Attempt 一个外部进程，Codex App Server Connector 则管理持久 Thread/Turn；三者不共享 Agent 框架。
 
 `--builtin-allowed-command` 只接受 executable basename。Runtime 创建时从绝对 PATH/PATHEXT 目录解析
 并固定可信 executable；模型传入的 `argv[0]` 不得包含相对、绝对或其他 path-qualified 路径，执行时
@@ -88,7 +91,8 @@ uv run ehai @Common get-run --run-id $Run.run_id
 ```
 
 把 `--planner exploration` 改为 `--planner single` 可创建单节点计划；改为 `--planner codex` 会使用
-独立的 Codex Planner 协议生成受预算约束的探索图。`--planner-timeout-seconds` 只控制 Planner，
+独立的 Codex Planner 协议生成受预算约束的探索图；改为 `--planner builtin` 并提供
+`--builtin-planner-model` 会使用 Responses Built-in Planner。`--planner-timeout-seconds` 只控制 Codex Planner，
 `--worker-timeout-seconds` 只控制 Worker Attempt。Worker 还可使用 `--codex-model` 和
 `--codex-reasoning-effort` 覆盖本次调用配置，不修改用户全局 Codex 配置。
 
@@ -97,7 +101,8 @@ CLI 还提供 `pause-run`、`resume-run`、`cancel-run`、`restore-run` 和启�
 
 ## 完成条件与 Check
 
-P1/P1.1 每个 Plan 只接受一个完成条件：
+P1/P1.1 每个 Plan 只接受一个完成条件；`single`、`exploration`、`codex` 和 `builtin` Planner 都通过同一个
+PlanProposal builder 创建 CheckSpec、CompletionContract 和 PlanRevision：
 
 - `artifact:non-empty`：候选 Artifact 必须存在且非空。
 - `command:exit-zero`：宿主配置的命令必须以退出码 0 完成。

@@ -27,6 +27,16 @@ Dispatcher 选择 Worker/Endpoint，Built-in Agent 或 Codex Connector 执行 At
 P2 不实现 P3 Dashboard、P4 Workflow、P5 OpenCode/Claude Code/DSH Connector、插件 SDK/市场或跨主机
 分布式调度。
 
+## P2.1 Planner 契约修复
+
+Planner provider 只输出 provider-specific plan content，必须先转换为 provider-neutral `PlanTemplate`，
+再由应用层统一 builder 创建 `CheckSpec`、`CompletionContract` 和 `PlanRevision`。`single`、
+`exploration`、`codex` 和 `builtin` Planner 都不得各自决定 Criterion 到 CheckKind 的映射。
+
+Built-in Planner 可以复用 Built-in Agent 的 Responses `ModelClient` seam，但不得创建 Worker Attempt、
+Workspace、AgentSessionRef 或长期 Planner Session。Worker request 必须显式携带已确认的
+`CompletionContract` 和 required `CheckSpec` 快照；Provider 只能读取这些契约，不能决定或降低完成标准。
+
 ## DSH 借鉴范围
 
 Built-in Agent 借鉴 DeepSeek Harness 的基本 Agent Spine：Session、System Prompt、Tool Runtime、

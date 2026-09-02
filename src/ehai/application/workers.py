@@ -11,6 +11,7 @@ from typing import Protocol, runtime_checkable
 
 from ehai import ID, JsonValue, json_dumps, json_loads, normalize_id
 from ehai.domain.artifacts import Artifact, ArtifactKind
+from ehai.domain.checking import CheckSpec
 from ehai.domain.execution import Attempt, AttemptStatus, Run, RunStatus
 from ehai.domain.goal import CompletionContract
 from ehai.domain.planning import PlanNode, PlanNodeStatus
@@ -194,6 +195,7 @@ class WorkerRequest:
     attempt: Attempt
     plan_node: PlanNode
     completion_contract: CompletionContract
+    required_check_specs: tuple[CheckSpec, ...]
     artifact_inputs: tuple[ArtifactInputSnapshot, ...]
     _context_json: str = field(repr=False)
 
@@ -204,6 +206,7 @@ class WorkerRequest:
         attempt: Attempt,
         plan_node: PlanNode,
         completion_contract: CompletionContract,
+        required_check_specs: tuple[CheckSpec, ...],
         context: Mapping[str, JsonValue],
         artifact_inputs: tuple[ArtifactInputSnapshot, ...] = (),
     ) -> None:
@@ -215,6 +218,9 @@ class WorkerRequest:
             raise ValueError("WorkerRequest plan_node must be a PlanNode")
         if not isinstance(completion_contract, CompletionContract):
             raise ValueError("WorkerRequest completion_contract must be a CompletionContract")
+        checks = tuple(required_check_specs)
+        if not checks or not all(isinstance(check, CheckSpec) for check in checks):
+            raise ValueError("WorkerRequest required_check_specs must contain CheckSpecs")
         if not isinstance(context, Mapping):
             raise ValueError("WorkerRequest context must be a JSON object")
 
@@ -241,6 +247,15 @@ class WorkerRequest:
             raise ValueError(f"{owner} requires a confirmed CompletionContract")
         if completion_contract.goal_id != run.goal_id:
             raise ValueError(f"{owner} CompletionContract belongs to another Goal")
+        check_ids = tuple(check.check_id for check in checks)
+        if len(set(check_ids)) != len(check_ids):
+            raise ValueError(f"{owner} required CheckSpecs must not contain duplicate IDs")
+        if set(check_ids) != set(plan_node.required_check_ids):
+            raise ValueError(f"{owner} required CheckSpecs do not match its PlanNode")
+        if set(check_ids) != set(completion_contract.required_check_ids):
+            raise ValueError(f"{owner} required CheckSpecs do not match its CompletionContract")
+        if any(not check.required for check in checks):
+            raise ValueError(f"{owner} required CheckSpecs cannot be optional")
         foreign_artifacts = tuple(
             artifact.artifact_id
             for artifact in artifacts
@@ -253,6 +268,7 @@ class WorkerRequest:
         object.__setattr__(self, "attempt", attempt)
         object.__setattr__(self, "plan_node", plan_node)
         object.__setattr__(self, "completion_contract", completion_contract)
+        object.__setattr__(self, "required_check_specs", checks)
         object.__setattr__(self, "artifact_inputs", artifacts)
         context_json = json_dumps(dict(context))
         if len(context_json.encode("utf-8")) > MAX_WORKER_CONTEXT_BYTES:

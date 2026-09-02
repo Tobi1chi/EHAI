@@ -23,6 +23,7 @@ from ehai.application.workers import (
     WorkerTimedOutError,
 )
 from ehai.domain.artifacts import ArtifactKind
+from ehai.domain.checking import CheckKind, CheckSpec
 from ehai.domain.execution import Attempt, Run
 from ehai.domain.goal import CompletionContract
 from ehai.domain.planning import PlanNode
@@ -131,6 +132,12 @@ def _request() -> WorkerRequest:
     goal_id = new_id()
     run = Run(goal_id, new_id(), run_id=new_id(), created_at=NOW).start(at=NOW)
     check_id = new_id()
+    check_spec = CheckSpec(
+        "completion-artifact",
+        CheckKind.ARTIFACT,
+        "artifact:non-empty",
+        check_id=check_id,
+    )
     contract = CompletionContract.draft(
         goal_id,
         ("artifact:non-empty",),
@@ -160,6 +167,7 @@ def _request() -> WorkerRequest:
         attempt=attempt,
         plan_node=node,
         completion_contract=contract,
+        required_check_specs=(check_spec,),
         context={"prior": "fact"},
     )
 
@@ -346,6 +354,8 @@ def test_codex_worker_invokes_exact_non_shell_contract_and_tolerates_unknown_jso
     assert record["schema"]["additionalProperties"] is False
     assert "EHAI CODEX WORKER PROTOCOL v1" in record["prompt"]
     assert '"prior":"fact"' in record["prompt"]
+    assert "--- REQUIRED_CHECKS_JSON ---" in record["prompt"]
+    assert '"required_check_ids":["' in record["prompt"]
     assert "codex jsonl event: future.event" in result.diagnostics
 
 

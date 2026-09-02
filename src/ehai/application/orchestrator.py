@@ -230,6 +230,7 @@ class Orchestrator:
                     attempt=context.attempt,
                     plan_node=context.plan_node,
                     completion_contract=context.completion_contract,
+                    required_check_specs=context.check_specs,
                     context=worker_context,
                     artifact_inputs=artifact_inputs,
                 )
@@ -340,6 +341,7 @@ class Orchestrator:
             attempt=context.attempt,
             plan_node=context.plan_node,
             completion_contract=context.completion_contract,
+            required_check_specs=context.check_specs,
             context=worker_context,
             artifact_inputs=artifact_inputs,
         )
@@ -356,6 +358,7 @@ class Orchestrator:
             attempt=context.attempt,
             plan_node=context.plan_node,
             completion_contract=context.completion_contract,
+            required_check_specs=context.check_specs,
             context=worker_context,
             artifact_inputs=artifact_inputs,
         )
@@ -496,6 +499,7 @@ class Orchestrator:
             attempt=running_attempt,
             plan_node=running_node,
             completion_contract=contract,
+            required_check_specs=check_specs,
             context=worker_context,
             artifact_inputs=artifact_inputs,
         )

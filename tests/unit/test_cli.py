@@ -32,6 +32,8 @@ def test_cli_maps_orchestration_errors_to_json(
         worker_workspace: Path | None,
         planner_kind: str,
         planner_timeout_seconds: float,
+        builtin_planner_model: str | None,
+        builtin_planner_reasoning_effort: str | None,
         command_check_argv: object,
         semantic_required_terms: object,
         worker_timeout_seconds: float,
@@ -40,6 +42,7 @@ def test_cli_maps_orchestration_errors_to_json(
     ) -> ExecutionService:
         del worker_kind, worker_workspace, command_check_argv, semantic_required_terms
         del codex_model, codex_reasoning_effort
+        del builtin_planner_model, builtin_planner_reasoning_effort
         assert planner_kind == "single"
         assert planner_timeout_seconds == 120.0
         assert worker_timeout_seconds == 300.0
@@ -207,6 +210,32 @@ def test_parser_accepts_codex_planner_with_independent_timeout(tmp_path: Path) -
 
     assert args.planner == "codex"
     assert args.planner_timeout_seconds == 17
+
+
+def test_parser_accepts_builtin_planner_model_configuration(tmp_path: Path) -> None:
+    args = cli.create_parser().parse_args(
+        [
+            "--database",
+            str(tmp_path / "state.sqlite3"),
+            "--artifacts",
+            str(tmp_path / "artifacts"),
+            "--planner",
+            "builtin",
+            "--builtin-planner-model",
+            "gpt-test",
+            "--builtin-planner-reasoning-effort",
+            "high",
+            "create-project",
+            "--idempotency-key",
+            "project",
+            "--name",
+            "project",
+        ]
+    )
+
+    assert args.planner == "builtin"
+    assert args.builtin_planner_model == "gpt-test"
+    assert args.builtin_planner_reasoning_effort == "high"
 
 
 def test_parser_accepts_worker_runtime_configuration(tmp_path: Path) -> None:

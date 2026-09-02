@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from ehai import JsonValue, json_dumps
 from ehai.application.workers import CandidateArtifact, WorkerRequest, WorkerResult
 from ehai.domain.artifacts import ArtifactKind
+from ehai.domain.checking import CheckSpec
 from ehai.domain.planning import PlanNodeKind
 
 _OUTPUT_KEYS = frozenset({"summary", "artifacts"})
@@ -74,6 +75,7 @@ def build_codex_prompt(request: WorkerRequest) -> str:
     contract: dict[str, JsonValue] = {
         "completion_contract_id": request.completion_contract.completion_contract_id,
         "criteria": list(request.completion_contract.criteria),
+        "required_check_ids": list(request.completion_contract.required_check_ids),
         "version": request.completion_contract.version,
     }
     node: dict[str, JsonValue] = {
@@ -133,6 +135,8 @@ def build_codex_prompt(request: WorkerRequest) -> str:
         json_dumps(general_context),
         "--- CONFIRMED_COMPLETION_CONTRACT_JSON ---",
         json_dumps(contract),
+        "--- REQUIRED_CHECKS_JSON ---",
+        json_dumps([_check_spec_document(check) for check in request.required_check_specs]),
         "--- INPUT_ARTIFACTS_JSON ---",
         json_dumps(artifact_inputs),
         *role_sections,
@@ -142,6 +146,16 @@ def build_codex_prompt(request: WorkerRequest) -> str:
         *output_notes,
     )
     return "\n".join(sections)
+
+
+def _check_spec_document(check: CheckSpec) -> dict[str, JsonValue]:
+    return {
+        "check_id": check.check_id,
+        "name": check.name,
+        "kind": check.kind.value,
+        "description": check.description,
+        "required": check.required,
+    }
 
 
 def codex_output_schema_json() -> str:

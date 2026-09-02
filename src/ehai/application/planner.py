@@ -95,6 +95,163 @@ class ExplorationPlanRequest:
 
 
 @dataclass(frozen=True, slots=True)
+class PlanNodeTemplate:
+    """Provider-neutral PlanNode content before EHAI IDs and Check IDs are assigned."""
+
+    key: str
+    title: str
+    instruction: str
+    kind: PlanNodeKind = PlanNodeKind.WORK
+    required_dependency_keys: tuple[str, ...] = ()
+    require_completion_checks: bool = True
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "key", _template_key(self.key, "PlanNodeTemplate key"))
+        object.__setattr__(self, "kind", PlanNodeKind(self.kind))
+        dependencies = tuple(
+            _template_key(value, "PlanNodeTemplate dependency key")
+            for value in self.required_dependency_keys
+        )
+        if len(set(dependencies)) != len(dependencies):
+            raise ValueError(f"PlanNodeTemplate {self.key} contains duplicate dependencies")
+        if self.key in dependencies:
+            raise ValueError(f"PlanNodeTemplate {self.key} cannot depend on itself")
+        if not self.title.strip() or not self.instruction.strip():
+            raise ValueError(f"PlanNodeTemplate {self.key} requires title and instruction")
+        if not isinstance(self.require_completion_checks, bool):
+            raise ValueError("PlanNodeTemplate require_completion_checks must be a boolean")
+        object.__setattr__(self, "title", self.title.strip())
+        object.__setattr__(self, "instruction", self.instruction.strip())
+        object.__setattr__(self, "required_dependency_keys", dependencies)
+
+
+@dataclass(frozen=True, slots=True)
+class EdgeTemplate:
+    """Provider-neutral edge between keyed PlanNode templates."""
+
+    source_node_key: str
+    target_node_key: str
+    edge_type: EdgeType
+    branch_key: str | None = None
+    condition: str | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "source_node_key",
+            _template_key(self.source_node_key, "EdgeTemplate source_node_key"),
+        )
+        object.__setattr__(
+            self,
+            "target_node_key",
+            _template_key(self.target_node_key, "EdgeTemplate target_node_key"),
+        )
+        object.__setattr__(self, "edge_type", EdgeType(self.edge_type))
+        if self.branch_key is not None:
+            object.__setattr__(
+                self,
+                "branch_key",
+                _template_key(self.branch_key, "EdgeTemplate branch_key"),
+            )
+        if self.condition is not None and not self.condition.strip():
+            raise ValueError("EdgeTemplate condition must be non-blank when provided")
+
+
+@dataclass(frozen=True, slots=True)
+class BranchTemplate:
+    """Provider-neutral exploration branch before EHAI IDs are assigned."""
+
+    key: str
+    label: str
+    fork_node_key: str
+    node_keys: tuple[str, ...]
+    merge_node_key: str
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "key", _template_key(self.key, "BranchTemplate key"))
+        object.__setattr__(
+            self,
+            "fork_node_key",
+            _template_key(self.fork_node_key, "BranchTemplate fork_node_key"),
+        )
+        object.__setattr__(
+            self,
+            "merge_node_key",
+            _template_key(self.merge_node_key, "BranchTemplate merge_node_key"),
+        )
+        nodes = tuple(_template_key(value, "BranchTemplate node_key") for value in self.node_keys)
+        if not nodes:
+            raise ValueError(f"BranchTemplate {self.key} requires at least one node")
+        if len(set(nodes)) != len(nodes):
+            raise ValueError(f"BranchTemplate {self.key} contains duplicate node keys")
+        if self.fork_node_key == self.merge_node_key:
+            raise ValueError(f"BranchTemplate {self.key} fork and merge keys must differ")
+        if self.fork_node_key in nodes or self.merge_node_key in nodes:
+            raise ValueError(f"BranchTemplate {self.key} cannot include fork or merge nodes")
+        if not self.label.strip():
+            raise ValueError(f"BranchTemplate {self.key} requires a label")
+        object.__setattr__(self, "label", self.label.strip())
+        object.__setattr__(self, "node_keys", nodes)
+
+
+@dataclass(frozen=True, slots=True)
+class PlanTemplate:
+    """Provider-neutral proposal content assembled into EHAI domain objects."""
+
+    nodes: tuple[PlanNodeTemplate, ...]
+    edges: tuple[EdgeTemplate, ...] = ()
+    branches: tuple[BranchTemplate, ...] = ()
+    budget: ExplorationBudget | None = None
+    usage: ExplorationUsage | None = None
+    planner_diagnostics: tuple[str, ...] = ()
+    planner_event_types: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        nodes = tuple(self.nodes)
+        edges = tuple(self.edges)
+        branches = tuple(self.branches)
+        if not nodes:
+            raise ValueError("PlanTemplate requires at least one node")
+        node_keys = tuple(node.key for node in nodes)
+        if len(set(node_keys)) != len(node_keys):
+            raise ValueError("PlanTemplate contains duplicate node keys")
+        branch_keys = tuple(branch.key for branch in branches)
+        if len(set(branch_keys)) != len(branch_keys):
+            raise ValueError("PlanTemplate contains duplicate branch keys")
+        known_nodes = set(node_keys)
+        known_branches = set(branch_keys)
+        for node in nodes:
+            if any(key not in known_nodes for key in node.required_dependency_keys):
+                raise ValueError(f"PlanTemplate node {node.key} references an unknown dependency")
+        for edge in edges:
+            if edge.source_node_key not in known_nodes or edge.target_node_key not in known_nodes:
+                raise ValueError("PlanTemplate edge references an unknown node")
+            if edge.branch_key is not None and edge.branch_key not in known_branches:
+                raise ValueError("PlanTemplate edge references an unknown branch")
+        for branch in branches:
+            referenced = {branch.fork_node_key, branch.merge_node_key, *branch.node_keys}
+            if not referenced.issubset(known_nodes):
+                raise ValueError(f"PlanTemplate branch {branch.key} references an unknown node")
+        if (self.budget is None) != (self.usage is None):
+            raise ValueError("PlanTemplate budget and usage must be provided together")
+        if self.budget is not None and self.usage is not None:
+            self.usage.require_within(self.budget)
+        object.__setattr__(self, "nodes", nodes)
+        object.__setattr__(self, "edges", edges)
+        object.__setattr__(self, "branches", branches)
+        object.__setattr__(
+            self,
+            "planner_diagnostics",
+            _planner_messages(self.planner_diagnostics, "planner_diagnostics"),
+        )
+        object.__setattr__(
+            self,
+            "planner_event_types",
+            _planner_messages(self.planner_event_types, "planner_event_types"),
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class PlanProposal:
     """A Planner's unapproved graph, contract, and referenced Check definitions."""
 
@@ -212,41 +369,20 @@ class DeterministicPlanner:
         goal: Goal,
         normalized_criteria: tuple[str, ...],
     ) -> PlanProposal:
-        proposed_at = self.clock()
-        criterion = normalized_criteria[0]
-        check_spec = CheckSpec(
-            name=_check_name(criterion),
-            kind=_check_kind(criterion),
-            description=criterion,
-            required=True,
-            check_id=self.id_factory(),
-        )
-        contract = CompletionContract.draft(
-            goal_id=goal.goal_id,
-            criteria=normalized_criteria,
-            required_check_ids=(check_spec.check_id,),
-            completion_contract_id=self.id_factory(),
-            created_at=proposed_at,
-        )
-        node = PlanNode(
-            plan_node_id=self.id_factory(),
-            title=goal.objective,
-            instruction=f"Produce evidence that satisfies the Goal: {goal.objective}",
-            kind=PlanNodeKind.WORK,
-            required_check_ids=(check_spec.check_id,),
-        )
-        revision = PlanRevision.draft(
-            goal_id=goal.goal_id,
-            completion_contract=contract,
-            nodes=(node,),
-            edges=(),
-            plan_revision_id=self.id_factory(),
-            created_at=proposed_at,
-        )
-        return PlanProposal(
-            contract=contract,
-            plan_revision=revision,
-            check_specs=(check_spec,),
+        return build_plan_proposal(
+            goal,
+            normalized_criteria,
+            PlanTemplate(
+                nodes=(
+                    PlanNodeTemplate(
+                        "work",
+                        goal.objective,
+                        f"Produce evidence that satisfies the Goal: {goal.objective}",
+                    ),
+                ),
+            ),
+            id_factory=self.id_factory,
+            clock=self.clock,
         )
 
 
@@ -292,135 +428,31 @@ class DeterministicExplorationPlanner:
         goal = request.goal
         usage = ExplorationUsage(width=2, depth=1, attempts=5)
         usage.require_within(request.budget)
-        proposed_at = self.clock()
-        criterion = request.criteria[0]
-        check_spec = CheckSpec(
-            name=_check_name(criterion),
-            kind=_check_kind(criterion),
-            description=criterion,
-            required=True,
-            check_id=self.id_factory(),
-        )
-        contract = CompletionContract.draft(
-            goal_id=goal.goal_id,
-            criteria=request.criteria,
-            required_check_ids=(check_spec.check_id,),
-            completion_contract_id=self.id_factory(),
-            created_at=proposed_at,
-        )
-        required_checks = (check_spec.check_id,)
-        fork = PlanNode(
-            plan_node_id=self.id_factory(),
-            title="Fork exploration",
-            instruction="Start two independent candidate approaches.",
-            kind=PlanNodeKind.FORK,
-            required_check_ids=required_checks,
-        )
-        first = PlanNode(
-            plan_node_id=self.id_factory(),
-            title="Explore approach A",
-            instruction=f"Explore the first approach for Goal: {goal.objective}",
-            required_check_ids=required_checks,
-        )
-        second = PlanNode(
-            plan_node_id=self.id_factory(),
-            title="Explore approach B",
-            instruction=f"Explore an independent second approach for Goal: {goal.objective}",
-            required_check_ids=required_checks,
-        )
-        evaluator = PlanNode(
-            plan_node_id=self.id_factory(),
-            title="Evaluate branch candidates",
-            instruction="Compare both branch candidates using their persisted evidence.",
-            kind=PlanNodeKind.EVALUATOR,
-            required_dependency_ids=(first.plan_node_id, second.plan_node_id),
-            required_check_ids=required_checks,
-        )
-        merge = PlanNode(
-            plan_node_id=self.id_factory(),
-            title="Merge selected candidate",
-            instruction="Produce the final merged candidate from the evaluator decision.",
-            kind=PlanNodeKind.MERGE,
-            required_dependency_ids=(evaluator.plan_node_id,),
-            required_check_ids=required_checks,
-        )
-        first_branch = Branch(
-            branch_id=self.id_factory(),
-            label="approach-a",
-            fork_node_id=fork.plan_node_id,
-            node_ids=(first.plan_node_id,),
-            merge_node_id=merge.plan_node_id,
-        )
-        second_branch = Branch(
-            branch_id=self.id_factory(),
-            label="approach-b",
-            fork_node_id=fork.plan_node_id,
-            node_ids=(second.plan_node_id,),
-            merge_node_id=merge.plan_node_id,
-        )
-        edges = (
-            Edge(
-                self.id_factory(),
-                fork.plan_node_id,
-                first.plan_node_id,
-                EdgeType.EXPLORATION,
-                branch_id=first_branch.branch_id,
+        return build_plan_proposal(
+            goal,
+            request.criteria,
+            two_branch_plan_template(
+                fork_title="Fork exploration",
+                fork_instruction="Start two independent candidate approaches.",
+                first_label="approach-a",
+                first_title="Explore approach A",
+                first_instruction=f"Explore the first approach for Goal: {goal.objective}",
+                second_label="approach-b",
+                second_title="Explore approach B",
+                second_instruction=(
+                    f"Explore an independent second approach for Goal: {goal.objective}"
+                ),
+                evaluator_title="Evaluate branch candidates",
+                evaluator_instruction=(
+                    "Compare both branch candidates using their persisted evidence."
+                ),
+                merge_title="Merge selected candidate",
+                merge_instruction="Produce the final merged candidate from the evaluator decision.",
+                budget=request.budget,
+                usage=usage,
             ),
-            Edge(
-                self.id_factory(),
-                first.plan_node_id,
-                merge.plan_node_id,
-                EdgeType.MERGE,
-                branch_id=first_branch.branch_id,
-            ),
-            Edge(
-                self.id_factory(),
-                fork.plan_node_id,
-                second.plan_node_id,
-                EdgeType.EXPLORATION,
-                branch_id=second_branch.branch_id,
-            ),
-            Edge(
-                self.id_factory(),
-                second.plan_node_id,
-                merge.plan_node_id,
-                EdgeType.MERGE,
-                branch_id=second_branch.branch_id,
-            ),
-            Edge(
-                self.id_factory(),
-                first.plan_node_id,
-                evaluator.plan_node_id,
-                EdgeType.DEPENDENCY,
-            ),
-            Edge(
-                self.id_factory(),
-                second.plan_node_id,
-                evaluator.plan_node_id,
-                EdgeType.DEPENDENCY,
-            ),
-            Edge(
-                self.id_factory(),
-                evaluator.plan_node_id,
-                merge.plan_node_id,
-                EdgeType.DEPENDENCY,
-            ),
-        )
-        revision = PlanRevision.draft(
-            goal_id=goal.goal_id,
-            completion_contract=contract,
-            nodes=(fork, first, second, evaluator, merge),
-            edges=edges,
-            branches=(first_branch, second_branch),
-            plan_revision_id=self.id_factory(),
-            created_at=proposed_at,
-        )
-        return PlanProposal(
-            contract=contract,
-            plan_revision=revision,
-            check_specs=(check_spec,),
-            budget=request.budget,
-            usage=usage,
+            id_factory=self.id_factory,
+            clock=self.clock,
         )
 
 
@@ -509,6 +541,174 @@ def _planner_messages(values: tuple[str, ...], field_name: str) -> tuple[str, ..
     if any(not isinstance(value, str) or not value.strip() for value in snapshot):
         raise ValueError(f"PlanProposal {field_name} must contain non-blank strings")
     return snapshot
+
+
+def build_plan_proposal(
+    goal: Goal,
+    criteria: tuple[str, ...],
+    template: PlanTemplate,
+    *,
+    id_factory: Callable[[], ID] = new_id,
+    clock: Callable[[], datetime] = utc_now,
+) -> PlanProposal:
+    """Assemble provider-neutral template content into EHAI Planning domain objects."""
+    if not isinstance(goal, Goal):
+        raise TypeError("goal must be a Goal")
+    if not isinstance(template, PlanTemplate):
+        raise TypeError("template must be a PlanTemplate")
+    normalized_criteria = require_p1_criteria(criteria, "PlanProposalBuilder")
+    proposed_at = clock()
+    check_specs = tuple(
+        CheckSpec(
+            name=_check_name(criterion),
+            kind=_check_kind(criterion),
+            description=criterion,
+            required=True,
+            check_id=id_factory(),
+        )
+        for criterion in normalized_criteria
+    )
+    required_check_ids = tuple(check.check_id for check in check_specs)
+    contract = CompletionContract.draft(
+        goal_id=goal.goal_id,
+        criteria=normalized_criteria,
+        required_check_ids=required_check_ids,
+        completion_contract_id=id_factory(),
+        created_at=proposed_at,
+    )
+    node_ids = {node.key: id_factory() for node in template.nodes}
+    nodes = tuple(
+        PlanNode(
+            plan_node_id=node_ids[node.key],
+            title=node.title,
+            instruction=node.instruction,
+            kind=node.kind,
+            required_dependency_ids=tuple(
+                node_ids[dependency_key] for dependency_key in node.required_dependency_keys
+            ),
+            required_check_ids=required_check_ids if node.require_completion_checks else (),
+        )
+        for node in template.nodes
+    )
+    branch_ids = {branch.key: id_factory() for branch in template.branches}
+    branches = tuple(
+        Branch(
+            branch_id=branch_ids[branch.key],
+            label=branch.label,
+            fork_node_id=node_ids[branch.fork_node_key],
+            node_ids=tuple(node_ids[node_key] for node_key in branch.node_keys),
+            merge_node_id=node_ids[branch.merge_node_key],
+        )
+        for branch in template.branches
+    )
+    edges = tuple(
+        Edge(
+            id_factory(),
+            node_ids[edge.source_node_key],
+            node_ids[edge.target_node_key],
+            edge.edge_type,
+            branch_id=None if edge.branch_key is None else branch_ids[edge.branch_key],
+            condition=edge.condition,
+        )
+        for edge in template.edges
+    )
+    revision = PlanRevision.draft(
+        goal_id=goal.goal_id,
+        completion_contract=contract,
+        nodes=nodes,
+        edges=edges,
+        branches=branches,
+        plan_revision_id=id_factory(),
+        created_at=proposed_at,
+    )
+    return PlanProposal(
+        contract=contract,
+        plan_revision=revision,
+        check_specs=check_specs,
+        budget=template.budget,
+        usage=template.usage,
+        planner_diagnostics=template.planner_diagnostics,
+        planner_event_types=template.planner_event_types,
+    )
+
+
+def require_p1_criteria(criteria: tuple[str, ...], owner: str) -> tuple[str, ...]:
+    """Normalize and validate the currently supported P1 completion criteria."""
+    normalized = tuple(criterion.strip() for criterion in criteria)
+    if not normalized or any(not criterion for criterion in normalized):
+        raise ValueError(f"{owner} requires non-empty completion criteria")
+    if len(normalized) != 1 or normalized[0] not in P1_COMPLETION_CRITERIA:
+        raise ValueError(
+            f"{owner} supports exactly one P1 completion criterion: "
+            + ", ".join(sorted(P1_COMPLETION_CRITERIA))
+        )
+    return normalized
+
+
+def two_branch_plan_template(
+    *,
+    fork_title: str,
+    fork_instruction: str,
+    first_label: str,
+    first_title: str,
+    first_instruction: str,
+    second_label: str,
+    second_title: str,
+    second_instruction: str,
+    evaluator_title: str,
+    evaluator_instruction: str,
+    merge_title: str,
+    merge_instruction: str,
+    budget: ExplorationBudget,
+    usage: ExplorationUsage,
+    planner_diagnostics: tuple[str, ...] = (),
+    planner_event_types: tuple[str, ...] = (),
+) -> PlanTemplate:
+    """Return the fixed P2.1 bounded two-branch exploration graph template."""
+    return PlanTemplate(
+        nodes=(
+            PlanNodeTemplate("fork", fork_title, fork_instruction, kind=PlanNodeKind.FORK),
+            PlanNodeTemplate("first", first_title, first_instruction),
+            PlanNodeTemplate("second", second_title, second_instruction),
+            PlanNodeTemplate(
+                "evaluator",
+                evaluator_title,
+                evaluator_instruction,
+                kind=PlanNodeKind.EVALUATOR,
+                required_dependency_keys=("first", "second"),
+            ),
+            PlanNodeTemplate(
+                "merge",
+                merge_title,
+                merge_instruction,
+                kind=PlanNodeKind.MERGE,
+                required_dependency_keys=("evaluator",),
+            ),
+        ),
+        branches=(
+            BranchTemplate("first", first_label, "fork", ("first",), "merge"),
+            BranchTemplate("second", second_label, "fork", ("second",), "merge"),
+        ),
+        edges=(
+            EdgeTemplate("fork", "first", EdgeType.EXPLORATION, branch_key="first"),
+            EdgeTemplate("first", "merge", EdgeType.MERGE, branch_key="first"),
+            EdgeTemplate("fork", "second", EdgeType.EXPLORATION, branch_key="second"),
+            EdgeTemplate("second", "merge", EdgeType.MERGE, branch_key="second"),
+            EdgeTemplate("first", "evaluator", EdgeType.DEPENDENCY),
+            EdgeTemplate("second", "evaluator", EdgeType.DEPENDENCY),
+            EdgeTemplate("evaluator", "merge", EdgeType.DEPENDENCY),
+        ),
+        budget=budget,
+        usage=usage,
+        planner_diagnostics=planner_diagnostics,
+        planner_event_types=planner_event_types,
+    )
+
+
+def _template_key(value: str, field_name: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"{field_name} must be non-blank text")
+    return value.strip()
 
 
 def _check_kind(criterion: str) -> CheckKind:

@@ -45,6 +45,8 @@ def create_local_app(
     worker_workspace: Path | None = None,
     planner_kind: str = "single",
     planner_timeout_seconds: float = 120.0,
+    builtin_planner_model: str | None = None,
+    builtin_planner_reasoning_effort: str | None = None,
     command_check_argv: Sequence[str] | None = None,
     semantic_required_terms: Sequence[str] = (),
     worker_timeout_seconds: float = 300.0,
@@ -66,6 +68,16 @@ def create_local_app(
         worker_workspace=worker_workspace,
         planner_kind=planner_kind,
         planner_timeout_seconds=planner_timeout_seconds,
+        builtin_planner_model=(
+            builtin_planner_model
+            if builtin_planner_model is not None
+            else (builtin_model if planner_kind == "builtin" else None)
+        ),
+        builtin_planner_reasoning_effort=(
+            builtin_planner_reasoning_effort
+            if builtin_planner_reasoning_effort is not None
+            else (builtin_reasoning_effort if planner_kind == "builtin" else None)
+        ),
         command_check_argv=command_check_argv,
         semantic_required_terms=semantic_required_terms,
         worker_timeout_seconds=worker_timeout_seconds,
@@ -222,10 +234,15 @@ def create_parser() -> argparse.ArgumentParser:
     parser.add_argument("--worker-workspace", type=Path)
     parser.add_argument(
         "--planner",
-        choices=("single", "exploration", "codex"),
+        choices=("single", "exploration", "codex", "builtin"),
         default="single",
     )
     parser.add_argument("--planner-timeout-seconds", type=float, default=120.0)
+    parser.add_argument("--builtin-planner-model")
+    parser.add_argument(
+        "--builtin-planner-reasoning-effort",
+        choices=("none", "minimal", "low", "medium", "high", "xhigh", "max"),
+    )
     parser.add_argument("--worker-timeout-seconds", type=float, default=300.0)
     parser.add_argument("--codex-model")
     parser.add_argument(
@@ -274,6 +291,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         worker_workspace=args.worker_workspace,
         planner_kind=args.planner,
         planner_timeout_seconds=args.planner_timeout_seconds,
+        builtin_planner_model=args.builtin_planner_model,
+        builtin_planner_reasoning_effort=args.builtin_planner_reasoning_effort,
         worker_timeout_seconds=args.worker_timeout_seconds,
         codex_model=args.codex_model,
         codex_reasoning_effort=args.codex_reasoning_effort,

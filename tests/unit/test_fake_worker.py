@@ -20,6 +20,7 @@ from ehai.application.workers import (
     WorkerTimedOutError,
 )
 from ehai.domain.artifacts import ArtifactKind
+from ehai.domain.checking import CheckKind, CheckSpec
 from ehai.domain.execution import Attempt, Run
 from ehai.domain.goal import CompletionContract
 from ehai.domain.planning import PlanNode, PlanNodeKind
@@ -36,10 +37,17 @@ def make_request(
 ) -> WorkerRequest:
     goal_id = new_id()
     run = Run(goal_id, new_id(), created_at=NOW).start(at=NOW)
+    check_id = new_id()
+    check_spec = CheckSpec(
+        "completion-artifact",
+        CheckKind.ARTIFACT,
+        "candidate is supported by evidence",
+        check_id=check_id,
+    )
     contract = CompletionContract.draft(
         goal_id,
         ("candidate is supported by evidence",),
-        (new_id(),),
+        (check_id,),
         created_at=NOW,
     ).confirm(confirmed_at=NOW)
     node = PlanNode(
@@ -47,6 +55,7 @@ def make_request(
         "produce candidate",
         "return deterministic candidate",
         kind=node_kind,
+        required_check_ids=(check_id,),
     ).mark_ready()
     node = node.start()
     attempt = Attempt(run.run_id, node.plan_node_id, 1, created_at=NOW).start(at=NOW)
@@ -55,6 +64,7 @@ def make_request(
         attempt=attempt,
         plan_node=node,
         completion_contract=contract,
+        required_check_specs=(check_spec,),
         context={"prior": ["fact"]} if context is None else context,
         artifact_inputs=artifact_inputs,
     )
@@ -114,6 +124,7 @@ def test_worker_request_snapshots_context_and_exposes_validated_scope() -> None:
         attempt=request.attempt,
         plan_node=request.plan_node,
         completion_contract=request.completion_contract,
+        required_check_specs=request.required_check_specs,
         context=context,
         artifact_inputs=(input_artifact(),),
     )
@@ -142,6 +153,7 @@ def test_worker_request_rejects_cross_scope_attempt_contract_and_artifacts() -> 
             attempt=other.attempt,
             plan_node=other.plan_node,
             completion_contract=request.completion_contract,
+            required_check_specs=other.required_check_specs,
             context={},
         )
     with pytest.raises(ValueError, match="another Goal"):
@@ -150,6 +162,7 @@ def test_worker_request_rejects_cross_scope_attempt_contract_and_artifacts() -> 
             attempt=request.attempt,
             plan_node=request.plan_node,
             completion_contract=other.completion_contract,
+            required_check_specs=request.required_check_specs,
             context={},
         )
     with pytest.raises(ValueError, match="Artifacts from another Run"):
@@ -158,6 +171,7 @@ def test_worker_request_rejects_cross_scope_attempt_contract_and_artifacts() -> 
             attempt=request.attempt,
             plan_node=request.plan_node,
             completion_contract=request.completion_contract,
+            required_check_specs=request.required_check_specs,
             context={},
             artifact_inputs=(input_artifact(other.run_id),),
         )

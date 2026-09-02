@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from ehai import new_id
+from ehai.application.builtin_agent import ModelRequest, ModelResponse, ToolCall
 from ehai.application.commands import (
     ApprovePlan,
     CreateGoal,
@@ -15,6 +16,7 @@ from ehai.application.commands import (
     ReplanPlan,
 )
 from ehai.application.planner import (
+    COMMAND_EXIT_ZERO_CRITERION,
     NON_EMPTY_ARTIFACT_CRITERION,
     DeterministicExplorationPlanner,
     DeterministicPlanner,
@@ -23,11 +25,13 @@ from ehai.application.planner import (
     Planner,
 )
 from ehai.application.workers import WorkerAdapter
+from ehai.domain.checking import CheckKind
 from ehai.domain.events import EventType
 from ehai.domain.goal import Goal
 from ehai.domain.planning import PlanRevisionStatus
 from ehai.infrastructure.codex_transport import CodexProcessTransport
 from ehai.infrastructure.planners import (
+    BuiltinPlannerAdapter,
     CodexPlannerAdapter,
     CodexPlannerError,
     CodexPlannerTimedOutError,
@@ -119,6 +123,33 @@ def _goal() -> Goal:
     return Goal.create(new_id(), "produce verified evidence")
 
 
+class _PlannerModelClient:
+    def __init__(self, response: ModelResponse) -> None:
+        self.response = response
+        self.requests: list[ModelRequest] = []
+        self.closed = False
+
+    async def complete(self, request: ModelRequest) -> ModelResponse:
+        self.requests.append(request)
+        return self.response
+
+    async def aclose(self) -> None:
+        self.closed = True
+
+
+def _planner_document() -> dict[str, object]:
+    return {
+        "summary": "two bounded approaches",
+        "fork": {"title": "Fork", "instruction": "Start both approaches."},
+        "branches": [
+            {"label": "alpha", "title": "Alpha", "instruction": "Try alpha."},
+            {"label": "beta", "title": "Beta", "instruction": "Try beta."},
+        ],
+        "evaluator": {"title": "Evaluate", "instruction": "Compare evidence."},
+        "merge": {"title": "Merge", "instruction": "Merge the selected result."},
+    }
+
+
 def test_codex_planner_uses_independent_protocol_transport_and_event_mapping(
     tmp_path: Path,
 ) -> None:
@@ -160,6 +191,58 @@ def test_codex_planner_uses_independent_protocol_transport_and_event_mapping(
         "read-only",
         "--json",
     ]
+
+
+def test_codex_planner_accepts_command_completion_criterion(tmp_path: Path) -> None:
+    planner, record_path = _adapter(tmp_path)
+
+    proposal = planner.propose(_goal(), (COMMAND_EXIT_ZERO_CRITERION,))
+
+    assert proposal.contract.criteria == (COMMAND_EXIT_ZERO_CRITERION,)
+    assert proposal.check_specs[0].kind is CheckKind.COMMAND
+    assert proposal.check_specs[0].description == COMMAND_EXIT_ZERO_CRITERION
+    assert all(
+        node.required_check_ids == proposal.contract.required_check_ids
+        for node in proposal.plan_revision.nodes
+    )
+    record = json.loads(record_path.read_text(encoding="utf-8"))
+    assert record["input"]["completion_criteria"] == [COMMAND_EXIT_ZERO_CRITERION]
+
+
+def test_builtin_planner_uses_responses_model_client_without_worker_state() -> None:
+    client = _PlannerModelClient(
+        ModelResponse(
+            "",
+            (
+                ToolCall(
+                    "plan-1",
+                    "submit_plan",
+                    _planner_document(),
+                ),
+            ),
+            provider_response_id="resp-plan",
+        )
+    )
+    planner = BuiltinPlannerAdapter(
+        model="gpt-test",
+        model_client_factory=lambda _profile: client,
+    )
+
+    proposal = planner.propose(_goal(), (COMMAND_EXIT_ZERO_CRITERION,))
+
+    assert isinstance(planner, Planner)
+    assert not isinstance(planner, WorkerAdapter)
+    assert not hasattr(planner, "start")
+    assert not hasattr(planner, "execute")
+    assert client.closed
+    assert len(client.requests) == 1
+    request = client.requests[0]
+    assert request.tools[0].name == "submit_plan"
+    assert "EHAI BUILT-IN PLANNER PROTOCOL v1" in request.messages[1].content
+    assert COMMAND_EXIT_ZERO_CRITERION in request.messages[1].content
+    assert proposal.check_specs[0].kind is CheckKind.COMMAND
+    assert len(proposal.plan_revision.branches) == 2
+    assert proposal.planner_event_types == ("planner.responses.completed",)
 
 
 @pytest.mark.parametrize(

@@ -261,7 +261,7 @@ class BuiltinAgentConnector:
                     scope,
                     reference,
                     request.plan_node.instruction,
-                    request.context,
+                    _builtin_context(request),
                 )
                 return _candidate_result(session, execution.attempt_id)
         finally:
@@ -341,6 +341,27 @@ def _candidate_result(session: BuiltinSession, attempt_id: ID) -> WorkerResult:
         f"Built-in Agent submitted {name}",
         raw_output=raw_output,
     )
+
+
+def _builtin_context(request: WorkerRequest) -> dict[str, JsonValue]:
+    context = request.context
+    context["confirmed_completion_contract"] = {
+        "completion_contract_id": request.completion_contract.completion_contract_id,
+        "criteria": list(request.completion_contract.criteria),
+        "required_check_ids": list(request.completion_contract.required_check_ids),
+        "version": request.completion_contract.version,
+    }
+    context["required_checks"] = [
+        {
+            "check_id": check.check_id,
+            "name": check.name,
+            "kind": check.kind.value,
+            "description": check.description,
+            "required": check.required,
+        }
+        for check in request.required_check_specs
+    ]
+    return context
 
 
 def _required_text(
