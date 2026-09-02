@@ -97,6 +97,7 @@ class WorkerProfile:
     capabilities: frozenset[WorkerCapability] = field(default_factory=frozenset)
     session_policy: SessionPolicy = SessionPolicy.NEW
     budget_ref: str | None = None
+    credential_ref: str | None = None
     worker_profile_id: ID = field(default_factory=new_id)
 
     def __post_init__(self) -> None:
@@ -111,6 +112,12 @@ class WorkerProfile:
         object.__setattr__(self, "capabilities", capabilities)
         if self.budget_ref is not None:
             object.__setattr__(self, "budget_ref", _text(self.budget_ref, "budget_ref"))
+        if self.credential_ref is not None:
+            object.__setattr__(
+                self,
+                "credential_ref",
+                _text(self.credential_ref, "credential_ref"),
+            )
 
 
 @dataclass(frozen=True, slots=True)

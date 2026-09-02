@@ -4,6 +4,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from ehai import ID, new_id
+from ehai.application.execution_contracts import OPENAI_CREDENTIAL_REF
 from ehai.application.queries import QueryService
 from ehai.domain.artifacts import Artifact, ArtifactKind
 from ehai.domain.checking import CheckKind, Checkpoint, CheckResult, CheckRun, CheckSpec, Gate
@@ -152,6 +153,7 @@ def test_p2_worker_registry_and_execution_bindings_round_trip_together(tmp_path)
         WorkerKind.BUILTIN,
         "gpt-test",
         frozenset({capability}),
+        credential_ref=OPENAI_CREDENTIAL_REF,
     )
     external_profile = WorkerProfile(
         "codex",
@@ -272,6 +274,15 @@ def test_p2_worker_registry_and_execution_bindings_round_trip_together(tmp_path)
     assert runtime.provider_session_id == "codex-thread"
     assert runtime.provider_execution_id == "codex-turn"
     assert runtime.activity is AttemptActivity.WAITING
+    connection = database.connect()
+    try:
+        stored_credential = connection.execute(
+            "SELECT credential_ref FROM worker_profiles WHERE worker_profile_id = ?",
+            (builtin_profile.worker_profile_id,),
+        ).fetchone()[0]
+        assert stored_credential == OPENAI_CREDENTIAL_REF
+    finally:
+        connection.close()
 
 
 def test_contract_history_allows_confirmation_but_rejects_content_rewrite(tmp_path) -> None:

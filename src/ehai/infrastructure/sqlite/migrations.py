@@ -6,7 +6,7 @@ import sqlite3
 from collections.abc import Sequence
 
 P1_SCHEMA_VERSION = 2
-LATEST_SCHEMA_VERSION = 4
+LATEST_SCHEMA_VERSION = 5
 
 
 class SchemaVersionError(RuntimeError):
@@ -369,11 +369,18 @@ _MIGRATION_4: tuple[str, ...] = (
     """,
 )
 
+_MIGRATION_5: tuple[str, ...] = (
+    """
+    ALTER TABLE worker_profiles ADD COLUMN credential_ref TEXT
+    """,
+)
+
 _MIGRATIONS: dict[int, Sequence[str]] = {
     1: _MIGRATION_1,
     2: _MIGRATION_2,
     3: _MIGRATION_3,
     4: _MIGRATION_4,
+    5: _MIGRATION_5,
 }
 
 

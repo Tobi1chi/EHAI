@@ -235,6 +235,7 @@ def encode_worker_profile(profile: WorkerProfile) -> str:
             "capabilities": capabilities,
             "session_policy": profile.session_policy.value,
             "budget_ref": profile.budget_ref,
+            "credential_ref": profile.credential_ref,
         }
     )
 
@@ -251,6 +252,7 @@ def decode_worker_profile(snapshot: str) -> WorkerProfile:
         ),
         session_policy=SessionPolicy(_string(document, "session_policy")),
         budget_ref=_optional_string(document, "budget_ref"),
+        credential_ref=_optional_string(document, "credential_ref"),
     )
 
 

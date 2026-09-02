@@ -6,6 +6,7 @@ from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
+from time import monotonic
 from types import TracebackType
 from typing import Protocol, Self, runtime_checkable
 
@@ -31,6 +32,35 @@ class IncompleteWriteToolError(BuiltinAgentError):
 
 class BuiltinSessionStateError(BuiltinAgentError):
     """Raised when append-only Session events violate Turn/Step ordering."""
+
+
+class AgentBudgetExceededError(BuiltinAgentError):
+    """Raised before a Built-in Agent exceeds its configured execution budget."""
+
+
+@dataclass(frozen=True, slots=True)
+class AgentBudget:
+    """Finite Step, Tool, wall-clock, and output limits for one Turn."""
+
+    max_steps: int
+    max_tool_calls: int
+    wall_clock_seconds: float
+    max_output_bytes: int
+
+    def __post_init__(self) -> None:
+        for name in ("max_steps", "max_tool_calls", "max_output_bytes"):
+            value = getattr(self, name)
+            if type(value) is not int or value < 1:
+                raise ValueError(f"AgentBudget {name} must be a positive integer")
+        if (
+            not isinstance(self.wall_clock_seconds, (int, float))
+            or isinstance(self.wall_clock_seconds, bool)
+            or self.wall_clock_seconds <= 0
+        ):
+            raise ValueError("AgentBudget wall_clock_seconds must be positive")
+
+
+DEFAULT_AGENT_BUDGET = AgentBudget(32, 64, 600.0, 8 * 1024 * 1024)
 
 
 class ModelRole(StrEnum):
@@ -98,12 +128,23 @@ class ModelRequest:
 
     messages: tuple[ModelMessage, ...]
     tools: tuple[ToolDefinition, ...]
+    input_messages: tuple[ModelMessage, ...] = ()
+    previous_response_id: str | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "messages", tuple(self.messages))
         object.__setattr__(self, "tools", tuple(self.tools))
+        object.__setattr__(self, "input_messages", tuple(self.input_messages))
         if not self.messages:
             raise ValueError("ModelRequest requires model-visible history")
+        if not self.input_messages:
+            object.__setattr__(self, "input_messages", self.messages)
+        if self.previous_response_id is not None:
+            object.__setattr__(
+                self,
+                "previous_response_id",
+                _text(self.previous_response_id, "previous_response_id"),
+            )
 
 
 @dataclass(frozen=True, slots=True)
@@ -114,6 +155,9 @@ class ModelResponse:
     tool_calls: tuple[ToolCall, ...] = ()
     final_text: str | None = None
     provider_response_id: str | None = None
+    status: str = "completed"
+    usage: Mapping[str, JsonValue] | None = None
+    output_items: tuple[Mapping[str, JsonValue], ...] = ()
 
     def __post_init__(self) -> None:
         if not isinstance(self.content, str):
@@ -129,6 +173,19 @@ class ModelResponse:
                 "provider_response_id",
                 _text(self.provider_response_id, "provider_response_id"),
             )
+        object.__setattr__(self, "status", _text(self.status, "response status"))
+        if self.usage is not None:
+            usage = json_loads(json_dumps(dict(self.usage)))
+            if not isinstance(usage, dict):  # pragma: no cover - construction guarantees object
+                raise RuntimeError("stored response usage is not an object")
+            object.__setattr__(self, "usage", usage)
+        output_items: list[Mapping[str, JsonValue]] = []
+        for item in self.output_items:
+            decoded = json_loads(json_dumps(dict(item)))
+            if not isinstance(decoded, dict):  # pragma: no cover - construction guarantees object
+                raise RuntimeError("stored response output item is not an object")
+            output_items.append(decoded)
+        object.__setattr__(self, "output_items", tuple(output_items))
 
 
 @runtime_checkable
@@ -151,6 +208,7 @@ class ToolDefinition:
     name: str
     description: str
     writes_workspace: bool
+    ends_turn: bool
     _input_schema_json: str = field(repr=False)
 
     def __init__(
@@ -160,6 +218,7 @@ class ToolDefinition:
         input_schema: Mapping[str, JsonValue],
         *,
         writes_workspace: bool = False,
+        ends_turn: bool = False,
     ) -> None:
         object.__setattr__(self, "name", _text(name, "ToolDefinition name"))
         object.__setattr__(self, "description", _text(description, "ToolDefinition description"))
@@ -169,6 +228,9 @@ class ToolDefinition:
         if not isinstance(writes_workspace, bool):
             raise ValueError("ToolDefinition writes_workspace must be a boolean")
         object.__setattr__(self, "writes_workspace", writes_workspace)
+        if not isinstance(ends_turn, bool):
+            raise ValueError("ToolDefinition ends_turn must be a boolean")
+        object.__setattr__(self, "ends_turn", ends_turn)
 
     @property
     def input_schema(self) -> dict[str, JsonValue]:
@@ -376,21 +438,18 @@ class BuiltinSession:
         return next((call_id for call_id, writes in pending.items() if writes), None)
 
     def model_messages(self) -> tuple[ModelMessage, ...]:
-        history: list[ModelMessage] = []
-        pending_step: list[ModelMessage] = []
-        for event in self.events:
-            if event.type is BuiltinSessionEventType.TURN_STARTED:
-                history.extend(_turn_messages(event.payload))
-            elif event.type is BuiltinSessionEventType.STEP_STARTED:
-                pending_step = []
-            elif event.type is BuiltinSessionEventType.MODEL_MESSAGE:
-                pending_step.append(_message_from_document(event.payload))
-            elif event.type is BuiltinSessionEventType.TOOL_RESULT:
-                pending_step.append(_tool_result_message(event.payload))
-            elif event.type is BuiltinSessionEventType.STEP_ENDED:
-                history.extend(pending_step)
-                pending_step = []
-        return tuple(history)
+        history, _, _ = _replayed_messages(self.events)
+        return history
+
+    def last_provider_response_id(self) -> str | None:
+        """Return the latest durable provider continuation handle."""
+        _, response_id, _ = _replayed_messages(self.events)
+        return response_id
+
+    def continuation_messages(self) -> tuple[ModelMessage, ...]:
+        """Return model inputs after the latest provider Response handle."""
+        history, response_id, start = _replayed_messages(self.events)
+        return history if response_id is None else history[start:]
 
     def close(self) -> None:
         self._closed = True
@@ -495,11 +554,15 @@ class BuiltinAgentLoop:
         prompt_builder: PromptBuilder,
         tool_set: ToolSet,
         session_store: BuiltinSessionStore,
+        budget: AgentBudget = DEFAULT_AGENT_BUDGET,
+        monotonic_clock: Callable[[], float] = monotonic,
     ) -> None:
         self.model_client = model_client
         self.prompt_builder = prompt_builder
         self.tool_set = tool_set
         self.session_store = session_store
+        self.budget = budget
+        self._monotonic_clock = monotonic_clock
 
     async def run(
         self,
@@ -523,6 +586,11 @@ class BuiltinAgentLoop:
                 f"write Tool call {incomplete_call} has an unknown outcome and cannot be replayed"
             )
         persisted_sequence = len(session.events)
+        started_at = self._monotonic_clock()
+        step_count, tool_call_count, output_bytes = _turn_usage(
+            session.events,
+            attempt_id,
+        )
         if not session.has_turn(attempt_id):
             system_message, user_message = self.prompt_builder.build(instruction, context)
             session.append(
@@ -534,10 +602,24 @@ class BuiltinAgentLoop:
 
         while True:
             scope.cancellation.raise_if_cancelled()
+            self._check_wall_clock(started_at)
+            if step_count >= self.budget.max_steps:
+                raise AgentBudgetExceededError("Built-in Agent Step budget exhausted")
             step_start = len(session.events)
             session.append(attempt_id, BuiltinSessionEventType.STEP_STARTED, {})
-            request = ModelRequest(session.model_messages(), self.tool_set.definitions)
+            request = ModelRequest(
+                session.model_messages(),
+                self.tool_set.definitions,
+                input_messages=session.continuation_messages(),
+                previous_response_id=session.last_provider_response_id(),
+            )
             response = await self.model_client.complete(request)
+            step_count += 1
+            output_bytes += len(response.content.encode("utf-8"))
+            if response.final_text is not None:
+                output_bytes += len(response.final_text.encode("utf-8"))
+            if output_bytes > self.budget.max_output_bytes:
+                raise AgentBudgetExceededError("Built-in Agent output byte budget exhausted")
             assistant = ModelMessage(
                 ModelRole.ASSISTANT,
                 response.content,
@@ -546,10 +628,19 @@ class BuiltinAgentLoop:
             session.append(
                 attempt_id,
                 BuiltinSessionEventType.MODEL_MESSAGE,
-                _message_document(assistant, response.provider_response_id),
+                _message_document(
+                    assistant,
+                    response.provider_response_id,
+                    status=response.status,
+                    usage=response.usage,
+                    output_items=response.output_items,
+                ),
             )
             if response.tool_calls:
+                if tool_call_count + len(response.tool_calls) > self.budget.max_tool_calls:
+                    raise AgentBudgetExceededError("Built-in Agent Tool Call budget exhausted")
                 for call in response.tool_calls:
+                    self._check_wall_clock(started_at)
                     definition = self.tool_set.require(call.name)
                     session.append(
                         attempt_id,
@@ -564,11 +655,40 @@ class BuiltinAgentLoop:
                     if definition.writes_workspace:
                         persisted_sequence = self._persist(session, persisted_sequence)
                     result = await scope.tool_executor.execute(call, scope.cancellation)
+                    tool_call_count += 1
+                    output_bytes += len(json_dumps(result).encode("utf-8"))
+                    if output_bytes > self.budget.max_output_bytes:
+                        raise AgentBudgetExceededError(
+                            "Built-in Agent output byte budget exhausted"
+                        )
                     session.append(
                         attempt_id,
                         BuiltinSessionEventType.TOOL_RESULT,
                         {"call_id": call.call_id, "result": result},
                     )
+                    if definition.ends_turn:
+                        if len(response.tool_calls) != 1:
+                            raise BuiltinAgentError(
+                                "a final Tool must be the only ToolCall in its Step"
+                            )
+                        final_text = json_dumps(result)
+                        session.append(
+                            attempt_id,
+                            BuiltinSessionEventType.FINAL,
+                            {"text": final_text},
+                        )
+                        session.append(
+                            attempt_id,
+                            BuiltinSessionEventType.STEP_ENDED,
+                            {"started_sequence": step_start + 1},
+                        )
+                        session.append(
+                            attempt_id,
+                            BuiltinSessionEventType.TURN_ENDED,
+                            {},
+                        )
+                        self._persist(session, persisted_sequence)
+                        return final_text
                 session.append(
                     attempt_id,
                     BuiltinSessionEventType.STEP_ENDED,
@@ -591,6 +711,10 @@ class BuiltinAgentLoop:
             session.append(attempt_id, BuiltinSessionEventType.TURN_ENDED, {})
             self._persist(session, persisted_sequence)
             return response.final_text
+
+    def _check_wall_clock(self, started_at: float) -> None:
+        if self._monotonic_clock() - started_at > self.budget.wall_clock_seconds:
+            raise AgentBudgetExceededError("Built-in Agent wall-clock budget exhausted")
 
     def _persist(self, session: BuiltinSession, persisted_sequence: int) -> int:
         events = session.events[persisted_sequence:]
@@ -657,7 +781,9 @@ def _validate_next_event(
             {BuiltinSessionEventType.MODEL_MESSAGE, BuiltinSessionEventType.TOOL_RESULT}
         ),
         BuiltinSessionEventType.TOOL_RESULT: frozenset({BuiltinSessionEventType.TOOL_CALLED}),
-        BuiltinSessionEventType.FINAL: frozenset({BuiltinSessionEventType.MODEL_MESSAGE}),
+        BuiltinSessionEventType.FINAL: frozenset(
+            {BuiltinSessionEventType.MODEL_MESSAGE, BuiltinSessionEventType.TOOL_RESULT}
+        ),
         BuiltinSessionEventType.STEP_ENDED: frozenset(
             {
                 BuiltinSessionEventType.MODEL_MESSAGE,
@@ -685,6 +811,10 @@ def _validate_next_event(
 def _message_document(
     message: ModelMessage,
     provider_response_id: str | None = None,
+    *,
+    status: str | None = None,
+    usage: Mapping[str, JsonValue] | None = None,
+    output_items: tuple[Mapping[str, JsonValue], ...] = (),
 ) -> dict[str, JsonValue]:
     calls: list[JsonValue] = [
         {"call_id": call.call_id, "name": call.name, "arguments": call.arguments}
@@ -696,6 +826,9 @@ def _message_document(
         "tool_calls": calls,
         "call_id": message.call_id,
         "provider_response_id": provider_response_id,
+        "status": status,
+        "usage": None if usage is None else dict(usage),
+        "output_items": [dict(item) for item in output_items],
     }
 
 
@@ -730,6 +863,64 @@ def _turn_messages(document: Mapping[str, JsonValue]) -> tuple[ModelMessage, ...
     if not isinstance(values, list):
         raise BuiltinSessionStateError("turn/start messages must be an array")
     return tuple(_message_from_document(value) for value in values if isinstance(value, dict))
+
+
+def _replayed_messages(
+    events: tuple[BuiltinSessionEvent, ...],
+) -> tuple[tuple[ModelMessage, ...], str | None, int]:
+    history: list[ModelMessage] = []
+    pending_step: list[ModelMessage] = []
+    response_id: str | None = None
+    pending_continuation_start: int | None = None
+    continuation_start = 0
+    for event in events:
+        if event.type is BuiltinSessionEventType.TURN_STARTED:
+            history.extend(_turn_messages(event.payload))
+        elif event.type is BuiltinSessionEventType.STEP_STARTED:
+            pending_step = []
+            pending_continuation_start = None
+        elif event.type is BuiltinSessionEventType.MODEL_MESSAGE:
+            pending_step.append(_message_from_document(event.payload))
+            provider_id = event.payload.get("provider_response_id")
+            if isinstance(provider_id, str) and provider_id:
+                response_id = provider_id
+                pending_continuation_start = len(history) + len(pending_step)
+        elif event.type is BuiltinSessionEventType.TOOL_RESULT:
+            pending_step.append(_tool_result_message(event.payload))
+        elif event.type is BuiltinSessionEventType.STEP_ENDED:
+            history.extend(pending_step)
+            if pending_continuation_start is not None:
+                continuation_start = pending_continuation_start
+            pending_step = []
+            pending_continuation_start = None
+    return tuple(history), response_id, continuation_start
+
+
+def _turn_usage(
+    events: tuple[BuiltinSessionEvent, ...],
+    attempt_id: ID,
+) -> tuple[int, int, int]:
+    step_count = 0
+    tool_call_count = 0
+    output_bytes = 0
+    for event in events:
+        if event.attempt_id != attempt_id:
+            continue
+        if event.type is BuiltinSessionEventType.STEP_STARTED:
+            step_count += 1
+        elif event.type is BuiltinSessionEventType.TOOL_CALLED:
+            tool_call_count += 1
+        elif event.type is BuiltinSessionEventType.MODEL_MESSAGE:
+            content = event.payload.get("content")
+            if isinstance(content, str):
+                output_bytes += len(content.encode("utf-8"))
+        elif event.type is BuiltinSessionEventType.TOOL_RESULT:
+            output_bytes += len(json_dumps(event.payload.get("result")).encode("utf-8"))
+        elif event.type is BuiltinSessionEventType.FINAL:
+            text = event.payload.get("text")
+            if isinstance(text, str):
+                output_bytes += len(text.encode("utf-8"))
+    return step_count, tool_call_count, output_bytes
 
 
 def _tool_result_message(document: Mapping[str, JsonValue]) -> ModelMessage:

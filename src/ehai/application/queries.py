@@ -272,6 +272,7 @@ class WorkerProfileView:
     capabilities: tuple[str, ...]
     session_policy: SessionPolicy
     budget_ref: str | None
+    credential_ref: str | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -332,6 +333,7 @@ class QueryService:
                     capabilities=tuple(sorted(item.name for item in profile.capabilities)),
                     session_policy=profile.session_policy,
                     budget_ref=profile.budget_ref,
+                    credential_ref=profile.credential_ref,
                 )
                 for profile in session.worker_registry.list_worker_profiles()
             )

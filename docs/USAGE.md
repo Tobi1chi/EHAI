@@ -151,6 +151,21 @@ Remove-Item Env:EHAI_RUN_CODEX_SMOKE
 历史验证结果与 App Server 可见性观察见
 [Codex CLI 本地通道技术验证](spikes/codex-cli-local-channel.md)。
 
+## 真实 OpenAI Responses Smoke
+
+Built-in Agent 只从 `OPENAI_API_KEY` 读取凭证；数据库保存的是引用
+`env:OPENAI_API_KEY`，不会保存 key。真实 Smoke 还要求显式提供当前账号有权使用的模型：
+
+```powershell
+$env:EHAI_RUN_OPENAI_SMOKE = "1"
+$env:EHAI_OPENAI_SMOKE_MODEL = "<authorized-model>"
+uv run pytest tests/smoke/test_openai_responses_smoke.py -q
+Remove-Item Env:EHAI_RUN_OPENAI_SMOKE
+Remove-Item Env:EHAI_OPENAI_SMOKE_MODEL
+```
+
+不要把 `OPENAI_API_KEY` 写入命令历史、配置文件、Event、Artifact 或数据库。
+
 ## 离线确定性验证
 
 开发或 CI 环境不应默认依赖网络、认证和模型额度。需要验证 EHAI 自身闭环时，可将 CLI 示例中的

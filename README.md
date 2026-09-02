@@ -48,9 +48,9 @@ Goal + CompletionContract
 | P2 | 进行中 | 异步调度、Built-in/Codex Worker、Agent Session、并发与资源管理 |
 | P3+ | 已规划 | TypeScript Control Plane、可复用 Workflow 和开放扩展生态 |
 
-P2-I0–I2 已固定执行契约，可持久化和查询 Worker 路由与执行绑定，并提供由 ScriptedModelClient
-验证的 Built-in Agent Turn/Step/Tool Loop 和可恢复 Session Event；真实模型、后台 Runtime 与调度
-仍未实现。当前可运行命令保持 P1/P1.1 的串行语义。
+P2-I0–I3 已固定执行契约和 Worker 路由，提供可恢复的 Built-in Agent Loop、固定 Tool runtime，
+以及使用官方 OpenAI Python SDK 的 Responses ModelClient。Responses 协议已由离线流测试验证；真实
+Smoke 仍需显式 API key 和 model。后台 Runtime 与调度尚未实现，当前命令保持 P1/P1.1 串行语义。
 
 ## Quick Start
 

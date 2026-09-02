@@ -197,14 +197,16 @@ class SQLiteWorkerRegistry:
         self._connection.execute(
             """
             INSERT INTO worker_profiles(
-                worker_profile_id, worker_kind, model, session_policy, snapshot_json
-            ) VALUES (?, ?, ?, ?, ?)
+                worker_profile_id, worker_kind, model, session_policy,
+                credential_ref, snapshot_json
+            ) VALUES (?, ?, ?, ?, ?, ?)
             """,
             (
                 profile.worker_profile_id,
                 profile.kind.value,
                 profile.model,
                 profile.session_policy.value,
+                profile.credential_ref,
                 snapshot,
             ),
         )
