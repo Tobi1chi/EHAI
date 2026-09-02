@@ -18,6 +18,7 @@ from ehai.application.async_runtime import (
     WorkerEvent,
     WorkerEventType,
 )
+from ehai.application.execution_policy import EndpointHealthStatus
 from ehai.application.workers import WorkerResult
 from ehai.domain.workers import AttemptActivity
 from ehai.infrastructure.workers.codex_protocol import (
@@ -308,6 +309,14 @@ class CodexAppServerConnector:
         if state.terminal:
             return AttemptActivity.STALLED
         return AttemptActivity.RUNNING
+
+    async def health(self) -> EndpointHealthStatus:
+        """Report only this Endpoint connection health, never Session progress."""
+        if self._reader_task is None:
+            return EndpointHealthStatus.UNKNOWN
+        if self._reader_task.done() or self._transport is None:
+            return EndpointHealthStatus.UNHEALTHY
+        return EndpointHealthStatus.HEALTHY
 
     async def cancel(self, execution: ConnectorExecution) -> None:
         """Interrupt only the exact active Turn named by the execution handle."""

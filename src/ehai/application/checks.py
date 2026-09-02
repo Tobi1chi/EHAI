@@ -6,6 +6,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+from types import MappingProxyType
 from typing import Protocol, runtime_checkable
 
 from ehai import ID, normalize_id, utc_now
@@ -125,15 +126,10 @@ class CheckAdapter(Protocol):
         ...
 
 
-class CheckRunner:
-    """Dispatch CheckSpecs and advance their domain CheckRun snapshots."""
+class CheckRegistry:
+    """Immutable internal Check adapter registry created explicitly at startup."""
 
-    def __init__(
-        self,
-        adapters: Mapping[CheckKind, CheckAdapter],
-        *,
-        clock: Callable[[], datetime] | None = None,
-    ) -> None:
+    def __init__(self, adapters: Mapping[CheckKind, CheckAdapter]) -> None:
         normalized: dict[CheckKind, CheckAdapter] = {}
         for kind, adapter in adapters.items():
             normalized_kind = CheckKind(kind)
@@ -144,7 +140,25 @@ class CheckRunner:
                     f"adapter for {normalized_kind.value} does not implement CheckAdapter"
                 )
             normalized[normalized_kind] = adapter
-        self._adapters = normalized
+        self._adapters = MappingProxyType(normalized)
+
+    def get(self, kind: CheckKind) -> CheckAdapter | None:
+        """Return only a preconfigured adapter; no dynamic loading is performed."""
+        return self._adapters.get(CheckKind(kind))
+
+
+class CheckRunner:
+    """Dispatch CheckSpecs and advance their domain CheckRun snapshots."""
+
+    def __init__(
+        self,
+        adapters: Mapping[CheckKind, CheckAdapter] | CheckRegistry,
+        *,
+        clock: Callable[[], datetime] | None = None,
+    ) -> None:
+        self._registry = (
+            adapters if isinstance(adapters, CheckRegistry) else CheckRegistry(adapters)
+        )
         self._clock = utc_now if clock is None else clock
 
     def run(self, spec: CheckSpec, context: CheckContext) -> CheckRun:
@@ -166,7 +180,7 @@ class CheckRunner:
             check_id=spec.check_id,
             created_at=started_at,
         ).start(at=started_at)
-        adapter = self._adapters.get(spec.kind)
+        adapter = self._registry.get(spec.kind)
         if adapter is None:
             return check_run.fail(
                 f"no Check adapter configured for {spec.kind.value}",

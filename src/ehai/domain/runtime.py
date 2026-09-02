@@ -118,6 +118,29 @@ class DispatchWork:
             _rehydrate_token=_REHYDRATE,
         )
 
+    def reclaim(
+        self,
+        owner: str,
+        lease_expires_at: datetime,
+        *,
+        at: datetime | None = None,
+    ) -> Self:
+        """Take over only an expired claim after a Runtime crash."""
+        timestamp = _utc(at or utc_now())
+        if self.status is not DispatchWorkStatus.CLAIMED:
+            raise ValueError(f"DispatchWork {self.dispatch_work_id} is not claimed")
+        if self.lease_expires_at is None or self.lease_expires_at > timestamp:
+            raise ValueError(f"DispatchWork {self.dispatch_work_id} claim lease has not expired")
+        if not owner.strip():
+            raise ValueError("DispatchWork claim owner must not be blank")
+        return replace(
+            self,
+            claimed_at=timestamp,
+            claim_owner=owner,
+            lease_expires_at=_utc(lease_expires_at),
+            _rehydrate_token=_REHYDRATE,
+        )
+
     def complete(self, *, at: datetime | None = None) -> Self:
         if self.status is not DispatchWorkStatus.CLAIMED:
             raise ValueError(f"DispatchWork {self.dispatch_work_id} is not claimed")

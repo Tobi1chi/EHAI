@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncIterator
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -11,6 +12,7 @@ from ehai.application.async_runtime import (
     ConnectorExecution,
     ConnectorRecoveryRequest,
     ConnectorStartRequest,
+    RuntimeConnector,
     SingleSlotRuntime,
     WorkerEvent,
     WorkerEventType,
@@ -22,6 +24,12 @@ from ehai.application.commands import (
     CreateProject,
     ProposePlan,
     StartRun,
+)
+from ehai.application.execution_policy import (
+    EndpointHealthStatus,
+    ExecutionPolicy,
+    ExecutionReplay,
+    RetrySafety,
 )
 from ehai.application.orchestrator import Orchestrator
 from ehai.application.planner import (
@@ -35,6 +43,7 @@ from ehai.application.planner import (
 from ehai.application.service import ExecutionService
 from ehai.application.workers import WorkerRequest
 from ehai.domain.checking import CheckKind
+from ehai.domain.events import EventType
 from ehai.domain.execution import AttemptStatus, RunStatus
 from ehai.domain.goal import Goal
 from ehai.domain.runtime import DispatchWorkStatus
@@ -97,7 +106,7 @@ class _TestConnector:
     ) -> AsyncIterator[WorkerEvent]:
         del after_cursor
         attempt_id = execution.attempt_id
-        if self.fail_first_stream and attempt_id not in self._failed_streams:
+        if self.fail_first_stream and not self._failed_streams:
             self._failed_streams.add(attempt_id)
             raise RuntimeError("simulated Runtime process loss")
         result = self.worker.execute(self.requests[attempt_id])
@@ -272,7 +281,7 @@ def test_completed_result_wins_cancel_race(tmp_path: Path) -> None:
         assert session.states.list_dispatch_work()[0].status is DispatchWorkStatus.COMPLETED
 
 
-def test_recovery_marks_missing_original_execution_interrupted_without_restart(
+def test_recovery_retries_when_provider_confirms_original_execution_is_missing(
     tmp_path: Path,
 ) -> None:
     service, runtime, connector, database, _ = _build_runtime(
@@ -289,8 +298,336 @@ def test_recovery_marks_missing_original_execution_interrupted_without_restart(
 
     recovered = asyncio.run(runtime.recover_startup())
 
-    assert len(recovered) == 1 and recovered[0].status is RunStatus.PAUSED
-    assert connector.start_calls == [attempt.attempt_id]
+    assert len(recovered) == 1 and recovered[0].status is RunStatus.COMPLETED
+    assert connector.start_calls[0] == attempt.attempt_id
+    assert len(connector.start_calls) == 2
     with database.read_session() as session:
         stored = session.states.get_attempt(attempt.attempt_id)
-        assert stored is not None and stored.status is AttemptStatus.INTERRUPTED
+        attempts = session.states.list_attempts(run_id)
+        events = tuple(item.event.type for item in session.events.list_events())
+    assert stored is not None and stored.status is AttemptStatus.INTERRUPTED
+    assert tuple(item.status for item in attempts) == (
+        AttemptStatus.INTERRUPTED,
+        AttemptStatus.SUCCEEDED,
+    )
+    assert EventType.ATTEMPT_RETRY_SCHEDULED in events
+
+
+class _WatchdogConnector:
+    def __init__(self, mode: str) -> None:
+        self.mode = mode
+        self.cancel_calls = 0
+        self._cursor = 0
+
+    async def start(self, request: ConnectorStartRequest) -> ConnectorExecution:
+        return ConnectorExecution(
+            request.attempt_id,
+            f"session-{request.attempt_id}",
+            str(new_id()),
+            True,
+        )
+
+    async def events(
+        self,
+        execution: ConnectorExecution,
+        *,
+        after_cursor: str | None = None,
+    ) -> AsyncIterator[WorkerEvent]:
+        del after_cursor
+        if self.mode == "lease":
+            await asyncio.Event().wait()
+            return
+        if self.mode == "waiting":
+            yield self._event(execution, WorkerEventType.WAITING)
+        while True:
+            await asyncio.sleep(0.005)
+            yield self._event(execution, WorkerEventType.HEARTBEAT)
+
+    async def inspect(self, execution: ConnectorExecution) -> AttemptActivity:
+        del execution
+        if self.mode == "lease":
+            return AttemptActivity.STALLED
+        if self.mode == "waiting":
+            return AttemptActivity.WAITING
+        return AttemptActivity.RUNNING
+
+    async def cancel(self, execution: ConnectorExecution) -> None:
+        del execution
+        self.cancel_calls += 1
+
+    async def recover(self, request: ConnectorRecoveryRequest) -> ConnectorExecution | None:
+        del request
+        return None
+
+    def _event(
+        self,
+        execution: ConnectorExecution,
+        event_type: WorkerEventType,
+    ) -> WorkerEvent:
+        self._cursor += 1
+        return WorkerEvent(
+            f"{execution.attempt_id}:{self._cursor}",
+            execution.attempt_id,
+            event_type,
+            str(self._cursor),
+            reason=(
+                "explicit approval required" if event_type is WorkerEventType.WAITING else None
+            ),
+        )
+
+
+class _RetryConnector:
+    def __init__(self, *, start_timeout_once: bool) -> None:
+        self.start_timeout_once = start_timeout_once
+        self.start_calls = 0
+        self.requests: dict[ID, WorkerRequest] = {}
+        self.worker = FakeWorker()
+
+    async def start(self, request: ConnectorStartRequest) -> ConnectorExecution:
+        self.start_calls += 1
+        self.requests[request.attempt_id] = request.request
+        if self.start_timeout_once and self.start_calls == 1:
+            await asyncio.sleep(1)
+        return ConnectorExecution(
+            request.attempt_id,
+            f"session-{request.attempt_id}",
+            str(new_id()),
+            True,
+        )
+
+    async def events(
+        self,
+        execution: ConnectorExecution,
+        *,
+        after_cursor: str | None = None,
+    ) -> AsyncIterator[WorkerEvent]:
+        del after_cursor
+        if not self.start_timeout_once:
+            yield WorkerEvent(
+                f"{execution.attempt_id}:failed",
+                execution.attempt_id,
+                WorkerEventType.FAILED,
+                "1",
+                reason="provider outcome is unknown",
+                retry_safety=RetrySafety.UNKNOWN,
+            )
+            return
+        result = self.worker.execute(self.requests[execution.attempt_id])
+        yield WorkerEvent(
+            f"{execution.attempt_id}:candidate",
+            execution.attempt_id,
+            WorkerEventType.CANDIDATE,
+            "1",
+            result=result,
+        )
+        yield WorkerEvent(
+            f"{execution.attempt_id}:completed",
+            execution.attempt_id,
+            WorkerEventType.COMPLETED,
+            "2",
+        )
+
+    async def inspect(self, execution: ConnectorExecution) -> AttemptActivity:
+        del execution
+        return AttemptActivity.RUNNING
+
+    async def cancel(self, execution: ConnectorExecution) -> None:
+        del execution
+
+    async def recover(self, request: ConnectorRecoveryRequest) -> ConnectorExecution | None:
+        del request
+        return None
+
+
+def test_watchdog_separates_heartbeat_progress_waiting_and_absolute_deadline(
+    tmp_path: Path,
+) -> None:
+    cases = (
+        (
+            "heartbeat",
+            ExecutionPolicy(
+                heartbeat_lease=timedelta(milliseconds=30),
+                no_progress_timeout=timedelta(milliseconds=40),
+                absolute_attempt_timeout=timedelta(milliseconds=200),
+                cancel_grace=timedelta(milliseconds=10),
+            ),
+            "no progress",
+        ),
+        (
+            "lease",
+            ExecutionPolicy(
+                heartbeat_lease=timedelta(milliseconds=20),
+                no_progress_timeout=timedelta(milliseconds=200),
+                absolute_attempt_timeout=timedelta(milliseconds=300),
+                cancel_grace=timedelta(milliseconds=10),
+            ),
+            "heartbeat lease",
+        ),
+        (
+            "waiting",
+            ExecutionPolicy(
+                heartbeat_lease=timedelta(milliseconds=30),
+                no_progress_timeout=timedelta(milliseconds=20),
+                absolute_attempt_timeout=timedelta(milliseconds=70),
+                cancel_grace=timedelta(milliseconds=10),
+            ),
+            "absolute Attempt deadline",
+        ),
+    )
+    for mode, policy, expected_reason in cases:
+        workspace = tmp_path / mode
+        workspace.mkdir()
+        connector = _WatchdogConnector(mode)
+        service, runtime, database = _policy_runtime(workspace, connector, policy)
+        run_id, _ = _start(service)
+
+        result = asyncio.run(runtime.run_once())
+
+        assert result is not None and result.status is RunStatus.PAUSED
+        assert connector.cancel_calls == 1
+        with database.read_session() as session:
+            attempt = session.states.list_attempts(run_id)[0]
+        assert attempt.status is AttemptStatus.TIMED_OUT
+        assert expected_reason in (attempt.outcome_reason or "")
+
+
+def test_retry_requires_safe_knowledge_and_replay_matches_persisted_facts(
+    tmp_path: Path,
+) -> None:
+    safe_workspace = tmp_path / "safe"
+    safe_workspace.mkdir()
+    safe_connector = _RetryConnector(start_timeout_once=True)
+    policy = ExecutionPolicy(
+        start_timeout=timedelta(milliseconds=20),
+        heartbeat_lease=timedelta(seconds=1),
+        no_progress_timeout=timedelta(seconds=1),
+        absolute_attempt_timeout=timedelta(seconds=2),
+        cancel_grace=timedelta(milliseconds=20),
+    )
+    service, runtime, database = _policy_runtime(safe_workspace, safe_connector, policy)
+    run_id, _ = _start(service)
+
+    completed = asyncio.run(runtime.run_once())
+
+    assert completed is not None and completed.status is RunStatus.COMPLETED
+    assert safe_connector.start_calls == 2
+    with database.read_session() as session:
+        attempts = session.states.list_attempts(run_id)
+        work = session.states.list_dispatch_work()[0]
+        stored_events = session.events.list_events()
+    replayed = ExecutionReplay().replay(stored_events)
+    assert tuple(attempt.status for attempt in attempts) == (
+        AttemptStatus.TIMED_OUT,
+        AttemptStatus.SUCCEEDED,
+    )
+    assert replayed.claimed_work_ids[run_id] == work.dispatch_work_id
+    assert replayed.dispatched_attempt_ids == {attempt.attempt_id for attempt in attempts}
+    assert set(replayed.bindings) == {attempts[1].attempt_id}
+    assert replayed.retries == {attempts[0].attempt_id: RetrySafety.NO_EXECUTION_HANDLE}
+    assert attempts[1].worker_endpoint_id is not None
+    assert replayed.endpoint_health[attempts[1].worker_endpoint_id] is EndpointHealthStatus.HEALTHY
+    usage = tuple(
+        item.event.payload
+        for item in stored_events
+        if item.event.type is EventType.PROVIDER_USAGE_RECORDED
+    )
+    assert usage[-1]["provider_cost"] is None
+    assert usage[-1]["provider_cost_available"] is False
+
+    unknown_workspace = tmp_path / "unknown"
+    unknown_workspace.mkdir()
+    unknown_connector = _RetryConnector(start_timeout_once=False)
+    service, runtime, database = _policy_runtime(unknown_workspace, unknown_connector, policy)
+    unknown_run_id, _ = _start(service)
+
+    paused = asyncio.run(runtime.run_once())
+
+    assert paused is not None and paused.status is RunStatus.PAUSED
+    assert unknown_connector.start_calls == 1
+    with database.read_session() as session:
+        unknown_attempts = session.states.list_attempts(unknown_run_id)
+    assert len(unknown_attempts) == 1
+    assert unknown_attempts[0].status is AttemptStatus.INTERRUPTED
+
+
+def test_expired_dispatch_claim_is_reclaimed_without_duplicate_work(tmp_path: Path) -> None:
+    service, _, _, database, _ = _build_runtime(tmp_path, exploration=False)
+    run_id, _ = _start(service)
+    claimed_at = datetime(2026, 9, 2, tzinfo=UTC)
+    with database.unit_of_work() as uow:
+        original = uow.states.claim_next_dispatch_work(
+            owner="runtime-old",
+            at=claimed_at,
+            lease_expires_at=claimed_at + timedelta(seconds=1),
+        )
+        uow.commit()
+    assert original is not None and original.run_id == run_id
+
+    with database.unit_of_work() as uow:
+        before_expiry = uow.states.claim_next_dispatch_work(
+            owner="runtime-new",
+            at=claimed_at + timedelta(milliseconds=500),
+            lease_expires_at=claimed_at + timedelta(seconds=2),
+        )
+        uow.commit()
+    assert before_expiry is None
+
+    with database.unit_of_work() as uow:
+        reclaimed = uow.states.claim_next_dispatch_work(
+            owner="runtime-new",
+            at=claimed_at + timedelta(seconds=1),
+            lease_expires_at=claimed_at + timedelta(seconds=3),
+        )
+        uow.commit()
+    assert reclaimed is not None
+    assert reclaimed.dispatch_work_id == original.dispatch_work_id
+    assert reclaimed.claim_owner == "runtime-new"
+
+
+def _policy_runtime(
+    tmp_path: Path,
+    connector: RuntimeConnector,
+    policy: ExecutionPolicy,
+) -> tuple[ExecutionService, SingleSlotRuntime, SQLiteDatabase]:
+    database = SQLiteDatabase(tmp_path / "policy.sqlite3")
+    artifacts = FilesystemArtifactStore(tmp_path / "artifacts")
+    worker = FakeWorker()
+    orchestrator = Orchestrator(
+        uow_factory=database.unit_of_work,
+        worker=worker,
+        artifact_store=artifacts,
+        check_runner=CheckRunner(
+            {
+                CheckKind.ARTIFACT: ArtifactCheckAdapter(
+                    artifacts,
+                    {},
+                    default_rule=ArtifactCheckRule(minimum_count=1, require_non_empty=True),
+                )
+            }
+        ),
+        workspace=tmp_path,
+        attempt_budget=5,
+    )
+    service = ExecutionService(
+        uow_factory=database.unit_of_work,
+        planner=DeterministicPlanner(),
+        orchestrator=orchestrator,
+        background_start=True,
+    )
+    profile = WorkerProfile("policy", WorkerKind.BUILTIN, "scripted")
+    endpoint = WorkerEndpoint(
+        "policy",
+        WorkerKind.BUILTIN,
+        WorkerEndpointType.IN_PROCESS,
+        "policy",
+        1,
+    )
+    runtime = SingleSlotRuntime(
+        uow_factory=database.unit_of_work,
+        orchestrator=orchestrator,
+        connector=connector,
+        profile=profile,
+        endpoint=endpoint,
+        policy=policy,
+    )
+    return service, runtime, database

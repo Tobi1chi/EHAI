@@ -247,7 +247,7 @@ class CurrentStateRepository(CurrentStateReader, Protocol):
         at: datetime,
         lease_expires_at: datetime,
     ) -> DispatchWork | None:
-        """Claim the oldest pending work in this single write transaction."""
+        """Claim pending or reclaim the oldest expired work in this transaction."""
         ...
 
     def record_worker_event(self, attempt_id: ID, worker_event_id: str, *, at: datetime) -> bool:

@@ -22,6 +22,10 @@ _MAX_DIAGNOSTIC_CHARACTERS = 500
 _ERROR_TRUNCATION_MARKER = b"\n...[truncated]...\n"
 MAX_ARTIFACT_INPUT_BYTES = 256 * 1024
 MAX_ARTIFACT_INPUT_TOTAL_BYTES = 1024 * 1024
+MAX_WORKER_CONTEXT_BYTES = 1024 * 1024
+MAX_CANDIDATE_ARTIFACT_BYTES = 1024 * 1024
+MAX_CANDIDATE_TOTAL_BYTES = 3 * 1024 * 1024
+MAX_WORKER_SUMMARY_BYTES = 64 * 1024
 _ARTIFACT_INPUT_ENCODINGS = frozenset({"utf-8", "base64"})
 
 
@@ -250,7 +254,10 @@ class WorkerRequest:
         object.__setattr__(self, "plan_node", plan_node)
         object.__setattr__(self, "completion_contract", completion_contract)
         object.__setattr__(self, "artifact_inputs", artifacts)
-        object.__setattr__(self, "_context_json", json_dumps(dict(context)))
+        context_json = json_dumps(dict(context))
+        if len(context_json.encode("utf-8")) > MAX_WORKER_CONTEXT_BYTES:
+            raise ArtifactInputBudgetExceeded("Worker context exceeds the P2 bounded context limit")
+        object.__setattr__(self, "_context_json", context_json)
 
     @property
     def run_id(self) -> ID:
@@ -319,10 +326,23 @@ class WorkerResult:
             raise ValueError("WorkerResult requires at least one CandidateArtifact")
         if not isinstance(self.summary, str) or not self.summary.strip():
             raise ValueError("WorkerResult summary must not be blank")
+        if len(self.summary.encode("utf-8")) > MAX_WORKER_SUMMARY_BYTES:
+            raise ValueError("WorkerResult summary exceeds the P2 evidence limit")
+        artifact_sizes = tuple(len(artifact.content) for artifact in artifacts)
+        if any(size > MAX_CANDIDATE_ARTIFACT_BYTES for size in artifact_sizes):
+            raise ValueError("WorkerResult Artifact exceeds the P2 evidence limit")
+        if sum(artifact_sizes) > MAX_CANDIDATE_TOTAL_BYTES:
+            raise ValueError("WorkerResult Artifacts exceed the P2 total evidence limit")
         if not isinstance(self.raw_output, (bytes, bytearray, memoryview)):
             raise TypeError("WorkerResult raw_output must be bytes-like")
         if any(not isinstance(item, str) or not item.strip() for item in diagnostics):
             raise ValueError("WorkerResult diagnostics must contain non-blank strings")
+        if len(self.raw_output) > _MAX_ERROR_OUTPUT_BYTES:
+            raise ValueError("WorkerResult raw_output exceeds the P2 log limit")
+        if len(diagnostics) > _MAX_ERROR_DIAGNOSTICS or any(
+            len(item) > _MAX_DIAGNOSTIC_CHARACTERS for item in diagnostics
+        ):
+            raise ValueError("WorkerResult diagnostics exceed the P2 log limit")
         object.__setattr__(self, "artifacts", artifacts)
         object.__setattr__(self, "raw_output", bytes(self.raw_output))
         object.__setattr__(self, "diagnostics", diagnostics)

@@ -8,7 +8,13 @@ from pathlib import Path
 import pytest
 
 from ehai import ID, new_id
-from ehai.application.checks import CheckAdapter, CheckContext, CheckOutcome, CheckRunner
+from ehai.application.checks import (
+    CheckAdapter,
+    CheckContext,
+    CheckOutcome,
+    CheckRegistry,
+    CheckRunner,
+)
 from ehai.application.ports import ArtifactStore
 from ehai.domain.artifacts import Artifact, ArtifactKind
 from ehai.domain.checking import CheckKind, CheckRunStatus, CheckSpec
@@ -109,7 +115,7 @@ def make_context(
 
 
 def run_check(spec: CheckSpec, context: CheckContext, adapter: CheckAdapter):
-    runner = CheckRunner({spec.kind: adapter}, clock=lambda: NOW)
+    runner = CheckRunner(CheckRegistry({spec.kind: adapter}), clock=lambda: NOW)
     return runner.run(spec, context)
 
 

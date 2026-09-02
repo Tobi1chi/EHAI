@@ -8,9 +8,18 @@ from dataclasses import dataclass
 from datetime import timedelta
 
 from ehai import ID, utc_now
-from ehai.application.async_runtime import RuntimeConnector, SingleSlotRuntime
+from ehai.application.async_runtime import (
+    HealthAwareConnector,
+    RuntimeConnector,
+    SingleSlotRuntime,
+)
+from ehai.application.execution_policy import (
+    EndpointHealthStatus,
+    ExecutionPolicy,
+)
 from ehai.application.orchestrator import Orchestrator
 from ehai.application.ports import UnitOfWork
+from ehai.domain.events import Event, EventType
 from ehai.domain.execution import Attempt, AttemptStatus, Run, RunStatus
 from ehai.domain.planning import PlanNode
 from ehai.domain.runtime import DispatchWork, DispatchWorkStatus
@@ -87,6 +96,7 @@ class Dispatcher:
         run_id: ID,
         usage: CapacityUsage,
         workspace_conflict: bool,
+        endpoint_health: Mapping[ID, EndpointHealthStatus] | None = None,
     ) -> DispatchDecision:
         if workspace_conflict:
             return DispatchDecision(None, "workspace conflict")
@@ -116,6 +126,11 @@ class Dispatcher:
                     for endpoint in self.endpoints
                     if endpoint.worker_kind is profile.kind
                     and endpoint.status is WorkerEndpointStatus.ENABLED
+                    and (endpoint_health or {}).get(
+                        endpoint.worker_endpoint_id,
+                        EndpointHealthStatus.UNKNOWN,
+                    )
+                    is not EndpointHealthStatus.UNHEALTHY
                     and usage.endpoints.get(endpoint.worker_endpoint_id, 0)
                     < min(
                         endpoint.capacity,
@@ -151,15 +166,26 @@ class ConcurrentRuntime:
         orchestrator: Orchestrator,
         dispatcher: Dispatcher,
         connectors: Mapping[ID, RuntimeConnector],
+        policy: ExecutionPolicy | None = None,
     ) -> None:
         self._uow_factory = uow_factory
         self._orchestrator = orchestrator
         self._dispatcher = dispatcher
         self._connectors = dict(connectors)
+        self._policy = (
+            ExecutionPolicy(max_concurrency=dispatcher.capacity.global_capacity)
+            if policy is None
+            else policy
+        )
+        self._endpoint_health = {
+            endpoint.worker_endpoint_id: EndpointHealthStatus.UNKNOWN
+            for endpoint in dispatcher.endpoints
+        }
         self._claim_owner = f"scheduler:{utc_now().timestamp()}"
 
     async def run_until_idle(self) -> tuple[Run, ...]:
         """Run until every dispatchable Run is terminal or only blocked work remains."""
+        await self._refresh_endpoint_health()
         works = self._claim_all_work()
         tasks: dict[asyncio.Task[Run], _ActiveExecution] = {}
         terminal: dict[ID, Run] = {}
@@ -173,12 +199,25 @@ class ConcurrentRuntime:
             done, _ = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
             for task in done:
                 active = tasks.pop(task)
+                self._endpoint_health[active.assignment.endpoint.worker_endpoint_id] = (
+                    active.helper.endpoint_health.status
+                )
                 run = task.result()
                 if run.status is not RunStatus.RUNNING:
                     active.helper.finish_dispatch_work(active.work)
                     works.pop(active.work.run_id, None)
                     terminal[run.run_id] = run
         return tuple(terminal[key] for key in sorted(terminal))
+
+    async def _refresh_endpoint_health(self) -> None:
+        for endpoint_id, connector in self._connectors.items():
+            if isinstance(connector, HealthAwareConnector):
+                try:
+                    self._endpoint_health[endpoint_id] = await connector.health()
+                except Exception:
+                    self._endpoint_health[endpoint_id] = EndpointHealthStatus.UNHEALTHY
+            else:
+                self._endpoint_health[endpoint_id] = EndpointHealthStatus.UNKNOWN
 
     def cancel_queued_attempt(self, attempt_id: ID) -> Run:
         run = self._orchestrator.cancel_queued_attempt(attempt_id)
@@ -201,6 +240,8 @@ class ConcurrentRuntime:
             self._orchestrator.queue_ready_attempts(run_id, limit=100)
         scheduled = False
         while True:
+            if len(tasks) >= self._policy.max_concurrency:
+                return scheduled
             usage = _capacity_usage(tasks.values())
             candidate = self._next_assignment(works, tasks, usage)
             if candidate is None:
@@ -218,6 +259,7 @@ class ConcurrentRuntime:
                 connector=connector,
                 profile=assignment.profile,
                 endpoint=_single_slot_endpoint(assignment.endpoint),
+                policy=self._policy,
             )
             task = asyncio.create_task(helper.execute_started_request(request))
             tasks[task] = _ActiveExecution(work, request.attempt, project_id, assignment, helper)
@@ -269,6 +311,7 @@ class ConcurrentRuntime:
                         run_id=run_id,
                         usage=usage,
                         workspace_conflict=workspace_conflict,
+                        endpoint_health=self._endpoint_health,
                     )
                     if decision.assignment is not None:
                         return works[run_id], attempt, goal.project_id, decision.assignment
@@ -284,7 +327,8 @@ class ConcurrentRuntime:
             for endpoint in self._dispatcher.endpoints:
                 uow.worker_registry.put_worker_endpoint(endpoint)
             for work in uow.states.list_dispatch_work(DispatchWorkStatus.CLAIMED):
-                claimed[work.run_id] = work
+                if work.claim_owner == self._claim_owner:
+                    claimed[work.run_id] = work
             while True:
                 claimed_at = utc_now()
                 claimed_work = uow.states.claim_next_dispatch_work(
@@ -295,6 +339,18 @@ class ConcurrentRuntime:
                 if claimed_work is None:
                     break
                 claimed[claimed_work.run_id] = claimed_work
+                uow.events.append(
+                    Event(
+                        type=EventType.DISPATCH_WORK_CLAIMED,
+                        correlation_id=claimed_work.dispatch_work_id,
+                        run_id=claimed_work.run_id,
+                        payload={
+                            "dispatch_work_id": claimed_work.dispatch_work_id,
+                            "claim_owner": self._claim_owner,
+                        },
+                        occurred_at=claimed_at,
+                    )
+                )
             uow.commit()
         return claimed
 
@@ -310,6 +366,7 @@ class ConcurrentRuntime:
             connector=connector,
             profile=profile,
             endpoint=_single_slot_endpoint(endpoint),
+            policy=self._policy,
         )
 
 

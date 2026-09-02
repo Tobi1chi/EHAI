@@ -7,6 +7,9 @@ import pytest
 
 from ehai import ID, JsonValue, new_id
 from ehai.application.workers import (
+    MAX_CANDIDATE_ARTIFACT_BYTES,
+    MAX_WORKER_CONTEXT_BYTES,
+    ArtifactInputBudgetExceeded,
     ArtifactInputSnapshot,
     CandidateArtifact,
     WorkerAdapter,
@@ -328,3 +331,11 @@ def test_worker_result_has_no_completion_authority() -> None:
     assert not hasattr(worker_result, "completed")
     assert not hasattr(worker_result, "plan_node_status")
     assert not hasattr(worker_result, "goal_status")
+
+
+def test_worker_context_and_candidate_evidence_are_bounded() -> None:
+    with pytest.raises(ArtifactInputBudgetExceeded, match="context"):
+        make_request(context={"payload": "x" * (MAX_WORKER_CONTEXT_BYTES + 1)})
+
+    with pytest.raises(ValueError, match="Artifact exceeds"):
+        result(b"x" * (MAX_CANDIDATE_ARTIFACT_BYTES + 1))

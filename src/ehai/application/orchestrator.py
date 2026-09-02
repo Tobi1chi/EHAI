@@ -19,6 +19,7 @@ from ehai.application.evaluation import (
     parse_branch_selection,
     validate_branch_selection,
 )
+from ehai.application.execution_policy import RetrySafety
 from ehai.application.ports import ArtifactStore, UnitOfWork
 from ehai.application.workers import (
     MAX_ARTIFACT_INPUT_BYTES,
@@ -352,14 +353,18 @@ class Orchestrator:
             if run.status is not RunStatus.RUNNING:
                 return ()
             attempts = uow.states.list_attempts(run.run_id)
-            attempted_nodes = {attempt.plan_node_id for attempt in attempts}
+            active_nodes = {
+                attempt.plan_node_id
+                for attempt in attempts
+                if attempt.status in {AttemptStatus.PENDING, AttemptStatus.RUNNING}
+            }
             candidates = tuple(
                 node
                 for node in (
                     tuple(node for node in plan.nodes if node.status is PlanNodeStatus.READY)
                     or ready_nodes(plan)
                 )
-                if node.plan_node_id not in attempted_nodes
+                if node.plan_node_id not in active_nodes
             )[:limit]
             queued: list[Attempt] = []
             for candidate in candidates:
@@ -565,6 +570,177 @@ class Orchestrator:
             )
             uow.commit()
             return paused
+
+    def retry_attempt(
+        self,
+        attempt_id: ID,
+        reason: str,
+        *,
+        retry_safety: RetrySafety,
+        timed_out: bool = False,
+    ) -> Run:
+        """Schedule replacement work only when the provider outcome is known safe."""
+        safety = RetrySafety(retry_safety)
+        if not safety.allows_retry:
+            return self.interrupt_attempt(attempt_id, reason)
+        with self._uow_factory() as uow:
+            attempt = _required_attempt(uow, attempt_id)
+            run = _required_run(uow, attempt.run_id)
+            if attempt.status is not AttemptStatus.RUNNING:
+                return run
+            plan = _required_plan(uow, run.plan_revision_id)
+            node = _required_node(plan, attempt.plan_node_id)
+            attempts = uow.states.list_attempts(run.run_id)
+            if timed_out:
+                terminal_attempt = attempt.time_out(reason, at=self._clock())
+                terminal_event = EventType.ATTEMPT_TIMED_OUT
+            elif safety is RetrySafety.EXECUTION_NOT_FOUND:
+                terminal_attempt = attempt.interrupt(reason, at=self._clock())
+                terminal_event = EventType.ATTEMPT_INTERRUPTED
+            else:
+                terminal_attempt = attempt.fail(reason, at=self._clock())
+                terminal_event = EventType.ATTEMPT_FAILED
+            failed_node = node.fail()
+            uow.states.put_attempt(terminal_attempt)
+            failed_plan = _replace_node(plan, failed_node)
+            uow.states.put_plan_revision(failed_plan)
+            uow.events.append(
+                self._event(
+                    terminal_event,
+                    run,
+                    attempt.attempt_id,
+                    {"attempt_id": attempt.attempt_id, "reason": reason},
+                )
+            )
+            uow.events.append(
+                self._event(
+                    EventType.PLAN_NODE_FAILED,
+                    run,
+                    node.plan_node_id,
+                    {"plan_node_id": node.plan_node_id, "reason": reason},
+                )
+            )
+            if len(attempts) >= self._attempt_budget:
+                exhausted_reason = (
+                    f"safe retry exhausted Attempt budget: consumed={len(attempts)}, "
+                    f"limit={self._attempt_budget}; {reason}"
+                )
+                failed_run = run.fail(exhausted_reason, at=self._clock())
+                uow.states.put_run(failed_run)
+                uow.events.append(
+                    self._event(
+                        EventType.RUN_FAILED,
+                        failed_run,
+                        run.run_id,
+                        {"run_id": run.run_id, "reason": exhausted_reason},
+                    )
+                )
+                uow.commit()
+                return failed_run
+            ready_node = failed_node.retry()
+            uow.states.put_plan_revision(_replace_node(failed_plan, ready_node))
+            uow.events.append(
+                self._event(
+                    EventType.PLAN_NODE_READIED,
+                    run,
+                    node.plan_node_id,
+                    {"plan_node_id": node.plan_node_id, "reason": "safe retry"},
+                )
+            )
+            uow.events.append(
+                self._event(
+                    EventType.ATTEMPT_RETRY_SCHEDULED,
+                    run,
+                    attempt.attempt_id,
+                    {
+                        "attempt_id": attempt.attempt_id,
+                        "plan_node_id": attempt.plan_node_id,
+                        "reason": reason,
+                        "retry_safety": safety.value,
+                    },
+                )
+            )
+            uow.commit()
+            return run
+
+    def time_out_attempt(self, attempt_id: ID, reason: str) -> Run:
+        """Time out unknown in-flight work without creating replacement side effects."""
+        with self._uow_factory() as uow:
+            attempt = _required_attempt(uow, attempt_id)
+            run = _required_run(uow, attempt.run_id)
+            if attempt.status is not AttemptStatus.RUNNING:
+                return run
+            plan = _required_plan(uow, run.plan_revision_id)
+            node = _required_node(plan, attempt.plan_node_id)
+            timed_out = attempt.time_out(reason, at=self._clock())
+            failed_node = node.fail()
+            paused = run.pause()
+            uow.states.put_attempt(timed_out)
+            uow.states.put_plan_revision(_replace_node(plan, failed_node))
+            uow.states.put_run(paused)
+            uow.events.append(
+                self._event(
+                    EventType.ATTEMPT_TIMED_OUT,
+                    run,
+                    attempt.attempt_id,
+                    {"attempt_id": attempt.attempt_id, "reason": reason},
+                )
+            )
+            uow.events.append(
+                self._event(
+                    EventType.PLAN_NODE_FAILED,
+                    run,
+                    node.plan_node_id,
+                    {"plan_node_id": node.plan_node_id, "reason": reason},
+                )
+            )
+            uow.events.append(
+                self._event(
+                    EventType.RUN_PAUSED,
+                    paused,
+                    run.run_id,
+                    {"run_id": run.run_id, "reason": reason},
+                )
+            )
+            uow.commit()
+            return paused
+
+    def fail_attempt(self, attempt_id: ID, reason: str) -> Run:
+        """Fail an Attempt and its Run when an explicit resource budget is exhausted."""
+        with self._uow_factory() as uow:
+            attempt = _required_attempt(uow, attempt_id)
+            run = _required_run(uow, attempt.run_id)
+            if attempt.status is not AttemptStatus.RUNNING:
+                return run
+            plan = _required_plan(uow, run.plan_revision_id)
+            node = _required_node(plan, attempt.plan_node_id)
+            failed_attempt = attempt.fail(reason, at=self._clock())
+            failed_node = node.fail()
+            failed_run = run.fail(reason, at=self._clock())
+            uow.states.put_attempt(failed_attempt)
+            uow.states.put_plan_revision(_replace_node(plan, failed_node))
+            uow.states.put_run(failed_run)
+            events: tuple[tuple[EventType, ID, dict[str, JsonValue]], ...] = (
+                (
+                    EventType.ATTEMPT_FAILED,
+                    attempt.attempt_id,
+                    {"attempt_id": attempt.attempt_id, "reason": reason},
+                ),
+                (
+                    EventType.PLAN_NODE_FAILED,
+                    node.plan_node_id,
+                    {"plan_node_id": node.plan_node_id, "reason": reason},
+                ),
+                (
+                    EventType.RUN_FAILED,
+                    run.run_id,
+                    {"run_id": run.run_id, "reason": reason},
+                ),
+            )
+            for event_type, correlation_id, payload in events:
+                uow.events.append(self._event(event_type, failed_run, correlation_id, payload))
+            uow.commit()
+            return failed_run
 
     def _load_attempt_context(self, attempt_id: ID) -> _ExecutionContext:
         with self._uow_factory() as uow:

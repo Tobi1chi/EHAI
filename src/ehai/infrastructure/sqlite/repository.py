@@ -758,15 +758,21 @@ class SQLiteCurrentStateRepository:
         row = self._connection.execute(
             """
             SELECT snapshot_json FROM dispatch_work
-            WHERE status = 'pending' ORDER BY created_at, dispatch_work_id LIMIT 1
-            """
+            WHERE status = 'pending'
+               OR (status = 'claimed' AND lease_expires_at <= ?)
+            ORDER BY CASE status WHEN 'claimed' THEN 0 ELSE 1 END,
+                     created_at, dispatch_work_id
+            LIMIT 1
+            """,
+            (format_utc_datetime(at),),
         ).fetchone()
         if row is None:
             return None
-        claimed = decode_dispatch_work(_row_index_string(row, 0)).claim(
-            owner,
-            lease_expires_at,
-            at=at,
+        work = decode_dispatch_work(_row_index_string(row, 0))
+        claimed = (
+            work.claim(owner, lease_expires_at, at=at)
+            if work.status is DispatchWorkStatus.PENDING
+            else work.reclaim(owner, lease_expires_at, at=at)
         )
         self.put_dispatch_work(claimed)
         return claimed
