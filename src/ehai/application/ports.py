@@ -240,7 +240,13 @@ class CurrentStateRepository(CurrentStateReader, Protocol):
         """Persist one Run-level dispatch request."""
         ...
 
-    def claim_next_dispatch_work(self, *, at: datetime) -> DispatchWork | None:
+    def claim_next_dispatch_work(
+        self,
+        *,
+        owner: str,
+        at: datetime,
+        lease_expires_at: datetime,
+    ) -> DispatchWork | None:
         """Claim the oldest pending work in this single write transaction."""
         ...
 
