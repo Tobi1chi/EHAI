@@ -91,7 +91,11 @@ def create_local_app(
         background_start=p2_runtime,
     )
     query_database = SQLiteDatabase(database_path)
-    query_service = QueryService(read_session_factory=query_database.read_session)
+    builtin_sessions = SQLiteBuiltinSessionStore(query_database)
+    query_service = QueryService(
+        read_session_factory=query_database.read_session,
+        builtin_session_reader=builtin_sessions,
+    )
     if not p2_runtime:
         execution_service.recover_startup()
         return create_app(execution_service, query_service)
@@ -155,7 +159,7 @@ def create_local_app(
         connector = BuiltinAgentConnector(
             uow_factory=query_database.unit_of_work,
             orchestrator=execution_service.orchestrator,
-            session_store=SQLiteBuiltinSessionStore(query_database),
+            session_store=builtin_sessions,
             artifact_store=artifact_store,
             profile=profile,
             default_workspace=workspace,

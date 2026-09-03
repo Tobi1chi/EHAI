@@ -206,6 +206,18 @@ export type Checkpoint = {
   readonly created_at: UtcDateTime;
 };
 
+export type BuiltinSessionEventType = "step/start" | "model/message" | "tool/call" | "tool/result" | "tool/error" | "step/end";
+
+export type BuiltinSessionEvent = {
+  readonly agent_session_ref_id: Id;
+  readonly attempt_id: Id;
+  readonly sequence: number;
+  readonly type: BuiltinSessionEventType;
+  readonly occurred_at: UtcDateTime;
+  readonly payload: Readonly<Record<string, unknown>>;
+  readonly payload_truncated: boolean;
+};
+
 export type ExecutionTrace = {
   readonly run: Run;
   readonly attempts: ReadonlyArray<Attempt>;
@@ -213,6 +225,8 @@ export type ExecutionTrace = {
   readonly check_runs: ReadonlyArray<CheckRun>;
   readonly checkpoints: ReadonlyArray<Checkpoint>;
   readonly events: ReadonlyArray<StoredEventRecord>;
+  readonly session_events: ReadonlyArray<BuiltinSessionEvent>;
+  readonly session_events_truncated: boolean;
 };
 
 export type EventPage = {

@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from ehai import ID, JsonValue, new_id
+from ehai import ID, JsonValue, json_dumps, new_id
 from ehai.application.async_runtime import (
     ConnectorExecution,
     ConnectorRecoveryRequest,
@@ -48,6 +48,7 @@ from ehai.application.planner import (
     ExplorationPlanRequest,
     PlanProposal,
 )
+from ehai.application.queries import QueryService
 from ehai.application.runtime_control import RuntimeControlService, WorkerRequestStatus
 from ehai.application.scheduler import CapacityPolicy, ConcurrentRuntime, Dispatcher
 from ehai.application.service import ExecutionService
@@ -767,6 +768,12 @@ class _BuiltinScriptedClient:
 
     async def complete(self, request: ModelRequest) -> ModelResponse:
         self.requests.append(request)
+        if len(self.requests) == 1:
+            return ModelResponse(
+                "Bearer trace-secret " + ("x" * 20_000),
+                (ToolCall("invalid-read", "workspace_read", {"path": ""}),),
+                provider_response_id="response-1",
+            )
         return ModelResponse(
             "submit candidate",
             (
@@ -776,11 +783,11 @@ class _BuiltinScriptedClient:
                     {
                         "name": "builtin-result.txt",
                         "media_type": "text/plain",
-                        "content": "standalone built-in result",
+                        "content": "standalone built-in result sk-trace-secret",
                     },
                 ),
             ),
-            provider_response_id="response-1",
+            provider_response_id="response-2",
         )
 
     async def aclose(self) -> None:
@@ -917,7 +924,7 @@ def test_builtin_connector_runs_real_agent_loop_without_fake_worker(tmp_path: Pa
 
     assert completed is not None and completed.status is RunStatus.COMPLETED
     assert legacy_worker.calls == ()
-    assert model.closed and len(model.requests) == 1
+    assert model.closed and len(model.requests) == 2
     with database.read_session() as session:
         stored_artifacts = session.states.list_artifacts_for_run(run_id)
         refs = session.states.list_agent_session_refs(run_id)
@@ -929,11 +936,38 @@ def test_builtin_connector_runs_real_agent_loop_without_fake_worker(tmp_path: Pa
         BuiltinSessionEventType.STEP_STARTED,
         BuiltinSessionEventType.MODEL_MESSAGE,
         BuiltinSessionEventType.TOOL_CALLED,
+        BuiltinSessionEventType.TOOL_ERROR,
+        BuiltinSessionEventType.STEP_ENDED,
+        BuiltinSessionEventType.STEP_STARTED,
+        BuiltinSessionEventType.MODEL_MESSAGE,
+        BuiltinSessionEventType.TOOL_CALLED,
         BuiltinSessionEventType.TOOL_RESULT,
         BuiltinSessionEventType.FINAL,
         BuiltinSessionEventType.STEP_ENDED,
         BuiltinSessionEventType.TURN_ENDED,
     ]
+    trace = QueryService(
+        read_session_factory=database.read_session,
+        builtin_session_reader=sessions,
+    ).get_execution_trace(run_id)
+    assert [event.type for event in trace.session_events] == [
+        BuiltinSessionEventType.STEP_STARTED,
+        BuiltinSessionEventType.MODEL_MESSAGE,
+        BuiltinSessionEventType.TOOL_CALLED,
+        BuiltinSessionEventType.TOOL_ERROR,
+        BuiltinSessionEventType.STEP_ENDED,
+        BuiltinSessionEventType.STEP_STARTED,
+        BuiltinSessionEventType.MODEL_MESSAGE,
+        BuiltinSessionEventType.TOOL_CALLED,
+        BuiltinSessionEventType.TOOL_RESULT,
+        BuiltinSessionEventType.STEP_ENDED,
+    ]
+    assert not trace.session_events_truncated
+    assert any(event.payload_truncated for event in trace.session_events)
+    public_events = json_dumps([event.payload for event in trace.session_events])
+    assert "trace-secret" not in public_events
+    assert "sk-trace-secret" not in public_events
+    assert "[REDACTED]" in public_events
 
 
 def test_builtin_connector_rejects_plain_text_as_candidate(tmp_path: Path) -> None:

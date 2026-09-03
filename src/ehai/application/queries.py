@@ -5,9 +5,16 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
+from typing import Protocol
 
-from ehai import ID, normalize_id
+from ehai import ID, JsonValue, normalize_id
+from ehai.application.builtin_agent import (
+    BuiltinSession,
+    BuiltinSessionEvent,
+    BuiltinSessionEventType,
+)
 from ehai.application.ports import ReadSession, StoredEvent
+from ehai.application.sanitization import sanitize_json_object
 from ehai.domain.artifacts import Artifact, ArtifactKind
 from ehai.domain.checking import (
     CheckKind,
@@ -40,6 +47,24 @@ from ehai.domain.workers import (
 )
 
 ReadSessionFactory = Callable[[], ReadSession]
+_MAX_TRACE_SESSION_EVENTS = 512
+_MAX_TRACE_SESSION_PAYLOAD_BYTES = 8 * 1024
+_TRACE_SESSION_EVENT_TYPES = frozenset(
+    {
+        BuiltinSessionEventType.STEP_STARTED,
+        BuiltinSessionEventType.MODEL_MESSAGE,
+        BuiltinSessionEventType.TOOL_CALLED,
+        BuiltinSessionEventType.TOOL_RESULT,
+        BuiltinSessionEventType.TOOL_ERROR,
+        BuiltinSessionEventType.STEP_ENDED,
+    }
+)
+
+
+class BuiltinSessionReader(Protocol):
+    """Read the durable event stream for one Built-in Agent session."""
+
+    def load(self, agent_session_ref_id: ID) -> BuiltinSession: ...
 
 
 class QueryNotFoundError(LookupError):
@@ -250,6 +275,21 @@ class ExecutionTraceView:
     check_runs: tuple[CheckRunView, ...]
     checkpoints: tuple[CheckpointSummary, ...]
     events: tuple[StoredEvent, ...]
+    session_events: tuple[BuiltinSessionEventView, ...]
+    session_events_truncated: bool
+
+
+@dataclass(frozen=True, slots=True)
+class BuiltinSessionEventView:
+    """One sanitized and bounded Built-in Agent Step or Tool fact."""
+
+    agent_session_ref_id: ID
+    attempt_id: ID
+    sequence: int
+    type: BuiltinSessionEventType
+    occurred_at: datetime
+    payload: dict[str, JsonValue]
+    payload_truncated: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -314,8 +354,14 @@ class AttemptRuntimeView:
 class QueryService:
     """Build P1 read models from one short-lived snapshot per query."""
 
-    def __init__(self, *, read_session_factory: ReadSessionFactory) -> None:
+    def __init__(
+        self,
+        *,
+        read_session_factory: ReadSessionFactory,
+        builtin_session_reader: BuiltinSessionReader | None = None,
+    ) -> None:
         self._read_session_factory = read_session_factory
+        self._builtin_session_reader = builtin_session_reader
 
     def get_run(self, run_id: ID) -> RunView:
         """Return current Run state and fail closed when it is absent."""
@@ -411,13 +457,13 @@ class QueryService:
         normalized_id = normalize_id(run_id)
         with self._read_session_factory() as session:
             run = _required_run(session.states.get_run(normalized_id), normalized_id)
-            attempts = tuple(
-                _attempt_view(attempt)
-                for attempt in sorted(
+            stored_attempts = tuple(
+                sorted(
                     session.states.list_attempts(normalized_id),
                     key=lambda item: (item.sequence, item.attempt_id),
                 )
             )
+            attempts = tuple(_attempt_view(attempt) for attempt in stored_attempts)
             artifacts = tuple(
                 _artifact_view(artifact)
                 for artifact in sorted(
@@ -444,6 +490,10 @@ class QueryService:
                 for stored in sorted(session.events.list_events(), key=lambda item: item.offset)
                 if stored.event.run_id == normalized_id
             )
+            session_events, session_events_truncated = _builtin_session_event_views(
+                stored_attempts,
+                self._builtin_session_reader,
+            )
             return ExecutionTraceView(
                 run=_run_view(run),
                 attempts=attempts,
@@ -451,6 +501,8 @@ class QueryService:
                 check_runs=check_runs,
                 checkpoints=checkpoints,
                 events=events,
+                session_events=session_events,
+                session_events_truncated=session_events_truncated,
             )
 
     def list_check_specs(self, plan_revision_id: ID) -> tuple[CheckSpecView, ...]:
@@ -658,6 +710,58 @@ def _check_spec_view(check_spec: CheckSpec) -> CheckSpecView:
         command_argv=check_spec.command_argv,
         semantic_required_terms=check_spec.semantic_required_terms,
     )
+
+
+def _builtin_session_event_views(
+    attempts: tuple[Attempt, ...],
+    reader: BuiltinSessionReader | None,
+) -> tuple[tuple[BuiltinSessionEventView, ...], bool]:
+    if reader is None:
+        return (), False
+    attempt_order = {attempt.attempt_id: attempt.sequence for attempt in attempts}
+    session_ids = tuple(
+        dict.fromkeys(
+            attempt.agent_session_ref_id
+            for attempt in attempts
+            if attempt.agent_session_ref_id is not None
+        )
+    )
+    events: list[BuiltinSessionEvent] = []
+    for session_id in session_ids:
+        session = reader.load(session_id)
+        events.extend(
+            event
+            for event in session.events
+            if event.attempt_id in attempt_order and event.type in _TRACE_SESSION_EVENT_TYPES
+        )
+    ordered = sorted(
+        events,
+        key=lambda event: (
+            attempt_order[event.attempt_id],
+            event.occurred_at,
+            event.agent_session_ref_id,
+            event.sequence,
+        ),
+    )
+    truncated = len(ordered) > _MAX_TRACE_SESSION_EVENTS
+    views: list[BuiltinSessionEventView] = []
+    for event in ordered[:_MAX_TRACE_SESSION_EVENTS]:
+        payload, payload_truncated = sanitize_json_object(
+            event.payload,
+            max_bytes=_MAX_TRACE_SESSION_PAYLOAD_BYTES,
+        )
+        views.append(
+            BuiltinSessionEventView(
+                agent_session_ref_id=event.agent_session_ref_id,
+                attempt_id=event.attempt_id,
+                sequence=event.sequence,
+                type=event.type,
+                occurred_at=event.occurred_at,
+                payload=payload,
+                payload_truncated=payload_truncated,
+            )
+        )
+    return tuple(views), truncated
 
 
 def _check_result_view(result: CheckResult) -> CheckResultView:

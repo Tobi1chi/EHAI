@@ -13,6 +13,7 @@ from jsonschema.exceptions import ValidationError
 from referencing import Registry, Resource
 
 from ehai import ID, new_id
+from ehai.application.builtin_agent import BuiltinSessionEventType
 from ehai.application.planner import NON_EMPTY_ARTIFACT_CRITERION
 from ehai.application.ports import StoredEvent
 from ehai.application.queries import (
@@ -20,6 +21,7 @@ from ehai.application.queries import (
     AttemptRuntimeView,
     AttemptView,
     BranchSelectionView,
+    BuiltinSessionEventView,
     CheckpointSummary,
     CheckResultView,
     CheckRunView,
@@ -214,6 +216,15 @@ STORED_EVENT = StoredEvent(
         occurred_at=NOW,
     ),
 )
+SESSION_EVENT = BuiltinSessionEventView(
+    new_id(),
+    ATTEMPT_ID,
+    3,
+    BuiltinSessionEventType.MODEL_MESSAGE,
+    NOW,
+    {"content": "sanitized model output"},
+    False,
+)
 TRACE = ExecutionTraceView(
     RUN,
     (
@@ -234,6 +245,8 @@ TRACE = ExecutionTraceView(
     (CHECK_RUN,),
     (CHECKPOINT,),
     (STORED_EVENT,),
+    (SESSION_EVENT,),
+    False,
 )
 EVENT_PAGE = EventPage((STORED_EVENT,), None, STORED_EVENT.event.id, 1, False)
 PROFILE = WorkerProfileView(

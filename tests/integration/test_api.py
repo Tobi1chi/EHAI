@@ -776,6 +776,15 @@ def test_local_p2_api_runs_standalone_builtin_worker(tmp_path: Path) -> None:
         assert endpoints[0]["capacity"] == 2
         artifacts = client.get(f"/api/v1/runs/{started['run_id']}/artifacts").json()["data"]
         assert any(artifact["name"] == "api-builtin.txt" for artifact in artifacts)
+        trace = client.get(f"/api/v1/runs/{started['run_id']}/trace").json()["data"]
+        assert [event["type"] for event in trace["session_events"]] == [
+            "step/start",
+            "model/message",
+            "tool/call",
+            "tool/result",
+            "step/end",
+        ]
+        assert trace["session_events_truncated"] is False
 
     assert model.closed and len(model.requests) == 1
     prompt = json_loads(model.requests[0].messages[1].content)

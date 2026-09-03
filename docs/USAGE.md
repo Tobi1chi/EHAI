@@ -176,6 +176,10 @@ $Events = Invoke-RestMethod "$Api/events?limit=100"
 从 ExecutionTrace 取得 `attempt_id` 后，可以读取分配、Session/Execution、活动、heartbeat、progress、
 deadline、lease 和有界诊断：
 
+Built-in Run 的 ExecutionTrace 还包含经过凭证模式脱敏的 `step/start`、`model/message`、`tool/call`、
+`tool/result`、`tool/error` 和 `step/end` Session 事件。每个 payload 与总事件数都有硬上限，
+`payload_truncated` / `session_events_truncated` 会显式标记截断。
+
 ```powershell
 $Trace = Invoke-RestMethod "$Api/runs/$($Run.data.run_id)/trace"
 $AttemptId = $Trace.data.attempts[0].attempt_id

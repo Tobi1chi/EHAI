@@ -425,10 +425,45 @@
         "created_at": {"$ref": "common.schema.json#/$defs/UtcDateTime"}
       }
     },
+    "BuiltinSessionEventType": {
+      "type": "string",
+      "enum": ["step/start", "model/message", "tool/call", "tool/result", "tool/error", "step/end"]
+    },
+    "BuiltinSessionEvent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "agent_session_ref_id",
+        "attempt_id",
+        "sequence",
+        "type",
+        "occurred_at",
+        "payload",
+        "payload_truncated"
+      ],
+      "properties": {
+        "agent_session_ref_id": {"$ref": "common.schema.json#/$defs/Id"},
+        "attempt_id": {"$ref": "common.schema.json#/$defs/Id"},
+        "sequence": {"type": "integer", "minimum": 1},
+        "type": {"$ref": "#/$defs/BuiltinSessionEventType"},
+        "occurred_at": {"$ref": "common.schema.json#/$defs/UtcDateTime"},
+        "payload": {"type": "object", "additionalProperties": true},
+        "payload_truncated": {"type": "boolean"}
+      }
+    },
     "ExecutionTrace": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["run", "attempts", "artifacts", "check_runs", "checkpoints", "events"],
+      "required": [
+        "run",
+        "attempts",
+        "artifacts",
+        "check_runs",
+        "checkpoints",
+        "events",
+        "session_events",
+        "session_events_truncated"
+      ],
       "properties": {
         "run": {"$ref": "#/$defs/Run"},
         "attempts": {
@@ -450,7 +485,12 @@
         "events": {
           "type": "array",
           "items": {"$ref": "events.schema.json#/$defs/StoredEventRecord"}
-        }
+        },
+        "session_events": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/BuiltinSessionEvent"}
+        },
+        "session_events_truncated": {"type": "boolean"}
       }
     },
     "EventPage": {
