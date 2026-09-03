@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncIterator, Callable
+from functools import partial
 from pathlib import Path
 
 from openai.types.shared import ReasoningEffort
@@ -94,6 +95,7 @@ class BuiltinAgentConnector:
         self._workspaces: dict[ID, Path] = {}
         self._executions: dict[ID, ConnectorExecution] = {}
         self._tasks: dict[ID, asyncio.Task[WorkerResult]] = {}
+        self._terminal_outcomes: dict[ID, tuple[str | None, str]] = {}
         self._cancellations: dict[ID, CancellationToken] = {}
 
     async def start(self, request: ConnectorStartRequest) -> ConnectorExecution:
@@ -121,6 +123,15 @@ class BuiltinAgentConnector:
     ) -> AsyncIterator[WorkerEvent]:
         del after_cursor
         self._require_execution(execution)
+        if execution.attempt_id in self._terminal_outcomes:
+            failure, cursor = self._terminal_outcomes[execution.attempt_id]
+            if failure is not None:
+                yield _failed_event(execution.attempt_id, failure, cursor=cursor)
+                return
+            result = self._completed_result(execution)
+            yield _candidate_event(execution.attempt_id, result)
+            yield _completed_event(execution.attempt_id)
+            return
         task = self._tasks.get(execution.attempt_id)
         if task is None:
             task = asyncio.create_task(
@@ -128,46 +139,28 @@ class BuiltinAgentConnector:
                 name=f"ehai-builtin-{execution.attempt_id}",
             )
             self._tasks[execution.attempt_id] = task
+            task.add_done_callback(partial(self._record_terminal_outcome, execution.attempt_id))
         try:
             result = await asyncio.shield(task)
         except asyncio.CancelledError:
             if not task.cancelled():
                 raise
-            yield WorkerEvent(
-                f"builtin:{execution.attempt_id}:cancelled",
+            yield _failed_event(
                 execution.attempt_id,
-                WorkerEventType.FAILED,
-                "cancelled",
-                reason="Built-in Agent execution was cancelled",
-                retry_safety=RetrySafety.UNKNOWN,
+                "Built-in Agent execution was cancelled",
+                cursor="cancelled",
             )
             return
         except Exception as error:
-            yield WorkerEvent(
-                f"builtin:{execution.attempt_id}:failed",
-                execution.attempt_id,
-                WorkerEventType.FAILED,
-                "failed",
-                reason=_failure_reason(error),
-                retry_safety=RetrySafety.UNKNOWN,
-            )
+            yield _failed_event(execution.attempt_id, _failure_reason(error))
             return
-        yield WorkerEvent(
-            f"builtin:{execution.attempt_id}:candidate",
-            execution.attempt_id,
-            WorkerEventType.CANDIDATE,
-            "candidate",
-            result=result,
-        )
-        yield WorkerEvent(
-            f"builtin:{execution.attempt_id}:completed",
-            execution.attempt_id,
-            WorkerEventType.COMPLETED,
-            "completed",
-        )
+        yield _candidate_event(execution.attempt_id, result)
+        yield _completed_event(execution.attempt_id)
 
     async def inspect(self, execution: ConnectorExecution) -> AttemptActivity:
         self._require_execution(execution)
+        if execution.attempt_id in self._terminal_outcomes:
+            return AttemptActivity.STALLED
         task = self._tasks.get(execution.attempt_id)
         return (
             AttemptActivity.RUNNING if task is None or not task.done() else AttemptActivity.STALLED
@@ -280,6 +273,31 @@ class BuiltinAgentConnector:
                 raise RuntimeError(f"Attempt {execution.attempt_id} is not a Built-in execution")
         return reference, self._session_store.load(reference.agent_session_ref_id)
 
+    def _completed_result(self, execution: ConnectorExecution) -> WorkerResult:
+        _, session = self._execution_context(execution)
+        return _candidate_result(session, execution.attempt_id)
+
+    def _record_terminal_outcome(
+        self,
+        attempt_id: ID,
+        task: asyncio.Task[WorkerResult],
+    ) -> None:
+        if self._tasks.get(attempt_id) is task:
+            self._tasks.pop(attempt_id, None)
+        self._requests.pop(attempt_id, None)
+        self._workspaces.pop(attempt_id, None)
+        try:
+            task.result()
+        except asyncio.CancelledError:
+            self._terminal_outcomes[attempt_id] = (
+                "Built-in Agent execution was cancelled",
+                "cancelled",
+            )
+        except Exception as error:
+            self._terminal_outcomes[attempt_id] = (_failure_reason(error), "failed")
+        else:
+            self._terminal_outcomes[attempt_id] = (None, "completed")
+
     def _create_model_client(
         self,
         profile: WorkerProfile,
@@ -301,6 +319,36 @@ class BuiltinAgentConnector:
         existing = self._executions.get(execution.attempt_id)
         if existing != execution:
             raise RuntimeError(f"Built-in execution {execution.attempt_id} is not registered")
+
+
+def _failed_event(attempt_id: ID, reason: str, *, cursor: str = "failed") -> WorkerEvent:
+    return WorkerEvent(
+        f"builtin:{attempt_id}:{cursor}",
+        attempt_id,
+        WorkerEventType.FAILED,
+        cursor,
+        reason=reason,
+        retry_safety=RetrySafety.UNKNOWN,
+    )
+
+
+def _candidate_event(attempt_id: ID, result: WorkerResult) -> WorkerEvent:
+    return WorkerEvent(
+        f"builtin:{attempt_id}:candidate",
+        attempt_id,
+        WorkerEventType.CANDIDATE,
+        "candidate",
+        result=result,
+    )
+
+
+def _completed_event(attempt_id: ID) -> WorkerEvent:
+    return WorkerEvent(
+        f"builtin:{attempt_id}:completed",
+        attempt_id,
+        WorkerEventType.COMPLETED,
+        "completed",
+    )
 
 
 def _candidate_result(session: BuiltinSession, attempt_id: ID) -> WorkerResult:

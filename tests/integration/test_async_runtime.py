@@ -855,6 +855,7 @@ def _builtin_runtime(
     SQLiteDatabase,
     FakeWorker,
     SQLiteBuiltinSessionStore,
+    BuiltinAgentConnector,
 ]:
     database = SQLiteDatabase(tmp_path / "builtin-runtime.sqlite3")
     artifacts = FilesystemArtifactStore(tmp_path / "builtin-artifacts")
@@ -912,12 +913,14 @@ def _builtin_runtime(
         endpoint=endpoint,
         workspace=tmp_path,
     )
-    return service, runtime, database, legacy_worker, sessions
+    return service, runtime, database, legacy_worker, sessions, connector
 
 
 def test_builtin_connector_runs_real_agent_loop_without_fake_worker(tmp_path: Path) -> None:
     model = _BuiltinScriptedClient()
-    service, runtime, database, legacy_worker, sessions = _builtin_runtime(tmp_path, model)
+    service, runtime, database, legacy_worker, sessions, connector = _builtin_runtime(
+        tmp_path, model
+    )
     run_id, _ = _start(service)
 
     completed = asyncio.run(runtime.run_once())
@@ -968,10 +971,27 @@ def test_builtin_connector_runs_real_agent_loop_without_fake_worker(tmp_path: Pa
     assert "trace-secret" not in public_events
     assert "sk-trace-secret" not in public_events
     assert "[REDACTED]" in public_events
+    with database.read_session() as read_session:
+        attempt = read_session.states.list_attempts(run_id)[0]
+    execution = connector._executions[attempt.attempt_id]
+
+    async def replay_events() -> tuple[WorkerEvent, ...]:
+        events: list[WorkerEvent] = []
+        async for event in connector.events(execution):
+            events.append(event)
+        return tuple(events)
+
+    replayed = asyncio.run(replay_events())
+    assert [event.type for event in replayed] == [
+        WorkerEventType.CANDIDATE,
+        WorkerEventType.COMPLETED,
+    ]
+    assert len(model.requests) == 2
+    assert connector._tasks == {}
 
 
 def test_builtin_connector_rejects_plain_text_as_candidate(tmp_path: Path) -> None:
-    service, runtime, database, legacy_worker, sessions = _builtin_runtime(
+    service, runtime, database, legacy_worker, sessions, _connector = _builtin_runtime(
         tmp_path,
         _BuiltinTextOnlyClient(),
     )
@@ -990,6 +1010,7 @@ def test_builtin_connector_rejects_plain_text_as_candidate(tmp_path: Path) -> No
     assert sessions.load(refs[0].agent_session_ref_id).final_text(attempts[0].attempt_id) == (
         "ordinary text is not a candidate"
     )
+    assert _connector._tasks == {}
 
 
 def test_concurrent_builtin_cancel_isolated_to_one_session(tmp_path: Path) -> None:
