@@ -52,7 +52,10 @@ Attempt 一个外部进程，Codex App Server Connector 则管理持久 Thread/T
 Built-in Worker 默认完全不注册 `command` Tool。每个 `--builtin-allowed-command` 接受一个完整 JSON
 argv 数组并只允许该精确调用，例如上面的 `uv --version`；只配置 executable basename 不会授权其他
 参数。Runtime 创建时从绝对 PATH/PATHEXT 目录解析并固定可信 executable，使用不含 API 凭据的最小
-子进程环境，并在读取期间限制、脱敏 stdout/stderr。取消、超时或输出超限会清理该命令的进程树。
+子进程环境，并在读取期间限制、脱敏 stdout/stderr。允许列表会出现在 Tool 描述中，但安全边界始终是
+Runtime 对完整 argv 的精确匹配，不依赖模型供应商是否支持数组值 JSON Schema enum。取消、超时或
+输出超限会清理该命令的进程树。
+
 Workspace read/patch 在分配完整内容前执行大小预检并以有界块读取；list/search 对目录项、候选文件、
 累计扫描字节、匹配数、匹配行与返回体分别限流。Search 结果通过 `truncated` 和
 `truncation_reason` 显式说明未遍历完整的原因，并在遍历与读取期间响应取消。

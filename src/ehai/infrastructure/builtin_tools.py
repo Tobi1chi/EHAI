@@ -575,9 +575,10 @@ def _array_definition(
     description: str,
     allowed_argv: tuple[tuple[str, ...], ...],
 ) -> ToolDefinition:
+    allowed_values = [cast(JsonValue, list(argv)) for argv in allowed_argv]
     return ToolDefinition(
         name,
-        description,
+        f"{description}. Allowed exact argv values: {json_dumps(allowed_values)}",
         {
             "type": "object",
             "properties": {
@@ -585,7 +586,6 @@ def _array_definition(
                     "type": "array",
                     "items": {"type": "string", "minLength": 1},
                     "minItems": 1,
-                    "enum": [list(argv) for argv in allowed_argv],
                 }
             },
             "required": ["argv"],

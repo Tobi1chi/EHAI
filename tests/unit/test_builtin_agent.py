@@ -16,7 +16,7 @@ import httpx
 import pytest
 from openai import AsyncOpenAI, BadRequestError, omit
 
-from ehai import JsonValue, json_loads, new_id
+from ehai import JsonValue, json_dumps, json_loads, new_id
 from ehai.application.builtin_agent import (
     AgentBudget,
     AgentBudgetExceededError,
@@ -888,6 +888,12 @@ def test_builtin_command_uses_trusted_resolution_and_rejects_qualified_argv(
         workspace=workspace,
         allowed_commands=((executable_name, "-c", script),),
     )
+    command_definition = runtime.tool_set.require("command")
+    properties = cast(
+        dict[str, dict[str, JsonValue]], command_definition.input_schema["properties"]
+    )
+    assert "enum" not in properties["argv"]
+    assert json_dumps([[executable_name, "-c", script]]) in command_definition.description
 
     async def invoke() -> JsonValue:
         token = CancellationToken()
