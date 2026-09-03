@@ -54,7 +54,7 @@ def create_local_app(
     codex_reasoning_effort: str | None = None,
     builtin_model: str | None = None,
     builtin_reasoning_effort: str | None = None,
-    builtin_allowed_commands: Sequence[str] = ("uv",),
+    builtin_allowed_commands: Sequence[Sequence[str]] = (),
     builtin_capacity: int = 1,
     builtin_model_client_factory: Callable[[WorkerProfile, WorkerRequest], ModelClient]
     | None = None,
@@ -154,7 +154,7 @@ def create_local_app(
             artifact_store=artifact_store,
             profile=profile,
             default_workspace=workspace,
-            allowed_commands=tuple(builtin_allowed_commands),
+            allowed_commands=_normalize_allowed_command_argv(builtin_allowed_commands),
             reasoning_effort=cast(ReasoningEffort, builtin_reasoning_effort),
             model_client_factory=builtin_model_client_factory,
             workspace_resolver=workspace_resolver,
@@ -258,7 +258,8 @@ def create_parser() -> argparse.ArgumentParser:
         "--builtin-allowed-command",
         action="append",
         default=[],
-        help="trusted PATH executable basename for the Built-in command Tool",
+        metavar="JSON_ARGV",
+        help="exact trusted argv JSON array exposed through the Built-in command Tool",
     )
     parser.add_argument(
         "--builtin-capacity",
@@ -298,7 +299,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         codex_reasoning_effort=args.codex_reasoning_effort,
         builtin_model=args.builtin_model,
         builtin_reasoning_effort=args.builtin_reasoning_effort,
-        builtin_allowed_commands=tuple(args.builtin_allowed_command or ("uv",)),
+        builtin_allowed_commands=_parse_allowed_command_argv(args.builtin_allowed_command),
         builtin_capacity=args.builtin_capacity,
         p2_runtime=args.p2_runtime,
         command_check_argv=_parse_command_argv(args.command_check_argv),
@@ -319,6 +320,27 @@ def _parse_command_argv(value: str | None) -> tuple[str, ...] | None:
     ):
         raise ValueError("--command-check-argv must be a non-empty JSON string array")
     return tuple(item for item in decoded if isinstance(item, str))
+
+
+def _parse_allowed_command_argv(values: Sequence[str]) -> tuple[tuple[str, ...], ...]:
+    policies: list[tuple[str, ...]] = []
+    for value in values:
+        decoded = _parse_command_argv(value)
+        if decoded is None:  # pragma: no cover - argparse always supplies text values
+            raise ValueError("--builtin-allowed-command requires an argv JSON array")
+        policies.append(decoded)
+    return tuple(policies)
+
+
+def _normalize_allowed_command_argv(
+    values: Sequence[Sequence[str]],
+) -> tuple[tuple[str, ...], ...]:
+    policies: list[tuple[str, ...]] = []
+    for argv in values:
+        if isinstance(argv, str) or not argv or any(not isinstance(item, str) for item in argv):
+            raise ValueError("Built-in allowed commands must be non-empty argv sequences")
+        policies.append(tuple(argv))
+    return tuple(policies)
 
 
 if __name__ == "__main__":  # pragma: no cover - console entry point

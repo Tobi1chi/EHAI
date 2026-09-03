@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import ctypes
+import os
 import shutil
 import sys
+import time
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from pathlib import Path
@@ -52,6 +55,7 @@ from ehai.domain.workers import (
     WorkerKind,
     WorkerProfile,
 )
+from ehai.infrastructure import builtin_tools
 from ehai.infrastructure.builtin_sessions import SQLiteBuiltinSessionStore
 from ehai.infrastructure.builtin_tools import BuiltinToolRuntime
 from ehai.infrastructure.openai_responses import OpenAIResponsesModelClient
@@ -590,7 +594,7 @@ def test_builtin_tool_runtime_fixes_controlled_patch_and_final_candidate(
     runtime = BuiltinToolRuntime(
         artifact_store=cast(ArtifactStore, object()),
         workspace=workspace,
-        allowed_commands=(Path(sys.executable).name,),
+        allowed_commands=(),
     )
     definitions = {definition.name: definition for definition in runtime.tool_set.definitions}
 
@@ -623,7 +627,6 @@ def test_builtin_tool_runtime_fixes_controlled_patch_and_final_candidate(
         "workspace_search",
         "workspace_read",
         "workspace_patch",
-        "command",
         "submit_candidate",
     }
     assert definitions["submit_candidate"].ends_turn
@@ -645,10 +648,11 @@ def test_builtin_command_uses_trusted_resolution_and_rejects_qualified_argv(
     executable_name = Path(sys.executable).name
     workspace_executable = workspace / executable_name
     shutil.copy2(sys.executable, workspace_executable)
+    script = "import sys; print(sys.executable)"
     runtime = BuiltinToolRuntime(
         artifact_store=cast(ArtifactStore, object()),
         workspace=workspace,
-        allowed_commands=(executable_name,),
+        allowed_commands=((executable_name, "-c", script),),
     )
 
     async def invoke() -> JsonValue:
@@ -662,7 +666,7 @@ def test_builtin_command_uses_trusted_resolution_and_rejects_qualified_argv(
                         "argv": [
                             executable_name,
                             "-c",
-                            "import sys; print(sys.executable)",
+                            script,
                         ]
                     },
                 ),
@@ -685,6 +689,15 @@ def test_builtin_command_uses_trusted_resolution_and_rejects_qualified_argv(
                     ToolCall("denied", "command", {"argv": ["definitely-not-allowed"]}),
                     token,
                 )
+            with pytest.raises(ValueError, match="not allowed"):
+                await runtime.executor.execute(
+                    ToolCall(
+                        "arguments-denied",
+                        "command",
+                        {"argv": [executable_name, "-c", "print('different')"]},
+                    ),
+                    token,
+                )
             return result
         finally:
             await runtime.executor.aclose()
@@ -698,6 +711,117 @@ def test_builtin_command_uses_trusted_resolution_and_rejects_qualified_argv(
     assert Path(stdout.strip()).samefile(sys.executable)
 
 
+def test_builtin_command_strips_credentials_and_redacts_output(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    executable_name = Path(sys.executable).name
+    script = (
+        "import os; "
+        "print(os.getenv('OPENAI_API_KEY')); "
+        "print(os.getenv('OPENAI_BASE_URL')); "
+        "print('api_key=sk-visible-sentinel')"
+    )
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-parent-sentinel")
+    monkeypatch.setenv("OPENAI_BASE_URL", "https://sentinel.invalid")
+    runtime = BuiltinToolRuntime(
+        artifact_store=cast(ArtifactStore, object()),
+        workspace=workspace,
+        allowed_commands=((executable_name, "-c", script),),
+    )
+
+    result = asyncio.run(
+        runtime.executor.execute(
+            ToolCall("environment", "command", {"argv": [executable_name, "-c", script]}),
+            CancellationToken(),
+        )
+    )
+
+    assert isinstance(result, dict)
+    assert result["exit_code"] == 0
+    assert str(result["stdout"]).splitlines() == [
+        "None",
+        "None",
+        "api_key=[REDACTED]",
+    ]
+
+
+def test_builtin_command_stops_process_tree_on_cancellation(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    child_pid_file = workspace / "child.pid"
+    executable_name = Path(sys.executable).name
+    child_script = "import time; time.sleep(60)"
+    parent_script = (
+        "import pathlib, subprocess, sys, time; "
+        f"child=subprocess.Popen([sys.executable, '-c', {child_script!r}]); "
+        f"pathlib.Path({str(child_pid_file)!r}).write_text(str(child.pid)); "
+        "time.sleep(60)"
+    )
+    runtime = BuiltinToolRuntime(
+        artifact_store=cast(ArtifactStore, object()),
+        workspace=workspace,
+        allowed_commands=((executable_name, "-c", parent_script),),
+    )
+
+    async def invoke() -> int:
+        cancellation = CancellationToken()
+        task = asyncio.create_task(
+            runtime.executor.execute(
+                ToolCall(
+                    "cancel-tree",
+                    "command",
+                    {"argv": [executable_name, "-c", parent_script]},
+                ),
+                cancellation,
+            )
+        )
+        for _ in range(200):
+            if child_pid_file.exists():
+                break
+            await asyncio.sleep(0.01)
+        assert child_pid_file.exists()
+        child_pid = int(child_pid_file.read_text(encoding="utf-8"))
+        cancellation.cancel()
+        with pytest.raises(AgentCancelledError):
+            await task
+        return child_pid
+
+    child_pid = asyncio.run(invoke())
+    for _ in range(100):
+        if not _process_is_running(child_pid):
+            break
+        time.sleep(0.02)
+    assert not _process_is_running(child_pid)
+
+
+def test_builtin_command_enforces_output_limit_while_reading(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    executable_name = Path(sys.executable).name
+    script = "import sys, time; sys.stdout.write('x'*65536); sys.stdout.flush(); time.sleep(60)"
+    monkeypatch.setattr(builtin_tools, "_MAX_TOOL_OUTPUT_BYTES", 1024)
+    runtime = BuiltinToolRuntime(
+        artifact_store=cast(ArtifactStore, object()),
+        workspace=workspace,
+        allowed_commands=((executable_name, "-c", script),),
+        command_timeout_seconds=10,
+    )
+
+    with pytest.raises(ValueError, match="output exceeds"):
+        asyncio.run(
+            runtime.executor.execute(
+                ToolCall("bounded", "command", {"argv": [executable_name, "-c", script]}),
+                CancellationToken(),
+            )
+        )
+
+
 def test_scripted_builtin_agent_reads_modifies_runs_command_and_submits_candidate(
     tmp_path: Path,
 ) -> None:
@@ -709,7 +833,7 @@ def test_scripted_builtin_agent_reads_modifies_runs_command_and_submits_candidat
     runtime = BuiltinToolRuntime(
         artifact_store=cast(ArtifactStore, object()),
         workspace=workspace,
-        allowed_commands=("git",),
+        allowed_commands=(("git", "--version"),),
     )
     client = _ScriptedModelClient(
         (
@@ -774,3 +898,22 @@ def test_scripted_builtin_agent_reads_modifies_runs_command_and_submits_candidat
     assert final == {"name": "task.txt", "media_type": "text/plain", "content": "after"}
     assert target.read_text(encoding="utf-8") == "after"
     assert store.load(session.agent_session_ref_id).is_turn_complete(execution.attempt_id)
+
+
+def _process_is_running(pid: int) -> bool:
+    if os.name != "nt":
+        try:
+            os.kill(pid, 0)
+        except OSError:
+            return False
+        return True
+    synchronize = 0x00100000
+    wait_timeout = 258
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    handle = kernel32.OpenProcess(synchronize, False, pid)
+    if not handle:
+        return False
+    try:
+        return kernel32.WaitForSingleObject(handle, 0) == wait_timeout
+    finally:
+        kernel32.CloseHandle(handle)

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -267,6 +268,7 @@ class CancellationToken:
     def __init__(self) -> None:
         self._cancelled = False
         self._closed = False
+        self._cancelled_event = asyncio.Event()
 
     @property
     def is_cancelled(self) -> bool:
@@ -275,14 +277,20 @@ class CancellationToken:
     def cancel(self) -> None:
         if not self._closed:
             self._cancelled = True
+            self._cancelled_event.set()
 
     def raise_if_cancelled(self) -> None:
         if self._cancelled:
             raise AgentCancelledError("Built-in Agent execution was cancelled")
 
+    async def wait_cancelled(self) -> None:
+        """Wait until cancellation is requested for this execution scope."""
+        await self._cancelled_event.wait()
+
     def close(self) -> None:
         self._cancelled = True
         self._closed = True
+        self._cancelled_event.set()
 
 
 ToolHandler = Callable[[dict[str, JsonValue], CancellationToken], Awaitable[JsonValue]]

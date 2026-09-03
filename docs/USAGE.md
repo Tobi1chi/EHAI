@@ -38,7 +38,7 @@ uv run ehai-api `
     --builtin-model gpt-5.6-luna `
     --builtin-reasoning-effort high `
     --builtin-capacity 2 `
-    --builtin-allowed-command uv `
+    --builtin-allowed-command '["uv","--version"]' `
     --p2-runtime `
     --host 127.0.0.1 `
     --port 8000
@@ -49,9 +49,10 @@ Worker Attempt、Workspace 或 Agent Session。Built-in Agent 只能通过严格
 候选 Artifact；普通 assistant 文本不会被当作执行结果。`Fake` Worker 仅用于离线测试，Codex CLI 是每
 Attempt 一个外部进程，Codex App Server Connector 则管理持久 Thread/Turn；三者不共享 Agent 框架。
 
-`--builtin-allowed-command` 只接受 executable basename。Runtime 创建时从绝对 PATH/PATHEXT 目录解析
-并固定可信 executable；模型传入的 `argv[0]` 不得包含相对、绝对或其他 path-qualified 路径，执行时
-也不会从 Workspace cwd 再次搜索同名文件。
+Built-in Worker 默认完全不注册 `command` Tool。每个 `--builtin-allowed-command` 接受一个完整 JSON
+argv 数组并只允许该精确调用，例如上面的 `uv --version`；只配置 executable basename 不会授权其他
+参数。Runtime 创建时从绝对 PATH/PATHEXT 目录解析并固定可信 executable，使用不含 API 凭据的最小
+子进程环境，并在读取期间限制、脱敏 stdout/stderr。取消、超时或输出超限会清理该命令的进程树。
 
 ## 真实 Codex CLI 闭环
 

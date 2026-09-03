@@ -1,7 +1,7 @@
 from datetime import UTC, datetime
 
 from fastapi.testclient import TestClient
-from pytest import MonkeyPatch
+from pytest import MonkeyPatch, raises
 
 from ehai import new_id
 from ehai.domain.execution import Attempt, AttemptStatus, Run, RunStatus
@@ -26,7 +26,7 @@ def test_runtime_parser_accepts_standalone_builtin_configuration() -> None:
             "--builtin-capacity",
             "3",
             "--builtin-allowed-command",
-            "uv",
+            '["uv","--version"]',
             "--p2-runtime",
         ]
     )
@@ -35,8 +35,20 @@ def test_runtime_parser_accepts_standalone_builtin_configuration() -> None:
     assert args.builtin_model == "gpt-5.6-luna"
     assert args.builtin_reasoning_effort == "high"
     assert args.builtin_capacity == 3
-    assert args.builtin_allowed_command == ["uv"]
+    assert args.builtin_allowed_command == ['["uv","--version"]']
+    assert runtime._parse_allowed_command_argv(args.builtin_allowed_command) == (
+        ("uv", "--version"),
+    )
     assert args.p2_runtime
+
+
+def test_runtime_builtin_command_is_disabled_by_default() -> None:
+    args = runtime.create_parser().parse_args(["--worker", "builtin"])
+
+    assert runtime._parse_allowed_command_argv(args.builtin_allowed_command) == ()
+
+    with raises(ValueError, match="argv sequences"):
+        runtime._normalize_allowed_command_argv(("uv",))
 
 
 def test_runtime_composes_codex_planner_with_independent_timeout(

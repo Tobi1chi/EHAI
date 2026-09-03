@@ -832,7 +832,7 @@ def _builtin_runtime(
         artifact_store=artifacts,
         profile=profile,
         default_workspace=tmp_path,
-        allowed_commands=("uv",),
+        allowed_commands=(),
         model_client_factory=lambda _profile, _request: model,
     )
     runtime = SingleSlotRuntime(
@@ -967,7 +967,7 @@ def test_concurrent_builtin_cancel_isolated_to_one_session(tmp_path: Path) -> No
         artifact_store=artifacts,
         profile=profile,
         default_workspace=tmp_path,
-        allowed_commands=("uv",),
+        allowed_commands=(),
         model_client_factory=model_factory,
     )
     runtime = ConcurrentRuntime(

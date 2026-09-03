@@ -310,7 +310,7 @@ def test_p2_mixed_workers_isolate_branches_gate_and_replay(tmp_path: Path) -> No
         artifact_store=artifacts,
         profile=builtin_profile,
         default_workspace=repository,
-        allowed_commands=("uv",),
+        allowed_commands=(),
         model_client_factory=lambda _profile, request: _BuiltinRoutedModelClient(
             request,
             builtin_model_worker,

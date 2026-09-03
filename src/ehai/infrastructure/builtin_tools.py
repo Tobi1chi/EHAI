@@ -5,7 +5,11 @@ from __future__ import annotations
 import asyncio
 import base64
 import os
+import re
+import signal
+import subprocess
 from collections.abc import Mapping
+from contextlib import suppress
 from pathlib import Path
 from typing import cast
 
@@ -18,9 +22,41 @@ from ehai.application.builtin_agent import (
     ToolSet,
 )
 from ehai.application.ports import ArtifactStore
+from ehai.infrastructure.codex_transport import redact_codex_bytes
 
 _MAX_TOOL_OUTPUT_BYTES = 1024 * 1024
 _MAX_SEARCH_MATCHES = 100
+_STREAM_CHUNK_BYTES = 8192
+_COMMAND_CANCEL_GRACE_SECONDS = 0.5
+_WINDOWS_HELPER_TIMEOUT_SECONDS = 5.0
+_COMMAND_ENVIRONMENT_NAMES = frozenset(
+    {
+        "PATH",
+        "PATHEXT",
+        "SYSTEMDRIVE",
+        "SYSTEMROOT",
+        "TEMP",
+        "TMP",
+        "WINDIR",
+    }
+)
+_SENSITIVE_ENVIRONMENT_NAME = re.compile(
+    r"(?i)(?:AUTH|BEARER|COOKIE|CREDENTIAL|KEY|PASSWORD|SECRET|TOKEN)"
+)
+
+
+class _CommandOutputBudget:
+    def __init__(self, limit: int) -> None:
+        self.limit = limit
+        self.consumed = 0
+        self.exceeded = asyncio.Event()
+
+    def capture(self, chunk: bytes) -> bytes:
+        remaining = max(self.limit - self.consumed, 0)
+        self.consumed += len(chunk)
+        if self.consumed > self.limit:
+            self.exceeded.set()
+        return chunk[:remaining]
 
 
 class BuiltinToolRuntime:
@@ -31,60 +67,63 @@ class BuiltinToolRuntime:
         *,
         artifact_store: ArtifactStore,
         workspace: Path,
-        allowed_commands: tuple[str, ...],
+        allowed_commands: tuple[tuple[str, ...], ...] = (),
         command_timeout_seconds: float = 120.0,
     ) -> None:
         self.artifact_store = artifact_store
         self.workspace = workspace.resolve()
-        if not allowed_commands:
-            raise ValueError("BuiltinToolRuntime requires at least one allowed command")
-        self._command_paths = _resolve_allowed_commands(allowed_commands, self.workspace)
-        self.allowed_commands = frozenset(self._command_paths)
+        self._command_policies = _resolve_allowed_commands(allowed_commands, self.workspace)
+        self.allowed_commands = frozenset(allowed_commands)
         if command_timeout_seconds <= 0:
             raise ValueError("command_timeout_seconds must be positive")
         self.command_timeout_seconds = command_timeout_seconds
-        self.tool_set = ToolSet(
-            (
-                _definition("artifact_read", "Read one immutable Artifact", "artifact_id"),
-                _definition("workspace_list", "List one Workspace directory", "path"),
-                _definition(
-                    "workspace_search",
-                    "Search UTF-8 Workspace files",
-                    "path",
-                    "query",
-                ),
-                _definition("workspace_read", "Read one UTF-8 Workspace file", "path"),
-                _definition(
-                    "workspace_patch",
-                    "Replace one exact text occurrence in a Workspace file",
-                    "path",
-                    "expected",
-                    "replacement",
-                    writes_workspace=True,
-                ),
-                _array_definition(
-                    "command",
-                    "Run a trusted allowlisted argv command without a shell",
-                ),
-                _definition(
-                    "submit_candidate",
-                    "Submit the final candidate Artifact content",
-                    "name",
-                    "media_type",
-                    "content",
-                    ends_turn=True,
-                ),
-            )
-        )
-        handlers: Mapping[str, ToolHandler] = {
+        definitions = [
+            _definition("artifact_read", "Read one immutable Artifact", "artifact_id"),
+            _definition("workspace_list", "List one Workspace directory", "path"),
+            _definition(
+                "workspace_search",
+                "Search UTF-8 Workspace files",
+                "path",
+                "query",
+            ),
+            _definition("workspace_read", "Read one UTF-8 Workspace file", "path"),
+            _definition(
+                "workspace_patch",
+                "Replace one exact text occurrence in a Workspace file",
+                "path",
+                "expected",
+                "replacement",
+                writes_workspace=True,
+            ),
+        ]
+        handlers: dict[str, ToolHandler] = {
             "artifact_read": self._artifact_read,
             "workspace_list": self._workspace_list,
             "workspace_search": self._workspace_search,
             "workspace_read": self._workspace_read,
             "workspace_patch": self._workspace_patch,
-            "command": self._command,
-            "submit_candidate": self._submit_candidate,
         }
+        if allowed_commands:
+            definitions.append(
+                _array_definition(
+                    "command",
+                    "Run one exact host-approved argv command without a shell",
+                    allowed_commands,
+                )
+            )
+            handlers["command"] = self._command
+        definitions.append(
+            _definition(
+                "submit_candidate",
+                "Submit the final candidate Artifact content",
+                "name",
+                "media_type",
+                "content",
+                ends_turn=True,
+            )
+        )
+        handlers["submit_candidate"] = self._submit_candidate
+        self.tool_set = ToolSet(tuple(definitions))
         self.executor = ToolExecutor(self.tool_set, handlers)
 
     async def _artifact_read(
@@ -203,31 +242,77 @@ class BuiltinToolRuntime:
             raise ValueError("command argv must be a non-empty string array")
         argv = tuple(cast(str, item) for item in argv_value)
         executable = _command_name(argv[0], "command executable")
-        trusted_path = self._command_paths.get(_command_key(executable))
+        trusted_path = self._command_policies.get((_command_key(executable), *argv[1:]))
         if trusted_path is None:
-            raise ValueError(f"command executable {executable!r} is not allowed")
+            raise ValueError("command argv is not allowed by the configured policy")
+        environment = _command_environment(tuple(self._command_policies.values()))
+        secret_values = _sensitive_environment_values()
+        options: dict[str, object] = {
+            "cwd": self.workspace,
+            "env": environment,
+            "stdin": asyncio.subprocess.DEVNULL,
+            "stdout": asyncio.subprocess.PIPE,
+            "stderr": asyncio.subprocess.PIPE,
+        }
+        if os.name == "nt":
+            options["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
+        else:
+            options["start_new_session"] = True
         process = await asyncio.create_subprocess_exec(
             str(trusted_path),
             *argv[1:],
-            cwd=self.workspace,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
+            **options,  # type: ignore[arg-type]
+        )
+        output_budget = _CommandOutputBudget(_MAX_TOOL_OUTPUT_BYTES)
+        capture_task = asyncio.create_task(
+            _capture_command_output(process, output_budget),
+            name="ehai-builtin-command-output",
+        )
+        cancellation_task = asyncio.create_task(
+            cancellation.wait_cancelled(),
+            name="ehai-builtin-command-cancellation",
+        )
+        output_limit_task = asyncio.create_task(
+            output_budget.exceeded.wait(),
+            name="ehai-builtin-command-output-limit",
         )
         try:
-            stdout, stderr = await asyncio.wait_for(
-                process.communicate(),
+            done, _ = await asyncio.wait(
+                {capture_task, cancellation_task, output_limit_task},
                 timeout=self.command_timeout_seconds,
+                return_when=asyncio.FIRST_COMPLETED,
             )
-        except TimeoutError:
-            process.kill()
-            await process.wait()
-            raise ValueError("command exceeded its Tool timeout") from None
-        if len(stdout) + len(stderr) > _MAX_TOOL_OUTPUT_BYTES:
-            raise ValueError("command output exceeds the Tool output limit")
+            if cancellation_task in done:
+                await asyncio.shield(_terminate_process_tree(process, environment))
+                await asyncio.shield(_settle_capture(capture_task))
+                cancellation.raise_if_cancelled()
+            if output_limit_task in done:
+                await asyncio.shield(_terminate_process_tree(process, environment))
+                await asyncio.shield(_settle_capture(capture_task))
+                raise ValueError("command output exceeds the Tool output limit")
+            if capture_task not in done:
+                await asyncio.shield(_terminate_process_tree(process, environment))
+                await asyncio.shield(_settle_capture(capture_task))
+                raise ValueError("command exceeded its Tool timeout")
+            return_code, stdout, stderr = capture_task.result()
+        except asyncio.CancelledError:
+            await asyncio.shield(_terminate_process_tree(process, environment))
+            await asyncio.shield(_settle_capture(capture_task))
+            raise
+        finally:
+            for task in (capture_task, cancellation_task, output_limit_task):
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(
+                capture_task,
+                cancellation_task,
+                output_limit_task,
+                return_exceptions=True,
+            )
         return {
-            "exit_code": process.returncode,
-            "stdout": stdout.decode(errors="replace"),
-            "stderr": stderr.decode(errors="replace"),
+            "exit_code": return_code,
+            "stdout": redact_codex_bytes(stdout, secret_values).decode(errors="replace"),
+            "stderr": redact_codex_bytes(stderr, secret_values).decode(errors="replace"),
         }
 
     async def _submit_candidate(
@@ -277,13 +362,24 @@ def _definition(
     )
 
 
-def _array_definition(name: str, description: str) -> ToolDefinition:
+def _array_definition(
+    name: str,
+    description: str,
+    allowed_argv: tuple[tuple[str, ...], ...],
+) -> ToolDefinition:
     return ToolDefinition(
         name,
         description,
         {
             "type": "object",
-            "properties": {"argv": {"type": "array", "items": {"type": "string"}, "minItems": 1}},
+            "properties": {
+                "argv": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "minItems": 1,
+                    "enum": [list(argv) for argv in allowed_argv],
+                }
+            },
             "required": ["argv"],
             "additionalProperties": False,
         },
@@ -310,22 +406,149 @@ def _non_empty_text(value: str, name: str) -> str:
 
 
 def _resolve_allowed_commands(
-    commands: tuple[str, ...],
+    commands: tuple[tuple[str, ...], ...],
     workspace: Path,
-) -> dict[str, Path]:
-    resolved: dict[str, Path] = {}
-    for configured in commands:
-        name = _command_name(configured, "allowed command")
+) -> dict[tuple[str, ...], Path]:
+    resolved: dict[tuple[str, ...], Path] = {}
+    for configured_argv in commands:
+        if not configured_argv or not all(
+            isinstance(item, str) and item for item in configured_argv
+        ):
+            raise ValueError("allowed command argv must be a non-empty string tuple")
+        name = _command_name(configured_argv[0], "allowed command")
         executable = _resolve_trusted_executable(name, workspace)
         aliases = {_command_key(name), _command_key(executable.name)}
         if os.name == "nt" and executable.suffix.lower() in _windows_executable_extensions():
             aliases.add(_command_key(executable.stem))
         for alias in aliases:
-            existing = resolved.get(alias)
+            policy = (alias, *configured_argv[1:])
+            existing = resolved.get(policy)
             if existing is not None and existing != executable:
-                raise ValueError(f"allowed command alias {alias!r} is ambiguous")
-            resolved[alias] = executable
+                raise ValueError(f"allowed command policy {configured_argv!r} is ambiguous")
+            resolved[policy] = executable
     return resolved
+
+
+async def _capture_command_output(
+    process: asyncio.subprocess.Process,
+    budget: _CommandOutputBudget,
+) -> tuple[int, bytes, bytes]:
+    tasks = (
+        asyncio.create_task(
+            _read_command_stream(process.stdout, budget),
+            name="ehai-builtin-command-stdout",
+        ),
+        asyncio.create_task(
+            _read_command_stream(process.stderr, budget),
+            name="ehai-builtin-command-stderr",
+        ),
+        asyncio.create_task(process.wait(), name="ehai-builtin-command-wait"),
+    )
+    try:
+        stdout, stderr, return_code = await asyncio.gather(*tasks)
+        return return_code, stdout, stderr
+    finally:
+        for task in tasks:
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+
+async def _read_command_stream(
+    reader: asyncio.StreamReader | None,
+    budget: _CommandOutputBudget,
+) -> bytes:
+    if reader is None:
+        return b""
+    chunks: list[bytes] = []
+    while chunk := await reader.read(_STREAM_CHUNK_BYTES):
+        captured = budget.capture(chunk)
+        if captured:
+            chunks.append(captured)
+    return b"".join(chunks)
+
+
+async def _settle_capture(task: asyncio.Task[tuple[int, bytes, bytes]]) -> None:
+    if task.done():
+        await asyncio.gather(task, return_exceptions=True)
+        return
+    try:
+        await asyncio.wait_for(
+            asyncio.shield(task),
+            timeout=_WINDOWS_HELPER_TIMEOUT_SECONDS,
+        )
+    except TimeoutError:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+
+async def _terminate_process_tree(
+    process: asyncio.subprocess.Process,
+    environment: Mapping[str, str],
+) -> None:
+    pid = getattr(process, "pid", None)
+    if os.name == "nt" and isinstance(pid, int) and pid > 0 and pid != os.getpid():
+        system_root = environment.get("SYSTEMROOT") or environment.get("WINDIR")
+        taskkill = (
+            str(Path(system_root) / "System32" / "taskkill.exe") if system_root else "taskkill.exe"
+        )
+        try:
+            helper = await asyncio.create_subprocess_exec(
+                taskkill,
+                "/PID",
+                str(pid),
+                "/T",
+                "/F",
+                env=dict(environment),
+                stdin=asyncio.subprocess.DEVNULL,
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.DEVNULL,
+            )
+            try:
+                await asyncio.wait_for(helper.wait(), timeout=_WINDOWS_HELPER_TIMEOUT_SECONDS)
+            except TimeoutError:
+                with suppress(ProcessLookupError):
+                    helper.kill()
+                with suppress(TimeoutError):
+                    await asyncio.wait_for(helper.wait(), timeout=_WINDOWS_HELPER_TIMEOUT_SECONDS)
+        except OSError:
+            pass
+    elif os.name != "nt" and isinstance(pid, int) and pid > 0 and pid != os.getpid():
+        kill_process_group = os.killpg  # type: ignore[attr-defined]
+        with suppress(OSError):
+            kill_process_group(pid, signal.SIGTERM)
+        await asyncio.sleep(_COMMAND_CANCEL_GRACE_SECONDS)
+        with suppress(OSError):
+            kill_process_group(pid, getattr(signal, "SIGKILL", signal.SIGTERM))
+    if process.returncode is None:
+        with suppress(ProcessLookupError):
+            process.kill()
+    with suppress(TimeoutError):
+        await asyncio.wait_for(process.wait(), timeout=_COMMAND_CANCEL_GRACE_SECONDS)
+
+
+def _command_environment(executables: tuple[Path, ...]) -> dict[str, str]:
+    source = {key.upper(): value for key, value in os.environ.items()}
+    environment = {
+        name: source[name]
+        for name in _COMMAND_ENVIRONMENT_NAMES
+        if name in source and _SENSITIVE_ENVIRONMENT_NAME.search(name) is None
+    }
+    path_entries = list(dict.fromkeys(str(path.parent) for path in executables))
+    system_root = environment.get("SYSTEMROOT") or environment.get("WINDIR")
+    if system_root:
+        path_entries.append(str(Path(system_root) / "System32"))
+    environment["PATH"] = os.pathsep.join(dict.fromkeys(path_entries))
+    return environment
+
+
+def _sensitive_environment_values() -> tuple[str, ...]:
+    values = {
+        value
+        for key, value in os.environ.items()
+        if len(value) >= 4 and _SENSITIVE_ENVIRONMENT_NAME.search(key) is not None
+    }
+    return tuple(sorted(values, key=len, reverse=True))
 
 
 def _resolve_trusted_executable(name: str, workspace: Path) -> Path:

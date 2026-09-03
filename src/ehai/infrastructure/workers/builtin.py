@@ -65,7 +65,7 @@ class BuiltinAgentConnector:
         artifact_store: ArtifactStore,
         profile: WorkerProfile,
         default_workspace: Path,
-        allowed_commands: tuple[str, ...],
+        allowed_commands: tuple[tuple[str, ...], ...] = (),
         reasoning_effort: ReasoningEffort = None,
         model_client_factory: ModelClientFactory | None = None,
         workspace_resolver: WorkspaceResolver | None = None,

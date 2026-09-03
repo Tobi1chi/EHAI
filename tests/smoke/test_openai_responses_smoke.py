@@ -101,7 +101,7 @@ def test_real_openai_responses_runs_builtin_runtime_tools_artifact_and_gate(
         artifact_store=artifacts,
         profile=profile,
         default_workspace=workspace,
-        allowed_commands=("uv",),
+        allowed_commands=(("uv", "--version"),),
         reasoning_effort="high",
     )
     runtime = SingleSlotRuntime(
