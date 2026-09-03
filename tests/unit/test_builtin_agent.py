@@ -35,11 +35,11 @@ from ehai.application.builtin_agent import (
     ModelResponse,
     ModelRole,
     PromptBuilder,
+    RecoverableToolError,
     ToolCall,
     ToolDefinition,
     ToolExecutor,
     ToolSet,
-    UnknownToolError,
 )
 from ehai.application.execution_contracts import OPENAI_CREDENTIAL_REF
 from ehai.application.ports import ArtifactStore
@@ -356,9 +356,12 @@ def test_builtin_agent_rejects_unknown_tool_and_illegal_session_transition(
 
     tool_set = ToolSet((_tool("inspect"),))
     client = _ScriptedModelClient(
-        (ModelResponse("Unknown.", (ToolCall("call-1", "missing", {}),)),)
+        (
+            ModelResponse("Unknown.", (ToolCall("call-1", "missing", {}),)),
+            ModelResponse("Recovered.", final_text="candidate"),
+        )
     )
-    with pytest.raises(UnknownToolError):
+    assert (
         _run_agent(
             store=store,
             session=session,
@@ -367,6 +370,20 @@ def test_builtin_agent_rejects_unknown_tool_and_illegal_session_transition(
             tool_set=tool_set,
             handlers={"inspect": inspect},
         )
+        == "candidate"
+    )
+    restored = store.load(session.agent_session_ref_id)
+    assert BuiltinSessionEventType.TOOL_ERROR in tuple(event.type for event in restored.events)
+    error_message = next(
+        message for message in client.requests[1].messages if message.role is ModelRole.TOOL
+    )
+    assert json_loads(error_message.content) == {
+        "error": {
+            "code": "unknown_tool",
+            "message": "Tool is not in this Session ToolSet",
+            "recoverable": True,
+        }
+    }
 
     invalid = BuiltinSession(new_id())
     with pytest.raises(BuiltinSessionStateError, match="turn/start"):
@@ -631,6 +648,12 @@ def test_builtin_tool_runtime_fixes_controlled_patch_and_final_candidate(
     }
     assert definitions["submit_candidate"].ends_turn
     assert definitions["workspace_patch"].writes_workspace
+    path_schema = definitions["workspace_read"].input_schema["properties"]
+    assert isinstance(path_schema, dict)
+    assert path_schema["path"] == {"type": "string", "minLength": 1}
+    patch_schema = definitions["workspace_patch"].input_schema["properties"]
+    assert isinstance(patch_schema, dict)
+    assert patch_schema["replacement"] == {"type": "string"}
     assert patched == {"path": "example.txt", "changed": True}
     assert candidate == {
         "name": "result.txt",
@@ -638,6 +661,123 @@ def test_builtin_tool_runtime_fixes_controlled_patch_and_final_candidate(
         "content": "after",
     }
     assert target.read_text(encoding="utf-8") == "after"
+
+
+def test_builtin_agent_returns_durable_read_error_to_model(tmp_path: Path) -> None:
+    store, session, execution = _execution_context(tmp_path)
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    runtime = BuiltinToolRuntime(
+        artifact_store=cast(ArtifactStore, object()),
+        workspace=workspace,
+    )
+    client = _ScriptedModelClient(
+        (
+            ModelResponse(
+                "Read missing file.",
+                (ToolCall("read-missing", "workspace_read", {"path": "missing.txt"}),),
+            ),
+            ModelResponse(
+                "Submit after correcting the lookup.",
+                (
+                    ToolCall(
+                        "submit-after-error",
+                        "submit_candidate",
+                        {"name": "result.txt", "media_type": "text/plain", "content": "ok"},
+                    ),
+                ),
+            ),
+        )
+    )
+
+    async def invoke() -> str:
+        loop = BuiltinAgentLoop(
+            model_client=client,
+            prompt_builder=PromptBuilder("Use the fixed Tools."),
+            tool_set=runtime.tool_set,
+            session_store=store,
+        )
+        agent = BuiltinAgent(loop)
+        scope = ExecutionScope(
+            agent=agent,
+            session=session,
+            tool_executor=runtime.executor,
+            cancellation=CancellationToken(),
+        )
+        async with scope:
+            return await agent.run(scope, execution, "read then submit", {})
+
+    assert json_loads(asyncio.run(invoke()))["content"] == "ok"
+    restored = store.load(session.agent_session_ref_id)
+    types = tuple(event.type for event in restored.events)
+    assert BuiltinSessionEventType.MODEL_MESSAGE in types
+    assert BuiltinSessionEventType.TOOL_CALLED in types
+    assert BuiltinSessionEventType.TOOL_ERROR in types
+    error = next(
+        event.payload["error"]
+        for event in restored.events
+        if event.type is BuiltinSessionEventType.TOOL_ERROR
+    )
+    assert error == {
+        "code": "not_found",
+        "message": "Workspace file does not exist",
+        "recoverable": True,
+    }
+
+
+def test_incomplete_read_only_tool_is_replayed_after_recovery(tmp_path: Path) -> None:
+    store, session, execution = _execution_context(tmp_path)
+    reads = 0
+
+    async def interrupted_read(
+        arguments: dict[str, JsonValue], cancellation: CancellationToken
+    ) -> JsonValue:
+        nonlocal reads
+        del arguments
+        reads += 1
+        cancellation.cancel()
+        return {"read": True}
+
+    tool_set = ToolSet((_tool("inspect"),))
+    with pytest.raises(AgentCancelledError):
+        _run_agent(
+            store=store,
+            session=session,
+            execution=execution,
+            client=_ScriptedModelClient(
+                (ModelResponse("Inspect.", (ToolCall("read-1", "inspect", {}),)),)
+            ),
+            tool_set=tool_set,
+            handlers={"inspect": interrupted_read},
+        )
+
+    restored = store.load(session.agent_session_ref_id)
+    assert restored.incomplete_write_call(execution.attempt_id) is None
+    assert restored.incomplete_tool_call(execution.attempt_id) is not None
+
+    async def successful_read(
+        arguments: dict[str, JsonValue], cancellation: CancellationToken
+    ) -> JsonValue:
+        nonlocal reads
+        del arguments
+        cancellation.raise_if_cancelled()
+        reads += 1
+        return {"read": True}
+
+    final_client = _ScriptedModelClient((ModelResponse("Done.", final_text="candidate"),))
+    assert (
+        _run_agent(
+            store=store,
+            session=restored,
+            execution=execution,
+            client=final_client,
+            tool_set=tool_set,
+            handlers={"inspect": successful_read},
+        )
+        == "candidate"
+    )
+    assert reads == 2
+    assert any(message.role is ModelRole.TOOL for message in final_client.requests[0].messages)
 
 
 def test_builtin_command_uses_trusted_resolution_and_rejects_qualified_argv(
@@ -679,17 +819,17 @@ def test_builtin_command_uses_trusted_resolution_and_rejects_qualified_argv(
                     str(workspace_executable.resolve()),
                 )
             ):
-                with pytest.raises(ValueError, match="unqualified executable name"):
+                with pytest.raises(RecoverableToolError, match="unqualified"):
                     await runtime.executor.execute(
                         ToolCall(f"qualified-{index}", "command", {"argv": [value]}),
                         token,
                     )
-            with pytest.raises(ValueError, match="not allowed"):
+            with pytest.raises(RecoverableToolError, match="not allowed"):
                 await runtime.executor.execute(
                     ToolCall("denied", "command", {"argv": ["definitely-not-allowed"]}),
                     token,
                 )
-            with pytest.raises(ValueError, match="not allowed"):
+            with pytest.raises(RecoverableToolError, match="not allowed"):
                 await runtime.executor.execute(
                     ToolCall(
                         "arguments-denied",

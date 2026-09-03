@@ -16,6 +16,7 @@ from typing import cast
 from ehai import ID, JsonValue, normalize_id
 from ehai.application.builtin_agent import (
     CancellationToken,
+    RecoverableToolError,
     ToolDefinition,
     ToolExecutor,
     ToolHandler,
@@ -94,6 +95,7 @@ class BuiltinToolRuntime:
                 "expected",
                 "replacement",
                 writes_workspace=True,
+                allow_empty_fields=frozenset({"replacement"}),
             ),
         ]
         handlers: dict[str, ToolHandler] = {
@@ -120,6 +122,7 @@ class BuiltinToolRuntime:
                 "media_type",
                 "content",
                 ends_turn=True,
+                allow_empty_fields=frozenset({"content"}),
             )
         )
         handlers["submit_candidate"] = self._submit_candidate
@@ -132,13 +135,18 @@ class BuiltinToolRuntime:
         cancellation: CancellationToken,
     ) -> JsonValue:
         cancellation.raise_if_cancelled()
-        artifact_id = normalize_id(ID(_required_string(arguments, "artifact_id")))
+        try:
+            artifact_id = normalize_id(ID(_required_string(arguments, "artifact_id")))
+        except ValueError as error:
+            raise RecoverableToolError(
+                "invalid_artifact_id", "artifact_id is not a valid identifier"
+            ) from error
         artifact = self.artifact_store.get(artifact_id)
         if artifact is None:
-            raise LookupError(f"Artifact {artifact_id} does not exist")
+            raise RecoverableToolError("not_found", "Artifact does not exist")
         content = self.artifact_store.read(artifact_id)
         if len(content) > _MAX_TOOL_OUTPUT_BYTES:
-            raise ValueError(f"Artifact {artifact_id} exceeds the Tool output limit")
+            raise RecoverableToolError("output_limit", "Artifact exceeds the Tool output limit")
         try:
             encoded = content.decode("utf-8")
             encoding = "utf-8"
@@ -161,7 +169,7 @@ class BuiltinToolRuntime:
         cancellation.raise_if_cancelled()
         target = self._resolve(_required_string(arguments, "path"))
         if not target.is_dir():
-            raise ValueError(f"Workspace path {target.name!r} is not a directory")
+            raise RecoverableToolError("not_directory", "Workspace path is not a directory")
         return {
             "entries": [
                 {"name": child.name, "is_directory": child.is_dir()}
@@ -175,7 +183,9 @@ class BuiltinToolRuntime:
         cancellation: CancellationToken,
     ) -> JsonValue:
         root = self._resolve(_required_string(arguments, "path"))
-        query = _non_empty_text(_required_string(arguments, "query"), "query")
+        if not root.exists():
+            raise RecoverableToolError("not_found", "Workspace path does not exist")
+        query = _tool_non_empty_text(_required_string(arguments, "query"), "query")
         candidates = (root,) if root.is_file() else root.rglob("*")
         matches: list[JsonValue] = []
         for path in candidates:
@@ -206,10 +216,21 @@ class BuiltinToolRuntime:
     ) -> JsonValue:
         cancellation.raise_if_cancelled()
         path = self._resolve(_required_string(arguments, "path"))
-        content = path.read_bytes()
+        if not path.is_file():
+            raise RecoverableToolError("not_found", "Workspace file does not exist")
+        try:
+            content = path.read_bytes()
+        except OSError as error:
+            raise RecoverableToolError("read_failed", "Workspace file could not be read") from error
         if len(content) > _MAX_TOOL_OUTPUT_BYTES:
-            raise ValueError(f"Workspace file {path.name!r} exceeds the Tool output limit")
-        return {"path": path.relative_to(self.workspace).as_posix(), "content": content.decode()}
+            raise RecoverableToolError(
+                "output_limit", "Workspace file exceeds the Tool output limit"
+            )
+        try:
+            decoded = content.decode("utf-8")
+        except UnicodeDecodeError as error:
+            raise RecoverableToolError("not_utf8", "Workspace file is not UTF-8 text") from error
+        return {"path": path.relative_to(self.workspace).as_posix(), "content": decoded}
 
     async def _workspace_patch(
         self,
@@ -220,9 +241,19 @@ class BuiltinToolRuntime:
         path = self._resolve(_required_string(arguments, "path"))
         expected = _required_string(arguments, "expected")
         replacement = _required_string(arguments, "replacement", allow_empty=True)
-        content = path.read_text(encoding="utf-8")
+        if not path.is_file():
+            raise RecoverableToolError("not_found", "Workspace file does not exist")
+        try:
+            content = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError) as error:
+            raise RecoverableToolError(
+                "read_failed", "Workspace file could not be read as UTF-8 text"
+            ) from error
         if content.count(expected) != 1:
-            raise ValueError("workspace_patch expected text must occur exactly once")
+            raise RecoverableToolError(
+                "precondition_failed",
+                "workspace_patch expected text must occur exactly once",
+            )
         updated = content.replace(expected, replacement, 1)
         path.write_text(updated, encoding="utf-8")
         return {"path": path.relative_to(self.workspace).as_posix(), "changed": True}
@@ -239,12 +270,21 @@ class BuiltinToolRuntime:
             or not argv_value
             or not all(isinstance(item, str) and item for item in argv_value)
         ):
-            raise ValueError("command argv must be a non-empty string array")
+            raise RecoverableToolError(
+                "invalid_arguments", "command argv must be a non-empty string array"
+            )
         argv = tuple(cast(str, item) for item in argv_value)
-        executable = _command_name(argv[0], "command executable")
+        try:
+            executable = _command_name(argv[0], "command executable")
+        except ValueError as error:
+            raise RecoverableToolError(
+                "invalid_arguments", "command executable must be an unqualified name"
+            ) from error
         trusted_path = self._command_policies.get((_command_key(executable), *argv[1:]))
         if trusted_path is None:
-            raise ValueError("command argv is not allowed by the configured policy")
+            raise RecoverableToolError(
+                "command_not_allowed", "command argv is not allowed by the configured policy"
+            )
         environment = _command_environment(tuple(self._command_policies.values()))
         secret_values = _sensitive_environment_values()
         options: dict[str, object] = {
@@ -322,8 +362,8 @@ class BuiltinToolRuntime:
     ) -> JsonValue:
         cancellation.raise_if_cancelled()
         return {
-            "name": _non_empty_text(_required_string(arguments, "name"), "name"),
-            "media_type": _non_empty_text(
+            "name": _tool_non_empty_text(_required_string(arguments, "name"), "name"),
+            "media_type": _tool_non_empty_text(
                 _required_string(arguments, "media_type"),
                 "media_type",
             ),
@@ -333,10 +373,10 @@ class BuiltinToolRuntime:
     def _resolve(self, relative_path: str) -> Path:
         candidate = Path(relative_path)
         if candidate.is_absolute():
-            raise ValueError("Workspace Tool paths must be relative")
+            raise RecoverableToolError("invalid_path", "Workspace Tool paths must be relative")
         resolved = (self.workspace / candidate).resolve()
         if not resolved.is_relative_to(self.workspace):
-            raise ValueError("Workspace Tool path escapes the Workspace")
+            raise RecoverableToolError("invalid_path", "Workspace Tool path escapes the Workspace")
         return resolved
 
 
@@ -346,8 +386,16 @@ def _definition(
     *required_fields: str,
     writes_workspace: bool = False,
     ends_turn: bool = False,
+    allow_empty_fields: frozenset[str] = frozenset(),
 ) -> ToolDefinition:
-    properties: dict[str, JsonValue] = {field: {"type": "string"} for field in required_fields}
+    properties: dict[str, JsonValue] = {
+        field: (
+            {"type": "string"}
+            if field in allow_empty_fields
+            else {"type": "string", "minLength": 1}
+        )
+        for field in required_fields
+    }
     return ToolDefinition(
         name,
         description,
@@ -375,7 +423,7 @@ def _array_definition(
             "properties": {
                 "argv": {
                     "type": "array",
-                    "items": {"type": "string"},
+                    "items": {"type": "string", "minLength": 1},
                     "minItems": 1,
                     "enum": [list(argv) for argv in allowed_argv],
                 }
@@ -395,8 +443,14 @@ def _required_string(
 ) -> str:
     value = arguments.get(name)
     if not isinstance(value, str) or (not allow_empty and not value):
-        raise ValueError(f"{name} must be text")
+        raise RecoverableToolError("invalid_arguments", f"{name} must be text")
     return value
+
+
+def _tool_non_empty_text(value: str, name: str) -> str:
+    if not value.strip():
+        raise RecoverableToolError("invalid_arguments", f"{name} must not be blank")
+    return value.strip()
 
 
 def _non_empty_text(value: str, name: str) -> str:
