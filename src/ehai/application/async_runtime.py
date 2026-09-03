@@ -21,7 +21,7 @@ from ehai.application.execution_policy import (
     RetrySafety,
     TimeoutDecision,
 )
-from ehai.application.orchestrator import Orchestrator
+from ehai.application.orchestrator import Orchestrator, WorkerEventReceipt
 from ehai.application.ports import UnitOfWork
 from ehai.application.workers import WorkerRequest, WorkerResult
 from ehai.domain.events import Event, EventType
@@ -294,11 +294,17 @@ class SingleSlotRuntime:
 
     async def _recover_work(self, work: DispatchWork) -> Run:
         with self._uow_factory() as uow:
+            stored_run = uow.states.get_run(work.run_id)
+            if stored_run is None:
+                raise RuntimeError(f"Run {work.run_id} is not persisted")
             attempts = uow.states.list_attempts(work.run_id)
             running = tuple(
                 attempt for attempt in attempts if attempt.status is AttemptStatus.RUNNING
             )
         if not running:
+            if stored_run.status not in {RunStatus.PENDING, RunStatus.RUNNING}:
+                self._complete_work(work)
+                return stored_run
             return await self._process_work(work)
         attempt = running[-1]
         run = await self.recover_attempt(attempt)
@@ -615,6 +621,7 @@ class SingleSlotRuntime:
         execution: ConnectorExecution,
     ) -> Run:
         candidate: WorkerResult | None = None
+        pending_events: list[WorkerEvent] = []
         iterator = self._connector.events(
             execution,
             after_cursor=attempt.event_cursor,
@@ -622,6 +629,24 @@ class SingleSlotRuntime:
         next_event: asyncio.Task[WorkerEvent] = asyncio.create_task(_next_worker_event(iterator))
         try:
             while True:
+                if not next_event.done():
+                    await asyncio.sleep(0)
+                if next_event.done():
+                    try:
+                        event = next_event.result()
+                    except StopAsyncIteration as error:
+                        raise RuntimeError(
+                            f"Connector event stream ended before Attempt {attempt.attempt_id}"
+                        ) from error
+                    next_event = asyncio.create_task(_next_worker_event(iterator))
+                    terminal, candidate = self._apply_event(
+                        attempt.attempt_id,
+                        event,
+                        candidate,
+                        pending_events,
+                    )
+                    if terminal is not None:
+                        return terminal
                 stored = self._stored_attempt(attempt.attempt_id)
                 now = self._clock()
                 decision = self._watchdog.evaluate(stored, at=now)
@@ -653,6 +678,7 @@ class SingleSlotRuntime:
                         iterator,
                         next_event,
                         candidate,
+                        pending_events,
                         decision,
                     )
                 delay = max(
@@ -662,16 +688,6 @@ class SingleSlotRuntime:
                 done, _ = await asyncio.wait({next_event}, timeout=delay)
                 if not done:
                     continue
-                try:
-                    event = next_event.result()
-                except StopAsyncIteration as error:
-                    raise RuntimeError(
-                        f"Connector event stream ended before Attempt {attempt.attempt_id}"
-                    ) from error
-                next_event = asyncio.create_task(_next_worker_event(iterator))
-                terminal, candidate = self._apply_event(attempt.attempt_id, event, candidate)
-                if terminal is not None:
-                    return terminal
         finally:
             if not next_event.done():
                 next_event.cancel()
@@ -681,29 +697,47 @@ class SingleSlotRuntime:
         attempt_id: ID,
         event: WorkerEvent,
         candidate: WorkerResult | None,
+        pending_events: list[WorkerEvent],
     ) -> tuple[Run | None, WorkerResult | None]:
         if event.attempt_id != attempt_id:
             raise RuntimeError("Connector emitted a WorkerEvent for another Attempt")
-        if not self._record_event(attempt_id, event):
-            return None, candidate
         if event.type is WorkerEventType.CANDIDATE:
+            if not any(item.worker_event_id == event.worker_event_id for item in pending_events):
+                pending_events.append(event)
+                self._observe_deferred_event(attempt_id, event)
             return None, event.result
         if event.type is WorkerEventType.COMPLETED:
             if candidate is None:
                 raise RuntimeError("Worker completed without a candidate")
-            return self._orchestrator.accept_worker_result(attempt_id, candidate), candidate
+            terminal = self._orchestrator.accept_worker_result(
+                attempt_id,
+                candidate,
+                worker_event_receipts=_event_receipts((*pending_events, event)),
+            )
+            return terminal, candidate
         if event.type is WorkerEventType.FAILED:
             reason = event.reason or "Worker failed"
             if event.retry_safety.allows_retry:
-                return (
-                    self._orchestrator.retry_attempt(
-                        attempt_id,
-                        reason,
-                        retry_safety=event.retry_safety,
-                    ),
-                    candidate,
+                terminal = self._orchestrator.retry_attempt(
+                    attempt_id,
+                    reason,
+                    retry_safety=event.retry_safety,
+                    worker_event_receipts=_event_receipts((*pending_events, event)),
                 )
-            return self._orchestrator.interrupt_attempt(attempt_id, reason), candidate
+            else:
+                terminal = self._orchestrator.interrupt_attempt(
+                    attempt_id,
+                    reason,
+                    worker_event_receipts=_event_receipts((*pending_events, event)),
+                )
+            return terminal, candidate
+        if pending_events:
+            if not any(item.worker_event_id == event.worker_event_id for item in pending_events):
+                pending_events.append(event)
+                self._observe_deferred_event(attempt_id, event)
+            return None, candidate
+        if not self._record_event(attempt_id, event):
+            return None, candidate
         return None, candidate
 
     async def _cancel_timed_out(
@@ -713,6 +747,7 @@ class SingleSlotRuntime:
         iterator: AsyncIterator[WorkerEvent],
         next_event: asyncio.Task[WorkerEvent],
         candidate: WorkerResult | None,
+        pending_events: list[WorkerEvent],
         decision: TimeoutDecision,
     ) -> Run:
         loop = asyncio.get_running_loop()
@@ -739,23 +774,46 @@ class SingleSlotRuntime:
                     break
                 if event.attempt_id != attempt.attempt_id:
                     raise RuntimeError("Connector emitted a WorkerEvent for another Attempt")
-                if self._record_event(attempt.attempt_id, event):
-                    if event.type is WorkerEventType.CANDIDATE:
-                        candidate = event.result
-                    elif event.type is WorkerEventType.COMPLETED and candidate is not None:
-                        return self._orchestrator.accept_worker_result(
-                            attempt.attempt_id, candidate
-                        )
-                    elif event.type is WorkerEventType.FAILED:
-                        break
+                if event.type is WorkerEventType.CANDIDATE:
+                    if not any(
+                        item.worker_event_id == event.worker_event_id for item in pending_events
+                    ):
+                        pending_events.append(event)
+                        self._observe_deferred_event(attempt.attempt_id, event)
+                    candidate = event.result
+                elif event.type is WorkerEventType.COMPLETED and candidate is not None:
+                    terminal = self._orchestrator.accept_worker_result(
+                        attempt.attempt_id,
+                        candidate,
+                        worker_event_receipts=_event_receipts((*pending_events, event)),
+                    )
+                    return terminal
+                elif event.type is WorkerEventType.FAILED:
+                    pending_events.append(event)
+                    break
+                elif pending_events:
+                    pending_events.append(event)
+                    self._observe_deferred_event(attempt.attempt_id, event)
+                else:
+                    self._record_event(attempt.attempt_id, event)
                 next_event = asyncio.create_task(_next_worker_event(iterator))
             reason = f"{decision.reason}; cancellation grace expired"
-            return self._orchestrator.time_out_attempt(attempt.attempt_id, reason)
+            return self._orchestrator.time_out_attempt(
+                attempt.attempt_id,
+                reason,
+                worker_event_receipts=_event_receipts(tuple(pending_events)),
+            )
         finally:
             if not next_event.done():
                 next_event.cancel()
 
     def _record_event(self, attempt_id: ID, event: WorkerEvent) -> bool:
+        if event.type in {
+            WorkerEventType.CANDIDATE,
+            WorkerEventType.COMPLETED,
+            WorkerEventType.FAILED,
+        }:
+            raise ValueError("candidate and terminal WorkerEvents require deferred recording")
         with self._uow_factory() as uow:
             is_new = uow.states.record_worker_event(
                 attempt_id,
@@ -807,22 +865,38 @@ class SingleSlotRuntime:
                     )
                 if event.type is WorkerEventType.HEARTBEAT:
                     uow.events.append(self._heartbeat_event(attempt, event.occurred_at))
-                if event.type in {WorkerEventType.COMPLETED, WorkerEventType.FAILED}:
-                    uow.events.append(
-                        Event(
-                            type=EventType.PROVIDER_USAGE_RECORDED,
-                            correlation_id=attempt.attempt_id,
-                            run_id=attempt.run_id,
-                            payload={
-                                "attempt_id": attempt.attempt_id,
-                                "provider_cost": event.provider_cost,
-                                "provider_cost_available": event.provider_cost is not None,
-                            },
-                            occurred_at=event.occurred_at,
-                        )
-                    )
             uow.commit()
             return is_new
+
+    def _observe_deferred_event(self, attempt_id: ID, event: WorkerEvent) -> None:
+        with self._uow_factory() as uow:
+            attempt = _required_attempt(uow, attempt_id)
+            if event.type is WorkerEventType.WAITING:
+                activity = AttemptActivity.WAITING
+            elif event.type is WorkerEventType.HEARTBEAT:
+                activity = attempt.activity or AttemptActivity.RUNNING
+            else:
+                activity = AttemptActivity.RUNNING
+            heartbeat_at = max(
+                value for value in (attempt.heartbeat_at, event.occurred_at) if value is not None
+            )
+            progress_at = (
+                attempt.progress_at
+                if event.type is WorkerEventType.HEARTBEAT
+                else max(
+                    value for value in (attempt.progress_at, event.occurred_at) if value is not None
+                )
+            )
+            uow.states.put_attempt(
+                attempt.observe(
+                    activity,
+                    event_cursor=attempt.event_cursor,
+                    heartbeat_at=heartbeat_at,
+                    progress_at=progress_at,
+                    lease_expires_at=heartbeat_at + self._policy.heartbeat_lease,
+                )
+            )
+            uow.commit()
 
     def _record_heartbeat(self, attempt_id: ID, activity: AttemptActivity) -> None:
         observed_at = self._clock()
@@ -912,6 +986,19 @@ class SingleSlotRuntime:
             if stored.status is DispatchWorkStatus.CLAIMED:
                 uow.states.put_dispatch_work(stored.complete(at=self._clock()))
             uow.commit()
+
+
+def _event_receipts(events: tuple[WorkerEvent, ...]) -> tuple[WorkerEventReceipt, ...]:
+    return tuple(
+        WorkerEventReceipt(
+            event.worker_event_id,
+            event.cursor,
+            event.occurred_at,
+            event.provider_cost,
+            event.type in {WorkerEventType.COMPLETED, WorkerEventType.FAILED},
+        )
+        for event in events
+    )
 
 
 def _required_attempt(uow: UnitOfWork, attempt_id: ID) -> Attempt:

@@ -494,6 +494,18 @@ class Attempt:
             _rehydrate_token=_REHYDRATE,
         )
 
+    def record_terminal_cursor(self, event_cursor: str) -> Self:
+        """Attach the last durably applied provider cursor to terminal work."""
+        if self.status in {AttemptStatus.PENDING, AttemptStatus.RUNNING}:
+            raise ValueError(f"attempt {self.attempt_id}: live work must use observe")
+        if not isinstance(event_cursor, str) or not event_cursor.strip():
+            raise ValueError(f"attempt {self.attempt_id}: event_cursor must not be blank")
+        return replace(
+            self,
+            event_cursor=event_cursor,
+            _rehydrate_token=_REHYDRATE,
+        )
+
     def extend_deadline(self, deadline_at: datetime) -> Self:
         """Extend, but never shorten, the absolute deadline of running work."""
         if self.status is not AttemptStatus.RUNNING:

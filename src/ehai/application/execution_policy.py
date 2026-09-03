@@ -97,25 +97,40 @@ class ExecutionWatchdog:
 
     def evaluate(self, attempt: Attempt, *, at: datetime) -> TimeoutDecision | None:
         now = _utc(at)
-        if attempt.deadline_at is not None and now >= attempt.deadline_at:
-            return TimeoutDecision(
-                ExecutionTimeoutKind.ABSOLUTE_DEADLINE,
-                "absolute Attempt deadline expired",
+        deadlines: list[tuple[datetime, TimeoutDecision]] = []
+        if attempt.deadline_at is not None:
+            deadlines.append(
+                (
+                    attempt.deadline_at,
+                    TimeoutDecision(
+                        ExecutionTimeoutKind.ABSOLUTE_DEADLINE,
+                        "absolute Attempt deadline expired",
+                    ),
+                )
             )
-        if attempt.lease_expires_at is not None and now >= attempt.lease_expires_at:
-            return TimeoutDecision(
-                ExecutionTimeoutKind.HEARTBEAT_LEASE,
-                "Attempt heartbeat lease expired",
+        if attempt.lease_expires_at is not None:
+            deadlines.append(
+                (
+                    attempt.lease_expires_at,
+                    TimeoutDecision(
+                        ExecutionTimeoutKind.HEARTBEAT_LEASE,
+                        "Attempt heartbeat lease expired",
+                    ),
+                )
             )
-        if attempt.activity is AttemptActivity.WAITING:
-            return None
         progress_at = attempt.progress_at or attempt.started_at
-        if progress_at is not None and now >= progress_at + self.policy.no_progress_timeout:
-            return TimeoutDecision(
-                ExecutionTimeoutKind.NO_PROGRESS,
-                "Attempt made no progress before its timeout",
+        if attempt.activity is not AttemptActivity.WAITING and progress_at is not None:
+            deadlines.append(
+                (
+                    progress_at + self.policy.no_progress_timeout,
+                    TimeoutDecision(
+                        ExecutionTimeoutKind.NO_PROGRESS,
+                        "Attempt made no progress before its timeout",
+                    ),
+                )
             )
-        return None
+        expired = tuple(item for item in deadlines if now >= item[0])
+        return None if not expired else min(expired, key=lambda item: item[0])[1]
 
     def next_check_at(self, attempt: Attempt) -> datetime:
         candidates: list[datetime] = []

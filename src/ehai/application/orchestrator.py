@@ -59,6 +59,17 @@ from ehai.domain.planning import (
 UnitOfWorkFactory = Callable[[], UnitOfWork]
 
 
+@dataclass(frozen=True, slots=True)
+class WorkerEventReceipt:
+    """Provider event metadata committed with its terminal Attempt transition."""
+
+    worker_event_id: str
+    cursor: str
+    occurred_at: datetime
+    provider_cost: float | None = None
+    records_usage: bool = False
+
+
 class OrchestrationError(RuntimeError):
     """Base failure for the bounded P1 Orchestrator."""
 
@@ -534,7 +545,13 @@ class Orchestrator:
             uow.commit()
             return cancelled_run
 
-    def accept_worker_result(self, attempt_id: ID, result: WorkerResult) -> Run:
+    def accept_worker_result(
+        self,
+        attempt_id: ID,
+        result: WorkerResult,
+        *,
+        worker_event_receipts: tuple[WorkerEventReceipt, ...] = (),
+    ) -> Run:
         """Persist one Worker candidate and advance existing Check/Gate semantics."""
         context = self._load_attempt_context(attempt_id)
         branch_local = (
@@ -548,7 +565,12 @@ class Orchestrator:
                 f"attempt {context.attempt.attempt_id} produced a candidate but Artifact "
                 f"persistence failed: {type(error).__name__}: {error}"
             ) from error
-        self._record_candidate(context.attempt.attempt_id, artifacts, result)
+        self._record_candidate(
+            context.attempt.attempt_id,
+            artifacts,
+            result,
+            worker_event_receipts=worker_event_receipts,
+        )
         return self._check_and_complete(
             context.run.run_id,
             context.attempt.attempt_id,
@@ -557,7 +579,13 @@ class Orchestrator:
             branch_local=branch_local,
         )
 
-    def interrupt_attempt(self, attempt_id: ID, reason: str) -> Run:
+    def interrupt_attempt(
+        self,
+        attempt_id: ID,
+        reason: str,
+        *,
+        worker_event_receipts: tuple[WorkerEventReceipt, ...] = (),
+    ) -> Run:
         """Fail closed when Runtime recovery cannot find the original execution."""
         with self._uow_factory() as uow:
             attempt = _required_attempt(uow, attempt_id)
@@ -566,12 +594,15 @@ class Orchestrator:
                 return run
             plan = _required_plan(uow, run.plan_revision_id)
             node = _required_node(plan, attempt.plan_node_id)
-            interrupted = attempt.interrupt(reason, at=self._clock())
+            branch_local = _branch_containing(plan, node.plan_node_id) is not None
+            interrupted = self._apply_worker_event_receipts(
+                uow,
+                attempt.interrupt(reason, at=self._clock()),
+                worker_event_receipts,
+            )
             failed_node = node.fail()
-            paused = run.pause()
             uow.states.put_attempt(interrupted)
             uow.states.put_plan_revision(_replace_node(plan, failed_node))
-            uow.states.put_run(paused)
             uow.events.append(
                 self._event(
                     EventType.ATTEMPT_INTERRUPTED,
@@ -588,16 +619,19 @@ class Orchestrator:
                     {"plan_node_id": node.plan_node_id, "reason": reason},
                 )
             )
-            uow.events.append(
-                self._event(
-                    EventType.RUN_PAUSED,
-                    paused,
-                    run.run_id,
-                    {"run_id": run.run_id, "reason": reason},
+            if not branch_local:
+                paused = run.pause()
+                uow.states.put_run(paused)
+                uow.events.append(
+                    self._event(
+                        EventType.RUN_PAUSED,
+                        paused,
+                        run.run_id,
+                        {"run_id": run.run_id, "reason": reason},
+                    )
                 )
-            )
             uow.commit()
-            return paused
+            return run if branch_local else paused
 
     def retry_attempt(
         self,
@@ -606,6 +640,7 @@ class Orchestrator:
         *,
         retry_safety: RetrySafety,
         timed_out: bool = False,
+        worker_event_receipts: tuple[WorkerEventReceipt, ...] = (),
     ) -> Run:
         """Schedule replacement work only when the provider outcome is known safe."""
         safety = RetrySafety(retry_safety)
@@ -628,6 +663,11 @@ class Orchestrator:
             else:
                 terminal_attempt = attempt.fail(reason, at=self._clock())
                 terminal_event = EventType.ATTEMPT_FAILED
+            terminal_attempt = self._apply_worker_event_receipts(
+                uow,
+                terminal_attempt,
+                worker_event_receipts,
+            )
             failed_node = node.fail()
             uow.states.put_attempt(terminal_attempt)
             failed_plan = _replace_node(plan, failed_node)
@@ -691,7 +731,13 @@ class Orchestrator:
             uow.commit()
             return run
 
-    def time_out_attempt(self, attempt_id: ID, reason: str) -> Run:
+    def time_out_attempt(
+        self,
+        attempt_id: ID,
+        reason: str,
+        *,
+        worker_event_receipts: tuple[WorkerEventReceipt, ...] = (),
+    ) -> Run:
         """Time out unknown in-flight work without creating replacement side effects."""
         with self._uow_factory() as uow:
             attempt = _required_attempt(uow, attempt_id)
@@ -700,12 +746,15 @@ class Orchestrator:
                 return run
             plan = _required_plan(uow, run.plan_revision_id)
             node = _required_node(plan, attempt.plan_node_id)
-            timed_out = attempt.time_out(reason, at=self._clock())
+            branch_local = _branch_containing(plan, node.plan_node_id) is not None
+            timed_out = self._apply_worker_event_receipts(
+                uow,
+                attempt.time_out(reason, at=self._clock()),
+                worker_event_receipts,
+            )
             failed_node = node.fail()
-            paused = run.pause()
             uow.states.put_attempt(timed_out)
             uow.states.put_plan_revision(_replace_node(plan, failed_node))
-            uow.states.put_run(paused)
             uow.events.append(
                 self._event(
                     EventType.ATTEMPT_TIMED_OUT,
@@ -722,16 +771,19 @@ class Orchestrator:
                     {"plan_node_id": node.plan_node_id, "reason": reason},
                 )
             )
-            uow.events.append(
-                self._event(
-                    EventType.RUN_PAUSED,
-                    paused,
-                    run.run_id,
-                    {"run_id": run.run_id, "reason": reason},
+            if not branch_local:
+                paused = run.pause()
+                uow.states.put_run(paused)
+                uow.events.append(
+                    self._event(
+                        EventType.RUN_PAUSED,
+                        paused,
+                        run.run_id,
+                        {"run_id": run.run_id, "reason": reason},
+                    )
                 )
-            )
             uow.commit()
-            return paused
+            return run if branch_local else paused
 
     def fail_attempt(self, attempt_id: ID, reason: str) -> Run:
         """Fail an Attempt and its Run when an explicit resource budget is exhausted."""
@@ -1374,6 +1426,8 @@ class Orchestrator:
         attempt_id: ID,
         artifacts: tuple[Artifact, ...],
         result: WorkerResult,
+        *,
+        worker_event_receipts: tuple[WorkerEventReceipt, ...] = (),
     ) -> None:
         with self._uow_factory() as uow:
             attempt = _required_attempt(uow, attempt_id)
@@ -1385,8 +1439,13 @@ class Orchestrator:
                 for artifact in artifacts
                 if artifact.kind in {ArtifactKind.CANDIDATE, ArtifactKind.PATCH}
             )
-            succeeded = attempt.succeed(
-                tuple(artifact.artifact_id for artifact in evidence_artifacts), at=self._clock()
+            succeeded = self._apply_worker_event_receipts(
+                uow,
+                attempt.succeed(
+                    tuple(artifact.artifact_id for artifact in evidence_artifacts),
+                    at=self._clock(),
+                ),
+                worker_event_receipts,
             )
             candidate_node = node.submit_candidate()
             plan = _replace_node(plan, candidate_node)
@@ -1422,6 +1481,36 @@ class Orchestrator:
                 )
             )
             uow.commit()
+
+    def _apply_worker_event_receipts(
+        self,
+        uow: UnitOfWork,
+        attempt: Attempt,
+        receipts: tuple[WorkerEventReceipt, ...],
+    ) -> Attempt:
+        if not receipts:
+            return attempt
+        for receipt in receipts:
+            is_new = uow.states.record_worker_event(
+                attempt.attempt_id,
+                receipt.worker_event_id,
+                at=receipt.occurred_at,
+            )
+            if is_new and receipt.records_usage:
+                uow.events.append(
+                    Event(
+                        type=EventType.PROVIDER_USAGE_RECORDED,
+                        correlation_id=attempt.attempt_id,
+                        run_id=attempt.run_id,
+                        payload={
+                            "attempt_id": attempt.attempt_id,
+                            "provider_cost": receipt.provider_cost,
+                            "provider_cost_available": receipt.provider_cost is not None,
+                        },
+                        occurred_at=receipt.occurred_at,
+                    )
+                )
+        return attempt.record_terminal_cursor(receipts[-1].cursor)
 
     def _check_and_complete(
         self,

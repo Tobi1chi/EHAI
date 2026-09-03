@@ -42,9 +42,11 @@ from ehai.application.scheduler import (
 from ehai.application.service import ExecutionService
 from ehai.application.workers import WorkerRequest
 from ehai.domain.checking import CheckKind
+from ehai.domain.events import EventType
 from ehai.domain.execution import AttemptStatus, RunStatus
 from ehai.domain.goal import Goal
 from ehai.domain.planning import BranchStatus, PlanNode
+from ehai.domain.runtime import DispatchWorkStatus
 from ehai.domain.workers import (
     AttemptActivity,
     WorkerCapability,
@@ -76,7 +78,7 @@ class _ExplorationPlanner:
 
 
 class _BlockingConnector:
-    def __init__(self, worker: FakeWorker) -> None:
+    def __init__(self, worker: FakeWorker, *, fail_one_work: bool = False) -> None:
         self.worker = worker
         self.requests: dict[ID, WorkerRequest] = {}
         self.executions: dict[ID, ConnectorExecution] = {}
@@ -85,6 +87,8 @@ class _BlockingConnector:
         self.two_work_active = asyncio.Event()
         self.active_work = 0
         self.max_active_work = 0
+        self.fail_one_work = fail_one_work
+        self.failed_work = False
 
     async def start(self, request: ConnectorStartRequest) -> ConnectorExecution:
         self.requests[request.attempt_id] = request.request
@@ -114,6 +118,16 @@ class _BlockingConnector:
                 self.two_work_active.set()
             await self.release_work.wait()
         try:
+            if is_branch_work and self.fail_one_work and not self.failed_work:
+                self.failed_work = True
+                yield WorkerEvent(
+                    f"{execution.attempt_id}:failed",
+                    execution.attempt_id,
+                    WorkerEventType.FAILED,
+                    "failed",
+                    reason="injected branch-local failure",
+                )
+                return
             result = self.worker.execute(request)
             yield WorkerEvent(
                 f"{execution.attempt_id}:candidate",
@@ -425,3 +439,96 @@ def test_concurrent_branches_overlap_third_queues_and_queued_cancel_uses_no_slot
             BranchStatus.SELECTED,
             BranchStatus.PRUNED,
         }
+
+
+def test_branch_local_failure_converges_without_pausing_sibling_work(tmp_path: Path) -> None:
+    database = SQLiteDatabase(tmp_path / "branch-failure.sqlite3")
+    artifacts = FilesystemArtifactStore(tmp_path / "branch-failure-artifacts")
+    worker = FakeWorker()
+    orchestrator = Orchestrator(
+        uow_factory=database.unit_of_work,
+        worker=worker,
+        artifact_store=artifacts,
+        check_runner=CheckRunner(
+            {
+                CheckKind.ARTIFACT: ArtifactCheckAdapter(
+                    artifacts,
+                    {},
+                    default_rule=ArtifactCheckRule(minimum_count=1, require_non_empty=True),
+                )
+            }
+        ),
+        workspace=tmp_path,
+        attempt_budget=10,
+    )
+    service = ExecutionService(
+        uow_factory=database.unit_of_work,
+        planner=_ExplorationPlanner(),
+        orchestrator=orchestrator,
+        background_start=True,
+    )
+    project = service.create_project(CreateProject("branch-failure-project", "scheduler"))
+    goal = service.create_goal(
+        CreateGoal("branch-failure-goal", project.project_id, "survive one branch failure")
+    )
+    plan = service.propose_plan(
+        ProposePlan("branch-failure-plan", goal.goal_id, (NON_EMPTY_ARTIFACT_CRITERION,))
+    )
+    approved = service.approve_plan(
+        ApprovePlan(
+            "branch-failure-approve",
+            plan.plan_revision_id,
+            plan.completion_contract_id,
+        )
+    )
+    run_id = service.start_run(StartRun("branch-failure-start", approved.plan_revision_id)).run_id
+    profile = WorkerProfile("branch-failure", WorkerKind.BUILTIN, "scripted")
+    endpoint = WorkerEndpoint(
+        "branch-failure",
+        WorkerKind.BUILTIN,
+        WorkerEndpointType.IN_PROCESS,
+        "branch-failure",
+        2,
+    )
+    connector = _BlockingConnector(worker, fail_one_work=True)
+    runtime = ConcurrentRuntime(
+        uow_factory=database.unit_of_work,
+        orchestrator=orchestrator,
+        dispatcher=Dispatcher(
+            profiles=(profile,),
+            endpoints=(endpoint,),
+            capacity=CapacityPolicy(2, 2, 2, {}, {}),
+        ),
+        connectors={endpoint.worker_endpoint_id: connector},
+    )
+
+    async def scenario() -> tuple[RunStatus, ...]:
+        running = asyncio.create_task(runtime.run_until_idle())
+        await asyncio.wait_for(connector.two_work_active.wait(), timeout=5)
+        connector.release_work.set()
+        completed = await asyncio.wait_for(running, timeout=10)
+        return tuple(run.status for run in completed)
+
+    statuses = asyncio.run(scenario())
+
+    assert statuses == (RunStatus.COMPLETED,)
+    with database.read_session() as session:
+        run = session.states.get_run(run_id)
+        assert run is not None and run.status is RunStatus.COMPLETED
+        stored_plan = session.states.get_plan_revision(run.plan_revision_id)
+        assert stored_plan is not None
+        assert {branch.status for branch in stored_plan.branches} == {
+            BranchStatus.SELECTED,
+            BranchStatus.PRUNED,
+        }
+        attempts = session.states.list_attempts(run_id)
+        assert sum(attempt.status is AttemptStatus.INTERRUPTED for attempt in attempts) == 1
+        assert all(
+            attempt.status not in {AttemptStatus.PENDING, AttemptStatus.RUNNING}
+            and attempt.lease_expires_at is None
+            for attempt in attempts
+        )
+        assert session.states.list_dispatch_work()[0].status is DispatchWorkStatus.COMPLETED
+        assert all(
+            stored.event.type is not EventType.RUN_PAUSED for stored in session.events.list_events()
+        )

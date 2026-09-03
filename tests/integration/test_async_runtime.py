@@ -67,7 +67,7 @@ from ehai.domain.workers import (
 from ehai.infrastructure.artifacts import FilesystemArtifactStore
 from ehai.infrastructure.builtin_sessions import SQLiteBuiltinSessionStore
 from ehai.infrastructure.checks import ArtifactCheckAdapter, ArtifactCheckRule
-from ehai.infrastructure.sqlite import SQLiteDatabase
+from ehai.infrastructure.sqlite import SQLiteCurrentStateRepository, SQLiteDatabase
 from ehai.infrastructure.workers import BuiltinAgentConnector, FakeWorker
 
 
@@ -268,6 +268,68 @@ def test_runtime_restart_recovers_original_execution_without_duplicate_start(
             (run_id,),
         ).fetchone()[0]
         assert receipts == 2
+    finally:
+        connection.close()
+
+
+def test_terminal_transition_failure_replays_unconsumed_worker_events(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service, runtime, connector, database, _ = _build_runtime(
+        tmp_path,
+        exploration=False,
+    )
+    run_id, _ = _start(service)
+    original_record = SQLiteCurrentStateRepository.record_worker_event
+    failed = False
+
+    def fail_terminal_transition(
+        repository: SQLiteCurrentStateRepository,
+        attempt_id: ID,
+        worker_event_id: str,
+        *,
+        at: datetime,
+    ) -> bool:
+        nonlocal failed
+        recorded = original_record(repository, attempt_id, worker_event_id, at=at)
+        if not failed:
+            failed = True
+            raise RuntimeError("injected terminal transition failure")
+        return recorded
+
+    monkeypatch.setattr(
+        SQLiteCurrentStateRepository,
+        "record_worker_event",
+        fail_terminal_transition,
+    )
+    with pytest.raises(RuntimeError, match="terminal transition failure"):
+        asyncio.run(runtime.run_once())
+
+    with database.read_session() as session:
+        attempt = session.states.list_attempts(run_id)[0]
+        assert attempt.status is AttemptStatus.RUNNING
+        assert attempt.event_cursor is None
+        assert session.states.list_dispatch_work()[0].status is DispatchWorkStatus.CLAIMED
+    connection = database.connect()
+    try:
+        assert connection.execute("SELECT COUNT(*) FROM worker_event_receipts").fetchone()[0] == 0
+    finally:
+        connection.close()
+
+    monkeypatch.setattr(SQLiteCurrentStateRepository, "record_worker_event", original_record)
+    recovered = asyncio.run(runtime.recover_startup())
+
+    assert len(recovered) == 1 and recovered[0].status is RunStatus.COMPLETED
+    assert connector.recover_calls == [attempt.attempt_id]
+    with database.read_session() as session:
+        restored = session.states.list_attempts(run_id)[0]
+        assert restored.status is AttemptStatus.SUCCEEDED
+        assert restored.event_cursor == "2"
+        assert session.states.list_dispatch_work()[0].status is DispatchWorkStatus.COMPLETED
+    connection = database.connect()
+    try:
+        assert connection.execute("SELECT COUNT(*) FROM worker_event_receipts").fetchone()[0] == 2
     finally:
         connection.close()
 
