@@ -725,6 +725,100 @@ def test_builtin_agent_returns_durable_read_error_to_model(tmp_path: Path) -> No
     }
 
 
+def test_workspace_read_rejects_oversized_file_before_full_allocation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace-read-limit"
+    workspace.mkdir()
+    (workspace / "large.txt").write_bytes(b"x" * 9)
+    monkeypatch.setattr(builtin_tools, "_MAX_TOOL_OUTPUT_BYTES", 8)
+
+    def unexpected_read_bytes(_path: Path) -> bytes:
+        raise AssertionError("workspace_read must not allocate through Path.read_bytes")
+
+    monkeypatch.setattr(Path, "read_bytes", unexpected_read_bytes)
+    runtime = BuiltinToolRuntime(
+        artifact_store=cast(ArtifactStore, object()),
+        workspace=workspace,
+    )
+
+    with pytest.raises(RecoverableToolError, match="exceeds"):
+        asyncio.run(
+            runtime.executor.execute(
+                ToolCall("read-large", "workspace_read", {"path": "large.txt"}),
+                CancellationToken(),
+            )
+        )
+
+
+def test_workspace_search_bounds_lines_and_traversal(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace-search-limit"
+    workspace.mkdir()
+    (workspace / "a.txt").write_text("needle" + ("x" * 100), encoding="utf-8")
+    (workspace / "b.txt").write_text("other", encoding="utf-8")
+    runtime = BuiltinToolRuntime(
+        artifact_store=cast(ArtifactStore, object()),
+        workspace=workspace,
+    )
+    monkeypatch.setattr(builtin_tools, "_MAX_SEARCH_LINE_BYTES", 8)
+
+    bounded = asyncio.run(
+        runtime.executor.execute(
+            ToolCall("search-line", "workspace_search", {"path": ".", "query": "needle"}),
+            CancellationToken(),
+        )
+    )
+    assert isinstance(bounded, dict)
+    matches = cast(list[dict[str, JsonValue]], bounded["matches"])
+    assert matches[0]["text"] == "needlexx"
+    assert matches[0]["text_truncated"] is True
+
+    monkeypatch.setattr(builtin_tools, "_MAX_SEARCH_ENTRIES", 1)
+    truncated = asyncio.run(
+        runtime.executor.execute(
+            ToolCall("search-tree", "workspace_search", {"path": ".", "query": "absent"}),
+            CancellationToken(),
+        )
+    )
+    assert isinstance(truncated, dict)
+    assert truncated["truncated"] is True
+    assert truncated["truncation_reason"] == "traversal_limit"
+
+
+def test_workspace_search_yields_to_cancellation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace-search-cancel"
+    workspace.mkdir()
+    for index in range(100):
+        (workspace / f"{index:03}.txt").write_text("searchable", encoding="utf-8")
+    monkeypatch.setattr(builtin_tools, "_SEARCH_YIELD_INTERVAL", 1)
+    runtime = BuiltinToolRuntime(
+        artifact_store=cast(ArtifactStore, object()),
+        workspace=workspace,
+    )
+
+    async def invoke() -> None:
+        cancellation = CancellationToken()
+        task = asyncio.create_task(
+            runtime.executor.execute(
+                ToolCall("search-cancel", "workspace_search", {"path": ".", "query": "missing"}),
+                cancellation,
+            )
+        )
+        await asyncio.sleep(0)
+        cancellation.cancel()
+        with pytest.raises(AgentCancelledError):
+            await task
+
+    asyncio.run(invoke())
+
+
 def test_incomplete_read_only_tool_is_replayed_after_recovery(tmp_path: Path) -> None:
     store, session, execution = _execution_context(tmp_path)
     reads = 0

@@ -13,7 +13,7 @@ from contextlib import suppress
 from pathlib import Path
 from typing import cast
 
-from ehai import ID, JsonValue, normalize_id
+from ehai import ID, JsonValue, json_dumps, normalize_id
 from ehai.application.builtin_agent import (
     CancellationToken,
     RecoverableToolError,
@@ -27,6 +27,12 @@ from ehai.infrastructure.codex_transport import redact_codex_bytes
 
 _MAX_TOOL_OUTPUT_BYTES = 1024 * 1024
 _MAX_SEARCH_MATCHES = 100
+_MAX_LIST_ENTRIES = 1_000
+_MAX_SEARCH_ENTRIES = 10_000
+_MAX_SEARCH_FILES = 2_000
+_MAX_SEARCH_TOTAL_BYTES = 16 * 1024 * 1024
+_MAX_SEARCH_LINE_BYTES = 4 * 1024
+_SEARCH_YIELD_INTERVAL = 32
 _STREAM_CHUNK_BYTES = 8192
 _COMMAND_CANCEL_GRACE_SECONDS = 0.5
 _WINDOWS_HELPER_TIMEOUT_SECONDS = 5.0
@@ -170,11 +176,34 @@ class BuiltinToolRuntime:
         target = self._resolve(_required_string(arguments, "path"))
         if not target.is_dir():
             raise RecoverableToolError("not_directory", "Workspace path is not a directory")
+        entries: list[dict[str, JsonValue]] = []
+        truncated = False
+        try:
+            with os.scandir(target) as iterator:
+                for index, child in enumerate(iterator, start=1):
+                    if index > _MAX_LIST_ENTRIES:
+                        truncated = True
+                        break
+                    if index % _SEARCH_YIELD_INTERVAL == 0:
+                        await asyncio.sleep(0)
+                        cancellation.raise_if_cancelled()
+                    try:
+                        entries.append(
+                            {
+                                "name": child.name,
+                                "is_directory": child.is_dir(follow_symlinks=False),
+                            }
+                        )
+                    except OSError:
+                        continue
+        except OSError as error:
+            raise RecoverableToolError(
+                "read_failed", "Workspace directory could not be listed"
+            ) from error
+        ordered_entries = sorted(entries, key=_workspace_entry_name)
         return {
-            "entries": [
-                {"name": child.name, "is_directory": child.is_dir()}
-                for child in sorted(target.iterdir(), key=lambda item: item.name)
-            ]
+            "entries": [cast(JsonValue, entry) for entry in ordered_entries],
+            "truncated": truncated,
         }
 
     async def _workspace_search(
@@ -182,32 +211,65 @@ class BuiltinToolRuntime:
         arguments: dict[str, JsonValue],
         cancellation: CancellationToken,
     ) -> JsonValue:
+        cancellation.raise_if_cancelled()
         root = self._resolve(_required_string(arguments, "path"))
         if not root.exists():
             raise RecoverableToolError("not_found", "Workspace path does not exist")
         query = _tool_non_empty_text(_required_string(arguments, "query"), "query")
-        candidates = (root,) if root.is_file() else root.rglob("*")
+        candidates, traversal_limit = await _bounded_workspace_files(
+            root,
+            self.workspace,
+            cancellation,
+        )
         matches: list[JsonValue] = []
-        for path in candidates:
+        searched_bytes = 0
+        truncated_reason = traversal_limit
+        for file_index, path in enumerate(candidates, start=1):
             cancellation.raise_if_cancelled()
-            if not path.is_file() or path.stat().st_size > _MAX_TOOL_OUTPUT_BYTES:
-                continue
+            if file_index % _SEARCH_YIELD_INTERVAL == 0:
+                await asyncio.sleep(0)
+                cancellation.raise_if_cancelled()
             try:
-                lines = path.read_text(encoding="utf-8").splitlines()
-            except UnicodeDecodeError:
+                size = path.stat().st_size
+            except OSError:
                 continue
-            for line_number, line in enumerate(lines, start=1):
-                if query in line:
-                    matches.append(
-                        {
+            if size > _MAX_TOOL_OUTPUT_BYTES:
+                truncated_reason = truncated_reason or "file_size_limit"
+                continue
+            if searched_bytes + size > _MAX_SEARCH_TOTAL_BYTES:
+                return _search_result(matches, "byte_limit")
+            searched_bytes += size
+            start_index = len(matches)
+            try:
+                with path.open("r", encoding="utf-8") as stream:
+                    for line_number, line in enumerate(stream, start=1):
+                        if line_number % _SEARCH_YIELD_INTERVAL == 0:
+                            await asyncio.sleep(0)
+                            cancellation.raise_if_cancelled()
+                        if query not in line:
+                            continue
+                        text, text_truncated = _bounded_utf8_text(
+                            line.rstrip("\r\n"),
+                            _MAX_SEARCH_LINE_BYTES,
+                        )
+                        match: dict[str, JsonValue] = {
                             "path": path.relative_to(self.workspace).as_posix(),
                             "line": line_number,
-                            "text": line,
+                            "text": text,
+                            "text_truncated": text_truncated,
                         }
-                    )
-                    if len(matches) >= _MAX_SEARCH_MATCHES:
-                        return {"matches": matches, "truncated": True}
-        return {"matches": matches, "truncated": False}
+                        if _json_size(matches) + _json_size([match]) > _MAX_TOOL_OUTPUT_BYTES:
+                            return _search_result(matches, "output_limit")
+                        matches.append(match)
+                        if len(matches) >= _MAX_SEARCH_MATCHES:
+                            return _search_result(matches, "match_limit")
+            except UnicodeDecodeError:
+                del matches[start_index:]
+                continue
+            except OSError:
+                del matches[start_index:]
+                continue
+        return _search_result(matches, truncated_reason)
 
     async def _workspace_read(
         self,
@@ -219,13 +281,30 @@ class BuiltinToolRuntime:
         if not path.is_file():
             raise RecoverableToolError("not_found", "Workspace file does not exist")
         try:
-            content = path.read_bytes()
+            size = path.stat().st_size
         except OSError as error:
             raise RecoverableToolError("read_failed", "Workspace file could not be read") from error
-        if len(content) > _MAX_TOOL_OUTPUT_BYTES:
+        if size > _MAX_TOOL_OUTPUT_BYTES:
             raise RecoverableToolError(
                 "output_limit", "Workspace file exceeds the Tool output limit"
             )
+        content = bytearray()
+        try:
+            with path.open("rb") as stream:
+                while chunk := stream.read(
+                    min(_STREAM_CHUNK_BYTES, _MAX_TOOL_OUTPUT_BYTES + 1 - len(content))
+                ):
+                    content.extend(chunk)
+                    if len(content) > _MAX_TOOL_OUTPUT_BYTES:
+                        raise RecoverableToolError(
+                            "output_limit", "Workspace file exceeds the Tool output limit"
+                        )
+                    await asyncio.sleep(0)
+                    cancellation.raise_if_cancelled()
+        except RecoverableToolError:
+            raise
+        except OSError as error:
+            raise RecoverableToolError("read_failed", "Workspace file could not be read") from error
         try:
             decoded = content.decode("utf-8")
         except UnicodeDecodeError as error:
@@ -244,7 +323,13 @@ class BuiltinToolRuntime:
         if not path.is_file():
             raise RecoverableToolError("not_found", "Workspace file does not exist")
         try:
+            if path.stat().st_size > _MAX_TOOL_OUTPUT_BYTES:
+                raise RecoverableToolError(
+                    "output_limit", "Workspace file exceeds the Tool input limit"
+                )
             content = path.read_text(encoding="utf-8")
+        except RecoverableToolError:
+            raise
         except (OSError, UnicodeDecodeError) as error:
             raise RecoverableToolError(
                 "read_failed", "Workspace file could not be read as UTF-8 text"
@@ -255,6 +340,11 @@ class BuiltinToolRuntime:
                 "workspace_patch expected text must occur exactly once",
             )
         updated = content.replace(expected, replacement, 1)
+        if len(updated.encode("utf-8")) > _MAX_TOOL_OUTPUT_BYTES:
+            raise RecoverableToolError(
+                "output_limit", "workspace_patch result exceeds the Tool output limit"
+            )
+        cancellation.raise_if_cancelled()
         path.write_text(updated, encoding="utf-8")
         return {"path": path.relative_to(self.workspace).as_posix(), "changed": True}
 
@@ -378,6 +468,76 @@ class BuiltinToolRuntime:
         if not resolved.is_relative_to(self.workspace):
             raise RecoverableToolError("invalid_path", "Workspace Tool path escapes the Workspace")
         return resolved
+
+
+async def _bounded_workspace_files(
+    root: Path,
+    workspace: Path,
+    cancellation: CancellationToken,
+) -> tuple[tuple[Path, ...], str | None]:
+    if root.is_file():
+        return (root,), None
+    if not root.is_dir():
+        return (), None
+    files: list[Path] = []
+    directories = [root]
+    visited = 0
+    while directories:
+        directory = directories.pop()
+        child_directories: list[Path] = []
+        child_files: list[Path] = []
+        try:
+            with os.scandir(directory) as iterator:
+                for child in iterator:
+                    visited += 1
+                    if visited > _MAX_SEARCH_ENTRIES:
+                        return tuple(files), "traversal_limit"
+                    if visited % _SEARCH_YIELD_INTERVAL == 0:
+                        await asyncio.sleep(0)
+                        cancellation.raise_if_cancelled()
+                    try:
+                        if child.is_symlink():
+                            continue
+                        path = Path(child.path).resolve(strict=True)
+                        if not path.is_relative_to(workspace):
+                            continue
+                        if child.is_dir(follow_symlinks=False):
+                            child_directories.append(path)
+                        elif child.is_file(follow_symlinks=False):
+                            child_files.append(path)
+                    except OSError:
+                        continue
+        except OSError:
+            continue
+        for path in sorted(child_files, key=lambda item: item.name):
+            files.append(path)
+            if len(files) >= _MAX_SEARCH_FILES:
+                return tuple(files), "file_limit"
+        directories.extend(reversed(sorted(child_directories, key=lambda item: item.name)))
+    return tuple(files), None
+
+
+def _bounded_utf8_text(value: str, limit: int) -> tuple[str, bool]:
+    encoded = value.encode("utf-8")
+    if len(encoded) <= limit:
+        return value, False
+    return encoded[:limit].decode("utf-8", errors="ignore"), True
+
+
+def _workspace_entry_name(entry: dict[str, JsonValue]) -> str:
+    return cast(str, entry["name"])
+
+
+def _json_size(value: JsonValue) -> int:
+    return len(json_dumps(value).encode("utf-8"))
+
+
+def _search_result(matches: list[JsonValue], reason: str | None) -> JsonValue:
+    return {
+        "matches": matches,
+        "truncated": reason is not None,
+        "truncation_reason": reason,
+    }
 
 
 def _definition(
