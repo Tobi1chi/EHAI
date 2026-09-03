@@ -163,8 +163,14 @@ Invoke-RestMethod "$Api/runs/$($Run.data.run_id)/checkpoints"
 Invoke-RestMethod "$Api/runs/$($Run.data.run_id)/artifacts"
 Invoke-RestMethod "$Api/workers/profiles"
 Invoke-RestMethod "$Api/workers/endpoints"
+Invoke-RestMethod "$Api/runtime/health"
 $Events = Invoke-RestMethod "$Api/events?limit=100"
 ```
+
+`/runtime/health` 单独报告后台调度循环的 `starting/healthy/degraded/failed/stopped` 状态；HTTP API
+仍可响应不代表 Runtime 仍在调度。Runtime 对瞬时循环异常执行至多两次有界重启，连续失败后保留可观测
+的 `failed` 状态。Built-in background Run 的 pause/cancel 会先停止新调度并收敛所有活跃 Attempt，resume
+再恢复该 Run 的调度；pause/cancel 完成后不会遗留 pending/running Attempt。
 
 从 ExecutionTrace 取得 `attempt_id` 后，可以读取分配、Session/Execution、活动、heartbeat、progress、
 deadline、lease 和有界诊断：

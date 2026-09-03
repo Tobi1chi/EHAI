@@ -215,6 +215,7 @@ class ConcurrentRuntime:
         self._claim_owner = f"scheduler:{utc_now().timestamp()}"
         self._active_helpers: dict[ID, SingleSlotRuntime] = {}
         self._active_tasks: dict[ID, asyncio.Task[Run]] = {}
+        self._controlled_runs: set[ID] = set()
 
     @property
     def orchestrator(self) -> Orchestrator:
@@ -232,6 +233,68 @@ class ConcurrentRuntime:
         await helper.request_cancel(normalized_id)
         return await asyncio.shield(task)
 
+    async def quiesce_run(self, run_id: ID) -> None:
+        """Stop new scheduling and settle every active Attempt for one Run."""
+        normalized_id = normalize_id(run_id)
+        self._controlled_runs.add(normalized_id)
+        active: list[tuple[ID, SingleSlotRuntime, asyncio.Task[Run]]] = []
+        with self._uow_factory() as uow:
+            for attempt_id, task in tuple(self._active_tasks.items()):
+                attempt = uow.states.get_attempt(attempt_id)
+                helper = self._active_helpers.get(attempt_id)
+                if (
+                    attempt is not None
+                    and attempt.run_id == normalized_id
+                    and helper is not None
+                    and not task.done()
+                ):
+                    active.append((attempt_id, helper, task))
+        grace_seconds = self._policy.cancel_grace.total_seconds()
+        cancellations = await asyncio.gather(
+            *(
+                asyncio.wait_for(helper.request_cancel(attempt_id), timeout=grace_seconds)
+                for attempt_id, helper, _ in active
+            ),
+            return_exceptions=True,
+        )
+        cancellation_error = next(
+            (result for result in cancellations if isinstance(result, BaseException)),
+            None,
+        )
+        active_tasks = tuple(task for _, _, task in active)
+        if active_tasks:
+            try:
+                await asyncio.wait_for(
+                    asyncio.gather(*active_tasks, return_exceptions=True),
+                    timeout=grace_seconds,
+                )
+            except TimeoutError as error:
+                for task in active_tasks:
+                    if not task.done():
+                        task.cancel()
+                await asyncio.gather(*active_tasks, return_exceptions=True)
+                if cancellation_error is None:
+                    cancellation_error = error
+        with self._uow_factory() as uow:
+            unsettled = tuple(
+                attempt
+                for attempt in uow.states.list_attempts(normalized_id)
+                if attempt.status is AttemptStatus.RUNNING
+            )
+        for attempt in unsettled:
+            self._orchestrator.interrupt_attempt(
+                attempt.attempt_id,
+                "Runtime control quiesced an unsettled execution",
+            )
+        if cancellation_error is not None:
+            raise RuntimeError(
+                f"Runtime could not quiesce Run {normalized_id}: "
+                f"{type(cancellation_error).__name__}"
+            ) from cancellation_error
+
+    def resume_run_scheduling(self, run_id: ID) -> None:
+        self._controlled_runs.discard(normalize_id(run_id))
+
     async def run_until_idle(self) -> tuple[Run, ...]:
         """Run until every dispatchable Run is terminal or only blocked work remains."""
         await self._refresh_endpoint_health()
@@ -240,6 +303,22 @@ class ConcurrentRuntime:
         terminal: dict[ID, Run] = {}
         while works or tasks:
             works.update(self._claim_all_work())
+            with self._uow_factory() as uow:
+                inactive = tuple(
+                    (run_id, work, uow.states.get_run(run_id)) for run_id, work in works.items()
+                )
+            for run_id, work, run in inactive:
+                if run is None:
+                    continue
+                should_finish = run.status in {
+                    RunStatus.CANCELLED,
+                    RunStatus.COMPLETED,
+                    RunStatus.FAILED,
+                } or (run.status is RunStatus.PAUSED and run_id not in self._controlled_runs)
+                if should_finish:
+                    self._helper_for_first_endpoint().finish_dispatch_work(work)
+                    works.pop(run_id, None)
+                    terminal[run_id] = run
             scheduled = self._schedule(works, tasks)
             if not tasks:
                 if not scheduled:
@@ -259,7 +338,8 @@ class ConcurrentRuntime:
                     if active.workspace is not None and self._workspace_manager is not None:
                         self._workspace_manager.cleanup(active.workspace)
                 if run.status is not RunStatus.RUNNING:
-                    active.helper.finish_dispatch_work(active.work)
+                    if not (run.status is RunStatus.PAUSED and run.run_id in self._controlled_runs):
+                        active.helper.finish_dispatch_work(active.work)
                     works.pop(active.work.run_id, None)
                     terminal[run.run_id] = run
         return tuple(terminal[key] for key in sorted(terminal))
@@ -426,6 +506,8 @@ class ConcurrentRuntime:
     ) -> tuple[DispatchWork, Attempt, ID, DispatchAssignment, bool, bool] | None:
         with self._uow_factory() as uow:
             for run_id in sorted(works):
+                if run_id in self._controlled_runs:
+                    continue
                 run = uow.states.get_run(run_id)
                 if run is None or run.status is not RunStatus.RUNNING:
                     continue

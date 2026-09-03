@@ -36,7 +36,7 @@ from ehai.application.planner import (
     Planner,
     PlanProposal,
 )
-from ehai.application.run_control import RunControlError, RunController
+from ehai.application.run_control import BackgroundRunController, RunControlError, RunController
 from ehai.application.service import ApplicationError, ExecutionService
 from ehai.application.workers import WorkerAdapter
 from ehai.domain.checking import CheckKind
@@ -186,7 +186,11 @@ def build_service(
         uow_factory=database.unit_of_work,
         planner=planner,
         orchestrator=orchestrator,
-        run_controller=(None if worker is None else RunController(database.unit_of_work, worker)),
+        run_controller=(
+            BackgroundRunController(database.unit_of_work)
+            if worker is None
+            else RunController(database.unit_of_work, worker)
+        ),
         recovery_service=RecoveryService(uow_factory=database.unit_of_work),
         background_start=background_start,
     )

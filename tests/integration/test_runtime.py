@@ -1,9 +1,11 @@
-from datetime import UTC, datetime
+import time
+from datetime import UTC, datetime, timedelta
 
 from fastapi.testclient import TestClient
 from pytest import MonkeyPatch, raises
 
 from ehai import new_id
+from ehai.application.execution_policy import ExecutionPolicy
 from ehai.domain.execution import Attempt, AttemptStatus, Run, RunStatus
 from ehai.domain.goal import CompletionContract, Goal, Project
 from ehai.domain.planning import PlanNode, PlanNodeStatus, PlanRevision, PlanRevisionStatus
@@ -49,6 +51,69 @@ def test_runtime_builtin_command_is_disabled_by_default() -> None:
 
     with raises(ValueError, match="argv sequences"):
         runtime._normalize_allowed_command_argv(("uv",))
+
+
+def test_builtin_runtime_wires_timeout_and_reports_supervisor_failure(
+    tmp_path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+    calls = 0
+
+    class _CrashingConcurrentRuntime:
+        def __init__(self, **options: object) -> None:
+            captured.update(options)
+
+        async def recover_startup(self) -> tuple[object, ...]:
+            return ()
+
+        async def run_until_idle(self) -> tuple[object, ...]:
+            nonlocal calls
+            calls += 1
+            raise RuntimeError("injected runtime loop crash")
+
+        def connector_for(self, worker_endpoint_id: object) -> None:
+            del worker_endpoint_id
+
+        async def cancel_attempt(self, attempt_id: object) -> None:
+            del attempt_id
+
+        async def quiesce_run(self, run_id: object) -> None:
+            del run_id
+
+        def resume_run_scheduling(self, run_id: object) -> None:
+            del run_id
+
+    monkeypatch.setattr(runtime, "ConcurrentRuntime", _CrashingConcurrentRuntime)
+    app = create_local_app(
+        tmp_path / "supervisor.sqlite3",
+        tmp_path / "supervisor-artifacts",
+        worker_kind="builtin",
+        worker_workspace=tmp_path,
+        builtin_model="scripted",
+        worker_timeout_seconds=17,
+        p2_runtime=True,
+    )
+
+    with TestClient(app) as client:
+        deadline = time.monotonic() + 2
+        health = client.get("/api/v1/runtime/health").json()["data"]
+        while health["status"] != "failed" and time.monotonic() < deadline:
+            time.sleep(0.02)
+            health = client.get("/api/v1/runtime/health").json()["data"]
+        assert health == {
+            "status": "failed",
+            "loop_active": False,
+            "consecutive_failures": 3,
+            "restart_count": 2,
+            "last_error": "RuntimeError: Runtime iteration failed",
+        }
+        assert client.get("/api/v1/events").status_code == 200
+
+    policy = captured["policy"]
+    assert isinstance(policy, ExecutionPolicy)
+    assert policy.absolute_attempt_timeout == timedelta(seconds=17)
+    assert calls == 3
 
 
 def test_runtime_composes_codex_planner_with_independent_timeout(

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import threading
 import time
 from datetime import UTC, datetime
 from pathlib import Path
@@ -62,6 +64,21 @@ class _ApiBuiltinModelClient:
             ),
             provider_response_id="api-response",
         )
+
+    async def aclose(self) -> None:
+        self.closed = True
+
+
+class _BlockingApiBuiltinModelClient:
+    def __init__(self) -> None:
+        self.started = threading.Event()
+        self.closed = False
+
+    async def complete(self, request: ModelRequest) -> ModelResponse:
+        del request
+        self.started.set()
+        await asyncio.Event().wait()
+        raise AssertionError("cancelled model call resumed unexpectedly")
 
     async def aclose(self) -> None:
         self.closed = True
@@ -772,3 +789,96 @@ def test_local_p2_api_runs_standalone_builtin_worker(tmp_path: Path) -> None:
     assert contract["criteria"] == [NON_EMPTY_ARTIFACT_CRITERION]
     assert contract["required_check_ids"] == [required_checks[0]["check_id"]]
     assert required_checks[0]["kind"] == "artifact"
+
+
+def test_local_builtin_background_run_pause_resume_and_cancel(tmp_path: Path) -> None:
+    blocking = _BlockingApiBuiltinModelClient()
+    resumed = _ApiBuiltinModelClient()
+    clients = [blocking, resumed, _BlockingApiBuiltinModelClient()]
+    app = create_local_app(
+        tmp_path / "builtin-controls.sqlite3",
+        tmp_path / "builtin-controls-artifacts",
+        worker_kind="builtin",
+        worker_workspace=tmp_path,
+        builtin_model="scripted",
+        builtin_capacity=1,
+        builtin_model_client_factory=lambda _profile, _request: clients.pop(0),
+        p2_runtime=True,
+    )
+
+    def create_run(client: TestClient, suffix: str) -> dict[str, object]:
+        project = client.post(
+            "/api/v1/projects",
+            json={"idempotency_key": f"project-{suffix}", "name": f"project-{suffix}"},
+        ).json()["data"]
+        goal = client.post(
+            "/api/v1/goals",
+            json={
+                "idempotency_key": f"goal-{suffix}",
+                "project_id": project["project_id"],
+                "objective": f"background control {suffix}",
+            },
+        ).json()["data"]
+        plan = client.post(
+            "/api/v1/plans/propose",
+            json={
+                "idempotency_key": f"plan-{suffix}",
+                "goal_id": goal["goal_id"],
+                "criteria": ["artifact:non-empty"],
+            },
+        ).json()["data"]
+        client.post(
+            "/api/v1/plans/approve",
+            json={
+                "idempotency_key": f"approve-{suffix}",
+                "plan_revision_id": plan["plan_revision_id"],
+                "completion_contract_id": plan["completion_contract_id"],
+            },
+        )
+        return client.post(
+            "/api/v1/runs/start",
+            json={
+                "idempotency_key": f"start-{suffix}",
+                "plan_revision_id": plan["plan_revision_id"],
+            },
+        ).json()["data"]
+
+    with TestClient(app) as client:
+        started = create_run(client, "pause")
+        assert blocking.started.wait(timeout=5)
+        paused = client.post(
+            f"/api/v1/runs/{started['run_id']}/pause",
+            json={"idempotency_key": "pause-background"},
+        )
+        assert paused.status_code == 200, paused.text
+        assert paused.json()["data"]["status"] == "paused"
+        paused_trace = client.get(f"/api/v1/runs/{started['run_id']}/trace").json()["data"]
+        assert all(
+            attempt["status"] not in {"pending", "running"} for attempt in paused_trace["attempts"]
+        )
+
+        resumed_response = client.post(
+            f"/api/v1/runs/{started['run_id']}/resume",
+            json={"idempotency_key": "resume-background"},
+        )
+        assert resumed_response.status_code == 200, resumed_response.text
+        assert resumed_response.json()["data"]["status"] == "running"
+        deadline = time.monotonic() + 5
+        current = resumed_response.json()["data"]
+        while current["status"] != "completed" and time.monotonic() < deadline:
+            time.sleep(0.05)
+            current = client.get(f"/api/v1/runs/{started['run_id']}").json()["data"]
+        assert current["status"] == "completed"
+
+        pending = create_run(client, "cancel")
+        cancelled = client.post(
+            f"/api/v1/runs/{pending['run_id']}/cancel",
+            json={"idempotency_key": "cancel-background", "reason": "test cancellation"},
+        )
+        assert cancelled.status_code == 200, cancelled.text
+        assert cancelled.json()["data"]["status"] == "cancelled"
+        cancelled_trace = client.get(f"/api/v1/runs/{pending['run_id']}/trace").json()["data"]
+        assert all(
+            attempt["status"] not in {"pending", "running"}
+            for attempt in cancelled_trace["attempts"]
+        )

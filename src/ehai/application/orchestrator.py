@@ -411,8 +411,8 @@ class Orchestrator:
                     if candidate.status is PlanNodeStatus.PENDING
                     else candidate
                 )
-                plan = _replace_node(plan, ready)
                 if candidate.status is PlanNodeStatus.PENDING:
+                    plan = _replace_node(plan, ready)
                     uow.events.append(
                         self._event(
                             EventType.PLAN_NODE_READIED,

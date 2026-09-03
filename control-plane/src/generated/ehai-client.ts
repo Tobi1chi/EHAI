@@ -241,6 +241,14 @@ export type WorkerEndpoint = {
   readonly status: "enabled" | "draining" | "disabled";
 };
 
+export type RuntimeHealth = {
+  readonly status: "starting" | "healthy" | "degraded" | "failed" | "stopped";
+  readonly loop_active: boolean;
+  readonly consecutive_failures: number;
+  readonly restart_count: number;
+  readonly last_error: string | null;
+};
+
 export type AttemptRuntime = {
   readonly attempt_id: Id;
   readonly worker_profile_id: NullableId;
@@ -324,6 +332,10 @@ export type WorkerProfileListResponse = {
 
 export type WorkerEndpointListResponse = {
   readonly data: WorkerEndpointList;
+};
+
+export type RuntimeHealthResponse = {
+  readonly data: RuntimeHealth;
 };
 
 export type AttemptRuntimeResponse = {

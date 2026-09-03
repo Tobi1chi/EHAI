@@ -321,6 +321,190 @@ class RunController:
             )
 
 
+class BackgroundRunController:
+    """Commit controls after an asynchronous Runtime has quiesced active Attempts."""
+
+    def __init__(
+        self,
+        uow_factory: UnitOfWorkFactory,
+        *,
+        clock: Callable[[], datetime] = utc_now,
+    ) -> None:
+        self._uow_factory = uow_factory
+        self._clock = clock
+
+    def pause(self, run_id: ID, *, receipt: CommandReceipt | None = None) -> Run:
+        normalized_id = normalize_id(run_id)
+        at = self._clock()
+        with self._uow_factory() as uow:
+            run, _, attempts = _background_snapshot(uow, normalized_id)
+            if any(attempt.status is AttemptStatus.RUNNING for attempt in attempts):
+                raise RunControlError(
+                    f"run {run.run_id} must quiesce active Attempts before background pause"
+                )
+            for attempt in attempts:
+                if attempt.status is not AttemptStatus.PENDING:
+                    continue
+                cancelled = attempt.cancel("Run paused", at=at)
+                uow.states.put_attempt(cancelled)
+                uow.events.append(
+                    _event(
+                        EventType.ATTEMPT_CANCELLED,
+                        run,
+                        attempt.attempt_id,
+                        {"attempt_id": attempt.attempt_id, "reason": "Run paused"},
+                        at,
+                    )
+                )
+            if run.status is RunStatus.PENDING:
+                run = run.start(at=at)
+                uow.states.put_run(run)
+                uow.events.append(
+                    _event(EventType.RUN_STARTED, run, run.run_id, {"run_id": run.run_id}, at)
+                )
+            if run.status is RunStatus.PAUSED:
+                paused = run
+            else:
+                paused = run.pause()
+                uow.states.put_run(paused)
+                uow.events.append(
+                    _event(
+                        EventType.RUN_PAUSED,
+                        paused,
+                        paused.run_id,
+                        {"run_id": paused.run_id},
+                        at,
+                    )
+                )
+            if receipt is not None:
+                uow.command_receipts.put(receipt)
+            uow.commit()
+            return paused
+
+    def resume(self, run_id: ID, *, receipt: CommandReceipt | None = None) -> Run:
+        normalized_id = normalize_id(run_id)
+        at = self._clock()
+        with self._uow_factory() as uow:
+            run, plan, attempts = _background_snapshot(uow, normalized_id)
+            resumed = run.resume()
+            nodes = list(plan.nodes)
+            readied: list[PlanNode] = []
+            for index, node in enumerate(nodes):
+                if node.status is not PlanNodeStatus.FAILED:
+                    continue
+                node_attempts = tuple(
+                    attempt for attempt in attempts if attempt.plan_node_id == node.plan_node_id
+                )
+                if not node_attempts:
+                    continue
+                latest = node_attempts[-1]
+                if latest.status is AttemptStatus.SUCCEEDED:
+                    raise RunControlError(
+                        f"run {run.run_id} cannot resume after succeeded Attempt "
+                        f"{latest.attempt_id} left PlanNode {node.plan_node_id} failed"
+                    )
+                if latest.status in {
+                    AttemptStatus.CANCELLED,
+                    AttemptStatus.FAILED,
+                    AttemptStatus.INTERRUPTED,
+                    AttemptStatus.TIMED_OUT,
+                }:
+                    ready = node.retry()
+                    nodes[index] = ready
+                    readied.append(ready)
+            if readied:
+                plan = _replace_nodes(plan, tuple(nodes))
+                uow.states.put_plan_revision(plan)
+                for node in readied:
+                    uow.events.append(
+                        _event(
+                            EventType.PLAN_NODE_READIED,
+                            resumed,
+                            node.plan_node_id,
+                            {"plan_node_id": node.plan_node_id, "reason": "Run resumed"},
+                            at,
+                        )
+                    )
+            uow.states.put_run(resumed)
+            uow.events.append(
+                _event(
+                    EventType.RUN_RESUMED,
+                    resumed,
+                    resumed.run_id,
+                    {"run_id": resumed.run_id},
+                    at,
+                )
+            )
+            if receipt is not None:
+                uow.command_receipts.put(receipt)
+            uow.commit()
+            return resumed
+
+    def cancel(
+        self,
+        run_id: ID,
+        reason: str | None = None,
+        *,
+        receipt: CommandReceipt | None = None,
+    ) -> Run:
+        normalized_id = normalize_id(run_id)
+        at = self._clock()
+        cancellation_reason = reason or "Run cancelled"
+        with self._uow_factory() as uow:
+            run, _, attempts = _background_snapshot(uow, normalized_id)
+            if any(attempt.status is AttemptStatus.RUNNING for attempt in attempts):
+                raise RunControlError(
+                    f"run {run.run_id} must quiesce active Attempts before background cancel"
+                )
+            for attempt in attempts:
+                if attempt.status is not AttemptStatus.PENDING:
+                    continue
+                cancelled = attempt.cancel(cancellation_reason, at=at)
+                uow.states.put_attempt(cancelled)
+                uow.events.append(
+                    _event(
+                        EventType.ATTEMPT_CANCELLED,
+                        run,
+                        attempt.attempt_id,
+                        {"attempt_id": attempt.attempt_id, "reason": cancellation_reason},
+                        at,
+                    )
+                )
+            cancelled_run = run.cancel(cancellation_reason, at=at)
+            uow.states.put_run(cancelled_run)
+            uow.events.append(
+                _event(
+                    EventType.RUN_CANCELLED,
+                    cancelled_run,
+                    cancelled_run.run_id,
+                    {"run_id": cancelled_run.run_id, "reason": cancellation_reason},
+                    at,
+                )
+            )
+            if receipt is not None:
+                uow.command_receipts.put(receipt)
+            uow.commit()
+            return cancelled_run
+
+
+RunControllerPort = RunController | BackgroundRunController
+
+
+def _background_snapshot(
+    uow: UnitOfWork,
+    run_id: ID,
+) -> tuple[Run, PlanRevision, tuple[Attempt, ...]]:
+    run = uow.states.get_run(run_id)
+    if run is None:
+        raise RunControlError(f"Run {run_id} is not persisted")
+    plan = uow.states.get_plan_revision(run.plan_revision_id)
+    if plan is None:
+        raise RunControlError(
+            f"Run {run.run_id} PlanRevision {run.plan_revision_id} is not persisted"
+        )
+    return run, plan, uow.states.list_attempts(run.run_id)
+
+
 def _last_retryable_attempt(attempts: tuple[Attempt, ...]) -> Attempt | None:
     if not attempts:
         return None
@@ -350,6 +534,23 @@ def _replace_node(plan: PlanRevision, replacement: PlanNode) -> PlanRevision:
         raise RunControlError(
             f"PlanNode {replacement.plan_node_id} is not in PlanRevision {plan.plan_revision_id}"
         )
+    return PlanRevision.rehydrate(
+        plan_revision_id=plan.plan_revision_id,
+        goal_id=plan.goal_id,
+        version=plan.version,
+        completion_contract_id=plan.completion_contract_id,
+        completion_contract_version=plan.completion_contract_version,
+        nodes=nodes,
+        edges=plan.edges,
+        branches=plan.branches,
+        created_at=plan.created_at,
+        status=plan.status,
+        approved_at=plan.approved_at,
+        supersedes_plan_revision_id=plan.supersedes_plan_revision_id,
+    )
+
+
+def _replace_nodes(plan: PlanRevision, nodes: tuple[PlanNode, ...]) -> PlanRevision:
     return PlanRevision.rehydrate(
         plan_revision_id=plan.plan_revision_id,
         goal_id=plan.goal_id,

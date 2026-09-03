@@ -26,7 +26,7 @@ from ehai.application.commands import (
 from ehai.application.orchestrator import Orchestrator
 from ehai.application.planner import Planner
 from ehai.application.ports import CommandReceipt, UnitOfWork
-from ehai.application.run_control import RunController
+from ehai.application.run_control import RunControllerPort
 from ehai.domain.events import Event, EventType
 from ehai.domain.execution import AttemptStatus, Run, RunStatus
 from ehai.domain.goal import CompletionContract, Goal, Project
@@ -57,7 +57,7 @@ class ExecutionService:
         uow_factory: UnitOfWorkFactory,
         planner: Planner,
         orchestrator: Orchestrator,
-        run_controller: RunController | None = None,
+        run_controller: RunControllerPort | None = None,
         recovery_service: RecoveryService | None = None,
         clock: Callable[[], datetime] = utc_now,
         id_factory: Callable[[], ID] = new_id,
@@ -417,6 +417,8 @@ class ExecutionService:
             command.fingerprint,
         )
         if existing is not None:
+            if self._background_start:
+                return existing
             if existing.status is RunStatus.PAUSED and self._was_paused_by_startup(existing.run_id):
                 return self._resume_and_execute_serially(existing.run_id)
             return (
@@ -430,6 +432,8 @@ class ExecutionService:
             command.fingerprint,
             {"run_id": command.run_id},
         )
+        if self._background_start:
+            return self._required_run_controller().resume(command.run_id, receipt=receipt)
         return self._resume_and_execute_serially(command.run_id, receipt=receipt)
 
     def cancel_run(self, command: CancelRun) -> Run:
@@ -473,7 +477,7 @@ class ExecutionService:
             )
             return None if existing is None else _required_run(uow, _result_id(existing, "run_id"))
 
-    def _required_run_controller(self) -> RunController:
+    def _required_run_controller(self) -> RunControllerPort:
         if self._run_controller is None:
             raise ApplicationError("Run control is not configured")
         return self._run_controller

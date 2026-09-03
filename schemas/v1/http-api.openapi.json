@@ -703,6 +703,54 @@
         }
       }
     },
+    "/api/v1/runtime/health": {
+      "get": {
+        "summary": "Get Runtime Health",
+        "operationId": "get_runtime_health_api_v1_runtime_health_get",
+        "responses": {
+          "200": {
+            "description": "Runtime scheduler health",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "queries.schema.json#/$defs/RuntimeHealthResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Unprocessable Entity",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/workers/profiles": {
       "get": {
         "summary": "List Worker Profiles",

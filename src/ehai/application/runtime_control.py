@@ -29,6 +29,25 @@ class WorkerRequestStatus(StrEnum):
     DECLINED = "declined"
 
 
+class RuntimeHealthStatus(StrEnum):
+    STARTING = "starting"
+    HEALTHY = "healthy"
+    DEGRADED = "degraded"
+    FAILED = "failed"
+    STOPPED = "stopped"
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimeHealthView:
+    """In-process scheduler health, separate from HTTP service availability."""
+
+    status: RuntimeHealthStatus
+    loop_active: bool
+    consecutive_failures: int
+    restart_count: int
+    last_error: str | None = None
+
+
 @dataclass(frozen=True, slots=True)
 class WaitingWorkerRequestView:
     """Sanitized request metadata with no provider transcript or internal path."""
@@ -78,6 +97,13 @@ class ControllableRuntime(Protocol):
     async def cancel_attempt(self, attempt_id: ID) -> Run: ...
 
 
+@runtime_checkable
+class QuiescibleRuntime(Protocol):
+    async def quiesce_run(self, run_id: ID) -> None: ...
+
+    def resume_run_scheduling(self, run_id: ID) -> None: ...
+
+
 class RuntimeControlService:
     """Coordinate explicit P2 commands with one single-process Runtime registry."""
 
@@ -97,6 +123,69 @@ class RuntimeControlService:
         self._bindings: dict[ID, tuple[InteractiveRuntimeConnector, int | str]] = {}
         self._views: dict[ID, WaitingWorkerRequestView] = {}
         self._command_results: dict[str, tuple[str, object]] = {}
+        self._runtime_health = RuntimeHealthView(
+            RuntimeHealthStatus.STARTING,
+            False,
+            0,
+            0,
+        )
+
+    def runtime_health(self) -> RuntimeHealthView:
+        return self._runtime_health
+
+    def mark_runtime_starting(self) -> None:
+        self._runtime_health = replace(
+            self._runtime_health,
+            status=RuntimeHealthStatus.STARTING,
+            loop_active=True,
+            last_error=None,
+        )
+
+    def mark_runtime_healthy(self) -> None:
+        self._runtime_health = replace(
+            self._runtime_health,
+            status=RuntimeHealthStatus.HEALTHY,
+            loop_active=True,
+            consecutive_failures=0,
+            last_error=None,
+        )
+
+    def mark_runtime_failure(self, error: BaseException, *, terminal: bool) -> None:
+        self._runtime_health = replace(
+            self._runtime_health,
+            status=(RuntimeHealthStatus.FAILED if terminal else RuntimeHealthStatus.DEGRADED),
+            loop_active=not terminal,
+            consecutive_failures=self._runtime_health.consecutive_failures + 1,
+            restart_count=self._runtime_health.restart_count + (0 if terminal else 1),
+            last_error=f"{type(error).__name__}: Runtime iteration failed",
+        )
+
+    def mark_runtime_stopped(self) -> None:
+        self._runtime_health = replace(
+            self._runtime_health,
+            status=RuntimeHealthStatus.STOPPED,
+            loop_active=False,
+        )
+
+    async def quiesce_run(self, run_id: ID) -> None:
+        seen: set[int] = set()
+        for runtime in self._runtimes.values():
+            identity = id(runtime)
+            if identity in seen:
+                continue
+            seen.add(identity)
+            if isinstance(runtime, QuiescibleRuntime):
+                await runtime.quiesce_run(run_id)
+
+    def resume_run_scheduling(self, run_id: ID) -> None:
+        seen: set[int] = set()
+        for runtime in self._runtimes.values():
+            identity = id(runtime)
+            if identity in seen:
+                continue
+            seen.add(identity)
+            if isinstance(runtime, QuiescibleRuntime):
+                runtime.resume_run_scheduling(run_id)
 
     def list_waiting_requests(self, attempt_id: ID) -> tuple[WaitingWorkerRequestView, ...]:
         attempt = self._attempt(attempt_id)

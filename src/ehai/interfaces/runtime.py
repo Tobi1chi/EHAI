@@ -6,6 +6,7 @@ import argparse
 import asyncio
 from collections.abc import Callable, Sequence
 from contextlib import suppress
+from datetime import timedelta
 from pathlib import Path
 from typing import cast
 
@@ -17,6 +18,7 @@ from ehai import ID, json_loads
 from ehai.application.async_runtime import RuntimeConnector, SingleSlotRuntime
 from ehai.application.builtin_agent import ModelClient
 from ehai.application.execution_contracts import OPENAI_CREDENTIAL_REF
+from ehai.application.execution_policy import ExecutionPolicy
 from ehai.application.queries import QueryService
 from ehai.application.runtime_control import RuntimeControlService
 from ehai.application.scheduler import CapacityPolicy, ConcurrentRuntime, Dispatcher
@@ -35,6 +37,9 @@ from ehai.infrastructure.workers import BuiltinAgentConnector, WorkerAdapterConn
 from ehai.infrastructure.workspaces import WorkspaceManager
 from ehai.interfaces.api import create_app
 from ehai.interfaces.cli import build_service
+
+_MAX_RUNTIME_RESTARTS = 2
+_RUNTIME_RESTART_BASE_SECONDS = 0.05
 
 
 def create_local_app(
@@ -178,6 +183,10 @@ def create_local_app(
                 capacity=capacity,
             ),
             connectors={endpoint.worker_endpoint_id: connector},
+            policy=ExecutionPolicy(
+                absolute_attempt_timeout=timedelta(seconds=worker_timeout_seconds),
+                max_concurrency=endpoint_capacity,
+            ),
             workspace_manager=workspace_manager,
         )
     else:
@@ -198,13 +207,33 @@ def create_local_app(
     task: asyncio.Task[None] | None = None
 
     async def runtime_loop() -> None:
-        await runtime.recover_startup()
+        consecutive_failures = 0
+        needs_recovery = True
+        runtime_control.mark_runtime_starting()
         while True:
-            if isinstance(runtime, ConcurrentRuntime):
-                completed = await runtime.run_until_idle()
-            else:
-                result = await runtime.run_once()
-                completed = () if result is None else (result,)
+            try:
+                if needs_recovery:
+                    await runtime.recover_startup()
+                    needs_recovery = False
+                if isinstance(runtime, ConcurrentRuntime):
+                    completed = await runtime.run_until_idle()
+                else:
+                    result = await runtime.run_once()
+                    completed = () if result is None else (result,)
+            except asyncio.CancelledError:
+                raise
+            except Exception as error:
+                terminal = consecutive_failures >= _MAX_RUNTIME_RESTARTS
+                runtime_control.mark_runtime_failure(error, terminal=terminal)
+                if terminal:
+                    return
+                delay = _RUNTIME_RESTART_BASE_SECONDS * (2**consecutive_failures)
+                consecutive_failures += 1
+                needs_recovery = True
+                await asyncio.sleep(delay)
+                continue
+            consecutive_failures = 0
+            runtime_control.mark_runtime_healthy()
             if not completed:
                 await asyncio.sleep(0.05)
 
@@ -217,6 +246,7 @@ def create_local_app(
             task.cancel()
             with suppress(asyncio.CancelledError):
                 await task
+        runtime_control.mark_runtime_stopped()
         if isinstance(connector, BuiltinAgentConnector):
             await connector.close()
 

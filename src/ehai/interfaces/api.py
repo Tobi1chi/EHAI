@@ -249,32 +249,48 @@ def create_app(
         response_model=DataResponse,
         responses=_RUN_WRITE_RESPONSES,
     )
-    def pause_run(run_id: UuidInput, request: RunActionRequest) -> DataResponse:
-        return _response(
-            execution_service.pause_run(PauseRun(request.idempotency_key, _id(str(run_id))))
-        )
+    async def pause_run(run_id: UuidInput, request: RunActionRequest) -> DataResponse:
+        normalized_id = _id(str(run_id))
+        if runtime_control is not None:
+            await runtime_control.quiesce_run(normalized_id)
+        try:
+            paused = execution_service.pause_run(PauseRun(request.idempotency_key, normalized_id))
+        except BaseException:
+            if runtime_control is not None:
+                runtime_control.resume_run_scheduling(normalized_id)
+            raise
+        return _response(paused)
 
     @router.post(
         "/runs/{run_id}/resume",
         response_model=DataResponse,
         responses=_RUN_WRITE_RESPONSES,
     )
-    def resume_run(run_id: UuidInput, request: RunActionRequest) -> DataResponse:
-        return _response(
-            execution_service.resume_run(ResumeRun(request.idempotency_key, _id(str(run_id))))
-        )
+    async def resume_run(run_id: UuidInput, request: RunActionRequest) -> DataResponse:
+        normalized_id = _id(str(run_id))
+        resumed = execution_service.resume_run(ResumeRun(request.idempotency_key, normalized_id))
+        if runtime_control is not None:
+            runtime_control.resume_run_scheduling(normalized_id)
+        return _response(resumed)
 
     @router.post(
         "/runs/{run_id}/cancel",
         response_model=DataResponse,
         responses=_RUN_WRITE_RESPONSES,
     )
-    def cancel_run(run_id: UuidInput, request: CancelRunRequest) -> DataResponse:
-        return _response(
-            execution_service.cancel_run(
-                CancelRun(request.idempotency_key, _id(str(run_id)), request.reason)
+    async def cancel_run(run_id: UuidInput, request: CancelRunRequest) -> DataResponse:
+        normalized_id = _id(str(run_id))
+        if runtime_control is not None:
+            await runtime_control.quiesce_run(normalized_id)
+        try:
+            cancelled = execution_service.cancel_run(
+                CancelRun(request.idempotency_key, normalized_id, request.reason)
             )
-        )
+        except BaseException:
+            if runtime_control is not None:
+                runtime_control.resume_run_scheduling(normalized_id)
+            raise
+        return _response(cancelled)
 
     @router.get(
         "/runs/{run_id}",
@@ -291,6 +307,15 @@ def create_app(
     )
     def list_worker_profiles() -> DataResponse:
         return _response(query_service.list_worker_profiles())
+
+    @router.get(
+        "/runtime/health",
+        response_model=DataResponse,
+        responses=_read_responses("RuntimeHealthResponse", "Runtime scheduler health"),
+    )
+    def get_runtime_health() -> DataResponse:
+        control = _required_runtime_control(runtime_control)
+        return _response(control.runtime_health())
 
     @router.get(
         "/workers/endpoints",

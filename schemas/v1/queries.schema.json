@@ -492,6 +492,20 @@
         "status": {"enum": ["enabled", "draining", "disabled"]}
       }
     },
+    "RuntimeHealth": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status", "loop_active", "consecutive_failures", "restart_count", "last_error"
+      ],
+      "properties": {
+        "status": {"enum": ["starting", "healthy", "degraded", "failed", "stopped"]},
+        "loop_active": {"type": "boolean"},
+        "consecutive_failures": {"type": "integer", "minimum": 0},
+        "restart_count": {"type": "integer", "minimum": 0},
+        "last_error": {"type": ["string", "null"]}
+      }
+    },
     "AttemptRuntime": {
       "type": "object",
       "additionalProperties": false,
@@ -639,6 +653,12 @@
       "additionalProperties": false,
       "required": ["data"],
       "properties": {"data": {"$ref": "#/$defs/WorkerEndpointList"}}
+    },
+    "RuntimeHealthResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["data"],
+      "properties": {"data": {"$ref": "#/$defs/RuntimeHealth"}}
     },
     "AttemptRuntimeResponse": {
       "type": "object",
