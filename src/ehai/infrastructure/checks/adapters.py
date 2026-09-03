@@ -52,8 +52,6 @@ class CommandCheckAdapter:
             raise TypeError("store must implement ArtifactStore")
         self._commands = _argv_mapping(commands)
         self._default_argv = None if default_argv is None else _argv(default_argv)
-        if not self._commands and self._default_argv is None:
-            raise ValueError("CommandCheckAdapter requires configured argv")
         self._store = store
         self._timeout_seconds = float(timeout_seconds)
         self._max_output_bytes = max_output_bytes
@@ -61,7 +59,7 @@ class CommandCheckAdapter:
         self._max_total_artifact_bytes = max_total_artifact_bytes
 
     def evaluate(self, spec: CheckSpec, context: CheckContext) -> CheckOutcome:
-        argv = self._commands.get(spec.check_id, self._default_argv)
+        argv = spec.command_argv or self._commands.get(spec.check_id, self._default_argv)
         if argv is None:
             raise CheckAdapterError(f"Command Check {spec.check_id} has no configured argv")
         with tempfile.TemporaryDirectory(prefix="ehai-check-") as check_dir:
@@ -371,7 +369,15 @@ class SemanticCheckAdapter:
         self._evaluator = _required_terms_evaluator if evaluator is None else evaluator
 
     def evaluate(self, spec: CheckSpec, context: CheckContext) -> CheckOutcome:
-        rubric = self._rubrics.get(spec.check_id, self._default_rubric)
+        rubric = (
+            SemanticRubric(
+                description=spec.description,
+                required_terms=spec.semantic_required_terms,
+                minimum_score=1.0,
+            )
+            if spec.semantic_required_terms
+            else self._rubrics.get(spec.check_id, self._default_rubric)
+        )
         if rubric is None:
             raise CheckAdapterError(f"Semantic Check {spec.check_id} has no configured rubric")
 

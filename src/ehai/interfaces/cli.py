@@ -29,6 +29,7 @@ from ehai.application.planner import (
     COMMAND_EXIT_ZERO_CRITERION,
     P1_COMPLETION_CRITERIA,
     SEMANTIC_REQUIRED_TERMS_CRITERION,
+    ConfiguredCheckPlanner,
     DeterministicExplorationPlanner,
     DeterministicPlanner,
     ExplorationBudget,
@@ -48,7 +49,6 @@ from ehai.infrastructure.checks import (
     ArtifactCheckRule,
     CommandCheckAdapter,
     SemanticCheckAdapter,
-    SemanticRubric,
 )
 from ehai.infrastructure.planners import (
     BuiltinPlannerAdapter,
@@ -148,30 +148,20 @@ def build_service(
         )
     else:
         raise ValueError(f"unsupported Planner: {planner_kind}")
+    planner = ConfiguredCheckPlanner(
+        planner,
+        command_argv=() if command_check_argv is None else tuple(command_check_argv),
+        semantic_required_terms=tuple(semantic_required_terms),
+    )
     adapters: dict[CheckKind, CheckAdapter] = {
         CheckKind.ARTIFACT: ArtifactCheckAdapter(
             artifact_store,
             {},
             default_rule=ArtifactCheckRule(minimum_count=1, require_non_empty=True),
-        )
+        ),
+        CheckKind.COMMAND: CommandCheckAdapter({}, store=artifact_store),
+        CheckKind.SEMANTIC: SemanticCheckAdapter(artifact_store, {}),
     }
-    if command_check_argv is not None:
-        adapters[CheckKind.COMMAND] = CommandCheckAdapter(
-            {},
-            store=artifact_store,
-            default_argv=tuple(command_check_argv),
-        )
-    semantic_terms = tuple(term.strip() for term in semantic_required_terms if term.strip())
-    if semantic_terms:
-        adapters[CheckKind.SEMANTIC] = SemanticCheckAdapter(
-            artifact_store,
-            {},
-            default_rubric=SemanticRubric(
-                description="required host-configured terms must appear",
-                required_terms=semantic_terms,
-                minimum_score=1.0,
-            ),
-        )
     check_runner = CheckRunner(
         adapters,
     )

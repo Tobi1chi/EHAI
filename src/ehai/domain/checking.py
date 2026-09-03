@@ -92,13 +92,45 @@ class CheckSpec:
     description: str
     required: bool = True
     check_id: ID = field(default_factory=new_id)
+    command_argv: tuple[str, ...] = ()
+    semantic_required_terms: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "check_id", _validated_id(self.check_id, "check_id"))
+        object.__setattr__(self, "kind", CheckKind(self.kind))
         if not self.name.strip():
             raise ValueError(f"check {self.check_id}: name must not be blank")
         if not self.description.strip():
             raise ValueError(f"check {self.check_id}: description must not be blank")
+        if isinstance(self.command_argv, str):
+            raise ValueError(
+                f"check {self.check_id}: command_argv must be an argv sequence, not shell text"
+            )
+        argv = tuple(self.command_argv)
+        if any(
+            not isinstance(argument, str) or not argument or "\x00" in argument for argument in argv
+        ):
+            raise ValueError(f"check {self.check_id}: command_argv contains an invalid argument")
+        if isinstance(self.semantic_required_terms, str):
+            raise ValueError(
+                f"check {self.check_id}: semantic_required_terms must be a term sequence"
+            )
+        terms = tuple(self.semantic_required_terms)
+        if any(not isinstance(term, str) or not term.strip() for term in terms):
+            raise ValueError(
+                f"check {self.check_id}: semantic_required_terms contains a blank term"
+            )
+        normalized_terms = tuple(term.strip().casefold() for term in terms)
+        if len(set(normalized_terms)) != len(normalized_terms):
+            raise ValueError(f"check {self.check_id}: semantic_required_terms contains duplicates")
+        if argv and self.kind is not CheckKind.COMMAND:
+            raise ValueError(f"check {self.check_id}: command_argv requires a Command Check")
+        if normalized_terms and self.kind is not CheckKind.SEMANTIC:
+            raise ValueError(
+                f"check {self.check_id}: semantic_required_terms requires a Semantic Check"
+            )
+        object.__setattr__(self, "command_argv", argv)
+        object.__setattr__(self, "semantic_required_terms", normalized_terms)
 
 
 @dataclass(frozen=True, slots=True)

@@ -111,7 +111,8 @@ PlanProposal builder 创建 CheckSpec、CompletionContract 和 PlanRevision：
 
 Command Check 通过 `--command-check-argv` 接收 JSON 字符串数组，不经过 shell。候选 Artifact 会被
 物化到本次 Attempt/Check 的临时目录，不写入项目 worktree。Semantic Check 使用可重复提供的
-`--semantic-required-term` 配置词项。相关全局配置必须在实际执行或恢复 Run 的进程中继续提供。
+`--semantic-required-term` 配置词项。两者会绑定到不可变 CheckSpec 并随 PlanRevision 持久化；恢复
+Run 时 Checker 使用该快照，而不依赖新进程重新提供相同的全局配置。
 
 ## HTTP API 与 SSE
 

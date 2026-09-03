@@ -13,9 +13,14 @@ from ehai.application.commands import (
     ReplanPlan,
 )
 from ehai.application.orchestrator import OrchestrationError
-from ehai.application.planner import COMMAND_EXIT_ZERO_CRITERION, NON_EMPTY_ARTIFACT_CRITERION
+from ehai.application.planner import (
+    COMMAND_EXIT_ZERO_CRITERION,
+    NON_EMPTY_ARTIFACT_CRITERION,
+    SEMANTIC_REQUIRED_TERMS_CRITERION,
+)
 from ehai.application.service import ExecutionService
 from ehai.infrastructure.planners import CodexPlannerError
+from ehai.infrastructure.sqlite import SQLiteDatabase
 from ehai.interfaces import cli
 
 
@@ -148,14 +153,17 @@ def test_build_service_selects_exploration_planner(tmp_path: Path) -> None:
 
 
 def test_build_service_runs_trusted_command_check_inside_ehai(tmp_path: Path) -> None:
+    database_path = tmp_path / "command.sqlite3"
+    artifact_root = tmp_path / "command-artifacts"
+    command_argv = (
+        sys.executable,
+        "-c",
+        "import pathlib; assert list(pathlib.Path('.').glob('*.txt'))",
+    )
     service = cli.build_service(
-        tmp_path / "command.sqlite3",
-        tmp_path / "command-artifacts",
-        command_check_argv=(
-            sys.executable,
-            "-c",
-            "import pathlib; assert list(pathlib.Path('.').glob('*.txt'))",
-        ),
+        database_path,
+        artifact_root,
+        command_check_argv=command_argv,
     )
     project = service.create_project(CreateProject("project", "command"))
     goal = service.create_goal(CreateGoal("goal", project.project_id, "command goal"))
@@ -164,9 +172,39 @@ def test_build_service_runs_trusted_command_check_inside_ehai(tmp_path: Path) ->
         ApprovePlan("approve", plan.plan_revision_id, plan.completion_contract_id)
     )
 
+    service = cli.build_service(database_path, artifact_root)
     run = service.start_run(cli.StartRun("start", approved.plan_revision_id))
 
     assert run.status.value == "completed"
+    with SQLiteDatabase(database_path).unit_of_work() as uow:
+        specs = uow.states.list_check_specs(plan.plan_revision_id)
+    assert specs[0].command_argv == command_argv
+
+
+def test_build_service_runs_persisted_semantic_check_after_restart(tmp_path: Path) -> None:
+    database_path = tmp_path / "semantic.sqlite3"
+    artifact_root = tmp_path / "semantic-artifacts"
+    service = cli.build_service(
+        database_path,
+        artifact_root,
+        semantic_required_terms=("fake candidate",),
+    )
+    project = service.create_project(CreateProject("project", "semantic"))
+    goal = service.create_goal(CreateGoal("goal", project.project_id, "semantic goal"))
+    plan = service.propose_plan(
+        ProposePlan("plan", goal.goal_id, (SEMANTIC_REQUIRED_TERMS_CRITERION,))
+    )
+    approved = service.approve_plan(
+        ApprovePlan("approve", plan.plan_revision_id, plan.completion_contract_id)
+    )
+
+    service = cli.build_service(database_path, artifact_root)
+    run = service.start_run(cli.StartRun("start", approved.plan_revision_id))
+
+    assert run.status.value == "completed"
+    with SQLiteDatabase(database_path).unit_of_work() as uow:
+        specs = uow.states.list_check_specs(plan.plan_revision_id)
+    assert specs[0].semantic_required_terms == ("fake candidate",)
 
 
 def test_parser_accepts_minimal_exploration_selection(tmp_path: Path) -> None:

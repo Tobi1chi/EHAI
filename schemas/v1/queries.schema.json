@@ -273,13 +273,29 @@
     "CheckSpec": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["check_id", "name", "kind", "description", "required"],
+      "required": [
+        "check_id",
+        "name",
+        "kind",
+        "description",
+        "required",
+        "command_argv",
+        "semantic_required_terms"
+      ],
       "properties": {
         "check_id": {"$ref": "common.schema.json#/$defs/Id"},
         "name": {"type": "string"},
         "kind": {"$ref": "#/$defs/CheckKind"},
         "description": {"type": "string"},
-        "required": {"type": "boolean"}
+        "required": {"type": "boolean"},
+        "command_argv": {
+          "type": "array",
+          "items": {"type": "string"}
+        },
+        "semantic_required_terms": {
+          "type": "array",
+          "items": {"type": "string"}
+        }
       }
     },
     "CheckResult": {

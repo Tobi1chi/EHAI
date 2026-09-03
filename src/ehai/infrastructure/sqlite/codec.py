@@ -368,6 +368,8 @@ def encode_check_spec(check_spec: CheckSpec) -> str:
             "kind": check_spec.kind.value,
             "description": check_spec.description,
             "required": check_spec.required,
+            "command_argv": list(check_spec.command_argv),
+            "semantic_required_terms": list(check_spec.semantic_required_terms),
         }
     )
 
@@ -380,6 +382,12 @@ def decode_check_spec(snapshot: str) -> CheckSpec:
         kind=CheckKind(_string(document, "kind")),
         description=_string(document, "description"),
         required=_boolean(document, "required"),
+        command_argv=(_strings(document, "command_argv") if "command_argv" in document else ()),
+        semantic_required_terms=(
+            _strings(document, "semantic_required_terms")
+            if "semantic_required_terms" in document
+            else ()
+        ),
     )
 
 

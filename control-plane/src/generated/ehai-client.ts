@@ -146,6 +146,8 @@ export type CheckSpec = {
   readonly kind: CheckKind;
   readonly description: string;
   readonly required: boolean;
+  readonly command_argv: ReadonlyArray<string>;
+  readonly semantic_required_terms: ReadonlyArray<string>;
 };
 
 export type CheckResult = {

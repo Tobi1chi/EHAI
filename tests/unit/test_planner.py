@@ -6,7 +6,10 @@ import pytest
 
 from ehai import ID, new_id
 from ehai.application.planner import (
+    COMMAND_EXIT_ZERO_CRITERION,
     NON_EMPTY_ARTIFACT_CRITERION,
+    SEMANTIC_REQUIRED_TERMS_CRITERION,
+    ConfiguredCheckPlanner,
     DeterministicExplorationPlanner,
     DeterministicPlanner,
     ExplorationBudget,
@@ -59,6 +62,41 @@ def test_deterministic_planner_proposes_one_unapproved_work_node() -> None:
     assert proposal.check_specs[0].required
     assert node.required_check_ids == proposal.contract.required_check_ids
     assert goal.completion_contract is None
+
+
+@pytest.mark.parametrize(
+    ("criterion", "command_argv", "semantic_terms"),
+    [
+        (COMMAND_EXIT_ZERO_CRITERION, ("uv", "run", "pytest", "-q"), ()),
+        (SEMANTIC_REQUIRED_TERMS_CRITERION, (), ("PlanGraph", "ExecutionTrace")),
+    ],
+)
+def test_configured_check_planner_binds_host_configuration_to_snapshot(
+    criterion: str,
+    command_argv: tuple[str, ...],
+    semantic_terms: tuple[str, ...],
+) -> None:
+    planner = ConfiguredCheckPlanner(
+        DeterministicPlanner(clock=lambda: NOW),
+        command_argv=command_argv,
+        semantic_required_terms=semantic_terms,
+    )
+
+    spec = planner.propose(_goal(), (criterion,)).check_specs[0]
+
+    assert spec.command_argv == command_argv
+    assert spec.semantic_required_terms == tuple(term.casefold() for term in semantic_terms)
+
+
+@pytest.mark.parametrize(
+    "criterion",
+    [COMMAND_EXIT_ZERO_CRITERION, SEMANTIC_REQUIRED_TERMS_CRITERION],
+)
+def test_configured_check_planner_rejects_unbound_host_configuration(criterion: str) -> None:
+    planner = ConfiguredCheckPlanner(DeterministicPlanner(clock=lambda: NOW))
+
+    with pytest.raises(ValueError, match="requires configured"):
+        planner.propose(_goal(), (criterion,))
 
 
 def test_injected_ids_and_clock_make_proposal_stable() -> None:

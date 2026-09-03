@@ -120,11 +120,14 @@ def run_check(spec: CheckSpec, context: CheckContext, adapter: CheckAdapter):
 
 
 def test_command_check_passes_with_evidence_and_captures_output(tmp_path: Path) -> None:
-    spec = CheckSpec("command", CheckKind.COMMAND, "command must pass")
-    context, _ = make_context(tmp_path, check_id=spec.check_id)
-    adapter = CommandCheckAdapter(
-        {spec.check_id: (sys.executable, "-c", "print('controlled output')")}
+    spec = CheckSpec(
+        "command",
+        CheckKind.COMMAND,
+        "command must pass",
+        command_argv=(sys.executable, "-c", "print('controlled output')"),
     )
+    context, _ = make_context(tmp_path, check_id=spec.check_id)
+    adapter = CommandCheckAdapter({})
 
     check_run = run_check(spec, context, adapter)
 
@@ -282,24 +285,28 @@ def test_artifact_check_fails_closed(case: str, tmp_path: Path) -> None:
 
 
 def test_semantic_check_saves_rubric_score_explanation_and_evidence(tmp_path: Path) -> None:
-    spec = CheckSpec("semantic", CheckKind.SEMANTIC, "required concepts are present")
+    spec = CheckSpec(
+        "semantic",
+        CheckKind.SEMANTIC,
+        "both architecture terms must appear",
+        semantic_required_terms=("PlanGraph", "ExecutionTrace"),
+    )
     context, store = make_context(
         tmp_path,
         check_id=spec.check_id,
         contents=(b"PlanGraph remains separate from ExecutionTrace",),
     )
-    rubric = SemanticRubric(
-        description="both architecture terms must appear",
-        required_terms=("PlanGraph", "ExecutionTrace"),
-        minimum_score=1.0,
-    )
-    adapter = SemanticCheckAdapter(store, {spec.check_id: rubric})
+    adapter = SemanticCheckAdapter(store, {})
 
     check_run = run_check(spec, context, adapter)
 
     assert check_run.result is not None and check_run.result.passed
     output = json.loads(check_run.result.output or "")
-    assert output["rubric"]["description"] == rubric.description
+    assert output["rubric"] == {
+        "description": spec.description,
+        "required_terms": ["plangraph", "executiontrace"],
+        "minimum_score": 1.0,
+    }
     assert output["score"] == 1.0
     assert output["explanation"]
     assert output["evidence_artifact_ids"] == list(context.attempt.artifact_ids)

@@ -127,12 +127,43 @@ def test_check_spec_is_validated_and_immutable() -> None:
         name="unit tests",
         kind=CheckKind.COMMAND,
         description="run the focused test suite",
+        command_argv=("uv", "run", "pytest", "-q"),
     )
     assert spec.required
+    assert spec.command_argv == ("uv", "run", "pytest", "-q")
     with pytest.raises(FrozenInstanceError):
         spec.required = False  # type: ignore[misc]
     with pytest.raises(ValueError, match="name must not be blank"):
         CheckSpec(name=" ", kind=CheckKind.ARTIFACT, description="inspect output")
+    with pytest.raises(ValueError, match="requires a Command Check"):
+        CheckSpec(
+            name="artifact",
+            kind=CheckKind.ARTIFACT,
+            description="inspect output",
+            command_argv=("uv", "--version"),
+        )
+    with pytest.raises(ValueError, match="not shell text"):
+        CheckSpec(
+            name="command",
+            kind=CheckKind.COMMAND,
+            description="run command",
+            command_argv="uv --version",  # type: ignore[arg-type]
+        )
+
+    semantic = CheckSpec(
+        name="terms",
+        kind=CheckKind.SEMANTIC,
+        description="required terms",
+        semantic_required_terms=(" PlanGraph ", "ExecutionTrace"),
+    )
+    assert semantic.semantic_required_terms == ("plangraph", "executiontrace")
+    with pytest.raises(ValueError, match="contains duplicates"):
+        CheckSpec(
+            name="terms",
+            kind=CheckKind.SEMANTIC,
+            description="required terms",
+            semantic_required_terms=("PlanGraph", "plangraph"),
+        )
 
 
 def test_check_run_completion_keeps_execution_status_separate_from_verdict() -> None:

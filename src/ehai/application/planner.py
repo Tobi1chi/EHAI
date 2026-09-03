@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from typing import Protocol, runtime_checkable
 
@@ -322,6 +322,63 @@ class Planner(Protocol):
     ) -> PlanProposal:
         """Return a versioned replacement proposal for an approved base."""
         ...
+
+
+@dataclass(frozen=True, slots=True)
+class ConfiguredCheckPlanner:
+    """Bind host-approved Check configuration into each immutable proposal snapshot."""
+
+    planner: Planner
+    command_argv: tuple[str, ...] = ()
+    semantic_required_terms: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.planner, Planner):
+            raise TypeError("planner must implement Planner")
+        if isinstance(self.command_argv, str):
+            raise ValueError("ConfiguredCheckPlanner command argv must not be shell text")
+        argv = tuple(self.command_argv)
+        if any(
+            not isinstance(argument, str) or not argument or "\x00" in argument for argument in argv
+        ):
+            raise ValueError("ConfiguredCheckPlanner command argv is invalid")
+        if isinstance(self.semantic_required_terms, str):
+            raise ValueError("ConfiguredCheckPlanner semantic terms must be a sequence")
+        terms = tuple(self.semantic_required_terms)
+        if any(not isinstance(term, str) or not term.strip() for term in terms):
+            raise ValueError("ConfiguredCheckPlanner semantic terms must not be blank")
+        normalized_terms = tuple(term.strip().casefold() for term in terms)
+        if len(set(normalized_terms)) != len(normalized_terms):
+            raise ValueError("ConfiguredCheckPlanner semantic terms must not contain duplicates")
+        object.__setattr__(self, "command_argv", argv)
+        object.__setattr__(self, "semantic_required_terms", normalized_terms)
+
+    def propose(self, goal: Goal, criteria: tuple[str, ...]) -> PlanProposal:
+        return self._bind(self.planner.propose(goal, criteria))
+
+    def replan(
+        self,
+        goal: Goal,
+        base: PlanRevision,
+        criteria: tuple[str, ...],
+    ) -> PlanProposal:
+        return self._bind(self.planner.replan(goal, base, criteria))
+
+    def _bind(self, proposal: PlanProposal) -> PlanProposal:
+        configured: list[CheckSpec] = []
+        for spec in proposal.check_specs:
+            if spec.kind is CheckKind.COMMAND:
+                if not self.command_argv:
+                    raise ValueError("Command Check requires configured argv before persistence")
+                spec = replace(spec, command_argv=self.command_argv)
+            elif spec.kind is CheckKind.SEMANTIC:
+                if not self.semantic_required_terms:
+                    raise ValueError(
+                        "Semantic Check requires configured required terms before persistence"
+                    )
+                spec = replace(spec, semantic_required_terms=self.semantic_required_terms)
+            configured.append(spec)
+        return replace(proposal, check_specs=tuple(configured))
 
 
 @dataclass(frozen=True, slots=True)

@@ -161,6 +161,8 @@ class CheckSpecView:
     kind: CheckKind
     description: str
     required: bool
+    command_argv: tuple[str, ...]
+    semantic_required_terms: tuple[str, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -653,6 +655,8 @@ def _check_spec_view(check_spec: CheckSpec) -> CheckSpecView:
         kind=check_spec.kind,
         description=check_spec.description,
         required=check_spec.required,
+        command_argv=check_spec.command_argv,
+        semantic_required_terms=check_spec.semantic_required_terms,
     )
 
 

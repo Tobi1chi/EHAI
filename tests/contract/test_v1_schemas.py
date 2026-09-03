@@ -156,7 +156,7 @@ ARTIFACT = ArtifactView(
     NODE_ID,
     ATTEMPT_ID,
 )
-CHECK_SPEC = CheckSpecView(CHECK_ID, "evidence", CheckKind.ARTIFACT, "must exist", True)
+CHECK_SPEC = CheckSpecView(CHECK_ID, "evidence", CheckKind.ARTIFACT, "must exist", True, (), ())
 CHECK_RESULT = CheckResultView(
     CHECK_ID,
     CHECK_RUN_ID,
