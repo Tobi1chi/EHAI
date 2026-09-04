@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+from typing import Literal
+from uuid import uuid4
 
 from openai import (
     APIConnectionError,
@@ -41,6 +43,10 @@ class OpenAIResponsesProtocolError(BuiltinAgentError):
     """Raised when a Responses stream cannot become one valid ModelResponse."""
 
 
+class OpenAIResponsesUnknownOutcomeError(OpenAIResponsesProtocolError):
+    """A create may have succeeded, but no recoverable Response ID was received."""
+
+
 class _BackgroundUnsupported(Exception):
     """Internal signal: the endpoint rejected background mode before creating a Response."""
 
@@ -68,6 +74,8 @@ class OpenAIResponsesModelClient(ModelClient):
         max_stream_reconnects: int = 5,
         retry_delay_seconds: float = 1.0,
         poll_interval_seconds: float = 2.0,
+        retry_owner: Literal["ehai", "client"] | None = None,
+        supports_idempotent_create: bool | None = None,
     ) -> None:
         if profile.kind is not WorkerKind.BUILTIN:
             raise ValueError("OpenAIResponsesModelClient requires a Built-in WorkerProfile")
@@ -97,6 +105,23 @@ class OpenAIResponsesModelClient(ModelClient):
             or poll_interval_seconds < 0
         ):
             raise ValueError("poll_interval_seconds must be non-negative")
+        if retry_owner not in {None, "ehai", "client"}:
+            raise ValueError("retry_owner must be 'ehai' or 'client'")
+        if supports_idempotent_create is not None and not isinstance(
+            supports_idempotent_create, bool
+        ):
+            raise ValueError("supports_idempotent_create must be a boolean")
+        if client is not None and retry_owner is None:
+            raise ValueError("injected OpenAI clients must declare retry_owner")
+        resolved_retry_owner = retry_owner or "ehai"
+        if client is None and resolved_retry_owner == "client":
+            raise ValueError("internally created OpenAI clients use EHAI-owned retries")
+        if resolved_retry_owner == "client" and max_http_retries != 0:
+            raise ValueError("client-owned retries require max_http_retries=0")
+        if client is not None and resolved_retry_owner == "ehai":
+            client_max_retries = getattr(client, "max_retries", None)
+            if client_max_retries != 0:
+                raise ValueError("EHAI-owned retries require an injected client with max_retries=0")
         self.profile = profile
         self.max_output_tokens = max_output_tokens
         self.timeout_seconds = float(timeout_seconds)
@@ -106,31 +131,43 @@ class OpenAIResponsesModelClient(ModelClient):
         self.max_stream_reconnects = max_stream_reconnects
         self.retry_delay_seconds = float(retry_delay_seconds)
         self.poll_interval_seconds = float(poll_interval_seconds)
-        self._client = AsyncOpenAI() if client is None else client
+        self.retry_owner = resolved_retry_owner
+        self._client = AsyncOpenAI(max_retries=0) if client is None else client
         self._owns_client = client is None
+        self.supports_idempotent_create = (
+            _is_official_openai_endpoint(self._client)
+            if supports_idempotent_create is None
+            else supports_idempotent_create
+        )
         self._closed = False
 
     async def complete(self, request: ModelRequest) -> ModelResponse:
         if self._closed:
             raise RuntimeError("OpenAIResponsesModelClient is closed")
+        logical_request_id = f"ehai-{uuid4()}"
         if self.background:
             try:
-                return await self._complete_background(request)
+                return await self._complete_background(request, logical_request_id)
             except _BackgroundUnsupported:
                 # The background create was rejected before any Response existed,
                 # so the streaming fallback cannot duplicate a Response.
                 pass
-        return await self._complete_streaming(request)
+        return await self._complete_streaming(request, logical_request_id)
 
-    async def _complete_background(self, request: ModelRequest) -> ModelResponse:
+    async def _complete_background(
+        self,
+        request: ModelRequest,
+        logical_request_id: str,
+    ) -> ModelResponse:
         """Create a background Response and poll it through retrieve until terminal."""
         http_failures = 0
         while True:
             try:
-                response = await self._start_background(request)
+                response = await self._start_background(request, logical_request_id)
             except Exception as error:
                 if not _is_retriable(error):
                     raise
+                self._require_safe_create_retry(error)
                 http_failures += 1
                 if http_failures > self.max_http_retries:
                     raise OpenAIResponsesProtocolError(
@@ -141,16 +178,21 @@ class OpenAIResponsesModelClient(ModelClient):
                 continue
             return await self._await_terminal_response(response.id)
 
-    async def _complete_streaming(self, request: ModelRequest) -> ModelResponse:
+    async def _complete_streaming(
+        self,
+        request: ModelRequest,
+        logical_request_id: str,
+    ) -> ModelResponse:
         http_failures = 0
         reconnects = 0
         seen_response_id: str | None = None
         while True:
             try:
-                stream = await self._start_stream(request)
+                stream = await self._start_stream(request, logical_request_id)
             except Exception as error:
                 if not _is_retriable(error):
                     raise
+                self._require_safe_create_retry(error)
                 http_failures += 1
                 if http_failures > self.max_http_retries:
                     raise OpenAIResponsesProtocolError(
@@ -238,12 +280,17 @@ class OpenAIResponsesModelClient(ModelClient):
                 f"Response {response_id} ended with terminal status {status}"
             )
 
-    async def _start_stream(self, request: ModelRequest) -> AsyncStream[ResponseStreamEvent]:
+    async def _start_stream(
+        self,
+        request: ModelRequest,
+        logical_request_id: str,
+    ) -> AsyncStream[ResponseStreamEvent]:
         try:
             return await self._create_stream(
                 request,
                 input_messages=request.input_messages,
                 previous_response_id=request.previous_response_id,
+                logical_request_id=logical_request_id,
             )
         except BadRequestError as error:
             if request.previous_response_id is not None and _rejects_continuation(error):
@@ -251,15 +298,21 @@ class OpenAIResponsesModelClient(ModelClient):
                     request,
                     input_messages=request.messages,
                     previous_response_id=None,
+                    logical_request_id=logical_request_id,
                 )
             raise
 
-    async def _start_background(self, request: ModelRequest) -> Response:
+    async def _start_background(
+        self,
+        request: ModelRequest,
+        logical_request_id: str,
+    ) -> Response:
         try:
             return await self._create_background(
                 request,
                 input_messages=request.input_messages,
                 previous_response_id=request.previous_response_id,
+                logical_request_id=logical_request_id,
             )
         except BadRequestError as error:
             if _rejects_background(error):
@@ -269,6 +322,7 @@ class OpenAIResponsesModelClient(ModelClient):
                     request,
                     input_messages=request.messages,
                     previous_response_id=None,
+                    logical_request_id=logical_request_id,
                 )
             raise
 
@@ -278,6 +332,7 @@ class OpenAIResponsesModelClient(ModelClient):
         *,
         input_messages: tuple[ModelMessage, ...],
         previous_response_id: str | None,
+        logical_request_id: str,
     ) -> AsyncStream[ResponseStreamEvent]:
         return await self._client.responses.create(
             model=self.profile.model,
@@ -293,6 +348,7 @@ class OpenAIResponsesModelClient(ModelClient):
                 omit if self.reasoning_effort is None else {"effort": self.reasoning_effort}
             ),
             timeout=self.timeout_seconds,
+            extra_headers={"Idempotency-Key": logical_request_id},
         )
 
     async def _create_background(
@@ -301,6 +357,7 @@ class OpenAIResponsesModelClient(ModelClient):
         *,
         input_messages: tuple[ModelMessage, ...],
         previous_response_id: str | None,
+        logical_request_id: str,
     ) -> Response:
         return await self._client.responses.create(
             model=self.profile.model,
@@ -316,7 +373,16 @@ class OpenAIResponsesModelClient(ModelClient):
                 omit if self.reasoning_effort is None else {"effort": self.reasoning_effort}
             ),
             timeout=self.timeout_seconds,
+            extra_headers={"Idempotency-Key": logical_request_id},
         )
+
+    def _require_safe_create_retry(self, error: BaseException) -> None:
+        if self.supports_idempotent_create:
+            return
+        raise OpenAIResponsesUnknownOutcomeError(
+            "Responses create outcome is unknown; the endpoint has not proven "
+            "idempotent create support, so EHAI did not create a replacement Response"
+        ) from error
 
     async def aclose(self) -> None:
         if self._closed:
@@ -383,6 +449,11 @@ def _is_retriable(error: BaseException) -> bool:
     if isinstance(error, APIConnectionError):
         return True
     return isinstance(error, APIStatusError) and error.status_code >= 500
+
+
+def _is_official_openai_endpoint(client: AsyncOpenAI) -> bool:
+    base_url = getattr(client, "base_url", None)
+    return getattr(base_url, "host", None) == "api.openai.com"
 
 
 def _instructions(messages: tuple[ModelMessage, ...]) -> str:

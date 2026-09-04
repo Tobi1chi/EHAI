@@ -66,6 +66,7 @@ from ehai.infrastructure.builtin_tools import BuiltinToolRuntime
 from ehai.infrastructure.openai_responses import (
     OpenAIResponsesModelClient,
     OpenAIResponsesProtocolError,
+    OpenAIResponsesUnknownOutcomeError,
 )
 from ehai.infrastructure.sqlite import SQLiteDatabase
 from ehai.infrastructure.workers.builtin import _builtin_role_protocol
@@ -167,6 +168,7 @@ class _FakeOpenAI:
         streams: tuple[_FakeStream | Exception, ...],
         retrievals: tuple[object | Exception, ...] = (),
     ) -> None:
+        self.max_retries = 0
         self.responses = _FakeResponses(streams, retrievals)
 
 
@@ -524,6 +526,7 @@ def test_openai_responses_protocol_streams_function_result_continuation_and_fina
         profile,
         client=cast(AsyncOpenAI, fake),
         reasoning_effort="high",
+        retry_owner="ehai",
     )
     tool = _tool("inspect")
     system = ModelMessage(ModelRole.SYSTEM, "system")
@@ -607,6 +610,7 @@ def test_openai_responses_replays_durable_history_when_continuation_is_rejected(
         profile,
         client=cast(AsyncOpenAI, fake),
         reasoning_effort="high",
+        retry_owner="ehai",
     )
     system = ModelMessage(ModelRole.SYSTEM, "system")
     user = ModelMessage(ModelRole.USER, "user")
@@ -679,6 +683,7 @@ def _client_with(
         client=cast(AsyncOpenAI, fake),
         retry_delay_seconds=0.0,
         poll_interval_seconds=0.0,
+        retry_owner="ehai",
         **options,
     )
 
@@ -735,7 +740,7 @@ def test_openai_responses_retries_http_failures_up_to_four_times() -> None:
             good_stream,
         )
     )
-    client = _client_with(fake)
+    client = _client_with(fake, supports_idempotent_create=True)
 
     result = asyncio.run(client.complete(_single_tool_request()))
 
@@ -743,10 +748,110 @@ def test_openai_responses_retries_http_failures_up_to_four_times() -> None:
     assert len(fake.responses.requests) == 5
 
     exhausted = _FakeOpenAI(tuple(_connection_error() for _ in range(5)))
-    exhausted_client = _client_with(exhausted)
+    exhausted_client = _client_with(exhausted, supports_idempotent_create=True)
     with pytest.raises(OpenAIResponsesProtocolError, match="HTTP retries"):
         asyncio.run(exhausted_client.complete(_single_tool_request()))
     assert len(exhausted.responses.requests) == 5
+
+
+def test_openai_responses_reuses_one_idempotency_key_for_logical_create_retries() -> None:
+    final_item = _Dumpable(
+        type="message",
+        document={"type": "message", "role": "assistant", "content": []},
+    )
+    response = SimpleNamespace(
+        id="resp-idempotent",
+        status="completed",
+        output_text="done",
+        usage=None,
+        output=(final_item,),
+    )
+    stream = _FakeStream((SimpleNamespace(type="response.completed", response=response),))
+    fake = _FakeOpenAI((_connection_error(), stream))
+    client = _client_with(fake, supports_idempotent_create=True)
+
+    result = asyncio.run(client.complete(_single_tool_request()))
+
+    assert result.final_text == "done"
+    keys = [
+        cast(dict[str, str], request["extra_headers"])["Idempotency-Key"]
+        for request in fake.responses.requests
+    ]
+    assert len(keys) == 2
+    assert len(set(keys)) == 1
+    assert keys[0].startswith("ehai-")
+
+
+@pytest.mark.parametrize("background", [False, True])
+def test_openai_responses_does_not_repeat_ambiguous_create_without_endpoint_support(
+    background: bool,
+) -> None:
+    fake = _FakeOpenAI((_connection_error(),))
+    client = _client_with(
+        fake,
+        background=background,
+        supports_idempotent_create=False,
+    )
+
+    with pytest.raises(OpenAIResponsesUnknownOutcomeError, match="outcome is unknown"):
+        asyncio.run(client.complete(_single_tool_request()))
+
+    assert len(fake.responses.requests) == 1
+
+
+def test_openai_responses_requires_explicit_retry_owner_for_injected_clients(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake = _FakeOpenAI(())
+    profile = WorkerProfile(
+        "openai-retry-owner",
+        WorkerKind.BUILTIN,
+        "gpt-5.6-luna",
+        credential_ref=OPENAI_CREDENTIAL_REF,
+    )
+
+    with pytest.raises(ValueError, match="declare retry_owner"):
+        OpenAIResponsesModelClient(profile, client=cast(AsyncOpenAI, fake))
+
+    fake.max_retries = 2
+    with pytest.raises(ValueError, match="max_retries=0"):
+        OpenAIResponsesModelClient(
+            profile,
+            client=cast(AsyncOpenAI, fake),
+            retry_owner="ehai",
+        )
+
+    client_owned = OpenAIResponsesModelClient(
+        profile,
+        client=cast(AsyncOpenAI, fake),
+        retry_owner="client",
+        max_http_retries=0,
+    )
+    assert client_owned.retry_owner == "client"
+
+    with pytest.raises(ValueError, match="internally created"):
+        OpenAIResponsesModelClient(
+            profile,
+            retry_owner="client",
+            max_http_retries=0,
+        )
+
+    created_with: list[dict[str, object]] = []
+
+    def create_client(**kwargs: object) -> _FakeOpenAI:
+        created_with.append(kwargs)
+        created = _FakeOpenAI(())
+        created.base_url = SimpleNamespace(host="api.openai.com")
+        return created
+
+    monkeypatch.setattr(
+        "ehai.infrastructure.openai_responses.AsyncOpenAI",
+        create_client,
+    )
+    internally_owned = OpenAIResponsesModelClient(profile)
+    assert created_with == [{"max_retries": 0}]
+    assert internally_owned.retry_owner == "ehai"
+    assert internally_owned.supports_idempotent_create is True
 
 
 def test_openai_responses_stream_reconnects_within_five_attempt_budget() -> None:
@@ -859,6 +964,9 @@ def test_openai_responses_background_falls_back_to_streaming_when_rejected() -> 
     assert len(fake.responses.requests) == 2
     assert fake.responses.requests[0]["background"] is True
     assert fake.responses.requests[1]["stream"] is True
+    background_headers = cast(dict[str, str], fake.responses.requests[0]["extra_headers"])
+    stream_headers = cast(dict[str, str], fake.responses.requests[1]["extra_headers"])
+    assert background_headers["Idempotency-Key"] == stream_headers["Idempotency-Key"]
     assert fake.responses.retrieve_calls == []
 
 
