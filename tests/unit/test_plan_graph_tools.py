@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from ehai.application.planner import (
@@ -106,6 +108,46 @@ def _build_exploration_graph(runtime: PlanGraphToolRuntime) -> None:
         assert runtime.execute("add_plan_edge", _edge(nodes[1], "evaluator"))["accepted"] is True
     assert runtime.execute("add_plan_edge", _edge("evaluator", "merge"))["accepted"] is True
     assert runtime.execute("add_plan_edge", _edge("merge", "verify"))["accepted"] is True
+
+
+def test_tool_schemas_use_provider_compatible_nullable_constraints() -> None:
+    schemas = {
+        definition.name: definition.input_schema for definition in _runtime().tool_definitions()
+    }
+
+    assert all('"oneOf"' not in json.dumps(schema) for schema in schemas.values())
+
+    nullable_fields = {
+        "add_plan_edge": ("branch_key", "condition"),
+        "remove_plan_edge": ("branch_key",),
+        "set_plan_branch": ("label", "fork_node_key", "node_keys", "merge_node_key"),
+    }
+    for tool_name, field_names in nullable_fields.items():
+        properties = schemas[tool_name]["properties"]
+        for field_name in field_names:
+            assert "null" in properties[field_name]["type"]
+
+    node_keys = schemas["set_plan_branch"]["properties"]["node_keys"]
+    assert node_keys["type"] == ["array", "null"]
+    assert node_keys["items"] == {"type": "string", "minLength": 1, "maxLength": 128}
+    assert node_keys["minItems"] == 1
+    assert node_keys["uniqueItems"] is True
+
+    expected_required = {
+        "add_plan_edge": ["source", "target", "edge_type", "branch_key", "condition"],
+        "remove_plan_edge": ["source", "target", "edge_type", "branch_key"],
+        "set_plan_branch": [
+            "branch_key",
+            "label",
+            "fork_node_key",
+            "node_keys",
+            "merge_node_key",
+            "remove",
+        ],
+    }
+    for tool_name, required in expected_required.items():
+        assert schemas[tool_name]["required"] == required
+        assert schemas[tool_name]["additionalProperties"] is False
 
 
 def test_tools_build_shared_node_two_multi_node_branches_evaluator_merge() -> None:
