@@ -93,6 +93,20 @@ Python 领域层不得依赖具体 Worker SDK、数据库或 Web 框架。外部
 
 跨 Plane 契约使用 OpenAPI 或 JSON Schema 并带显式版本。Python 生成或验证契约，TypeScript Client 和类型由契约生成。破坏性变化必须新建版本并提供迁移说明。REST 用于 Command 和查询；SSE 或 WebSocket 用于实时 Event。Event 必须携带可恢复订阅所需的 Event ID。
 
+## Built-in Agent 能力复用规范
+
+- EHAI 内部凡是需要模型推理、Tool 调用与 Session 的功能，必须优先复用通用 Built-in Agent Runtime；
+  不得为 Planner、Worker、Evaluator、Merge、Visualizer、Reviewer 或 Assistance 复制 Agent Loop、
+  ModelClient、Session Store、取消、预算、恢复或 Trace。
+- Role 特有行为只通过 Prompt、Tool Profile、Context Builder、Finish Tool 与权限表达。Tool Registry
+  提供能力目录，实际 Session ToolSet 必须由 Role、Endpoint 与用户策略显式授权并在创建时冻结。
+- Workspace、Shell、Git、Web、MCP、Skill 与 Session Message 使用统一 ToolDefinition/ToolExecutor 和
+  Event 语义；新增能力不得绕过输出限制、凭证脱敏、Workspace 隔离或审批。
+- Skill 是指令和资源，不是权限；Session Message 是协作输入，不是 Artifact 或完成证据；任何 Role 的
+  Finish Tool 都不能绕过 CompletionContract、Check、Gate 或 Orchestrator 的状态所有权。
+- Codex CLI/App Server 等外部平台继续通过 Worker Connector 接入，不因内部 Runtime 复用而复制或混合
+  其平台状态机。
+
 ## Commands、Events 与幂等
 
 Command 使用祈使语义，例如 `StartRun`、`CancelAttempt`；Event 使用过去式，例如 `RunStarted`、`AttemptFailed`。Event 至少包含唯一 ID、类型、时间、Run ID、关联 ID、版本和载荷。事件处理器必须允许安全重放；外部副作用应使用幂等键。

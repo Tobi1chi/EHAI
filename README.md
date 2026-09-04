@@ -5,7 +5,7 @@ EHAI（Enhanced Human-Agent Interface）是一个面向人—Agent 协作的执�
 但不能绕过预先确认的证据标准自行宣布任务完成。
 
 > 当前状态：P1/P1.1、P2 多 Worker 执行内核及 Planning & Execution Readiness Gate 已完成；
-> P3 Control Plane 尚未开始。
+> P2 Built-in Agent Foundation 扩展已规划，P3 Control Plane 尚未开始。
 
 ## Why EHAI
 
@@ -48,7 +48,7 @@ Goal + CompletionContract
 | 阶段 | 状态 | 范围 |
 | --- | --- | --- |
 | P1/P1.1 | 已完成 | 单 Worker 串行闭环、Codex CLI、分支评估、Check/Gate、Checkpoint、API/SSE |
-| P2 | 已完成 | 异步调度、Built-in/Codex Worker、Agent Session、并发、恢复与资源管理 |
+| P2 | 核心已完成，扩展中 | 异步调度、Built-in/Codex Worker、Agent Session、并发、恢复与资源管理 |
 | P2→P3 Readiness Gate | 已通过 | 真实规划、失败重规划、自举代码任务与最终执行能力验收 |
 | P3+ | 已规划 | Dashboard、可复用 Workflow 和开放扩展生态 |
 

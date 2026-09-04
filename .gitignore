@@ -213,6 +213,9 @@ tempCodeRunnerFile.py
 node_modules/
 control-plane/dist/
 
+# Local agent memory and workspace state
+.workbuddy/
+
 # Marimo
 marimo/_static/
 marimo/_lsp/

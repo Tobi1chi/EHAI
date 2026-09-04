@@ -2,7 +2,7 @@
 
 ## 状态与目标
 
-- 状态：已确认；从 `P2-I0` 开始实施。
+- 状态：`P2-I0–I13` 已完成；`P2-I14` 已实现但仍有提交前修复门禁；`P2-I15–I18` 已确认、待实现。
 - Roadmap 阶段：P2——稳定的多 Worker 执行内核。
 - P1/P1.1 执行语义基线：提交 `a1a41b1`。
 
@@ -33,9 +33,11 @@ Planner provider 只输出 provider-specific plan content，必须先转换为 p
 再由应用层统一 builder 创建 `CheckSpec`、`CompletionContract` 和 `PlanRevision`。`single`、
 `exploration`、`codex` 和 `builtin` Planner 都不得各自决定 Criterion 到 CheckKind 的映射。
 
-Built-in Planner 可以复用 Built-in Agent 的 Responses `ModelClient` seam，但不得创建 Worker Attempt、
-Workspace、AgentSessionRef 或长期 Planner Session。Worker request 必须显式携带已确认的
-`CompletionContract` 和 required `CheckSpec` 快照；Provider 只能读取这些契约，不能决定或降低完成标准。
+Built-in Planner 可以复用 Built-in Agent 的 Responses `ModelClient` seam，但不得创建 Worker Attempt 或
+获得 Worker 的写 Workspace。`P2-I15` 允许它通过通用 Built-in Agent Runtime 获得带 Role/Tool Profile
+的持久 Planning Session；该 Session 不属于 Run/Attempt，也不能绕过 Plan approval。Worker request 必须
+显式携带已确认的 `CompletionContract` 和 required `CheckSpec` 快照；Provider 只能读取这些契约，不能
+决定或降低完成标准。
 
 ## DSH 借鉴范围
 
@@ -57,14 +59,17 @@ EHAI 对应关系：
 | Agent/Agent Loop | `BuiltinAgent` / `BuiltinAgentLoop` |
 | Live Agent Event | 标准化 `WorkerEvent` |
 
-只借鉴职责与生命周期，不复制 DSH 的组成系统。P2 明确不实现或引入：
+只借鉴职责与生命周期，不复制 DSH 的组成系统。`P2-I0–I14` 未实现或引入：
 
 - Cordis Context、Event Waterfall 和 effect lifecycle。
 - 动态 Plugin 注册、卸载或发现。
 - Bundle、Profile overlay 和 Patch 配置树。
 - DSH TypeScript/Node Runtime 依赖。
-- Subagent、Skills、MCP、长期记忆、Self-modification、Web/ACP/SDK Host。
+- DSH 自有的 Subagent、Skills、MCP、长期记忆、Self-modification、Web/ACP/SDK Host 实现。
 - DSH Goal、Job、Workflow 或 UI；EHAI 继续使用自己的 PlanGraph、Run、Attempt 和 Gate。
+
+`P2-I17` 后续会在 EHAI 通用 Built-in Agent Runtime 中加入受权限控制的 Web、MCP 与 Skill 消费能力；
+它不复制 DSH 实现，也不提前 P5 的插件 SDK、市场、热安装或第三方 Agent Framework。
 
 ## 核心映射与职责
 
@@ -487,14 +492,16 @@ P2-I0–I9 固定并实现执行内核；以下增量只关闭真实项目使用
 **必须交付**
 
 - Built-in Planner 接收显式注入的 Goal、Completion Criteria、预算和必要仓库上下文。
-- 真实 Responses 调用必须通过严格 `submit_plan` 产生 provider-neutral PlanTemplate。
+- 本 Increment 的真实 Responses 验收通过当时的严格 `submit_plan` 产生 provider-neutral PlanTemplate；
+  该一次性协议随后由 `P2-I14` 的直接 PlanGraph Tool 取代。
 - 统一 builder 校验并持久化 draft PlanRevision、CheckSpec 和 CompletionContract。
 - Planning Trace 可以查看最终 PlanGraph 和稳定 Planner event，不保存模型思维链。
 
 **边界**
 
 - Planner 不读取整个仓库、不创建 Worker Attempt/Session，也不批准或执行计划。
-- 不要求模型生成任意 DAG；P2 继续使用有界双分支结构。
+- 本 Increment 不要求模型生成任意 DAG，并以有界双分支完成当时验收；该限制随后由 `P2-I14` 的
+  直接 PlanGraph Tool 和 ExplorationBudget 取代。
 - 真实 Smoke 默认跳过，只在显式开关和凭证存在时调用一次。
 
 **退出条件**
@@ -563,12 +570,14 @@ scope 检查，并由人工 Gate 比较 selected/pruned diff；因此没有用�
 Roadmap Readiness Gate 的四类 E2E 全部通过，工作树 clean，无已知阻断缺陷，才允许启动 P3 UI。
 
 P3+ 非阻断项保持原边界：Dashboard、P4 Workflow、插件生态、新 Provider 与跨主机分布式调度均未
-提前实现。P2 继续使用有界双分支 PlanGraph，不把本次验收扩张为任意动态图或测试矩阵。
+提前实现。此处“有界双分支”只记录 `P2-I13` Readiness Gate 当时的验收形态；后续 `P2-I14` 已用
+直接 PlanGraph Tool 支持线性图、共享节点与受 ExplorationBudget 限制的多节点分支。
 
 ### P2-I14：Built-in Planner 图操作 Tool 与长程超时语义
 
-**状态：** 已完成（2026-09-04）。固定 `two_branch_plan_template` 的 Built-in 路径已移除，由模型驱动的
-图操作 Tool Loop 取代；Provider 超时语义对齐长程执行。
+**状态：** 已实现（2026-09-04）；固定 `two_branch_plan_template` 的 Built-in 路径已移除，由模型驱动的
+图操作 Tool Loop 取代，Provider 超时语义已调整为长程执行。合入远端前仍须通过下列修复门禁与真实
+Planner Smoke。
 
 **必须交付**
 
@@ -614,6 +623,25 @@ P3+ 非阻断项保持原边界：Dashboard、P4 Workflow、插件生态、新 P
 HTTP retry 与 Background Mode 均有离线测试证明。
 
 建议提交：`feat(planner): build plans through graph tools`、`fix(runtime): support long-running model execution`
+
+#### P2-I14 提交前修复门禁
+
+以下三项来自提交 `bfec3be` 与 `28b2fcb` 的复审，必须在开始 `P2-I15` 前修复：
+
+1. **统一 HTTP retry 所有权。** `OpenAIResponsesModelClient` 自己维护 4 次 HTTP retry 时，内部创建的
+   `AsyncOpenAI` 必须关闭 SDK 默认 retry，避免 SDK 默认 2 次与外层 4 次叠加。测试必须证明一次逻辑
+   Provider 调用的底层尝试次数与公开预算一致；注入的外部 Client 必须明确由谁拥有 retry。
+2. **阻止 ambiguous create 重复 Response。** Background 和 Streaming 的 `responses.create` 使用同一个
+   逻辑请求幂等标识重试；如果连接在服务端可能已创建 Response、客户端尚未收到 `response_id` 时断开，
+   且 Endpoint 不能证明支持幂等 create，则不得盲目再次创建，必须以可恢复的 unknown outcome 结束。
+   测试应模拟“服务端已创建、确认包丢失”，证明没有两个模型执行。
+3. **固定 `finish_plan` 调用顺序。** 成功的 `finish_plan` 必须是一个模型 Response 中最后一个结束 Tool；
+   如果其后仍有 Tool Call，Planner 不得提前返回并静默忽略后续调用，而应返回带本地位置的可恢复协议
+   diagnostics，让同一模型继续修复。至少覆盖 finish 在中间、finish 最后和第 5 次校验失败三种代表场景。
+
+修复后先运行相关单元/集成测试，再显式运行一次真实 Built-in Planner Smoke。真实调用必须复用环境中的
+凭证引用，不打印或持久化密钥；如果环境没有凭证，则不得把 I14 标记为最终验收通过，须在报告中保留
+明确的未验证项。
 
 ### P2-I15：通用 Built-in Agent Runtime 与 Role 配置
 
@@ -726,6 +754,45 @@ Worker Session → Evaluator/Merge → Check/Gate/Checkpoint` E2E；至少两次
 所有 Role 使用同一个 Runtime，最终 Trace 能区分 Role、Tool、Message、Artifact 与领域决定。
 
 建议提交：`feat(agent): add session messaging and role runtime`
+
+## P2-I14–I18 重构 Agent 执行说明
+
+本节与 `P2-I14` 修复门禁、`P2-I15–I18` Increment 一起构成后续重构 Agent 的完整任务依据；不得再为
+同一轮实现创建平行的 Plan/Prompt 文档。
+
+### 启动与顺序
+
+- 只在包含 `P2-I14` 两个提交及本节文档的干净独立 branch/worktree 中开始；先检查 `git status`、HEAD
+  与最近提交。基线缺失或存在未知修改时停止并报告，不得重做 I14 或覆盖用户文件。
+- 严格按 `I14 修复门禁 → I15 → I16 → I17 → I18` 执行。每个 Increment 完成聚焦验证和只读复审后
+  单独提交，再进入下一项；一个长程 Session 可以持续负责，但不能把四个 Increment 压成一个提交。
+- `I15` 先统一 Runtime/Role，`I16` 再扩 Workspace/Shell/Git，`I17` 接入 Web/MCP/Skill，`I18` 最后
+  增加 Mailbox、Visualizer 与完整 Role 闭环。后续能力不得反向驱动前一 Increment 提前搭建占位抽象。
+
+### 不变量与范围
+
+- 所有内部模型 Role 共用一个 Built-in Agent Runtime；Role 只提供 Prompt、Tool Profile、Context Builder、
+  Finish Tool 与权限。Codex CLI/App Server 继续作为 External Worker Connector。
+- Tool Registry 提供能力目录，不默认授权；Session ToolSet 创建时冻结。Workspace、Shell、Git、Web、
+  MCP、Skill 与 Message 全部遵守 Workspace、审批、脱敏、输出限制、取消、恢复和 Trace 边界。
+- Planner 不能降低 CompletionContract；Worker/Message/Tool 不能推进完成状态；Evaluator/Merge 继续遵守
+  BranchSelection 与 selected-only Artifact；只有 Check/Gate 能完成节点和 Run。
+- 不实现插件市场、热安装、第三方 Agent Framework、自动 spawn、层级 Orchestrator、跨主机 Broker、
+  P3 UI 或新的 Workflow Engine。
+
+### 测试、提交与交付
+
+- 开发时运行最小相关测试，失败后先复测失败子测试；不得为 Tool、平台和权限建立笛卡尔积测试矩阵。
+- 每个 Increment 提交前运行适用的 pytest、Ruff、format、mypy 与 `git diff --check`；全部完成后运行
+  Python 全量测试。Schema 变化时再生成并验证 TypeScript Client。
+- 建议提交顺序：`fix(runtime): make response retries idempotent`、
+  `fix(planner): require finish tool ordering`、`refactor(agent): extract shared builtin runtime`、
+  `feat(agent): add workspace shell and git tools`、`feat(agent): add web mcp and skill providers`、
+  `feat(agent): add session messaging and role runtime`。
+- 不提交密钥、真实 Provider 输出、临时数据库、trajectory、`node_modules`、`.workbuddy` 或其他 Agent
+  私有记忆；不 push、merge、rebase、amend、force-push，不修改或删除其他 Codex worktree。
+- 最终报告必须映射每个 Increment 的实现文件、Role/Tool/Finish 配置、权限与恢复语义、真实/离线验证、
+  E2E 轨迹、提交列表、HEAD 和工作树状态，并明确所有未运行的真实外部验证。
 
 ## 最小充分测试策略
 

@@ -40,7 +40,8 @@ EHAI（Enhanced Human-Agent Interface）用于建立可规划、可探索、可�
 
 ## P2：稳定的多 Worker 执行内核
 
-**状态：** 已完成；Planning & Execution Readiness Gate 已于 2026-09-04 通过。
+**状态：** 多 Worker 执行内核与 Planning & Execution Readiness Gate 已完成；进入 P3 前先完成
+Built-in Agent Foundation 扩展。
 
 **目标：** 将 P1 原型升级为可靠、可扩展的 Agent Runtime。
 
@@ -65,7 +66,8 @@ EHAI（Enhanced Human-Agent Interface）用于建立可规划、可探索、可�
 
 ### P2→P3 Planning & Execution Readiness Gate
 
-**状态：** 已通过（2026-09-04）。P3 可以开始，但尚未进入实现。
+**状态：** 已通过（2026-09-04）。随后确认的 Built-in Agent Foundation 扩展成为新的 P3 前置门禁，
+因此 P3 尚未进入实现。
 
 **目标：** 在开发 Control Plane 前，把 P1/P2 的规划、执行、干预、恢复和重规划能力调整到可用于
 真实项目的稳定状态，并用 EHAI 开发 EHAI 的一次小型代码任务证明完整闭环。
@@ -88,6 +90,31 @@ Merge 精确复现 selected ChangeSet，宿主完整验证通过，用户 main �
 
 本 Gate 不实现 P3 UI、P4 Workflow、插件生态、新 Worker Provider 或跨主机分布式调度。详细增量见
 [P2 Implementation Plan](P2_IMPLEMENTATION_PLAN.md) 的 `P2-I10` 至 `P2-I13`。
+
+### P2→P3 Built-in Agent Foundation 扩展
+
+**状态：** 已确认，待实现。P3 UI 暂不开始，先将现有 Built-in Worker 提炼为所有内部 Agent 角色
+共用的运行地基。
+
+**目标：** Planner、Worker、Evaluator、Merge、Visualizer、Reviewer 和 Assistance Role 共用同一套
+ModelClient、Session/Event Store、Agent Loop、Tool Registry、取消、预算、恢复和 Trace；角色之间只
+配置 Prompt、Tool Profile、Context Builder 与 Finish Tool，禁止各自复制 Agent Loop。
+
+范围：
+
+- 完整 Workspace 能力：读取、搜索、创建、修改、统一 diff、删除、移动与创建目录。
+- 可按 Endpoint 选择的 Shell，以及覆盖全部 Git 子命令的结构化 Git Tool；实际权限继续按角色、沙箱
+  和审批策略授予，远端写入与危险操作不得因“通用能力”而默认放行。
+- 统一 Web Search Tool；MCP Tool Schema 接入；Skill 说明与资源加载。提前的是运行时消费能力，P5 的
+  插件 SDK、市场、动态安装与第三方生态仍不在本阶段。
+- 持久 Session Mailbox，使已存在的 Agent Session 能发送、读取和等待消息；跨 Workspace 协作通过
+  Message 与 Artifact，不直接写入其他 Session 的工作区。
+- Planner 使用工作区读取、分析命令和 PlanGraph Tool；Visualizer 从已校验的 draft PlanRevision 生成
+  可视化 Artifact；用户批准后仍由现有 Orchestrator/Scheduler 调度 Worker。
+
+退出条件：至少一个真实任务能完成 `Goal → Agent-assisted planning → validated PlanGraph → visualization
+→ human approval → multi-Worker execution → Check/Gate/Checkpoint`；参与角色共用同一 Agent Runtime，
+Session 通信、权限、恢复和 Trace 可从持久证据复核。
 
 ## P3：可观察、可干预的 Control Plane
 
