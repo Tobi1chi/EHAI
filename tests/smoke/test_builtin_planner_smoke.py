@@ -35,6 +35,7 @@ from ehai.domain.execution import RunStatus
 from ehai.domain.planning import PlanNodeKind, PlanRevisionStatus
 from ehai.domain.workers import WorkerProfile
 from ehai.infrastructure.artifacts import FilesystemArtifactStore
+from ehai.infrastructure.builtin_sessions import SQLiteBuiltinSessionStore
 from ehai.infrastructure.checks import ArtifactCheckAdapter, ArtifactCheckRule
 from ehai.infrastructure.openai_responses import (
     OpenAIResponsesModelClient,
@@ -217,14 +218,15 @@ def test_real_builtin_planner_proposes_grounded_plan_without_execution(
         tmp_path / "artifacts",
         planner_kind="single",
     )
-    service._planner = ConfiguredCheckPlanner(
-        BuiltinPlannerAdapter(
-            model=model,
-            reasoning_effort=reasoning_effort,
-            model_client_factory=model_client_factory,
-            endpoint_capabilities=endpoint_capabilities,
-        )
+    session_store = SQLiteBuiltinSessionStore(SQLiteDatabase(database_path))
+    planner = BuiltinPlannerAdapter(
+        model=model,
+        reasoning_effort=reasoning_effort,
+        model_client_factory=model_client_factory,
+        endpoint_capabilities=endpoint_capabilities,
+        session_store=session_store,
     )
+    service._planner = ConfiguredCheckPlanner(planner)
     project = service.create_project(CreateProject("planner-project", "P3 readiness"))
     goal = service.create_goal(
         CreateGoal(
@@ -295,6 +297,11 @@ def test_real_builtin_planner_proposes_grounded_plan_without_execution(
     assert not stored_goal.completion_contract.is_confirmed
     assert len(planner_events) == 1
     assert planner_events[0].payload["planner_event_types"] == ["planner.responses.completed"]
+    assert planner.last_session is not None
+    restored_session = session_store.load(planner.last_session.agent_session_ref_id)
+    runtime_facts = restored_session.events[0].payload["runtime"]
+    assert runtime_facts["role"] == "planner"
+    assert runtime_facts["finish_tool"] == "finish_plan"
 
     evidence["plan"] = {
         "plan_revision_id": plan.plan_revision_id,
@@ -302,6 +309,7 @@ def test_real_builtin_planner_proposes_grounded_plan_without_execution(
         "branch_count": len(plan.branches),
         "reloaded": True,
         "worker_attempt_count": 0,
+        "planning_session_reloaded": True,
     }
     evidence_path = tmp_path / "builtin-planner-smoke-evidence.json"
     serialized = json.dumps(evidence, ensure_ascii=False, indent=2, sort_keys=True)

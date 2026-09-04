@@ -22,6 +22,7 @@ from ehai.application.builtin_agent import (
     ToolHandler,
     ToolSet,
 )
+from ehai.application.builtin_runtime import ToolRegistry
 from ehai.application.ports import ArtifactStore
 from ehai.infrastructure.codex_transport import redact_codex_bytes
 
@@ -132,6 +133,7 @@ class BuiltinToolRuntime:
             )
         )
         handlers["submit_candidate"] = self._submit_candidate
+        self.registry = ToolRegistry(tuple(definitions), handlers)
         self.tool_set = ToolSet(tuple(definitions))
         self.executor = ToolExecutor(self.tool_set, handlers)
 

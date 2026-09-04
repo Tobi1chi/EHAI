@@ -8,13 +8,23 @@ from datetime import datetime
 
 from openai.types.shared import ReasoningEffort
 
-from ehai import ID, JsonValue, json_dumps, new_id, utc_now
+from ehai import ID, JsonValue, new_id, utc_now
 from ehai.application.builtin_agent import (
+    AgentBudget,
+    BuiltinSession,
+    BuiltinSessionStore,
+    CancellationToken,
     ModelClient,
-    ModelMessage,
-    ModelRequest,
-    ModelRole,
-    ToolCall,
+    ToolDefinition,
+    ToolHandler,
+)
+from ehai.application.builtin_runtime import (
+    BuiltinAgentRuntime,
+    BuiltinRole,
+    BuiltinRoleConfig,
+    BuiltinRoleExecution,
+    MemoryBuiltinSessionStore,
+    ToolRegistry,
 )
 from ehai.application.execution_contracts import OPENAI_CREDENTIAL_REF
 from ehai.application.planner import (
@@ -43,14 +53,7 @@ from ehai.infrastructure.planners.plan_graph_tools import (
 
 _DEFAULT_PLANNER_BUDGET = ExplorationBudget(max_attempts=24, max_width=3, max_depth=4)
 
-_MAX_PLANNER_STEPS = 256
-"""Safety valve well above the 128-operation budget; not a functional limit.
-
-The Planner loop terminates through the operation budget, the validation repair
-budget, accepted finish_plan, or provider terminal states. This bound only stops
-a pathological client that never converges, and never limits a valid flow that
-respects the 128-mutation budget.
-"""
+_PLANNER_AGENT_BUDGET = AgentBudget(256, 512, None, 8 * 1024 * 1024)
 
 _PLANNER_SYSTEM_PROMPT = "\n".join(
     (
@@ -94,6 +97,8 @@ class BuiltinPlannerAdapter:
         budget: ExplorationBudget | None = None,
         model_client_factory: PlannerModelClientFactory | None = None,
         endpoint_capabilities: ResponsesEndpointCapabilities | None = None,
+        agent_runtime: BuiltinAgentRuntime | None = None,
+        session_store: BuiltinSessionStore | None = None,
         id_factory: Callable[[], ID] = new_id,
         clock: Callable[[], datetime] = utc_now,
     ) -> None:
@@ -114,8 +119,19 @@ class BuiltinPlannerAdapter:
         if not isinstance(self._endpoint_capabilities, ResponsesEndpointCapabilities):
             raise TypeError("endpoint_capabilities must be ResponsesEndpointCapabilities")
         self._model_client_factory = model_client_factory or self._create_model_client
+        if agent_runtime is not None and session_store is not None:
+            raise ValueError("agent_runtime and session_store are mutually exclusive")
+        self._agent_runtime = agent_runtime or BuiltinAgentRuntime(
+            session_store or MemoryBuiltinSessionStore(),
+            budget=_PLANNER_AGENT_BUDGET,
+        )
+        self._last_session: BuiltinSession | None = None
         self._id_factory = id_factory
         self._clock = clock
+
+    @property
+    def last_session(self) -> BuiltinSession | None:
+        return self._last_session
 
     def propose(self, goal: Goal, criteria: tuple[str, ...]) -> PlanProposal:
         """Ask Responses for a provider-specific plan and assemble a draft proposal."""
@@ -161,91 +177,44 @@ class BuiltinPlannerAdapter:
         )
 
     async def _build_template(self, input_document: Mapping[str, JsonValue]) -> PlanTemplate:
-        """Drive the graph Tool loop until finish_plan accepts the draft graph.
-
-        The loop has no default wall-clock deadline: termination comes from the
-        128-mutation operation budget, the 4 validation repair attempts, an
-        accepted finish_plan, or provider terminal states.
-        """
-        client = self._model_client_factory(self._profile)
-        try:
-            runtime = PlanGraphToolRuntime(
-                self._budget,
-                planner_event_types=("planner.responses.completed",),
+        """Build a Plan through the shared Built-in Agent Runtime."""
+        graph = PlanGraphToolRuntime(
+            self._budget,
+            planner_event_types=("planner.responses.completed",),
+        )
+        registry = _planner_registry(graph)
+        config = BuiltinRoleConfig(
+            role=BuiltinRole.PLANNER,
+            system_prompt=_PLANNER_SYSTEM_PROMPT,
+            tool_profile="planner-graph-v1",
+            tool_names=tuple(definition.name for definition in graph.tool_definitions()),
+            finish_tool="finish_plan",
+            permissions=frozenset({"plan.read", "plan.write"}),
+            tool_choice="required",
+            final_tool_requires_only=False,
+        )
+        session = self._agent_runtime.create_session()
+        self._last_session = session
+        await self._agent_runtime.run(
+            config=config,
+            registry=registry,
+            model_client=self._model_client_factory(self._profile),
+            session=session,
+            execution=BuiltinRoleExecution(session.agent_session_ref_id),
+            instruction=(
+                "EHAI BUILT-IN PLANNER PROTOCOL v2. Build the plan graph with the graph "
+                "tools, then call finish_plan. "
+                f"Mutation budget: {MAX_PLAN_OPERATIONS}; validation repairs: "
+                f"{MAX_VALIDATION_RETRIES}."
+            ),
+            context={"planner_input": dict(input_document)},
+        )
+        if not graph.finished:
+            raise BuiltinPlannerError(
+                "Built-in Planner response contained no ToolCalls; the plan must be built "
+                "with the graph tools and submitted through finish_plan"
             )
-            history: list[ModelMessage] = [
-                ModelMessage(ModelRole.SYSTEM, _PLANNER_SYSTEM_PROMPT),
-                ModelMessage(
-                    ModelRole.USER,
-                    "\n".join(
-                        (
-                            "EHAI BUILT-IN PLANNER PROTOCOL v2",
-                            "Build the plan graph with the graph tools,",
-                            "then call finish_plan.",
-                            f"Graph mutation budget: {MAX_PLAN_OPERATIONS} operations;",
-                            f"validation repair budget: {MAX_VALIDATION_RETRIES} attempts",
-                            "after the first failed finish_plan.",
-                            "--- PLANNER_INPUT_JSON ---",
-                            json_dumps(dict(input_document)),
-                        )
-                    ),
-                ),
-            ]
-            pending: list[ModelMessage] = []
-            previous_response_id: str | None = None
-            steps = 0
-            while True:
-                steps += 1
-                if steps > _MAX_PLANNER_STEPS:
-                    raise BuiltinPlannerError(
-                        "Built-in Planner tool loop did not converge before the model step "
-                        f"safety valve ({_MAX_PLANNER_STEPS} steps)"
-                    )
-                request = ModelRequest(
-                    tuple(history),
-                    runtime.tool_definitions(),
-                    input_messages=tuple(pending) if previous_response_id else tuple(history),
-                    previous_response_id=previous_response_id,
-                    tool_choice="required",
-                )
-                response = await client.complete(request)
-                assistant = ModelMessage(
-                    ModelRole.ASSISTANT,
-                    response.content,
-                    tool_calls=response.tool_calls,
-                )
-                history.append(assistant)
-                if response.provider_response_id is not None:
-                    previous_response_id = response.provider_response_id
-                    pending = [assistant]
-                else:
-                    pending.append(assistant)
-                if not response.tool_calls:
-                    raise BuiltinPlannerError(
-                        "Built-in Planner response contained no ToolCalls; the plan must be built "
-                        "with the graph tools and submitted through finish_plan"
-                    )
-                for index, call in enumerate(response.tool_calls):
-                    if call.name == "finish_plan" and index != len(response.tool_calls) - 1:
-                        result = _finish_ordering_diagnostic(index, response.tool_calls)
-                    else:
-                        result = runtime.execute(call.name, call.arguments)
-                    tool_message = ModelMessage(
-                        ModelRole.TOOL,
-                        json_dumps(result),
-                        call_id=call.call_id,
-                    )
-                    history.append(tool_message)
-                    pending.append(tool_message)
-                    if runtime.validation_budget_exhausted:
-                        raise BuiltinPlannerError(
-                            "Built-in Planner validation budget exhausted: finish_plan failed "
-                            f"full validation {MAX_VALIDATION_RETRIES + 1} times"
-                        )
-                if runtime.finished:
-                    return runtime.build_template()
-        finally:
-            await client.aclose()
+        return graph.build_template()
 
     def _create_model_client(self, profile: WorkerProfile) -> ModelClient:
         return OpenAIResponsesModelClient(
@@ -265,23 +234,34 @@ class BuiltinPlannerAdapter:
             raise ValueError(f"Goal {goal.goal_id} already has a CompletionContract")
 
 
-def _finish_ordering_diagnostic(
-    index: int,
-    calls: tuple[ToolCall, ...],
-) -> dict[str, JsonValue]:
-    following_names: list[JsonValue] = [call.name for call in calls[index + 1 :]]
-    return {
-        "accepted": False,
-        "issues": [
-            {
-                "code": "FINISH_TOOL_NOT_LAST",
-                "location": f"response.tool_calls[{index}]",
-                "message": (
-                    "finish_plan must be the final Tool Call in its model Response; "
-                    "review the following Tool results, then call finish_plan again "
-                    "as the last Tool"
-                ),
-                "related_keys": following_names,
-            }
-        ],
-    }
+def _planner_registry(graph: PlanGraphToolRuntime) -> ToolRegistry:
+    definitions: list[ToolDefinition] = []
+    handlers: dict[str, ToolHandler] = {}
+    for graph_definition in graph.tool_definitions():
+        name = graph_definition.name
+        definitions.append(
+            ToolDefinition(
+                name,
+                graph_definition.description,
+                graph_definition.input_schema,
+                ends_turn=name == "finish_plan",
+            )
+        )
+
+        async def execute(
+            arguments: dict[str, JsonValue],
+            cancellation: CancellationToken,
+            *,
+            tool_name: str = name,
+        ) -> JsonValue:
+            cancellation.raise_if_cancelled()
+            result = graph.execute(tool_name, arguments)
+            if graph.validation_budget_exhausted:
+                raise BuiltinPlannerError(
+                    "Built-in Planner validation budget exhausted: finish_plan failed "
+                    f"full validation {MAX_VALIDATION_RETRIES + 1} times"
+                )
+            return result
+
+        handlers[name] = execute
+    return ToolRegistry(tuple(definitions), handlers)

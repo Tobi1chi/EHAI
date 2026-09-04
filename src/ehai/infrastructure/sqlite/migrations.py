@@ -6,7 +6,7 @@ import sqlite3
 from collections.abc import Sequence
 
 P1_SCHEMA_VERSION = 2
-LATEST_SCHEMA_VERSION = 9
+LATEST_SCHEMA_VERSION = 10
 
 
 class SchemaVersionError(RuntimeError):
@@ -446,6 +446,31 @@ _MIGRATION_9: tuple[str, ...] = (
     """,
 )
 
+_MIGRATION_10: tuple[str, ...] = (
+    """
+    CREATE TABLE builtin_role_sessions (
+        agent_session_ref_id TEXT PRIMARY KEY,
+        created_at TEXT NOT NULL
+    )
+    """,
+    """
+    CREATE TABLE builtin_role_session_events (
+        agent_session_ref_id TEXT NOT NULL
+            REFERENCES builtin_role_sessions(agent_session_ref_id) ON DELETE CASCADE,
+        sequence INTEGER NOT NULL CHECK (sequence > 0),
+        execution_id TEXT NOT NULL,
+        event_type TEXT NOT NULL,
+        occurred_at TEXT NOT NULL,
+        event_json TEXT NOT NULL CHECK (json_valid(event_json)),
+        PRIMARY KEY(agent_session_ref_id, sequence)
+    )
+    """,
+    """
+    CREATE INDEX builtin_role_session_events_execution_idx
+        ON builtin_role_session_events(execution_id, sequence)
+    """,
+)
+
 _MIGRATIONS: dict[int, Sequence[str]] = {
     1: _MIGRATION_1,
     2: _MIGRATION_2,
@@ -456,6 +481,7 @@ _MIGRATIONS: dict[int, Sequence[str]] = {
     7: _MIGRATION_7,
     8: _MIGRATION_8,
     9: _MIGRATION_9,
+    10: _MIGRATION_10,
 }
 
 

@@ -45,6 +45,7 @@ from ehai.domain.checking import CheckKind
 from ehai.domain.goal import Goal
 from ehai.domain.planning import PlanRevision
 from ehai.infrastructure.artifacts import FilesystemArtifactStore
+from ehai.infrastructure.builtin_sessions import SQLiteBuiltinSessionStore
 from ehai.infrastructure.checks import (
     ArtifactCheckAdapter,
     ArtifactCheckRule,
@@ -148,6 +149,7 @@ def build_service(
         planner = BuiltinPlannerAdapter(
             model=builtin_planner_model,
             reasoning_effort=cast(ReasoningEffort, builtin_planner_reasoning_effort),
+            session_store=SQLiteBuiltinSessionStore(database),
         )
     else:
         raise ValueError(f"unsupported Planner: {planner_kind}")

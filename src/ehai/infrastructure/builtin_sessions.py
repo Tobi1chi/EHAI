@@ -11,8 +11,10 @@ from ehai import (
     format_utc_datetime,
     json_dumps,
     json_loads,
+    new_id,
     normalize_id,
     parse_utc_datetime,
+    utc_now,
 )
 from ehai.application.builtin_agent import (
     BuiltinSession,
@@ -29,17 +31,28 @@ class SQLiteBuiltinSessionStore:
     def __init__(self, database: SQLiteDatabase) -> None:
         self._database = database
 
+    def create(self, agent_session_ref_id: ID | None = None) -> BuiltinSession:
+        session_id = normalize_id(agent_session_ref_id or new_id())
+        connection = self._database.connect()
+        try:
+            connection.execute(
+                "INSERT INTO builtin_role_sessions(agent_session_ref_id, created_at) VALUES (?, ?)",
+                (session_id, format_utc_datetime(utc_now())),
+            )
+            connection.commit()
+        finally:
+            connection.close()
+        return BuiltinSession(session_id)
+
     def load(self, agent_session_ref_id: ID) -> BuiltinSession:
         session_id = normalize_id(agent_session_ref_id)
         connection = self._database.connect()
         try:
-            if not _session_exists(connection, session_id):
+            table = _event_table(connection, session_id)
+            if table is None:
                 raise LookupError(f"AgentSessionRef {session_id} is not persisted")
             rows = connection.execute(
-                """
-                SELECT event_json FROM builtin_session_events
-                WHERE agent_session_ref_id = ? ORDER BY sequence
-                """,
+                f"SELECT event_json FROM {table} WHERE agent_session_ref_id = ? ORDER BY sequence",
                 (session_id,),
             ).fetchall()
             return BuiltinSession(
@@ -63,14 +76,13 @@ class SQLiteBuiltinSessionStore:
         connection = self._database.connect()
         connection.execute("BEGIN IMMEDIATE")
         try:
-            if not _session_exists(connection, session_id):
+            table = _event_table(connection, session_id)
+            if table is None:
                 raise LookupError(f"AgentSessionRef {session_id} is not persisted")
             current = int(
                 connection.execute(
-                    """
-                    SELECT COALESCE(MAX(sequence), 0) FROM builtin_session_events
-                    WHERE agent_session_ref_id = ?
-                    """,
+                    f"SELECT COALESCE(MAX(sequence), 0) FROM {table} "
+                    "WHERE agent_session_ref_id = ?",
                     (session_id,),
                 ).fetchone()[0]
             )
@@ -84,13 +96,12 @@ class SQLiteBuiltinSessionStore:
                     or event.sequence != expected_sequence + offset
                 ):
                     raise BuiltinSessionStateError("SessionEvent append batch is not contiguous")
+                execution_column = (
+                    "attempt_id" if table == "builtin_session_events" else "execution_id"
+                )
                 connection.execute(
-                    """
-                    INSERT INTO builtin_session_events(
-                        agent_session_ref_id, sequence, attempt_id,
-                        event_type, occurred_at, event_json
-                    ) VALUES (?, ?, ?, ?, ?, ?)
-                    """,
+                    f"INSERT INTO {table}(agent_session_ref_id, sequence, {execution_column}, "
+                    "event_type, occurred_at, event_json) VALUES (?, ?, ?, ?, ?, ?)",
                     (
                         session_id,
                         event.sequence,
@@ -115,6 +126,22 @@ def _session_exists(connection: sqlite3.Connection, session_id: ID) -> bool:
         (session_id,),
     ).fetchone()
     return row is not None
+
+
+def _role_session_exists(connection: sqlite3.Connection, session_id: ID) -> bool:
+    row = connection.execute(
+        "SELECT 1 FROM builtin_role_sessions WHERE agent_session_ref_id = ?",
+        (session_id,),
+    ).fetchone()
+    return row is not None
+
+
+def _event_table(connection: sqlite3.Connection, session_id: ID) -> str | None:
+    if _session_exists(connection, session_id):
+        return "builtin_session_events"
+    if _role_session_exists(connection, session_id):
+        return "builtin_role_session_events"
+    return None
 
 
 def _encode_event(event: BuiltinSessionEvent) -> str:

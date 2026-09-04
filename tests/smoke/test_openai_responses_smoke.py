@@ -178,6 +178,13 @@ def test_real_openai_responses_runs_builtin_runtime_tools_artifact_and_gate(
     assert artifacts.read(stored_artifacts[0].artifact_id) == b"AFTER"
     assert checkpoints and checkpoints[-1].gate_decision.passed
     durable = sessions.load(refs[0].agent_session_ref_id)
+    turn_started = next(
+        event for event in durable.events if event.type is BuiltinSessionEventType.TURN_STARTED
+    )
+    runtime_facts = cast(JSONObject, turn_started.payload["runtime"])
+    assert runtime_facts["role"] == "worker"
+    assert runtime_facts["tool_profile"] == "builtin-worker-v1"
+    assert runtime_facts["finish_tool"] == "submit_candidate"
     tool_names = tuple(
         event.payload.get("name")
         for event in durable.events

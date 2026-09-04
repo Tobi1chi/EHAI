@@ -12,7 +12,6 @@ from types import TracebackType
 from typing import Literal, Protocol, Self, runtime_checkable
 
 from ehai import ID, JsonValue, json_dumps, json_loads, normalize_id, utc_now
-from ehai.domain.workers import BuiltinExecutionRef
 
 
 class BuiltinAgentError(RuntimeError):
@@ -57,7 +56,7 @@ class AgentBudget:
 
     max_steps: int
     max_tool_calls: int
-    wall_clock_seconds: float
+    wall_clock_seconds: float | None
     max_output_bytes: int
 
     def __post_init__(self) -> None:
@@ -65,12 +64,12 @@ class AgentBudget:
             value = getattr(self, name)
             if type(value) is not int or value < 1:
                 raise ValueError(f"AgentBudget {name} must be a positive integer")
-        if (
+        if self.wall_clock_seconds is not None and (
             not isinstance(self.wall_clock_seconds, (int, float))
             or isinstance(self.wall_clock_seconds, bool)
             or self.wall_clock_seconds <= 0
         ):
-            raise ValueError("AgentBudget wall_clock_seconds must be positive")
+            raise ValueError("AgentBudget wall_clock_seconds must be positive or None")
 
 
 DEFAULT_AGENT_BUDGET = AgentBudget(32, 64, 600.0, 8 * 1024 * 1024)
@@ -215,6 +214,16 @@ class ModelClient(Protocol):
     async def aclose(self) -> None:
         """Release provider resources owned by this client."""
         ...
+
+
+class BuiltinExecution(Protocol):
+    """Provider-neutral identity for one execution inside a Built-in Session."""
+
+    @property
+    def attempt_id(self) -> ID: ...
+
+    @property
+    def agent_session_ref_id(self) -> ID: ...
 
 
 @dataclass(frozen=True, slots=True, init=False)
@@ -593,6 +602,9 @@ class BuiltinAgentLoop:
         tool_set: ToolSet,
         session_store: BuiltinSessionStore,
         budget: AgentBudget = DEFAULT_AGENT_BUDGET,
+        tool_choice: Literal["auto", "required"] = "auto",
+        runtime_facts: Mapping[str, JsonValue] | None = None,
+        final_tool_requires_only: bool = True,
         monotonic_clock: Callable[[], float] = monotonic,
     ) -> None:
         self.model_client = model_client
@@ -600,19 +612,31 @@ class BuiltinAgentLoop:
         self.tool_set = tool_set
         self.session_store = session_store
         self.budget = budget
+        if tool_choice not in {"auto", "required"}:
+            raise ValueError("BuiltinAgentLoop tool_choice must be 'auto' or 'required'")
+        if not isinstance(final_tool_requires_only, bool):
+            raise ValueError("final_tool_requires_only must be a boolean")
+        self.tool_choice = tool_choice
+        self.runtime_facts = {} if runtime_facts is None else dict(runtime_facts)
+        self.final_tool_requires_only = final_tool_requires_only
         self._monotonic_clock = monotonic_clock
 
     async def run(
         self,
         scope: ExecutionScope,
-        execution: BuiltinExecutionRef,
+        execution: BuiltinExecution,
         instruction: str,
         context: Mapping[str, JsonValue],
     ) -> str:
         session = scope.session
         attempt_id = execution.attempt_id
         if execution.agent_session_ref_id != session.agent_session_ref_id:
-            raise BuiltinAgentError("BuiltinExecutionRef belongs to another Session")
+            raise BuiltinAgentError("Builtin execution belongs to another Session")
+        if (
+            session.has_turn(attempt_id)
+            and _turn_runtime_facts(session.events, attempt_id) != self.runtime_facts
+        ):
+            raise BuiltinSessionStateError("Session Role/ToolSet snapshot changed during recovery")
         if session.is_turn_complete(attempt_id):
             final = session.final_text(attempt_id)
             if final is None:
@@ -631,10 +655,15 @@ class BuiltinAgentLoop:
         )
         if not session.has_turn(attempt_id):
             system_message, user_message = self.prompt_builder.build(instruction, context)
+            payload: dict[str, JsonValue] = {
+                "messages": [_message_document(system_message), _message_document(user_message)]
+            }
+            if self.runtime_facts:
+                payload["runtime"] = self.runtime_facts
             session.append(
                 attempt_id,
                 BuiltinSessionEventType.TURN_STARTED,
-                {"messages": [_message_document(system_message), _message_document(user_message)]},
+                payload,
             )
             persisted_sequence = self._persist(session, persisted_sequence)
 
@@ -668,6 +697,7 @@ class BuiltinAgentLoop:
                 self.tool_set.definitions,
                 input_messages=session.continuation_messages(),
                 previous_response_id=session.last_provider_response_id(),
+                tool_choice=self.tool_choice,
             )
             response = await self.model_client.complete(request)
             step_count += 1
@@ -695,7 +725,7 @@ class BuiltinAgentLoop:
             if response.tool_calls:
                 if tool_call_count + len(response.tool_calls) > self.budget.max_tool_calls:
                     raise AgentBudgetExceededError("Built-in Agent Tool Call budget exhausted")
-                for call in response.tool_calls:
+                for index, call in enumerate(response.tool_calls):
                     self._check_wall_clock(started_at)
                     try:
                         definition = self.tool_set.require(call.name)
@@ -714,7 +744,20 @@ class BuiltinAgentLoop:
                         },
                     )
                     persisted_sequence = self._persist(session, persisted_sequence)
-                    event_type, payload, visible_result = await self._execute_tool(scope, call)
+                    if (
+                        definition is not None
+                        and definition.ends_turn
+                        and index != len(response.tool_calls) - 1
+                    ):
+                        if self.final_tool_requires_only:
+                            raise BuiltinAgentError(
+                                "a final Tool must be the only ToolCall in its Step"
+                            )
+                        visible_result = _finish_ordering_result(index, response.tool_calls)
+                        event_type = BuiltinSessionEventType.TOOL_RESULT
+                        payload = {"call_id": call.call_id, "result": visible_result}
+                    else:
+                        event_type, payload, visible_result = await self._execute_tool(scope, call)
                     tool_call_count += 1
                     output_bytes += len(json_dumps(visible_result).encode("utf-8"))
                     self._check_output_budget(output_bytes)
@@ -725,8 +768,11 @@ class BuiltinAgentLoop:
                     )
                     if event_type is BuiltinSessionEventType.TOOL_ERROR:
                         continue
-                    if definition is not None and definition.ends_turn:
-                        if len(response.tool_calls) != 1:
+                    rejected_finish = (
+                        isinstance(visible_result, dict) and visible_result.get("accepted") is False
+                    )
+                    if definition is not None and definition.ends_turn and not rejected_finish:
+                        if self.final_tool_requires_only and len(response.tool_calls) != 1:
                             raise BuiltinAgentError(
                                 "a final Tool must be the only ToolCall in its Step"
                             )
@@ -772,7 +818,10 @@ class BuiltinAgentLoop:
             return response.final_text
 
     def _check_wall_clock(self, started_at: float) -> None:
-        if self._monotonic_clock() - started_at > self.budget.wall_clock_seconds:
+        if (
+            self.budget.wall_clock_seconds is not None
+            and self._monotonic_clock() - started_at > self.budget.wall_clock_seconds
+        ):
             raise AgentBudgetExceededError("Built-in Agent wall-clock budget exhausted")
 
     def _check_output_budget(self, output_bytes: int) -> None:
@@ -824,7 +873,7 @@ class BuiltinAgent:
     async def run(
         self,
         scope: ExecutionScope,
-        execution: BuiltinExecutionRef,
+        execution: BuiltinExecution,
         instruction: str,
         context: Mapping[str, JsonValue],
     ) -> str:
@@ -1018,6 +1067,40 @@ def _turn_usage(
             if isinstance(text, str):
                 output_bytes += len(text.encode("utf-8"))
     return step_count, tool_call_count, output_bytes
+
+
+def _turn_runtime_facts(
+    events: tuple[BuiltinSessionEvent, ...],
+    attempt_id: ID,
+) -> dict[str, JsonValue]:
+    for event in events:
+        if event.attempt_id != attempt_id or event.type is not BuiltinSessionEventType.TURN_STARTED:
+            continue
+        facts = event.payload.get("runtime")
+        if facts is None:
+            return {}
+        if not isinstance(facts, Mapping):
+            raise BuiltinSessionStateError("turn/start runtime facts must be an object")
+        return dict(facts)
+    return {}
+
+
+def _finish_ordering_result(index: int, calls: tuple[ToolCall, ...]) -> dict[str, JsonValue]:
+    return {
+        "accepted": False,
+        "issues": [
+            {
+                "code": "FINISH_TOOL_NOT_LAST",
+                "location": f"response.tool_calls[{index}]",
+                "message": (
+                    "The finish Tool must be the final Tool Call in its model Response; "
+                    "review following Tool results, then call the finish Tool again "
+                    "as the last Tool"
+                ),
+                "related_keys": [call.name for call in calls[index + 1 :]],
+            }
+        ],
+    }
 
 
 def _tool_result_message(document: Mapping[str, JsonValue]) -> ModelMessage:

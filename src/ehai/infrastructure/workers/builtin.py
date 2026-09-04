@@ -20,16 +20,13 @@ from ehai.application.async_runtime import (
 from ehai.application.builtin_agent import (
     DEFAULT_AGENT_BUDGET,
     AgentBudget,
-    BuiltinAgent,
-    BuiltinAgentLoop,
     BuiltinSession,
     BuiltinSessionEventType,
     BuiltinSessionStore,
     CancellationToken,
-    ExecutionScope,
     ModelClient,
-    PromptBuilder,
 )
+from ehai.application.builtin_runtime import BuiltinAgentRuntime, BuiltinRole, BuiltinRoleConfig
 from ehai.application.execution_policy import RetrySafety
 from ehai.application.orchestrator import Orchestrator
 from ehai.application.ports import ArtifactStore, UnitOfWork
@@ -99,6 +96,7 @@ class BuiltinAgentConnector:
         self._tasks: dict[ID, asyncio.Task[WorkerResult]] = {}
         self._terminal_outcomes: dict[ID, tuple[str | None, str]] = {}
         self._cancellations: dict[ID, CancellationToken] = {}
+        self._runtime = BuiltinAgentRuntime(session_store, budget=budget)
 
     async def start(self, request: ConnectorStartRequest) -> ConnectorExecution:
         attempt_id = request.attempt_id
@@ -236,29 +234,18 @@ class BuiltinAgentConnector:
             allowed_commands=self._allowed_commands,
             command_timeout_seconds=self._command_timeout_seconds,
         )
-        loop = BuiltinAgentLoop(
-            model_client=self._model_client_factory(self._profile, request),
-            prompt_builder=PromptBuilder(self._system_prompt),
-            tool_set=tools.tool_set,
-            session_store=self._session_store,
-            budget=self._budget,
-        )
-        agent = BuiltinAgent(loop)
-        scope = ExecutionScope(
-            agent=agent,
-            session=session,
-            tool_executor=tools.executor,
-            cancellation=cancellation,
-        )
         try:
-            async with scope:
-                await agent.run(
-                    scope,
-                    reference,
-                    request.plan_node.instruction,
-                    _builtin_context(request),
-                )
-                return _candidate_result(session, execution.attempt_id)
+            await self._runtime.run(
+                config=_worker_role_config(request, tools),
+                registry=tools.registry,
+                model_client=self._model_client_factory(self._profile, request),
+                session=session,
+                execution=reference,
+                instruction=request.plan_node.instruction,
+                context=_builtin_context(request),
+                cancellation=cancellation,
+            )
+            return _candidate_result(session, execution.attempt_id)
         finally:
             self._cancellations.pop(execution.attempt_id, None)
 
@@ -415,6 +402,28 @@ def _builtin_context(request: WorkerRequest) -> dict[str, JsonValue]:
     if role_protocol is not None:
         context["role_protocol"] = role_protocol
     return context
+
+
+def _worker_role_config(
+    request: WorkerRequest,
+    tools: BuiltinToolRuntime,
+) -> BuiltinRoleConfig:
+    role = {
+        PlanNodeKind.EVALUATOR: BuiltinRole.EVALUATOR,
+        PlanNodeKind.MERGE: BuiltinRole.MERGE,
+    }.get(request.plan_node.kind, BuiltinRole.WORKER)
+    return BuiltinRoleConfig(
+        role=role,
+        system_prompt=_DEFAULT_SYSTEM_PROMPT,
+        tool_profile=f"builtin-{role.value}-v1",
+        tool_names=tuple(definition.name for definition in tools.tool_set.definitions),
+        finish_tool="submit_candidate",
+        permissions=frozenset(
+            {"workspace.read", "workspace.write", "artifact.read", "command.execute"}
+        ),
+        tool_choice="required",
+        final_tool_requires_only=True,
+    )
 
 
 def _builtin_role_protocol(kind: PlanNodeKind) -> dict[str, JsonValue] | None:

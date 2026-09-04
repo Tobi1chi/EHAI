@@ -46,6 +46,14 @@ from ehai.application.builtin_agent import (
     ToolExecutor,
     ToolSet,
 )
+from ehai.application.builtin_runtime import (
+    BuiltinAgentRuntime,
+    BuiltinRole,
+    BuiltinRoleConfig,
+    BuiltinRoleExecution,
+    MemoryBuiltinSessionStore,
+    ToolRegistry,
+)
 from ehai.application.execution_contracts import OPENAI_CREDENTIAL_REF
 from ehai.application.ports import ArtifactStore
 from ehai.domain.execution import Attempt, Run
@@ -107,6 +115,143 @@ class _ScriptedModelClient:
 
     async def aclose(self) -> None:
         self.closed = True
+
+
+def test_shared_runtime_freezes_role_tool_profile_and_rejects_recovery_drift() -> None:
+    async def inspect(
+        arguments: dict[str, JsonValue], cancellation: CancellationToken
+    ) -> JsonValue:
+        del arguments
+        cancellation.raise_if_cancelled()
+        return {"observed": True}
+
+    async def finish(arguments: dict[str, JsonValue], cancellation: CancellationToken) -> JsonValue:
+        del arguments
+        cancellation.raise_if_cancelled()
+        return {"accepted": True}
+
+    definitions = (
+        ToolDefinition("inspect", "Inspect", {"type": "object", "properties": {}}),
+        ToolDefinition(
+            "finish",
+            "Finish",
+            {"type": "object", "properties": {}},
+            ends_turn=True,
+        ),
+    )
+    registry = ToolRegistry(definitions, {"inspect": inspect, "finish": finish})
+    config = BuiltinRoleConfig(
+        BuiltinRole.REVIEWER,
+        "Review the bounded input.",
+        "reviewer-v1",
+        ("inspect", "finish"),
+        "finish",
+        frozenset({"artifact.read"}),
+    )
+    store = MemoryBuiltinSessionStore()
+    runtime = BuiltinAgentRuntime(store, budget=AgentBudget(4, 4, None, 4096))
+    session = runtime.create_session()
+    execution = BuiltinRoleExecution(session.agent_session_ref_id)
+    client = _ScriptedModelClient(
+        (
+            ModelResponse("", (ToolCall("inspect-1", "inspect", {}),)),
+            ModelResponse("", (ToolCall("finish-1", "finish", {}),)),
+        )
+    )
+
+    result = asyncio.run(
+        runtime.run(
+            config=config,
+            registry=registry,
+            model_client=client,
+            session=session,
+            execution=execution,
+            instruction="review",
+            context={"artifact_id": "artifact-1"},
+        )
+    )
+
+    assert result == '{"accepted":true}'
+    started = session.events[0]
+    assert started.type is BuiltinSessionEventType.TURN_STARTED
+    assert started.payload["runtime"] == {
+        "role": "reviewer",
+        "tool_profile": "reviewer-v1",
+        "finish_tool": "finish",
+        "tool_names": ["inspect", "finish"],
+        "permissions": ["artifact.read"],
+    }
+    assert all(request.tool_choice == "required" for request in client.requests)
+
+    changed = BuiltinRoleConfig(
+        BuiltinRole.REVIEWER,
+        "Review the bounded input.",
+        "reviewer-v2",
+        ("inspect", "finish"),
+        "finish",
+    )
+    with pytest.raises(BuiltinSessionStateError, match="snapshot changed"):
+        asyncio.run(
+            runtime.run(
+                config=changed,
+                registry=registry,
+                model_client=_ScriptedModelClient(()),
+                session=store.load(session.agent_session_ref_id),
+                execution=execution,
+                instruction="review",
+                context={},
+            )
+        )
+
+
+def test_shared_runtime_role_session_round_trips_through_sqlite(tmp_path: Path) -> None:
+    async def finish(arguments: dict[str, JsonValue], cancellation: CancellationToken) -> JsonValue:
+        del arguments
+        cancellation.raise_if_cancelled()
+        return {"accepted": True}
+
+    definition = ToolDefinition(
+        "finish",
+        "Finish",
+        {"type": "object", "properties": {}},
+        ends_turn=True,
+    )
+    store = SQLiteBuiltinSessionStore(SQLiteDatabase(tmp_path / "role-session.sqlite3"))
+    runtime = BuiltinAgentRuntime(store, budget=AgentBudget(2, 2, None, 2048))
+    session = runtime.create_session()
+    execution = BuiltinRoleExecution(session.agent_session_ref_id)
+    config = BuiltinRoleConfig(
+        BuiltinRole.PLANNER,
+        "Plan only.",
+        "planner-v1",
+        ("finish",),
+        "finish",
+        frozenset({"plan.write"}),
+    )
+
+    asyncio.run(
+        runtime.run(
+            config=config,
+            registry=ToolRegistry((definition,), {"finish": finish}),
+            model_client=_ScriptedModelClient(
+                (ModelResponse("", (ToolCall("finish-1", "finish", {}),)),)
+            ),
+            session=session,
+            execution=execution,
+            instruction="plan",
+            context={},
+        )
+    )
+
+    restored = store.load(session.agent_session_ref_id)
+    assert restored.is_turn_complete(execution.attempt_id)
+    assert restored.events[0].payload["runtime"] == {
+        "role": "planner",
+        "tool_profile": "planner-v1",
+        "finish_tool": "finish",
+        "tool_names": ["finish"],
+        "permissions": ["plan.write"],
+    }
 
 
 class _Dumpable(SimpleNamespace):
