@@ -618,7 +618,15 @@ def _exploration_evidence(
         "tool/result",
         "step/end",
     }.issubset(session_event_types)
-    assert len(tool_calls) == 5 and all(item["name"] == "submit_candidate" for item in tool_calls)
+    submit_calls = [item for item in tool_calls if item["name"] == "submit_candidate"]
+    assert len(submit_calls) == 5
+    assert {item["attempt_id"] for item in submit_calls} == {
+        item["attempt_id"] for item in attempts
+    }
+    assert {item["name"] for item in tool_calls}.issubset({"artifact_read", "submit_candidate"})
+    for attempt in attempts:
+        attempt_calls = [item for item in tool_calls if item["attempt_id"] == attempt["attempt_id"]]
+        assert attempt_calls[-1]["name"] == "submit_candidate"
 
     return {
         "project": project,
