@@ -14,6 +14,7 @@ from ehai.application.builtin_agent import (
     ModelMessage,
     ModelRequest,
     ModelRole,
+    ToolCall,
 )
 from ehai.application.execution_contracts import OPENAI_CREDENTIAL_REF
 from ehai.application.planner import (
@@ -216,8 +217,11 @@ class BuiltinPlannerAdapter:
                         "Built-in Planner response contained no ToolCalls; the plan must be built "
                         "with the graph tools and submitted through finish_plan"
                     )
-                for call in response.tool_calls:
-                    result = runtime.execute(call.name, call.arguments)
+                for index, call in enumerate(response.tool_calls):
+                    if call.name == "finish_plan" and index != len(response.tool_calls) - 1:
+                        result = _finish_ordering_diagnostic(index, response.tool_calls)
+                    else:
+                        result = runtime.execute(call.name, call.arguments)
                     tool_message = ModelMessage(
                         ModelRole.TOOL,
                         json_dumps(result),
@@ -230,8 +234,8 @@ class BuiltinPlannerAdapter:
                             "Built-in Planner validation budget exhausted: finish_plan failed "
                             f"full validation {MAX_VALIDATION_RETRIES + 1} times"
                         )
-                    if runtime.finished:
-                        return runtime.build_template()
+                if runtime.finished:
+                    return runtime.build_template()
         finally:
             await client.aclose()
 
@@ -250,3 +254,25 @@ class BuiltinPlannerAdapter:
             raise ValueError(f"Goal {goal.goal_id} must be open before planning")
         if not allow_completion_contract and goal.completion_contract is not None:
             raise ValueError(f"Goal {goal.goal_id} already has a CompletionContract")
+
+
+def _finish_ordering_diagnostic(
+    index: int,
+    calls: tuple[ToolCall, ...],
+) -> dict[str, JsonValue]:
+    following_names: list[JsonValue] = [call.name for call in calls[index + 1 :]]
+    return {
+        "accepted": False,
+        "issues": [
+            {
+                "code": "FINISH_TOOL_NOT_LAST",
+                "location": f"response.tool_calls[{index}]",
+                "message": (
+                    "finish_plan must be the final Tool Call in its model Response; "
+                    "review the following Tool results, then call finish_plan again "
+                    "as the last Tool"
+                ),
+                "related_keys": following_names,
+            }
+        ],
+    }

@@ -338,6 +338,68 @@ def test_adapter_returns_diagnostics_and_model_repairs_in_same_call() -> None:
     assert node_by_title["Implement"].required_dependency_ids == ()
 
 
+def test_adapter_requires_successful_finish_plan_to_be_last_tool_call() -> None:
+    class _FinishInMiddleClient:
+        def __init__(self) -> None:
+            self.requests: list[ModelRequest] = []
+            self.closed = False
+
+        async def complete(self, request: ModelRequest) -> ModelResponse:
+            self.requests.append(request)
+            if len(self.requests) == 1:
+                return ModelResponse(
+                    "",
+                    (
+                        ToolCall(
+                            "node-first",
+                            "add_plan_node",
+                            {
+                                "key": "first",
+                                "title": "First",
+                                "instruction": "First",
+                                "kind": "work",
+                            },
+                        ),
+                        ToolCall("finish-middle", "finish_plan", {}),
+                        ToolCall(
+                            "node-second",
+                            "add_plan_node",
+                            {
+                                "key": "second",
+                                "title": "Second",
+                                "instruction": "Second",
+                                "kind": "work",
+                            },
+                        ),
+                    ),
+                    provider_response_id="resp-middle",
+                )
+            if len(self.requests) == 2:
+                assert any(
+                    "FINISH_TOOL_NOT_LAST" in message.content
+                    and '"location":"response.tool_calls[1]"' in message.content
+                    for message in request.input_messages
+                    if message.role.value == "tool"
+                )
+                return ModelResponse(
+                    "",
+                    (ToolCall("finish-last", "finish_plan", {}),),
+                    provider_response_id="resp-last",
+                )
+            raise AssertionError("unexpected planner step")
+
+        async def aclose(self) -> None:
+            self.closed = True
+
+    client = _FinishInMiddleClient()
+
+    proposal = _adapter(client).propose(_goal(), ("artifact:non-empty",))
+
+    assert client.closed
+    assert len(client.requests) == 2
+    assert {node.title for node in proposal.plan_revision.nodes} == {"First", "Second"}
+
+
 def test_adapter_terminates_with_validation_budget_exhausted() -> None:
     client = _NeverFinishingClient()
     goal = _goal()
@@ -345,6 +407,7 @@ def test_adapter_terminates_with_validation_budget_exhausted() -> None:
     with pytest.raises(BuiltinPlannerError, match="validation budget exhausted"):
         _adapter(client).propose(goal, ("artifact:non-empty",))
     assert client.closed
+    assert len(client.requests) == 5
 
 
 def test_adapter_rejects_model_response_without_tool_calls() -> None:
