@@ -90,6 +90,15 @@ npm.cmd run typecheck
 - [Architecture Decision Records](docs/adr/)：持久化、接口和 Codex 通道等关键决策。
 - [Codex CLI Spike](docs/spikes/codex-cli-local-channel.md)：真实 Codex 通道与验收观察。
 
+### Architecture Notes
+
+- [Domain](src/ehai/domain/README.md)：领域对象、不变量与状态所有权。
+- [Application](src/ehai/application/README.md)：用例、规划、编排、调度与恢复边界。
+- [Infrastructure](src/ehai/infrastructure/README.md)：外部服务、持久化、Worker 与 Workspace Adapter。
+- [Interfaces](src/ehai/interfaces/README.md)：CLI、HTTP、SSE 与本地 Composition Root。
+- [Schemas](schemas/README.md)：跨 Plane Schema、OpenAPI 与生成验证流程。
+- [Control Plane](control-plane/README.md)：当前严格 TypeScript API Client 的范围与用法。
+
 ## Development
 
 ```powershell
