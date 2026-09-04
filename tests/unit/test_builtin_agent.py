@@ -7,7 +7,7 @@ import shutil
 import subprocess
 import sys
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
@@ -72,13 +72,16 @@ from ehai.domain.workers import (
 from ehai.infrastructure import builtin_tools
 from ehai.infrastructure.builtin_sessions import SQLiteBuiltinSessionStore
 from ehai.infrastructure.builtin_tools import BuiltinToolRuntime
+from ehai.infrastructure.mcp_tools import MCPToolProvider, MCPToolSpec
 from ehai.infrastructure.openai_responses import (
     OpenAIResponsesModelClient,
     OpenAIResponsesProtocolError,
     OpenAIResponsesUnknownOutcomeError,
     ResponsesEndpointCapabilities,
 )
+from ehai.infrastructure.skill_loader import SkillLoader, SkillToolProvider
 from ehai.infrastructure.sqlite import SQLiteDatabase
+from ehai.infrastructure.web_tools import WebToolProvider
 from ehai.infrastructure.workers.builtin import _builtin_role_protocol
 
 NOW = datetime(2026, 9, 2, 12, 0, tzinfo=UTC)
@@ -1408,6 +1411,126 @@ def test_builtin_tool_runtime_shell_and_git_permissions_fail_closed(tmp_path: Pa
     shell_result, git_result = asyncio.run(invoke())
     assert "SHELL_OK" in cast(dict[str, JsonValue], shell_result)["stdout"]
     assert cast(dict[str, JsonValue], git_result)["permission"] == "git.read"
+
+
+def test_builtin_tool_runtime_composes_web_mcp_and_skill_without_permission_expansion(
+    tmp_path: Path,
+) -> None:
+    class _Web:
+        async def search(self, query: str) -> JsonValue:
+            return {"query": query, "results": [{"url": "https://example.invalid/fact"}]}
+
+        async def open(self, url: str) -> JsonValue:
+            return {"url": url, "text": "verified fact"}
+
+        async def find(self, url: str, pattern: str) -> JsonValue:
+            return {"url": url, "pattern": pattern, "matched": True}
+
+    class _MCP:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, dict[str, JsonValue]]] = []
+
+        def list_tools(self) -> tuple[MCPToolSpec, ...]:
+            return (
+                MCPToolSpec(
+                    "lookup",
+                    "Look up one key",
+                    {
+                        "type": "object",
+                        "properties": {"key": {"type": "string"}},
+                        "required": ["key"],
+                        "additionalProperties": False,
+                    },
+                ),
+            )
+
+        def call_tool(self, name: str, arguments: Mapping[str, JsonValue]) -> JsonValue:
+            self.calls.append((name, dict(arguments)))
+            return {"value": arguments["key"]}
+
+        def close(self) -> None:
+            return None
+
+    class _FailingWeb:
+        async def search(self, query: str) -> JsonValue:
+            del query
+            raise RuntimeError("external details")
+
+        async def open(self, url: str) -> JsonValue:
+            del url
+            raise RuntimeError("external details")
+
+        async def find(self, url: str, pattern: str) -> JsonValue:
+            del url, pattern
+            raise RuntimeError("external details")
+
+    skill_root = tmp_path / "skill"
+    skill_root.mkdir()
+    (skill_root / "SKILL.md").write_text(
+        '---\nrequired_tools: ["web_search"]\nresources: ["guide.txt"]\n---\nUse the fact.',
+        encoding="utf-8",
+    )
+    (skill_root / "guide.txt").write_text("FACT=42", encoding="utf-8")
+    mcp_client = _MCP()
+    runtime = BuiltinToolRuntime(
+        artifact_store=cast(ArtifactStore, object()),
+        workspace=tmp_path,
+        web_provider=WebToolProvider(_Web()),
+        mcp_providers=(MCPToolProvider("local", mcp_client, approved_tools=frozenset({"lookup"})),),
+        skill_provider=SkillToolProvider(
+            SkillLoader({"fact": skill_root}), authorized_tools=frozenset({"web_search"})
+        ),
+    )
+
+    async def invoke() -> tuple[JsonValue, JsonValue, JsonValue]:
+        token = CancellationToken()
+        web = await runtime.executor.execute(
+            ToolCall("web", "web_search", {"query": "fact"}), token
+        )
+        mcp = await runtime.executor.execute(
+            ToolCall("mcp", "mcp__local__lookup", {"key": "answer"}), token
+        )
+        skill = await runtime.executor.execute(
+            ToolCall("skill", "skill_load", {"name": "fact"}), token
+        )
+        await runtime.aclose()
+        return web, mcp, skill
+
+    web, mcp, skill = asyncio.run(invoke())
+    assert cast(dict[str, JsonValue], web)["operation"] == "search"
+    assert cast(dict[str, JsonValue], mcp)["server"] == "local"
+    assert cast(dict[str, JsonValue], skill)["resources"] == {"guide.txt": "FACT=42"}
+    assert mcp_client.calls == [("lookup", {"key": "answer"})]
+
+    denied = SkillLoader({"fact": skill_root})
+    with pytest.raises(RecoverableToolError, match="unauthorized tools"):
+        denied.load("fact", frozenset())
+    failing_web = WebToolProvider(_FailingWeb())
+    with pytest.raises(RecoverableToolError, match="Web provider request failed"):
+        asyncio.run(failing_web.handlers["web_search"]({"query": "fact"}, CancellationToken()))
+
+
+def test_skill_loader_rejects_resolved_skill_md_escape(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    outside = tmp_path / "outside.md"
+    outside.write_text("outside", encoding="utf-8")
+    skill_root = tmp_path / "skill"
+    skill_root.mkdir()
+    (skill_root / "SKILL.md").write_text("inside", encoding="utf-8")
+    loader = SkillLoader({"escape": skill_root})
+    original_resolve = Path.resolve
+
+    def resolve(path: Path, strict: bool = False) -> Path:
+        if path.name == "SKILL.md":
+            return outside
+        return original_resolve(path, strict=strict)
+
+    monkeypatch.setattr(Path, "resolve", resolve)
+
+    with pytest.raises(RecoverableToolError, match="escapes"):
+        loader.load("escape", frozenset())
 
 
 def test_builtin_agent_returns_durable_read_error_to_model(tmp_path: Path) -> None:

@@ -5,15 +5,18 @@ import json
 import os
 import sqlite3
 import subprocess
+import sys
 import tempfile
 import time
 from dataclasses import replace
 from pathlib import Path
 from typing import Any, cast
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 
+from ehai import JsonValue
 from ehai.application.async_runtime import SingleSlotRuntime
 from ehai.application.builtin_agent import BuiltinSessionEventType
 from ehai.application.checks import CheckRunner
@@ -50,12 +53,81 @@ from ehai.domain.workers import (
 from ehai.infrastructure.artifacts import FilesystemArtifactStore
 from ehai.infrastructure.builtin_sessions import SQLiteBuiltinSessionStore
 from ehai.infrastructure.checks import ArtifactCheckAdapter, ArtifactCheckRule
+from ehai.infrastructure.mcp_tools import MCPToolProvider, StdioMCPClient
+from ehai.infrastructure.skill_loader import SkillLoader, SkillToolProvider
 from ehai.infrastructure.sqlite import SQLiteDatabase
+from ehai.infrastructure.web_tools import WebToolProvider
 from ehai.infrastructure.workers import BuiltinAgentConnector
 from ehai.interfaces import cli as cli_module
 from ehai.interfaces.runtime import create_local_app
 
 type JSONObject = dict[str, Any]
+
+_LOCAL_MCP_SERVER = r"""
+import json
+import sys
+
+for line in sys.stdin:
+    request = json.loads(line)
+    method = request.get("method")
+    if "id" not in request:
+        continue
+    if method == "initialize":
+        result = {
+            "protocolVersion": "2025-06-18",
+            "capabilities": {"tools": {}},
+            "serverInfo": {"name": "ehai-smoke", "version": "1"},
+        }
+    elif method == "tools/list":
+        result = {
+            "tools": [{
+                "name": "lookup_fact",
+                "description": "Return the controlled MCP fact",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {"topic": {"type": "string"}},
+                    "required": ["topic"],
+                    "additionalProperties": False,
+                },
+            }]
+        }
+    elif method == "tools/call":
+        result = {
+            "content": [{"type": "text", "text": "MCP_FACT=42"}],
+            "structuredContent": {"fact": 42},
+        }
+    else:
+        result = {}
+    print(json.dumps({"jsonrpc": "2.0", "id": request["id"], "result": result}), flush=True)
+"""
+
+
+class _WikipediaWebProvider:
+    async def search(self, query: str) -> JsonValue:
+        async with httpx.AsyncClient(
+            timeout=30.0,
+            headers={"User-Agent": "EHAI/0.1 test@example.invalid"},
+        ) as client:
+            response = await client.get(
+                "https://en.wikipedia.org/w/api.php",
+                params={"action": "opensearch", "search": query, "limit": 2, "format": "json"},
+            )
+            response.raise_for_status()
+            return cast(JsonValue, response.json())
+
+    async def open(self, url: str) -> JsonValue:
+        async with httpx.AsyncClient(
+            timeout=30.0,
+            headers={"User-Agent": "EHAI/0.1 test@example.invalid"},
+        ) as client:
+            response = await client.get(url)
+            response.raise_for_status()
+            return {"url": url, "text": response.text[:16_000]}
+
+    async def find(self, url: str, pattern: str) -> JsonValue:
+        opened = cast(dict[str, JsonValue], await self.open(url))
+        text = cast(str, opened["text"])
+        return {"url": url, "pattern": pattern, "found": pattern in text}
 
 
 @pytest.mark.skipif(
@@ -72,6 +144,19 @@ def test_real_openai_responses_runs_builtin_runtime_tools_artifact_and_gate(
     target = workspace / "smoke.txt"
     target.write_text("BEFORE\n", encoding="utf-8")
     subprocess.run(["git", "init", "--quiet"], cwd=workspace, check=True)
+    skill_root = tmp_path / "skills" / "fact"
+    skill_root.mkdir(parents=True)
+    (skill_root / "SKILL.md").write_text(
+        '---\nrequired_tools: ["web_search", "mcp__local__lookup_fact"]\n'
+        'resources: ["guide.txt"]\n---\nUse both facts before continuing the task.',
+        encoding="utf-8",
+    )
+    (skill_root / "guide.txt").write_text("SKILL_FACT=ready", encoding="utf-8")
+    mcp_provider = MCPToolProvider(
+        "local",
+        StdioMCPClient((sys.executable, "-u", "-c", _LOCAL_MCP_SERVER)),
+        approved_tools=frozenset({"lookup_fact"}),
+    )
     database = SQLiteDatabase(tmp_path / "responses-smoke.sqlite3")
     artifacts = FilesystemArtifactStore(tmp_path / "artifacts")
     sessions = SQLiteBuiltinSessionStore(database)
@@ -126,6 +211,12 @@ def test_real_openai_responses_runs_builtin_runtime_tools_artifact_and_gate(
         allowed_commands=(("uv", "--version"),),
         available_shells=("powershell",),
         git_permissions=frozenset({"git.read"}),
+        web_provider=WebToolProvider(_WikipediaWebProvider()),
+        mcp_providers=(mcp_provider,),
+        skill_provider=SkillToolProvider(
+            SkillLoader({"fact": skill_root}),
+            authorized_tools=frozenset({"web_search", "mcp__local__lookup_fact"}),
+        ),
         reasoning_effort="high",
     )
     runtime = SingleSlotRuntime(
@@ -141,7 +232,9 @@ def test_real_openai_responses_runs_builtin_runtime_tools_artifact_and_gate(
         CreateGoal(
             "smoke-goal",
             project.project_id,
-            "Use the tools in this exact order. Read smoke.txt. Create created.txt with content "
+            "Use the tools in this exact order. Call web_search for 'OpenAI'. Call "
+            "mcp__local__lookup_fact with topic 'answer'. Call skill_load with name 'fact'. "
+            "Read smoke.txt. Create created.txt with content "
             "CREATED using workspace_write overwrite=false. Replace BEFORE with MIDDLE using "
             "workspace_patch. Use workspace_apply_patch with this exact unified diff: "
             "--- a/smoke.txt\\n+++ b/smoke.txt\\n@@ -1 +1 @@\\n-MIDDLE\\n+AFTER\\n. "
@@ -174,6 +267,7 @@ def test_real_openai_responses_runs_builtin_runtime_tools_artifact_and_gate(
             return await runtime.run_once()
         finally:
             await connector.close()
+            await mcp_provider.aclose()
 
     completed = asyncio.run(execute())
 
@@ -202,6 +296,9 @@ def test_real_openai_responses_runs_builtin_runtime_tools_artifact_and_gate(
         if event.type is BuiltinSessionEventType.TOOL_CALLED
     )
     assert "workspace_read" in tool_names
+    assert "web_search" in tool_names
+    assert "mcp__local__lookup_fact" in tool_names
+    assert "skill_load" in tool_names
     assert "workspace_write" in tool_names
     assert "workspace_patch" in tool_names
     assert "workspace_apply_patch" in tool_names

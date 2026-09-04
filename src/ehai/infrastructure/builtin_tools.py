@@ -25,6 +25,9 @@ from ehai.application.builtin_agent import (
 from ehai.application.builtin_runtime import ToolRegistry
 from ehai.application.ports import ArtifactStore
 from ehai.infrastructure.codex_transport import redact_codex_bytes
+from ehai.infrastructure.mcp_tools import MCPToolProvider
+from ehai.infrastructure.skill_loader import SkillToolProvider
+from ehai.infrastructure.web_tools import WebToolProvider
 
 _MAX_TOOL_OUTPUT_BYTES = 1024 * 1024
 _MAX_SEARCH_MATCHES = 100
@@ -88,6 +91,9 @@ class BuiltinToolRuntime:
         allow_workspace_write: bool = True,
         available_shells: tuple[str, ...] = (),
         git_permissions: frozenset[str] = frozenset(),
+        web_provider: WebToolProvider | None = None,
+        mcp_providers: tuple[MCPToolProvider, ...] = (),
+        skill_provider: SkillToolProvider | None = None,
     ) -> None:
         self.artifact_store = artifact_store
         self.workspace = workspace.resolve()
@@ -115,6 +121,7 @@ class BuiltinToolRuntime:
             _resolve_trusted_executable("git", self.workspace) if self.git_permissions else None
         )
         self._shell_processes: dict[ID, tuple[asyncio.subprocess.Process, Mapping[str, str]]] = {}
+        self._mcp_providers = tuple(mcp_providers)
         if command_timeout_seconds <= 0:
             raise ValueError("command_timeout_seconds must be positive")
         self.command_timeout_seconds = command_timeout_seconds
@@ -168,6 +175,16 @@ class BuiltinToolRuntime:
         if self._git_path is not None:
             definitions.append(_git_definition())
             handlers["git"] = self._git
+        for provider in tuple(
+            item
+            for item in (web_provider, *self._mcp_providers, skill_provider)
+            if item is not None
+        ):
+            for definition in provider.definitions:
+                if definition.name in handlers:
+                    raise ValueError(f"duplicate Tool provider name {definition.name!r}")
+                definitions.append(definition)
+                handlers[definition.name] = provider.handlers[definition.name]
         definitions.append(
             _definition(
                 "submit_candidate",
@@ -188,6 +205,8 @@ class BuiltinToolRuntime:
         for process, environment in tuple(self._shell_processes.values()):
             await _terminate_process_tree(process, environment)
         self._shell_processes.clear()
+        for provider in self._mcp_providers:
+            await provider.aclose()
         await self.executor.aclose()
 
     async def _artifact_read(

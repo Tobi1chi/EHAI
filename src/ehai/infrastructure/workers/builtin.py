@@ -41,7 +41,10 @@ from ehai.domain.workers import (
     WorkerProfile,
 )
 from ehai.infrastructure.builtin_tools import BuiltinToolRuntime
+from ehai.infrastructure.mcp_tools import MCPToolProvider
 from ehai.infrastructure.openai_responses import OpenAIResponsesModelClient
+from ehai.infrastructure.skill_loader import SkillToolProvider
+from ehai.infrastructure.web_tools import WebToolProvider
 
 UnitOfWorkFactory = Callable[[], UnitOfWork]
 ModelClientFactory = Callable[[WorkerProfile, WorkerRequest], ModelClient]
@@ -69,6 +72,9 @@ class BuiltinAgentConnector:
         allowed_commands: tuple[tuple[str, ...], ...] = (),
         available_shells: tuple[str, ...] = (),
         git_permissions: frozenset[str] = frozenset(),
+        web_provider: WebToolProvider | None = None,
+        mcp_providers: tuple[MCPToolProvider, ...] = (),
+        skill_provider: SkillToolProvider | None = None,
         reasoning_effort: ReasoningEffort = None,
         model_client_factory: ModelClientFactory | None = None,
         workspace_resolver: WorkspaceResolver | None = None,
@@ -88,6 +94,9 @@ class BuiltinAgentConnector:
         self._allowed_commands = tuple(allowed_commands)
         self._available_shells = tuple(available_shells)
         self._git_permissions = frozenset(git_permissions)
+        self._web_provider = web_provider
+        self._mcp_providers = tuple(mcp_providers)
+        self._skill_provider = skill_provider
         self._reasoning_effort = reasoning_effort
         self._model_client_factory = model_client_factory or self._create_model_client
         self._workspace_resolver = workspace_resolver
@@ -243,6 +252,9 @@ class BuiltinAgentConnector:
             ),
             available_shells=self._available_shells,
             git_permissions=self._git_permissions,
+            web_provider=self._web_provider,
+            mcp_providers=self._mcp_providers,
+            skill_provider=self._skill_provider,
         )
         try:
             await self._runtime.run(
