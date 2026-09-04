@@ -70,7 +70,8 @@ def test_real_openai_responses_runs_builtin_runtime_tools_artifact_and_gate(
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     target = workspace / "smoke.txt"
-    target.write_text("BEFORE", encoding="utf-8")
+    target.write_text("BEFORE\n", encoding="utf-8")
+    subprocess.run(["git", "init", "--quiet"], cwd=workspace, check=True)
     database = SQLiteDatabase(tmp_path / "responses-smoke.sqlite3")
     artifacts = FilesystemArtifactStore(tmp_path / "artifacts")
     sessions = SQLiteBuiltinSessionStore(database)
@@ -123,6 +124,8 @@ def test_real_openai_responses_runs_builtin_runtime_tools_artifact_and_gate(
         profile=profile,
         default_workspace=workspace,
         allowed_commands=(("uv", "--version"),),
+        available_shells=("powershell",),
+        git_permissions=frozenset({"git.read"}),
         reasoning_effort="high",
     )
     runtime = SingleSlotRuntime(
@@ -138,10 +141,16 @@ def test_real_openai_responses_runs_builtin_runtime_tools_artifact_and_gate(
         CreateGoal(
             "smoke-goal",
             project.project_id,
-            "Use workspace_read on smoke.txt, replace BEFORE with AFTER using "
-            'workspace_patch, run command argv ["uv", "--version"], then call '
-            "submit_candidate with name smoke.txt, media_type text/plain, and content AFTER. "
-            "Do not finish with ordinary assistant text.",
+            "Use the tools in this exact order. Read smoke.txt. Create created.txt with content "
+            "CREATED using workspace_write overwrite=false. Replace BEFORE with MIDDLE using "
+            "workspace_patch. Use workspace_apply_patch with this exact unified diff: "
+            "--- a/smoke.txt\\n+++ b/smoke.txt\\n@@ -1 +1 @@\\n-MIDDLE\\n+AFTER\\n. "
+            "Create directory archive, move created.txt to archive/moved.txt, then delete "
+            "archive/moved.txt. Run shell_exec with shell powershell, command "
+            "'Write-Output SHELL_OK', wait=true. Run git twice with argv "
+            '["status", "--short"] and ["diff", "--", "smoke.txt"]. Run command argv '
+            '["uv", "--version"]. Finally call submit_candidate with name smoke.txt, '
+            "media_type text/plain, and content AFTER. Do not finish with ordinary assistant text.",
         )
     )
     plan = service.propose_plan(
@@ -169,7 +178,9 @@ def test_real_openai_responses_runs_builtin_runtime_tools_artifact_and_gate(
     completed = asyncio.run(execute())
 
     assert completed is not None and completed.status is RunStatus.COMPLETED
-    assert target.read_text(encoding="utf-8") == "AFTER"
+    assert target.read_text(encoding="utf-8") == "AFTER\n"
+    assert (workspace / "archive").is_dir()
+    assert not (workspace / "archive" / "moved.txt").exists()
     with database.read_session() as session:
         stored_artifacts = session.states.list_artifacts_for_run(started.run_id)
         refs = session.states.list_agent_session_refs(started.run_id)
@@ -191,7 +202,14 @@ def test_real_openai_responses_runs_builtin_runtime_tools_artifact_and_gate(
         if event.type is BuiltinSessionEventType.TOOL_CALLED
     )
     assert "workspace_read" in tool_names
+    assert "workspace_write" in tool_names
     assert "workspace_patch" in tool_names
+    assert "workspace_apply_patch" in tool_names
+    assert "workspace_mkdir" in tool_names
+    assert "workspace_move" in tool_names
+    assert "workspace_delete" in tool_names
+    assert "shell_exec" in tool_names
+    assert tool_names.count("git") >= 2
     assert "command" in tool_names
     assert tool_names[-1] == "submit_candidate"
 

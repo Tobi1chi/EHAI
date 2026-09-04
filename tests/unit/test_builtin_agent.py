@@ -4,6 +4,7 @@ import asyncio
 import ctypes
 import os
 import shutil
+import subprocess
 import sys
 import time
 from collections.abc import Awaitable, Callable
@@ -1288,7 +1289,12 @@ def test_builtin_tool_runtime_fixes_controlled_patch_and_final_candidate(
         "workspace_list",
         "workspace_search",
         "workspace_read",
+        "workspace_write",
         "workspace_patch",
+        "workspace_apply_patch",
+        "workspace_delete",
+        "workspace_move",
+        "workspace_mkdir",
         "submit_candidate",
     }
     assert definitions["submit_candidate"].ends_turn
@@ -1306,6 +1312,102 @@ def test_builtin_tool_runtime_fixes_controlled_patch_and_final_candidate(
         "content": "after",
     }
     assert target.read_text(encoding="utf-8") == "after"
+
+
+def test_builtin_tool_runtime_applies_full_workspace_text_lifecycle(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    runtime = BuiltinToolRuntime(
+        artifact_store=cast(ArtifactStore, object()),
+        workspace=workspace,
+    )
+    patch = """--- a/note.txt
++++ b/note.txt
+@@ -1 +1 @@
+-alpha
++beta
+"""
+
+    async def invoke() -> None:
+        token = CancellationToken()
+        await runtime.executor.execute(
+            ToolCall("mkdir", "workspace_mkdir", {"path": "nested"}), token
+        )
+        await runtime.executor.execute(
+            ToolCall(
+                "write",
+                "workspace_write",
+                {"path": "note.txt", "content": "alpha\n", "overwrite": False},
+            ),
+            token,
+        )
+        await runtime.executor.execute(
+            ToolCall("apply", "workspace_apply_patch", {"patch": patch}), token
+        )
+        await runtime.executor.execute(
+            ToolCall(
+                "move",
+                "workspace_move",
+                {"source": "note.txt", "target": "nested/moved.txt"},
+            ),
+            token,
+        )
+        assert (workspace / "nested" / "moved.txt").read_text(encoding="utf-8") == "beta\n"
+        await runtime.executor.execute(
+            ToolCall("delete", "workspace_delete", {"path": "nested/moved.txt"}), token
+        )
+        with pytest.raises(RecoverableToolError, match="escapes"):
+            await runtime.executor.execute(
+                ToolCall(
+                    "escape",
+                    "workspace_write",
+                    {"path": "../escape.txt", "content": "no", "overwrite": False},
+                ),
+                token,
+            )
+        await runtime.aclose()
+
+    asyncio.run(invoke())
+    assert not (workspace / "nested" / "moved.txt").exists()
+    assert not (tmp_path / "escape.txt").exists()
+
+
+def test_builtin_tool_runtime_shell_and_git_permissions_fail_closed(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    subprocess.run(["git", "init", "--quiet"], cwd=workspace, check=True)
+    shell = "powershell" if os.name == "nt" else "bash"
+    command = "Write-Output SHELL_OK" if os.name == "nt" else "printf SHELL_OK"
+    runtime = BuiltinToolRuntime(
+        artifact_store=cast(ArtifactStore, object()),
+        workspace=workspace,
+        available_shells=(shell,),
+        git_permissions=frozenset({"git.read"}),
+    )
+
+    async def invoke() -> tuple[JsonValue, JsonValue]:
+        token = CancellationToken()
+        shell_result = await runtime.executor.execute(
+            ToolCall(
+                "shell",
+                "shell_exec",
+                {"shell": shell, "command": command, "wait": True},
+            ),
+            token,
+        )
+        git_result = await runtime.executor.execute(
+            ToolCall("git-status", "git", {"argv": ["status", "--short"]}), token
+        )
+        with pytest.raises(RecoverableToolError, match=r"git\.local_write"):
+            await runtime.executor.execute(
+                ToolCall("git-add", "git", {"argv": ["add", "."]}), token
+            )
+        await runtime.aclose()
+        return shell_result, git_result
+
+    shell_result, git_result = asyncio.run(invoke())
+    assert "SHELL_OK" in cast(dict[str, JsonValue], shell_result)["stdout"]
+    assert cast(dict[str, JsonValue], git_result)["permission"] == "git.read"
 
 
 def test_builtin_agent_returns_durable_read_error_to_model(tmp_path: Path) -> None:

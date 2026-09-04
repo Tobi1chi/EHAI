@@ -36,6 +36,7 @@ from ehai.domain.planning import PlanNodeKind
 from ehai.domain.workers import (
     AttemptActivity,
     BuiltinExecutionRef,
+    WorkerCapability,
     WorkerKind,
     WorkerProfile,
 )
@@ -66,6 +67,8 @@ class BuiltinAgentConnector:
         profile: WorkerProfile,
         default_workspace: Path,
         allowed_commands: tuple[tuple[str, ...], ...] = (),
+        available_shells: tuple[str, ...] = (),
+        git_permissions: frozenset[str] = frozenset(),
         reasoning_effort: ReasoningEffort = None,
         model_client_factory: ModelClientFactory | None = None,
         workspace_resolver: WorkspaceResolver | None = None,
@@ -83,6 +86,8 @@ class BuiltinAgentConnector:
         self._profile = profile
         self._default_workspace = default_workspace.resolve(strict=True)
         self._allowed_commands = tuple(allowed_commands)
+        self._available_shells = tuple(available_shells)
+        self._git_permissions = frozenset(git_permissions)
         self._reasoning_effort = reasoning_effort
         self._model_client_factory = model_client_factory or self._create_model_client
         self._workspace_resolver = workspace_resolver
@@ -233,6 +238,11 @@ class BuiltinAgentConnector:
             workspace=workspace,
             allowed_commands=self._allowed_commands,
             command_timeout_seconds=self._command_timeout_seconds,
+            allow_workspace_write=(
+                WorkerCapability("workspace.write") in self._profile.capabilities
+            ),
+            available_shells=self._available_shells,
+            git_permissions=self._git_permissions,
         )
         try:
             await self._runtime.run(
@@ -248,6 +258,7 @@ class BuiltinAgentConnector:
             return _candidate_result(session, execution.attempt_id)
         finally:
             self._cancellations.pop(execution.attempt_id, None)
+            await tools.aclose()
 
     def _execution_context(
         self,
@@ -412,15 +423,22 @@ def _worker_role_config(
         PlanNodeKind.EVALUATOR: BuiltinRole.EVALUATOR,
         PlanNodeKind.MERGE: BuiltinRole.MERGE,
     }.get(request.plan_node.kind, BuiltinRole.WORKER)
+    tool_names = tuple(definition.name for definition in tools.tool_set.definitions)
+    permissions = {"workspace.read", "artifact.read"}
+    if any(definition.writes_workspace for definition in tools.tool_set.definitions):
+        permissions.add("workspace.write")
+    if "command" in tool_names:
+        permissions.add("command.execute")
+    if "shell_exec" in tool_names:
+        permissions.add("shell.execute")
+    permissions.update(tools.git_permissions)
     return BuiltinRoleConfig(
         role=role,
         system_prompt=_DEFAULT_SYSTEM_PROMPT,
         tool_profile=f"builtin-{role.value}-v1",
-        tool_names=tuple(definition.name for definition in tools.tool_set.definitions),
+        tool_names=tool_names,
         finish_tool="submit_candidate",
-        permissions=frozenset(
-            {"workspace.read", "workspace.write", "artifact.read", "command.execute"}
-        ),
+        permissions=frozenset(permissions),
         tool_choice="required",
         final_tool_requires_only=True,
     )
