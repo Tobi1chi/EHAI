@@ -475,6 +475,78 @@ Run 不会因 Worker/Runtime 故障永久悬挂，每次等待、重试、失败
 
 建议提交：`test(e2e): verify p2 multi-worker runtime`
 
+## P2→P3 Planning & Execution Readiness Gate
+
+P2-I0–I9 固定并实现执行内核；以下增量只关闭真实项目使用前仍缺少的组合证据，不重新设计 P2，
+也不提前开发 P3 UI。每项必须复用现有 Test Double、API、Trace 和 Smoke 基础，避免再次扩张测试框架。
+
+### P2-I10：真实 Planner 闭环
+
+**必须交付**
+
+- Built-in Planner 接收显式注入的 Goal、Completion Criteria、预算和必要仓库上下文。
+- 真实 Responses 调用必须通过严格 `submit_plan` 产生 provider-neutral PlanTemplate。
+- 统一 builder 校验并持久化 draft PlanRevision、CheckSpec 和 CompletionContract。
+- Planning Trace 可以查看最终 PlanGraph 和稳定 Planner event，不保存模型思维链。
+
+**边界**
+
+- Planner 不读取整个仓库、不创建 Worker Attempt/Session，也不批准或执行计划。
+- 不要求模型生成任意 DAG；P2 继续使用有界双分支结构。
+- 真实 Smoke 默认跳过，只在显式开关和凭证存在时调用一次。
+
+**退出条件**
+
+真实 Built-in Planner 能生成与输入上下文一致的双分支 draft，持久化后可重载，且数据库中没有 Run。
+
+### P2-I11：失败恢复与证据驱动 Replan
+
+**必须交付**
+
+- 固定 retry、resume、Checkpoint restore 和 Replan 的选择规则。
+- Replan 输入包含有界、脱敏的失败节点、Attempt 结果、Check 失败、预算和 Checkpoint 引用。
+- 新 PlanRevision 保留 base lineage，不修改旧 Plan/Run/Trace，不自动重放未知写副作用。
+
+**边界**
+
+- 不把完整 transcript、思维链或无界 Artifact 内容交给 Planner。
+- 不自动批准新 PlanRevision；失败上下文不能降低 CompletionContract。
+
+**退出条件**
+
+一个故障注入 E2E 能从失败 Run 形成可解释 ReplanContext，生成并批准新 revision，最终由新 Run 完成
+同一 Goal；旧轨迹保持可查询。
+
+### P2-I12：EHAI 自举代码任务
+
+**必须交付**
+
+- 选择一个低风险、少文件、可自动验证的 EHAI 代码改动作为 Goal。
+- 两个隔离分支分别实现，Evaluator 使用测试和 diff 证据选择，Merge 只晋升 selected ChangeSet。
+- CompletionContract 同时要求聚焦测试、受影响全量测试、Ruff、格式、mypy、diff scope 和人工 Gate。
+
+**边界**
+
+- 不自动 push、merge 或修改用户分支；最终 commit 仍需显式授权。
+- 不用 `artifact:non-empty` 代替代码正确性，不把未选中 Workspace 的修改带入结果。
+
+**退出条件**
+
+EHAI 使用真实模型完成一次自身代码变更，最终 diff、Check/Gate/Checkpoint、Session/Attempt 和 Workspace
+lease 均可从 trajectory 复核。
+
+### P2-I13：Readiness 最终验收
+
+**必须交付**
+
+- 汇总 P1/P2 的规划、执行、并发、控制、恢复、重试、Replan 和自举证据。
+- 验证 Python、Schema 和 TypeScript 全量门禁，并确认文档与实际 CLI/API 一致。
+- 记录仍属 P3+ 的非阻断项，不通过新增兼容层或测试矩阵掩盖缺口。
+
+**退出条件**
+
+Roadmap Readiness Gate 的四类 E2E 全部通过，工作树 clean，无已知阻断缺陷，才允许启动 P3 UI。
+
 ## 最小充分测试策略
 
 测试只用于证明 Increment 退出条件、保护已发生回归、阻止状态损坏/重复副作用或跨 Session/Workspace
@@ -486,8 +558,8 @@ Run 不会因 Worker/Runtime 故障永久悬挂，每次等待、重试、失败
 - SQLite、Runtime、Scheduler、Workspace 使用 integration test。
 - Built-in/Codex Worker 共用参数化 contract test；只为各自特有协议补最少测试。
 - P2 只维护一个代表最终退出条件的 E2E 场景。
-- 真实外部调用只保留一个 Responses Smoke、一个 Codex App Server 双 Session Smoke 和现有 Codex CLI
-  Smoke；默认测试不访问网络或用户 Session。
+- 真实外部调用保留一个 Responses Worker Smoke、一个 Responses Planner Smoke、一个 Codex App Server
+  双 Session Smoke 和现有 Codex CLI Smoke；默认测试不访问网络或用户 Session。
 
 预计新增的主要测试模块不超过以下职责集合；优先复用现有文件：
 

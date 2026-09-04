@@ -40,7 +40,7 @@ EHAI（Enhanced Human-Agent Interface）用于建立可规划、可探索、可�
 
 ## P2：稳定的多 Worker 执行内核
 
-**状态：** 当前开发阶段。
+**状态：** 功能实现完成；进入 P3 前的 Planning & Execution Readiness Gate。
 
 **目标：** 将 P1 原型升级为可靠、可扩展的 Agent Runtime。
 
@@ -62,6 +62,26 @@ EHAI（Enhanced Human-Agent Interface）用于建立可规划、可探索、可�
 - 稳定 OpenAPI/JSON Schema，并建立 TypeScript 类型和 API Client 的生成流程。
 
 退出条件：同一 PlanRevision 能混合调度多个 Worker；运行失败或进程重启后可恢复；每个决策均能追溯到事件和证据。完成首次系统性代码审查。
+
+### P2→P3 Planning & Execution Readiness Gate
+
+**目标：** 在开发 Control Plane 前，把 P1/P2 的规划、执行、干预、恢复和重规划能力调整到可用于
+真实项目的稳定状态，并用 EHAI 开发 EHAI 的一次小型代码任务证明完整闭环。
+
+范围：
+
+- 真实 Built-in Planner 根据受控仓库上下文生成、校验并持久化 PlanGraph。
+- 真实 Built-in/Codex Worker 在隔离 Workspace 中执行小型代码任务。
+- 验证分支选择、选中变更晋升、组合 Check、Gate、Checkpoint 和可读 Trace。
+- 对可安全重试、未知副作用、Checkpoint 恢复和带失败上下文的版本化 Replan 分别验收。
+- 完成一次 `Goal → Plan approval → isolated implementation → verification → selection → delivery`
+  自举闭环。
+
+退出条件：真实规划 E2E、真实执行 E2E、失败恢复/重规划 E2E 和自举代码任务 E2E 全部通过；没有
+pending/running Attempt 或活跃 Workspace lease；最终变更通过人工 Gate 和仓库完整验证。
+
+本 Gate 不实现 P3 UI、P4 Workflow、插件生态、新 Worker Provider 或跨主机分布式调度。详细增量见
+[P2 Implementation Plan](P2_IMPLEMENTATION_PLAN.md) 的 `P2-I10` 至 `P2-I13`。
 
 ## P3：可观察、可干预的 Control Plane
 

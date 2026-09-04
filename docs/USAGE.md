@@ -251,6 +251,20 @@ durable Session Event 重放 function call/result；`store=true`、streaming 和
 
 不要把 `OPENAI_API_KEY` 写入命令历史、配置文件、Event、Artifact 或数据库。
 
+### 真实 Built-in Planner Smoke
+
+Planner Smoke 只生成并持久化一份 draft PlanRevision，不批准计划、创建 Run 或启动 Worker。它验证真实
+Responses `submit_plan`、双分支图校验和 Planner/Worker 状态隔离：
+
+```powershell
+$env:EHAI_RUN_BUILTIN_PLANNER_SMOKE = "1"
+uv run pytest tests/smoke/test_builtin_planner_smoke.py -q
+Remove-Item Env:EHAI_RUN_BUILTIN_PLANNER_SMOKE
+```
+
+模型和 reasoning effort 可分别通过 `EHAI_BUILTIN_PLANNER_MODEL` 与
+`EHAI_BUILTIN_PLANNER_REASONING_EFFORT` 覆盖；默认使用 `gpt-5.6-luna` 和 `high`。
+
 ## 真实 Codex App Server 双 Session Smoke
 
 App Server Connector 只使用一个 Endpoint 对应一个 `codex app-server --listen stdio://` JSONL 连接。
