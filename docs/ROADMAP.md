@@ -40,7 +40,7 @@ EHAI（Enhanced Human-Agent Interface）用于建立可规划、可探索、可�
 
 ## P2：稳定的多 Worker 执行内核
 
-**状态：** 功能实现完成；进入 P3 前的 Planning & Execution Readiness Gate。
+**状态：** 已完成；Planning & Execution Readiness Gate 已于 2026-09-04 通过。
 
 **目标：** 将 P1 原型升级为可靠、可扩展的 Agent Runtime。
 
@@ -65,6 +65,8 @@ EHAI（Enhanced Human-Agent Interface）用于建立可规划、可探索、可�
 
 ### P2→P3 Planning & Execution Readiness Gate
 
+**状态：** 已通过（2026-09-04）。P3 可以开始，但尚未进入实现。
+
 **目标：** 在开发 Control Plane 前，把 P1/P2 的规划、执行、干预、恢复和重规划能力调整到可用于
 真实项目的稳定状态，并用 EHAI 开发 EHAI 的一次小型代码任务证明完整闭环。
 
@@ -79,6 +81,10 @@ EHAI（Enhanced Human-Agent Interface）用于建立可规划、可探索、可�
 
 退出条件：真实规划 E2E、真实执行 E2E、失败恢复/重规划 E2E 和自举代码任务 E2E 全部通过；没有
 pending/running Attempt 或活跃 Workspace lease；最终变更通过人工 Gate 和仓库完整验证。
+
+验收结果：真实 `gpt-5.6-luna/high` Planner、Built-in 双分支执行、失败证据 Replan 与 EHAI 自举代码
+任务均通过；真实 Codex CLI Worker Smoke 通过。自举任务的两个实现分支并发且隔离，Evaluator 选择后
+Merge 精确复现 selected ChangeSet，宿主完整验证通过，用户 main 工作树未被自动修改。
 
 本 Gate 不实现 P3 UI、P4 Workflow、插件生态、新 Worker Provider 或跨主机分布式调度。详细增量见
 [P2 Implementation Plan](P2_IMPLEMENTATION_PLAN.md) 的 `P2-I10` 至 `P2-I13`。

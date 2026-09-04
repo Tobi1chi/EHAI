@@ -482,6 +482,8 @@ P2-I0–I9 固定并实现执行内核；以下增量只关闭真实项目使用
 
 ### P2-I10：真实 Planner 闭环
 
+**状态：** 已完成（2026-09-04）。真实 `gpt-5.6-luna/high` Planner Smoke 通过，draft 可重载且未创建 Run。
+
 **必须交付**
 
 - Built-in Planner 接收显式注入的 Goal、Completion Criteria、预算和必要仓库上下文。
@@ -521,6 +523,9 @@ P2-I0–I9 固定并实现执行内核；以下增量只关闭真实项目使用
 
 ### P2-I12：EHAI 自举代码任务
 
+**状态：** 已完成（2026-09-04）。真实 `gpt-5.6-luna/high` Built-in Agent 完成两个隔离实现、
+Evaluator 选择和 selected-only Merge；最终 patch 作为交付物保留，未自动应用到 main。
+
 **必须交付**
 
 - 选择一个低风险、少文件、可自动验证的 EHAI 代码改动作为 Goal。
@@ -537,7 +542,15 @@ P2-I0–I9 固定并实现执行内核；以下增量只关闭真实项目使用
 EHAI 使用真实模型完成一次自身代码变更，最终 diff、Check/Gate/Checkpoint、Session/Attempt 和 Workspace
 lease 均可从 trajectory 复核。
 
+本次验收以 `ReplanContext` 构造不变量为两文件任务。5 个 Attempt、5 个节点 Gate 和 5 个 Checkpoint
+全部通过；两个 work 分支存在真实时间重叠且使用独立 worktree。节点使用结构化非空 Artifact Gate，
+代码正确性由 acceptance runner 另外执行 focused/full pytest、Ruff、format、mypy、diff-check 和两文件
+scope 检查，并由人工 Gate 比较 selected/pruned diff；因此没有用非空 Artifact 替代正确性验证。
+
 ### P2-I13：Readiness 最终验收
+
+**状态：** 已完成（2026-09-04）。四类真实 E2E、真实 Codex Worker Smoke、Python/Schema/TypeScript
+门禁与工作树清洁检查均通过。
 
 **必须交付**
 
@@ -548,6 +561,9 @@ lease 均可从 trajectory 复核。
 **退出条件**
 
 Roadmap Readiness Gate 的四类 E2E 全部通过，工作树 clean，无已知阻断缺陷，才允许启动 P3 UI。
+
+P3+ 非阻断项保持原边界：Dashboard、P4 Workflow、插件生态、新 Provider 与跨主机分布式调度均未
+提前实现。P2 继续使用有界双分支 PlanGraph，不把本次验收扩张为任意动态图或测试矩阵。
 
 ## 最小充分测试策略
 
