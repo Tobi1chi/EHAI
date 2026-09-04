@@ -614,7 +614,8 @@ Planner Smoke。
   Replan 复用同一套图编辑 Tool 构造替换图。
 - 模型不得创建、删除、降低或绕过 CompletionContract 与 Check；CheckSpec 仍由应用层根据用户确认的
   Completion Criteria 构造。
-- 不为超时/重连测试消耗真实模型 API；全部使用 Test Double。
+- 超时、断线、幂等与重连故障注入使用 Test Double；但 Test Double 不能作为本 Increment 的唯一完成
+  证据，提交前仍须由真实 Built-in Planner 使用真实 Responses 模型完成一次图操作与修复 Smoke。
 
 **退出条件**
 
@@ -668,6 +669,8 @@ HTTP retry 与 Background Mode 均有离线测试证明。
 
 Planner 与 Worker 使用同一个 Agent Loop 和持久 Session 协议，分别以 `finish_plan` 和
 `submit_candidate` 结束；中断恢复、取消、Tool Event 与预算语义一致，且没有复制的 Provider 调用循环。
+除确定性测试外，真实 Responses 模型必须分别以 Planner Role 和 Worker Role 运行并产生可复核 Session
+Event，证明不是 ScriptedModelClient/Test Double 在替代 Agent 决策。
 
 建议提交：`refactor(agent): extract shared builtin runtime`
 
@@ -696,7 +699,9 @@ Planner 与 Worker 使用同一个 Agent Loop 和持久 Session 协议，分别�
 **退出条件**
 
 一个 Built-in Worker 能在隔离 worktree 中创建、修改、移动和删除文本文件，运行宿主允许的 Shell/Git
-验证并提交候选；越界路径、未授权远端写和危险 Git 操作 fail closed，取消后无遗留子进程。
+验证并提交候选；越界路径、未授权远端写和危险 Git 操作 fail closed，取消后无遗留子进程。最终验收
+必须由真实 Built-in Agent 自主选择并调用 Workspace/Shell/Git Tool 完成一个小型临时仓库任务，不能
+只直接调用 Tool Handler 或使用 ScriptedModelClient。
 
 建议提交：`feat(agent): add workspace shell and git tools`
 
@@ -722,7 +727,9 @@ Planner 与 Worker 使用同一个 Agent Loop 和持久 Session 协议，分别�
 **退出条件**
 
 同一 Runtime 中的不同 Role 能按 Tool Profile 使用 Web、MCP 与 Skill；恢复后 Tool Schema 和权限不漂移，
-未授权 Skill/MCP Tool 无法执行，并有一个离线 MCP Test Double 与一个显式真实 Web Smoke 证明边界。
+未授权 Skill/MCP Tool 无法执行。协议故障使用离线 MCP/Web Test Double；另由真实 Built-in Agent 至少
+完成一次 Web Tool 调用、一次本地受控 MCP Tool 调用和一次 Skill 加载后的任务，证明模型能实际发现、
+选择和消费这些能力。
 
 建议提交：`feat(agent): add web mcp and skill providers`
 
@@ -749,9 +756,10 @@ Planner 与 Worker 使用同一个 Agent Loop 和持久 Session 协议，分别�
 
 **退出条件**
 
-完成一个 `Goal → Planning Role → validated PlanGraph → Visualization Artifact → human approval → 至少两个
-Worker Session → Evaluator/Merge → Check/Gate/Checkpoint` E2E；至少两次跨 Session 消息可持久恢复，
-所有 Role 使用同一个 Runtime，最终 Trace 能区分 Role、Tool、Message、Artifact 与领域决定。
+使用真实 Responses 模型完成一个 `Goal → Planning Role → validated PlanGraph → Visualization Artifact →
+human approval → 至少两个 Worker Session → Evaluator/Merge → Check/Gate/Checkpoint` E2E；至少两次跨
+Session 消息由真实 Agent 自主发送或读取并可持久恢复。所有 Role 使用同一个 Runtime，最终 Trace 能
+区分 Role、Tool、Message、Artifact 与领域决定；ScriptedModelClient 只用于故障注入，不能替代此 E2E。
 
 建议提交：`feat(agent): add session messaging and role runtime`
 
@@ -785,6 +793,11 @@ Worker Session → Evaluator/Merge → Check/Gate/Checkpoint` E2E；至少两次
 - 开发时运行最小相关测试，失败后先复测失败子测试；不得为 Tool、平台和权限建立笛卡尔积测试矩阵。
 - 每个 Increment 提交前运行适用的 pytest、Ruff、format、mypy 与 `git diff --check`；全部完成后运行
   Python 全量测试。Schema 变化时再生成并验证 TypeScript Client。
+- 每个涉及 Agent 决策的 Increment 使用“双层门禁”：Test Double 证明可重复的协议、故障和权限边界；
+  真实 Built-in Agent Smoke/E2E 证明模型实际理解 Prompt、选择 Tool、处理 Tool Result 并完成 Finish
+  Tool。只通过第一层不得把 Increment 标记为完成。
+- 真实测试使用独立临时数据库、Artifact Root 和 Workspace/worktree；运行证据写到仓库外并脱敏。真实
+  调用失败必须区分产品缺陷、Harness 缺陷与 Provider/Endpoint 失败，不得为了 PASS 改成 Scripted Agent。
 - 建议提交顺序：`fix(runtime): make response retries idempotent`、
   `fix(planner): require finish tool ordering`、`refactor(agent): extract shared builtin runtime`、
   `feat(agent): add workspace shell and git tools`、`feat(agent): add web mcp and skill providers`、
@@ -806,7 +819,8 @@ Worker Session → Evaluator/Merge → Check/Gate/Checkpoint` E2E；至少两次
 - Built-in/Codex Worker 共用参数化 contract test；只为各自特有协议补最少测试。
 - P2 只维护一个代表最终退出条件的 E2E 场景。
 - 真实外部调用保留一个 Responses Worker Smoke、一个 Responses Planner Smoke、一个 Codex App Server
-  双 Session Smoke 和现有 Codex CLI Smoke；默认测试不访问网络或用户 Session。
+  双 Session Smoke 和现有 Codex CLI Smoke；默认日常测试不访问网络或用户 Session，但相关 Increment
+  在标记完成前必须显式运行对应真实 Smoke。Test Double 不能替代真实 Agent 验收。
 
 预计新增的主要测试模块不超过以下职责集合；优先复用现有文件：
 
