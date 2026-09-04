@@ -35,6 +35,7 @@ from ehai.application.orchestrator import Orchestrator
 from ehai.application.ports import ArtifactStore, UnitOfWork
 from ehai.application.workers import CandidateArtifact, WorkerRequest, WorkerResult
 from ehai.domain.artifacts import ArtifactKind
+from ehai.domain.planning import PlanNodeKind
 from ehai.domain.workers import (
     AttemptActivity,
     BuiltinExecutionRef,
@@ -51,7 +52,8 @@ WorkspaceResolver = Callable[[ID], Path | None]
 _DEFAULT_SYSTEM_PROMPT = """You are the EHAI Built-in Agent. Work only inside the assigned
 Workspace and use only the provided tools. Complete the requested PlanNode, validate the
 result with an allowed command when appropriate, and finish only by calling submit_candidate.
-Do not claim that a Run or PlanNode is complete; EHAI Check and Gate own completion."""
+Follow context.role_protocol exactly when it is present. Do not claim that a Run or PlanNode is
+complete; EHAI Check and Gate own completion."""
 
 
 class BuiltinAgentConnector:
@@ -409,7 +411,46 @@ def _builtin_context(request: WorkerRequest) -> dict[str, JsonValue]:
         }
         for check in request.required_check_specs
     ]
+    role_protocol = _builtin_role_protocol(request.plan_node.kind)
+    if role_protocol is not None:
+        context["role_protocol"] = role_protocol
     return context
+
+
+def _builtin_role_protocol(kind: PlanNodeKind) -> dict[str, JsonValue] | None:
+    if kind is PlanNodeKind.EVALUATOR:
+        return {
+            "role": "evaluator",
+            "artifact_name": "selection.json",
+            "artifact_media_type": "application/json",
+            "content_required_keys": [
+                "selected_branch_id",
+                "pruned_branch_ids",
+                "criterion",
+                "explanation",
+                "compared_artifact_ids",
+                "selected_artifact_ids",
+            ],
+            "rules": [
+                "Compare every viable entry in context.candidate_branches using its artifacts.",
+                "Select exactly one viable branch and prune every active sibling branch.",
+                "compared_artifact_ids must cover every viable branch that has "
+                "candidate artifacts.",
+                "selected_artifact_ids must contain only artifacts owned by the selected branch.",
+                "Submit minified JSON content with exactly the required keys and no "
+                "markdown wrapper.",
+            ],
+        }
+    if kind is PlanNodeKind.MERGE:
+        return {
+            "role": "merge",
+            "rules": [
+                "Use only context.selected_artifacts and context.branch_selection.",
+                "Do not read, reconstruct, or include content from a pruned branch.",
+                "Submit one final candidate artifact derived only from selected_artifact_ids.",
+            ],
+        }
+    return None
 
 
 def _required_text(

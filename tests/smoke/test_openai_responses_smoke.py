@@ -436,13 +436,8 @@ def _real_e2e_instruction(kind: PlanNodeKind, title: str) -> str:
     if kind is PlanNodeKind.EVALUATOR:
         return (
             "Use context.candidate_branches. Select the active branch whose label is exactly "
-            "'approach-b'. Call submit_candidate once with name selection.json, media_type "
-            "application/json, and content as minified JSON with exactly these keys: "
-            "selected_branch_id, pruned_branch_ids, criterion, explanation, "
-            "compared_artifact_ids, selected_artifact_ids. Use every candidate artifact ID from "
-            "both active branches in compared_artifact_ids. Use only the selected approach-b "
-            "artifact IDs in selected_artifact_ids. Put the other active branch ID in "
-            "pruned_branch_ids. Do not wrap the JSON in markdown."
+            "'approach-b' after comparing every viable branch. Follow context.role_protocol for "
+            "the required output and evidence fields."
         )
     if kind is PlanNodeKind.MERGE:
         return (
@@ -538,8 +533,17 @@ def _exploration_evidence(
     ]
     assert len(selected_artifact_ids) == len(pruned_artifact_ids) == 1
 
+    attempt_by_node = {attempt["plan_node_id"]: attempt for attempt in attempts}
     evaluator_node = next(node for node in nodes if node["kind"] == "evaluator")
     merge_node = next(node for node in nodes if node["kind"] == "merge")
+    evaluator_attempt = attempt_by_node[evaluator_node["plan_node_id"]]
+    evaluator_runtime = runtime_by_attempt[evaluator_attempt["attempt_id"]]
+    evaluator_context = _turn_context(
+        database_path,
+        evaluator_runtime["agent_session_ref_id"],
+    )
+    evaluator_protocol = evaluator_context["role_protocol"]
+    assert isinstance(evaluator_protocol, dict) and evaluator_protocol["role"] == "evaluator"
     selection = _artifact_json(
         artifacts_root,
         artifacts_by_node[evaluator_node["plan_node_id"]][0]["artifact_id"],
@@ -560,10 +564,11 @@ def _exploration_evidence(
     }
     assert selection["selected_artifact_ids"] == selected_artifact_ids
 
-    attempt_by_node = {attempt["plan_node_id"]: attempt for attempt in attempts}
     merge_attempt = attempt_by_node[merge_node["plan_node_id"]]
     merge_runtime = runtime_by_attempt[merge_attempt["attempt_id"]]
     merge_context = _turn_context(database_path, merge_runtime["agent_session_ref_id"])
+    merge_protocol = merge_context["role_protocol"]
+    assert isinstance(merge_protocol, dict) and merge_protocol["role"] == "merge"
     merge_input_artifact_ids = [item["artifact_id"] for item in merge_context["selected_artifacts"]]
     merge_output = _artifact_json(
         artifacts_root,

@@ -45,7 +45,7 @@ from ehai.application.execution_contracts import OPENAI_CREDENTIAL_REF
 from ehai.application.ports import ArtifactStore
 from ehai.domain.execution import Attempt, Run
 from ehai.domain.goal import CompletionContract, Goal, Project
-from ehai.domain.planning import PlanNode, PlanRevision, PlanRevisionStatus
+from ehai.domain.planning import PlanNode, PlanNodeKind, PlanRevision, PlanRevisionStatus
 from ehai.domain.workers import (
     AgentSessionRef,
     BuiltinExecutionRef,
@@ -60,9 +60,27 @@ from ehai.infrastructure.builtin_sessions import SQLiteBuiltinSessionStore
 from ehai.infrastructure.builtin_tools import BuiltinToolRuntime
 from ehai.infrastructure.openai_responses import OpenAIResponsesModelClient
 from ehai.infrastructure.sqlite import SQLiteDatabase
+from ehai.infrastructure.workers.builtin import _builtin_role_protocol
 
 NOW = datetime(2026, 9, 2, 12, 0, tzinfo=UTC)
 ToolHandler = Callable[[dict[str, JsonValue], CancellationToken], Awaitable[JsonValue]]
+
+
+def test_builtin_role_protocol_defines_evaluator_and_merge_boundaries() -> None:
+    evaluator = _builtin_role_protocol(PlanNodeKind.EVALUATOR)
+    merge = _builtin_role_protocol(PlanNodeKind.MERGE)
+
+    assert evaluator is not None
+    assert evaluator["content_required_keys"] == [
+        "selected_branch_id",
+        "pruned_branch_ids",
+        "criterion",
+        "explanation",
+        "compared_artifact_ids",
+        "selected_artifact_ids",
+    ]
+    assert merge is not None and merge["role"] == "merge"
+    assert _builtin_role_protocol(PlanNodeKind.WORK) is None
 
 
 class _ScriptedModelClient:
