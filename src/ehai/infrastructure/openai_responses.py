@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Literal
+from dataclasses import dataclass
+from typing import Literal, cast
 from uuid import uuid4
 
 from openai import (
@@ -18,6 +19,7 @@ from openai.types.responses import (
     FunctionToolParam,
     Response,
     ResponseInputParam,
+    ResponseOutputItem,
     ResponseStreamEvent,
 )
 from openai.types.shared import ReasoningEffort
@@ -51,6 +53,25 @@ class _BackgroundUnsupported(Exception):
     """Internal signal: the endpoint rejected background mode before creating a Response."""
 
 
+@dataclass(frozen=True, slots=True)
+class ResponsesEndpointCapabilities:
+    """Explicit Responses features guaranteed by one configured provider endpoint."""
+
+    supports_background: bool = True
+    supports_idempotent_create: bool | None = None
+    supports_unique_items: bool = True
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.supports_background, bool):
+            raise ValueError("supports_background must be a boolean")
+        if self.supports_idempotent_create is not None and not isinstance(
+            self.supports_idempotent_create, bool
+        ):
+            raise ValueError("supports_idempotent_create must be a boolean")
+        if not isinstance(self.supports_unique_items, bool):
+            raise ValueError("supports_unique_items must be a boolean")
+
+
 class OpenAIResponsesModelClient(ModelClient):
     """Run one Response Step using the official OpenAI Python SDK.
 
@@ -75,7 +96,7 @@ class OpenAIResponsesModelClient(ModelClient):
         retry_delay_seconds: float = 1.0,
         poll_interval_seconds: float = 2.0,
         retry_owner: Literal["ehai", "client"] | None = None,
-        supports_idempotent_create: bool | None = None,
+        endpoint_capabilities: ResponsesEndpointCapabilities | None = None,
     ) -> None:
         if profile.kind is not WorkerKind.BUILTIN:
             raise ValueError("OpenAIResponsesModelClient requires a Built-in WorkerProfile")
@@ -107,10 +128,9 @@ class OpenAIResponsesModelClient(ModelClient):
             raise ValueError("poll_interval_seconds must be non-negative")
         if retry_owner not in {None, "ehai", "client"}:
             raise ValueError("retry_owner must be 'ehai' or 'client'")
-        if supports_idempotent_create is not None and not isinstance(
-            supports_idempotent_create, bool
-        ):
-            raise ValueError("supports_idempotent_create must be a boolean")
+        capabilities = endpoint_capabilities or ResponsesEndpointCapabilities()
+        if not isinstance(capabilities, ResponsesEndpointCapabilities):
+            raise TypeError("endpoint_capabilities must be ResponsesEndpointCapabilities")
         if client is not None and retry_owner is None:
             raise ValueError("injected OpenAI clients must declare retry_owner")
         resolved_retry_owner = retry_owner or "ehai"
@@ -132,12 +152,13 @@ class OpenAIResponsesModelClient(ModelClient):
         self.retry_delay_seconds = float(retry_delay_seconds)
         self.poll_interval_seconds = float(poll_interval_seconds)
         self.retry_owner = resolved_retry_owner
+        self.endpoint_capabilities = capabilities
         self._client = AsyncOpenAI(max_retries=0) if client is None else client
         self._owns_client = client is None
         self.supports_idempotent_create = (
             _is_official_openai_endpoint(self._client)
-            if supports_idempotent_create is None
-            else supports_idempotent_create
+            if capabilities.supports_idempotent_create is None
+            else capabilities.supports_idempotent_create
         )
         self._closed = False
 
@@ -145,7 +166,7 @@ class OpenAIResponsesModelClient(ModelClient):
         if self._closed:
             raise RuntimeError("OpenAIResponsesModelClient is closed")
         logical_request_id = f"ehai-{uuid4()}"
-        if self.background:
+        if self.background and self.endpoint_capabilities.supports_background:
             try:
                 return await self._complete_background(request, logical_request_id)
             except _BackgroundUnsupported:
@@ -201,6 +222,7 @@ class OpenAIResponsesModelClient(ModelClient):
                 await asyncio.sleep(self.retry_delay_seconds)
                 continue
             text_parts: list[str] = []
+            streamed_output_items: list[ResponseOutputItem] = []
             try:
                 async for event in stream:
                     response_id = _event_response_id(event)
@@ -210,6 +232,7 @@ class OpenAIResponsesModelClient(ModelClient):
                         text_parts.append(event.delta)
                     elif event.type == "response.output_item.done":
                         item = event.item
+                        streamed_output_items.append(item)
                         if item.type == "function_call":
                             arguments = json_loads(item.arguments)
                             if not isinstance(arguments, dict):
@@ -217,7 +240,11 @@ class OpenAIResponsesModelClient(ModelClient):
                                     f"function call {item.call_id} arguments are not an object"
                                 )
                     elif event.type == "response.completed":
-                        return _model_response(event.response, text="".join(text_parts))
+                        return _model_response(
+                            event.response,
+                            text="".join(text_parts),
+                            streamed_output_items=tuple(streamed_output_items),
+                        )
                     elif event.type in {"response.failed", "response.incomplete"}:
                         raise OpenAIResponsesProtocolError(
                             f"Responses stream ended with {event.type}"
@@ -338,9 +365,13 @@ class OpenAIResponsesModelClient(ModelClient):
             model=self.profile.model,
             instructions=_instructions(request.messages),
             input=_response_input(input_messages),
-            tools=_function_tools(request),
+            tools=_function_tools(
+                request,
+                supports_unique_items=self.endpoint_capabilities.supports_unique_items,
+            ),
             previous_response_id=(omit if previous_response_id is None else previous_response_id),
             parallel_tool_calls=False,
+            tool_choice=request.tool_choice,
             store=True,
             stream=True,
             max_output_tokens=self.max_output_tokens,
@@ -363,9 +394,13 @@ class OpenAIResponsesModelClient(ModelClient):
             model=self.profile.model,
             instructions=_instructions(request.messages),
             input=_response_input(input_messages),
-            tools=_function_tools(request),
+            tools=_function_tools(
+                request,
+                supports_unique_items=self.endpoint_capabilities.supports_unique_items,
+            ),
             previous_response_id=(omit if previous_response_id is None else previous_response_id),
             parallel_tool_calls=False,
+            tool_choice=request.tool_choice,
             store=True,
             background=True,
             max_output_tokens=self.max_output_tokens,
@@ -392,21 +427,27 @@ class OpenAIResponsesModelClient(ModelClient):
         self._closed = True
 
 
-def _model_response(response: Response, *, text: str | None = None) -> ModelResponse:
+def _model_response(
+    response: Response,
+    *,
+    text: str | None = None,
+    streamed_output_items: tuple[ResponseOutputItem, ...] = (),
+) -> ModelResponse:
     if response.status != "completed":
         raise OpenAIResponsesProtocolError(
             f"Response {response.id} has non-completed status {response.status}"
         )
     content = text if text and text.strip() else response.output_text
     usage = None if response.usage is None else _json_object(response.usage.model_dump(mode="json"))
+    response_items = tuple(response.output) or streamed_output_items
     output_items = tuple(
         _json_object(item.model_dump(mode="json"))
-        for item in response.output
+        for item in response_items
         if item.type != "reasoning"
     )
     tool_calls = tuple(
         ToolCall(item.call_id, item.name, _response_arguments(item.arguments))
-        for item in response.output
+        for item in response_items
         if item.type == "function_call"
     )
     if tool_calls:
@@ -498,17 +539,39 @@ def _response_input(messages: tuple[ModelMessage, ...]) -> ResponseInputParam:
     return items
 
 
-def _function_tools(request: ModelRequest) -> list[FunctionToolParam]:
-    return [
-        {
-            "type": "function",
-            "name": definition.name,
-            "description": definition.description,
-            "parameters": dict(definition.input_schema),
-            "strict": True,
+def _function_tools(
+    request: ModelRequest,
+    *,
+    supports_unique_items: bool = True,
+) -> list[FunctionToolParam]:
+    tools: list[FunctionToolParam] = []
+    for definition in request.tools:
+        parameters = definition.input_schema
+        if not supports_unique_items:
+            compatible = _without_unique_items(parameters)
+            if not isinstance(compatible, dict):  # pragma: no cover - root schema is an object
+                raise OpenAIResponsesProtocolError("Tool schema is not a JSON object")
+            parameters = compatible
+        tools.append(
+            {
+                "type": "function",
+                "name": definition.name,
+                "description": definition.description,
+                "parameters": cast(dict[str, object], parameters),
+                "strict": True,
+            }
+        )
+    return tools
+
+
+def _without_unique_items(value: JsonValue) -> JsonValue:
+    if isinstance(value, dict):
+        return {
+            key: _without_unique_items(item) for key, item in value.items() if key != "uniqueItems"
         }
-        for definition in request.tools
-    ]
+    if isinstance(value, list):
+        return [_without_unique_items(item) for item in value]
+    return value
 
 
 def _json_object(value: object) -> dict[str, JsonValue]:

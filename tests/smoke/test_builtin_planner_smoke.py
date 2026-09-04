@@ -36,7 +36,10 @@ from ehai.domain.planning import PlanNodeKind, PlanRevisionStatus
 from ehai.domain.workers import WorkerProfile
 from ehai.infrastructure.artifacts import FilesystemArtifactStore
 from ehai.infrastructure.checks import ArtifactCheckAdapter, ArtifactCheckRule
-from ehai.infrastructure.openai_responses import OpenAIResponsesModelClient
+from ehai.infrastructure.openai_responses import (
+    OpenAIResponsesModelClient,
+    ResponsesEndpointCapabilities,
+)
 from ehai.infrastructure.planners import BuiltinPlannerAdapter
 from ehai.infrastructure.sqlite import SQLiteDatabase
 from ehai.interfaces.cli import build_service
@@ -186,6 +189,17 @@ def test_real_builtin_planner_proposes_grounded_plan_without_execution(
         "requests": [],
         "responses": [],
     }
+    endpoint_capabilities = ResponsesEndpointCapabilities(
+        supports_background=False,
+        supports_idempotent_create=False,
+        supports_unique_items=False,
+    )
+    evidence["request_mode"] = {
+        "background": False,
+        "stream": True,
+        "store": True,
+        "unique_items": False,
+    }
 
     def model_client_factory(profile: WorkerProfile) -> ModelClient:
         return _RecordingResponsesClient(
@@ -193,6 +207,7 @@ def test_real_builtin_planner_proposes_grounded_plan_without_execution(
                 profile,
                 reasoning_effort=reasoning_effort,
                 background=True,
+                endpoint_capabilities=endpoint_capabilities,
             ),
             evidence,
         )
@@ -207,6 +222,7 @@ def test_real_builtin_planner_proposes_grounded_plan_without_execution(
             model=model,
             reasoning_effort=reasoning_effort,
             model_client_factory=model_client_factory,
+            endpoint_capabilities=endpoint_capabilities,
         )
     )
     project = service.create_project(CreateProject("planner-project", "P3 readiness"))
@@ -260,6 +276,9 @@ def test_real_builtin_planner_proposes_grounded_plan_without_execution(
     assert any(request["tool_result_issue_codes"] for request in requests[1:])
     assert all(response["provider_response_id"] for response in responses)
     assert any(response["usage_present"] for response in responses)
+    response_ids = [cast(str, response["provider_response_id"]) for response in responses]
+    assert len(response_ids) == len(set(response_ids))
+    assert len(responses) == len(requests)
 
     database = SQLiteDatabase(database_path)
     with database.read_session() as session:

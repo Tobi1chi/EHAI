@@ -30,7 +30,10 @@ from ehai.application.planner import (
 from ehai.domain.goal import Goal, GoalStatus
 from ehai.domain.planning import PlanRevision
 from ehai.domain.workers import WorkerCapability, WorkerKind, WorkerProfile
-from ehai.infrastructure.openai_responses import OpenAIResponsesModelClient
+from ehai.infrastructure.openai_responses import (
+    OpenAIResponsesModelClient,
+    ResponsesEndpointCapabilities,
+)
 from ehai.infrastructure.planners.codex_protocol import build_codex_planner_input
 from ehai.infrastructure.planners.plan_graph_tools import (
     MAX_PLAN_OPERATIONS,
@@ -90,6 +93,7 @@ class BuiltinPlannerAdapter:
         reasoning_effort: ReasoningEffort = None,
         budget: ExplorationBudget | None = None,
         model_client_factory: PlannerModelClientFactory | None = None,
+        endpoint_capabilities: ResponsesEndpointCapabilities | None = None,
         id_factory: Callable[[], ID] = new_id,
         clock: Callable[[], datetime] = utc_now,
     ) -> None:
@@ -106,6 +110,9 @@ class BuiltinPlannerAdapter:
             credential_ref=OPENAI_CREDENTIAL_REF,
         )
         self._reasoning_effort = reasoning_effort
+        self._endpoint_capabilities = endpoint_capabilities or ResponsesEndpointCapabilities()
+        if not isinstance(self._endpoint_capabilities, ResponsesEndpointCapabilities):
+            raise TypeError("endpoint_capabilities must be ResponsesEndpointCapabilities")
         self._model_client_factory = model_client_factory or self._create_model_client
         self._id_factory = id_factory
         self._clock = clock
@@ -199,6 +206,7 @@ class BuiltinPlannerAdapter:
                     runtime.tool_definitions(),
                     input_messages=tuple(pending) if previous_response_id else tuple(history),
                     previous_response_id=previous_response_id,
+                    tool_choice="required",
                 )
                 response = await client.complete(request)
                 assistant = ModelMessage(
@@ -244,6 +252,7 @@ class BuiltinPlannerAdapter:
             profile,
             reasoning_effort=self._reasoning_effort,
             background=True,
+            endpoint_capabilities=self._endpoint_capabilities,
         )
 
     @staticmethod

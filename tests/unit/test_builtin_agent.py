@@ -67,6 +67,7 @@ from ehai.infrastructure.openai_responses import (
     OpenAIResponsesModelClient,
     OpenAIResponsesProtocolError,
     OpenAIResponsesUnknownOutcomeError,
+    ResponsesEndpointCapabilities,
 )
 from ehai.infrastructure.sqlite import SQLiteDatabase
 from ehai.infrastructure.workers.builtin import _builtin_role_protocol
@@ -562,6 +563,7 @@ def test_openai_responses_protocol_streams_function_result_continuation_and_fina
     assert fake.responses.requests[0]["stream"] is True
     assert fake.responses.requests[0]["store"] is True
     assert fake.responses.requests[0]["parallel_tool_calls"] is False
+    assert fake.responses.requests[0]["tool_choice"] == "auto"
     assert fake.responses.requests[0]["reasoning"] == {"effort": "high"}
     assert fake.responses.requests[0]["previous_response_id"] is omit
     tools = cast(list[dict[str, object]], fake.responses.requests[0]["tools"])
@@ -571,6 +573,34 @@ def test_openai_responses_protocol_streams_function_result_continuation_and_fina
     assert response_input == [
         {"type": "function_call_output", "call_id": "call-1", "output": '{"ok":true}'}
     ]
+
+
+def test_openai_responses_uses_done_items_when_completed_event_omits_output() -> None:
+    function_item = _Dumpable(
+        type="function_call",
+        call_id="call-streamed",
+        name="inspect",
+        arguments="{}",
+        document={
+            "type": "function_call",
+            "call_id": "call-streamed",
+            "name": "inspect",
+            "arguments": "{}",
+        },
+    )
+    response = _terminal_response("resp-empty-final", "completed")
+    stream = _FakeStream(
+        (
+            SimpleNamespace(type="response.output_item.done", item=function_item),
+            SimpleNamespace(type="response.completed", response=response),
+        )
+    )
+
+    result = asyncio.run(_client_with(_FakeOpenAI((stream,))).complete(_single_tool_request()))
+
+    assert result.provider_response_id == "resp-empty-final"
+    assert result.tool_calls == (ToolCall("call-streamed", "inspect", {}),)
+    assert result.output_items == (function_item.model_dump(mode="json"),)
 
 
 def test_openai_responses_replays_durable_history_when_continuation_is_rejected() -> None:
@@ -740,7 +770,10 @@ def test_openai_responses_retries_http_failures_up_to_four_times() -> None:
             good_stream,
         )
     )
-    client = _client_with(fake, supports_idempotent_create=True)
+    client = _client_with(
+        fake,
+        endpoint_capabilities=ResponsesEndpointCapabilities(supports_idempotent_create=True),
+    )
 
     result = asyncio.run(client.complete(_single_tool_request()))
 
@@ -748,7 +781,10 @@ def test_openai_responses_retries_http_failures_up_to_four_times() -> None:
     assert len(fake.responses.requests) == 5
 
     exhausted = _FakeOpenAI(tuple(_connection_error() for _ in range(5)))
-    exhausted_client = _client_with(exhausted, supports_idempotent_create=True)
+    exhausted_client = _client_with(
+        exhausted,
+        endpoint_capabilities=ResponsesEndpointCapabilities(supports_idempotent_create=True),
+    )
     with pytest.raises(OpenAIResponsesProtocolError, match="HTTP retries"):
         asyncio.run(exhausted_client.complete(_single_tool_request()))
     assert len(exhausted.responses.requests) == 5
@@ -768,7 +804,10 @@ def test_openai_responses_reuses_one_idempotency_key_for_logical_create_retries(
     )
     stream = _FakeStream((SimpleNamespace(type="response.completed", response=response),))
     fake = _FakeOpenAI((_connection_error(), stream))
-    client = _client_with(fake, supports_idempotent_create=True)
+    client = _client_with(
+        fake,
+        endpoint_capabilities=ResponsesEndpointCapabilities(supports_idempotent_create=True),
+    )
 
     result = asyncio.run(client.complete(_single_tool_request()))
 
@@ -790,7 +829,7 @@ def test_openai_responses_does_not_repeat_ambiguous_create_without_endpoint_supp
     client = _client_with(
         fake,
         background=background,
-        supports_idempotent_create=False,
+        endpoint_capabilities=ResponsesEndpointCapabilities(supports_idempotent_create=False),
     )
 
     with pytest.raises(OpenAIResponsesUnknownOutcomeError, match="outcome is unknown"):
@@ -927,6 +966,98 @@ def test_openai_responses_background_mode_polls_retrieve_until_terminal() -> Non
     assert fake.responses.requests[0]["background"] is True
     assert "stream" not in fake.responses.requests[0]
     assert fake.responses.retrieve_calls == ["resp-bg", "resp-bg"]
+
+
+def test_openai_responses_endpoint_capability_selects_streaming_without_background_probe() -> None:
+    response = _terminal_response("resp-stream-only", "completed", output_text="stream result")
+    stream = _FakeStream((SimpleNamespace(type="response.completed", response=response),))
+    fake = _FakeOpenAI((stream,))
+    client = _client_with(
+        fake,
+        background=True,
+        endpoint_capabilities=ResponsesEndpointCapabilities(
+            supports_background=False,
+            supports_idempotent_create=False,
+            supports_unique_items=False,
+        ),
+    )
+
+    schema: dict[str, JsonValue] = {
+        "type": "object",
+        "properties": {
+            "node_keys": {
+                "type": ["array", "null"],
+                "items": {"type": "string"},
+                "minItems": 1,
+                "uniqueItems": True,
+            }
+        },
+        "required": ["node_keys"],
+        "additionalProperties": False,
+    }
+    request = ModelRequest(
+        (ModelMessage(ModelRole.SYSTEM, "system"), ModelMessage(ModelRole.USER, "user")),
+        (ToolDefinition("inspect", "inspect tool", schema),),
+        tool_choice="required",
+    )
+
+    result = asyncio.run(client.complete(request))
+
+    assert result.final_text == "stream result"
+    assert len(fake.responses.requests) == 1
+    assert fake.responses.requests[0]["stream"] is True
+    assert fake.responses.requests[0]["store"] is True
+    assert fake.responses.requests[0]["tool_choice"] == "required"
+    assert "background" not in fake.responses.requests[0]
+    provider_tools = cast(list[dict[str, object]], fake.responses.requests[0]["tools"])
+    assert "uniqueItems" not in json_dumps(provider_tools[0]["parameters"])
+    assert schema["properties"]["node_keys"]["uniqueItems"] is True
+
+
+def test_openai_responses_preserves_unique_items_for_capable_endpoints() -> None:
+    response = _terminal_response("resp-unique-items", "completed", output_text="result")
+    stream = _FakeStream((SimpleNamespace(type="response.completed", response=response),))
+    fake = _FakeOpenAI((stream,))
+    schema: dict[str, JsonValue] = {
+        "type": "object",
+        "properties": {
+            "node_keys": {
+                "type": "array",
+                "items": {"type": "string"},
+                "uniqueItems": True,
+            }
+        },
+        "required": ["node_keys"],
+        "additionalProperties": False,
+    }
+    request = ModelRequest(
+        (ModelMessage(ModelRole.SYSTEM, "system"), ModelMessage(ModelRole.USER, "user")),
+        (ToolDefinition("inspect", "inspect tool", schema),),
+    )
+
+    asyncio.run(_client_with(fake).complete(request))
+
+    provider_tools = cast(list[dict[str, object]], fake.responses.requests[0]["tools"])
+    assert '"uniqueItems":true' in json_dumps(provider_tools[0]["parameters"])
+
+
+def test_openai_responses_generic_bad_request_does_not_trigger_background_fallback() -> None:
+    rejection = BadRequestError(
+        "Upstream request failed",
+        response=httpx.Response(
+            400,
+            request=httpx.Request("POST", "https://example.invalid/responses"),
+        ),
+        body={"error": {"message": "Upstream request failed", "type": "upstream_error"}},
+    )
+    fake = _FakeOpenAI((rejection,))
+    client = _client_with(fake, background=True)
+
+    with pytest.raises(BadRequestError, match="Upstream request failed"):
+        asyncio.run(client.complete(_single_tool_request()))
+
+    assert len(fake.responses.requests) == 1
+    assert fake.responses.requests[0]["background"] is True
 
 
 def test_openai_responses_background_falls_back_to_streaming_when_rejected() -> None:

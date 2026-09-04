@@ -246,6 +246,7 @@ def test_adapter_builds_shared_node_two_multi_node_branches_from_tool_calls() ->
     proposal = _adapter(client).propose(goal, ("artifact:non-empty",))
 
     assert client.closed
+    assert all(request.tool_choice == "required" for request in client.requests)
     revision = proposal.plan_revision
     assert revision.status is PlanRevisionStatus.DRAFT
     keys = {node.plan_node_id: node.title for node in revision.nodes}

@@ -9,7 +9,7 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from time import monotonic
 from types import TracebackType
-from typing import Protocol, Self, runtime_checkable
+from typing import Literal, Protocol, Self, runtime_checkable
 
 from ehai import ID, JsonValue, json_dumps, json_loads, normalize_id, utc_now
 from ehai.domain.workers import BuiltinExecutionRef
@@ -143,6 +143,7 @@ class ModelRequest:
     tools: tuple[ToolDefinition, ...]
     input_messages: tuple[ModelMessage, ...] = ()
     previous_response_id: str | None = None
+    tool_choice: Literal["auto", "required"] = "auto"
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "messages", tuple(self.messages))
@@ -158,6 +159,8 @@ class ModelRequest:
                 "previous_response_id",
                 _text(self.previous_response_id, "previous_response_id"),
             )
+        if self.tool_choice not in {"auto", "required"}:
+            raise ValueError("ModelRequest tool_choice must be 'auto' or 'required'")
 
 
 @dataclass(frozen=True, slots=True)
