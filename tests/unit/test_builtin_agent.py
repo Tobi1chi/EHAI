@@ -57,6 +57,8 @@ from ehai.application.builtin_runtime import (
 )
 from ehai.application.execution_contracts import OPENAI_CREDENTIAL_REF
 from ehai.application.ports import ArtifactStore
+from ehai.application.session_mailbox import SessionMailbox
+from ehai.application.workers import WorkerRequest
 from ehai.domain.execution import Attempt, Run
 from ehai.domain.goal import CompletionContract, Goal, Project
 from ehai.domain.planning import PlanNode, PlanNodeKind, PlanRevision, PlanRevisionStatus
@@ -70,8 +72,10 @@ from ehai.domain.workers import (
     WorkerProfile,
 )
 from ehai.infrastructure import builtin_tools
+from ehai.infrastructure.artifacts import FilesystemArtifactStore
 from ehai.infrastructure.builtin_sessions import SQLiteBuiltinSessionStore
 from ehai.infrastructure.builtin_tools import BuiltinToolRuntime
+from ehai.infrastructure.builtin_visualizer import BuiltinPlanVisualizer
 from ehai.infrastructure.mcp_tools import MCPToolProvider, MCPToolSpec
 from ehai.infrastructure.openai_responses import (
     OpenAIResponsesModelClient,
@@ -79,10 +83,14 @@ from ehai.infrastructure.openai_responses import (
     OpenAIResponsesUnknownOutcomeError,
     ResponsesEndpointCapabilities,
 )
+from ehai.infrastructure.session_mailbox import SQLiteSessionMailboxRepository
 from ehai.infrastructure.skill_loader import SkillLoader, SkillToolProvider
 from ehai.infrastructure.sqlite import SQLiteDatabase
 from ehai.infrastructure.web_tools import WebToolProvider
-from ehai.infrastructure.workers.builtin import _builtin_role_protocol
+from ehai.infrastructure.workers.builtin import (
+    _builtin_role_protocol,
+    _validate_candidate_submission,
+)
 
 NOW = datetime(2026, 9, 2, 12, 0, tzinfo=UTC)
 ToolHandler = Callable[[dict[str, JsonValue], CancellationToken], Awaitable[JsonValue]]
@@ -103,6 +111,41 @@ def test_builtin_role_protocol_defines_evaluator_and_merge_boundaries() -> None:
     ]
     assert merge is not None and merge["role"] == "merge"
     assert _builtin_role_protocol(PlanNodeKind.WORK) is None
+
+
+def test_builtin_merge_rejects_candidate_provenance_outside_selected_artifacts() -> None:
+    request = cast(
+        WorkerRequest,
+        SimpleNamespace(plan_node=SimpleNamespace(kind=PlanNodeKind.MERGE)),
+    )
+    context: dict[str, JsonValue] = {"branch_selection": {"selected_artifact_ids": ["selected"]}}
+
+    with pytest.raises(RecoverableToolError, match="must exactly equal"):
+        _validate_candidate_submission(
+            request,
+            context,
+            {
+                "content": json_dumps(
+                    {
+                        "selected_artifact_ids": ["selected"],
+                        "merged_from_artifact_ids": ["evaluator", "selected"],
+                    }
+                )
+            },
+        )
+
+    _validate_candidate_submission(
+        request,
+        context,
+        {
+            "content": json_dumps(
+                {
+                    "selected_artifact_ids": ["selected"],
+                    "merged_from_artifact_ids": ["selected"],
+                }
+            )
+        },
+    )
 
 
 class _ScriptedModelClient:
@@ -206,6 +249,183 @@ def test_shared_runtime_freezes_role_tool_profile_and_rejects_recovery_drift() -
                 context={},
             )
         )
+
+
+def test_sqlite_session_mailbox_roundtrip_rejects_unknown_target_and_marks_read(
+    tmp_path: Path,
+) -> None:
+    database = SQLiteDatabase(tmp_path / "mailbox.sqlite3")
+    sessions = SQLiteBuiltinSessionStore(database)
+    source = sessions.create()
+    target = sessions.create()
+    repository = SQLiteSessionMailboxRepository(database)
+    mailbox = SessionMailbox(repository)
+
+    message = mailbox.send(
+        source.agent_session_ref_id, target.agent_session_ref_id, "work", "ready"
+    )
+    assert message.status.value == "pending"
+    assert mailbox.sessions(source.agent_session_ref_id) == (target.agent_session_ref_id,)
+    with pytest.raises(RecoverableToolError, match="existing Sessions"):
+        mailbox.send(source.agent_session_ref_id, new_id(), "work", "missing")
+
+    injected = mailbox.inject(target.agent_session_ref_id)
+    assert len(injected) == 1 and "ready" in injected[0].content
+    delivered = repository.list_for_target(target.agent_session_ref_id)
+    assert delivered[0].status.value == "delivered"
+    read = mailbox.read(target.agent_session_ref_id, correlation_id="work")
+    assert read[0].message_id == message.message_id
+    assert repository.list_for_target(target.agent_session_ref_id)[0].status.value == "read"
+
+
+def test_mailbox_injects_before_next_step_and_replays_without_toolset_drift(
+    tmp_path: Path,
+) -> None:
+    database = SQLiteDatabase(tmp_path / "injection.sqlite3")
+    store = SQLiteBuiltinSessionStore(database)
+    source = store.create()
+    target = store.create()
+    mailbox = SessionMailbox(SQLiteSessionMailboxRepository(database))
+
+    async def request_message(
+        arguments: dict[str, JsonValue], cancellation: CancellationToken
+    ) -> JsonValue:
+        del arguments
+        cancellation.raise_if_cancelled()
+        mailbox.send(
+            source.agent_session_ref_id, target.agent_session_ref_id, "review", "check beta"
+        )
+        return {"requested": True}
+
+    async def finish(arguments: dict[str, JsonValue], cancellation: CancellationToken) -> JsonValue:
+        del arguments
+        cancellation.raise_if_cancelled()
+        return {"accepted": True}
+
+    definitions = (
+        ToolDefinition("request_message", "Request", {"type": "object", "properties": {}}),
+        ToolDefinition("finish", "Finish", {"type": "object", "properties": {}}, ends_turn=True),
+    )
+    registry = ToolRegistry(definitions, {"request_message": request_message, "finish": finish})
+    config = BuiltinRoleConfig(
+        BuiltinRole.WORKER,
+        "Use the injected message.",
+        "mailbox-worker-v1",
+        ("request_message", "finish"),
+        "finish",
+    )
+    client = _ScriptedModelClient(
+        (
+            ModelResponse(
+                "",
+                (ToolCall("request", "request_message", {}),),
+                provider_response_id="response-1",
+            ),
+            ModelResponse(
+                "",
+                (ToolCall("finish", "finish", {}),),
+                provider_response_id="response-2",
+            ),
+        )
+    )
+    runtime = BuiltinAgentRuntime(store, budget=AgentBudget(4, 4, None, 4096))
+
+    asyncio.run(
+        runtime.run(
+            config=config,
+            registry=registry,
+            model_client=client,
+            session=target,
+            execution=BuiltinRoleExecution(target.agent_session_ref_id),
+            instruction="coordinate",
+            context={},
+            before_step_messages=mailbox.inject,
+        )
+    )
+
+    restored = store.load(target.agent_session_ref_id)
+    received = [
+        event for event in restored.events if event.type is BuiltinSessionEventType.MESSAGE_RECEIVED
+    ]
+    assert len(received) == 1
+    assert any("check beta" in message.content for message in restored.model_messages())
+    assert any("check beta" in message.content for message in client.requests[1].input_messages)
+    assert client.requests[0].tools == client.requests[1].tools == definitions
+    started = next(
+        event for event in restored.events if event.type is BuiltinSessionEventType.TURN_STARTED
+    )
+    assert started.payload["runtime"] == {
+        "role": "worker",
+        "tool_profile": "mailbox-worker-v1",
+        "finish_tool": "finish",
+        "tool_names": ["request_message", "finish"],
+        "permissions": [],
+    }
+
+
+def test_builtin_visualizer_uses_read_only_role_and_persists_mermaid(
+    tmp_path: Path,
+) -> None:
+    goal_id = new_id()
+    contract = CompletionContract.draft(goal_id, ("render",), (new_id(),), created_at=NOW)
+    node = PlanNode(new_id(), "Work", "Do work", required_check_ids=contract.required_check_ids)
+    plan = PlanRevision.draft(goal_id, contract, (node,), (), created_at=NOW)
+    database = SQLiteDatabase(tmp_path / "visualizer.sqlite3")
+    store = SQLiteBuiltinSessionStore(database)
+    artifacts = FilesystemArtifactStore(tmp_path / "artifacts")
+    client = _ScriptedModelClient(
+        (
+            ModelResponse(
+                "",
+                (
+                    ToolCall(
+                        "incomplete",
+                        "submit_visualization",
+                        {"name": "plan.mmd", "content": "flowchart TD\n  missing[Missing]"},
+                    ),
+                ),
+            ),
+            ModelResponse(
+                "",
+                (
+                    ToolCall(
+                        "visualize",
+                        "submit_visualization",
+                        {
+                            "name": "plan.mmd",
+                            "content": f"flowchart TD\n  {node.plan_node_id}[Work]",
+                        },
+                    ),
+                ),
+            ),
+        )
+    )
+    visualizer = BuiltinPlanVisualizer(
+        runtime=BuiltinAgentRuntime(store),
+        artifact_store=artifacts,
+        model="scripted",
+        model_client_factory=lambda profile: client,
+    )
+
+    artifact = visualizer.visualize(plan)
+
+    assert artifacts.read(artifact.artifact_id).startswith(b"flowchart TD")
+    assert artifact.media_type == "text/vnd.mermaid"
+    assert len(client.requests) == 2
+    assert "incomplete_visualization" in client.requests[1].input_messages[-1].content
+    assert visualizer.last_session_id is not None
+    session = store.load(visualizer.last_session_id)
+    started = next(
+        event for event in session.events if event.type is BuiltinSessionEventType.TURN_STARTED
+    )
+    assert started.payload["runtime"] == {
+        "role": "visualizer",
+        "tool_profile": "plan-visualizer-v1",
+        "finish_tool": "submit_visualization",
+        "tool_names": ["submit_visualization"],
+        "permissions": ["plan.read"],
+    }
+    assert plan.status is PlanRevisionStatus.DRAFT
 
 
 def test_shared_runtime_role_session_round_trips_through_sqlite(tmp_path: Path) -> None:

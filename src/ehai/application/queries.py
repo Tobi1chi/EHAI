@@ -51,6 +51,7 @@ _MAX_TRACE_SESSION_EVENTS = 512
 _MAX_TRACE_SESSION_PAYLOAD_BYTES = 8 * 1024
 _TRACE_SESSION_EVENT_TYPES = frozenset(
     {
+        BuiltinSessionEventType.MESSAGE_RECEIVED,
         BuiltinSessionEventType.STEP_STARTED,
         BuiltinSessionEventType.MODEL_MESSAGE,
         BuiltinSessionEventType.TOOL_CALLED,

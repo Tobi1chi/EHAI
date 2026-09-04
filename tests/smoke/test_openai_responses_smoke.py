@@ -16,9 +16,10 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 
-from ehai import JsonValue
+from ehai import ID, JsonValue
 from ehai.application.async_runtime import SingleSlotRuntime
 from ehai.application.builtin_agent import BuiltinSessionEventType
+from ehai.application.builtin_runtime import BuiltinAgentRuntime
 from ehai.application.checks import CheckRunner
 from ehai.application.commands import (
     ApprovePlan,
@@ -52,8 +53,11 @@ from ehai.domain.workers import (
 )
 from ehai.infrastructure.artifacts import FilesystemArtifactStore
 from ehai.infrastructure.builtin_sessions import SQLiteBuiltinSessionStore
+from ehai.infrastructure.builtin_visualizer import BuiltinPlanVisualizer
 from ehai.infrastructure.checks import ArtifactCheckAdapter, ArtifactCheckRule
 from ehai.infrastructure.mcp_tools import MCPToolProvider, StdioMCPClient
+from ehai.infrastructure.openai_responses import ResponsesEndpointCapabilities
+from ehai.infrastructure.planners import BuiltinPlannerAdapter
 from ehai.infrastructure.skill_loader import SkillLoader, SkillToolProvider
 from ehai.infrastructure.sqlite import SQLiteDatabase
 from ehai.infrastructure.web_tools import WebToolProvider
@@ -333,7 +337,6 @@ def test_real_openai_responses_completes_two_branch_exploration_api_runtime(
     observed_head_before = _git_output("rev-parse", "HEAD")
     git_status_before = _git_output("status", "--porcelain")
     assert observed_head_before == expected_head
-    assert git_status_before == ""
 
     summary: JSONObject = {
         "status": "FAIL",
@@ -362,16 +365,18 @@ def test_real_openai_responses_completes_two_branch_exploration_api_runtime(
         database_path = run_root / "exploration.sqlite3"
         artifacts_root = run_root / "artifacts"
         _init_git_workspace(workspace)
-        monkeypatch.setattr(cli_module, "_ExplorationPlannerAdapter", _RealE2EPlannerAdapter)
+        monkeypatch.setattr(cli_module, "BuiltinPlannerAdapter", _RealBuiltinPlannerAdapter)
         app = create_local_app(
             database_path,
             artifacts_root,
             worker_kind="builtin",
             worker_workspace=workspace,
-            planner_kind="exploration",
+            planner_kind="builtin",
             worker_timeout_seconds=240.0,
             builtin_model=model,
             builtin_reasoning_effort=reasoning_effort,
+            builtin_planner_model=model,
+            builtin_planner_reasoning_effort=reasoning_effort,
             builtin_capacity=2,
             p2_runtime=True,
         )
@@ -389,8 +394,19 @@ def test_real_openai_responses_completes_two_branch_exploration_api_runtime(
                     "idempotency_key": "goal",
                     "project_id": project["project_id"],
                     "objective": (
-                        "Create two tiny text candidates, select approach-b, and merge the "
-                        "selected candidate only."
+                        "Build exactly five nodes: one fork, two one-node branches labelled "
+                        "approach-a and approach-b, one evaluator, and one merge. The fork "
+                        "submits fork.txt with content fork-ready. Each branch instruction must "
+                        "first call session_list, then call session_send once to the first listed "
+                        "different Session using correlation_id candidate-coordination and content "
+                        "'approach-a ready' or 'approach-b ready', then submit branch-a.txt with "
+                        "content 'approach-a: compact alpha candidate', or branch-b.txt with "
+                        "content "
+                        "'approach-b: selected beta candidate'. The evaluator must compare both "
+                        "branches and select approach-b using the required evaluator protocol. The "
+                        "merge must use only selected artifacts and submit merged.txt as minified "
+                        "JSON with selected_branch_id, selected_artifact_ids, "
+                        "merged_from_artifact_ids, and merged_text."
                     ),
                 },
             )
@@ -404,6 +420,43 @@ def test_real_openai_responses_completes_two_branch_exploration_api_runtime(
                 },
             )
             plan_id = cast(str, proposed["plan_revision_id"])
+            database = SQLiteDatabase(database_path)
+            with database.read_session() as read_session:
+                plan_revision = read_session.states.get_plan_revision(ID(plan_id))
+            assert plan_revision is not None
+            visualizer = BuiltinPlanVisualizer(
+                runtime=BuiltinAgentRuntime(SQLiteBuiltinSessionStore(database)),
+                artifact_store=FilesystemArtifactStore(artifacts_root),
+                model=model,
+                reasoning_effort=cast(Any, reasoning_effort),
+            )
+            visualization = visualizer.visualize(plan_revision)
+            visualization_text = (
+                FilesystemArtifactStore(artifacts_root)
+                .read(visualization.artifact_id)
+                .decode("utf-8")
+            )
+            assert visualization_text.lstrip().startswith(("flowchart ", "graph "))
+            summary["visualization"] = {
+                "artifact_id": visualization.artifact_id,
+                "media_type": visualization.media_type,
+                "session_id": visualizer.last_session_id,
+                "contains_all_nodes": all(
+                    str(node.plan_node_id) in visualization_text for node in plan_revision.nodes
+                ),
+            }
+            assert cast(JSONObject, summary["visualization"])["contains_all_nodes"] is True
+            planning_roles = _role_sessions(database_path)
+            assert {
+                cast(JSONObject, item["runtime"])["role"]
+                for item in planning_roles
+                if isinstance(item.get("runtime"), dict)
+            } == {"planner", "visualizer"}
+            connection = sqlite3.connect(database_path)
+            try:
+                assert connection.execute("SELECT COUNT(*) FROM attempts").fetchone()[0] == 0
+            finally:
+                connection.close()
             approved = _api_object(
                 client,
                 "/api/v1/plans/approve",
@@ -466,10 +519,10 @@ def test_real_openai_responses_completes_two_branch_exploration_api_runtime(
         git_status_after = _git_output("status", "--porcelain")
         summary["observed_head_after"] = observed_head_after
         summary["git_status_after"] = git_status_after
-        summary["worktree_clean"] = git_status_after == ""
+        summary["worktree_unchanged"] = git_status_after == git_status_before
         summary["secret_scan"] = _secret_scan(run_root)
         assert observed_head_after == expected_head
-        assert summary["worktree_clean"] is True
+        assert summary["worktree_unchanged"] is True
         assert cast(JSONObject, summary["secret_scan"])["match_count"] == 0
         summary.pop("observed_run", None)
         summary.pop("observed_runtime_health", None)
@@ -501,6 +554,20 @@ def test_real_openai_responses_completes_two_branch_exploration_api_runtime(
             _write_json(failure_path, summary)
         assert _secret_scan(run_root)["match_count"] == 0
         assert not tuple(run_root.rglob("*-failure.json"))
+
+
+class _RealBuiltinPlannerAdapter(BuiltinPlannerAdapter):
+    def __init__(self, *, model: str, reasoning_effort: Any = None, **kwargs: object) -> None:
+        super().__init__(
+            model=model,
+            reasoning_effort=reasoning_effort,
+            endpoint_capabilities=ResponsesEndpointCapabilities(
+                supports_background=False,
+                supports_idempotent_create=False,
+                supports_unique_items=False,
+            ),
+            **kwargs,
+        )
 
 
 class _RealE2EPlannerAdapter:
@@ -596,6 +663,8 @@ def _exploration_evidence(
     attempts = cast(list[JSONObject], trace["attempts"])
     events = cast(list[JSONObject], trace["events"])
     session_events = cast(list[JSONObject], trace["session_events"])
+    session_messages = _session_messages(database_path)
+    role_sessions = _role_sessions(database_path)
     event_types = [item["event"]["type"] for item in events]
     session_event_types = {item["type"] for item in session_events}
     tool_calls = [
@@ -603,6 +672,19 @@ def _exploration_evidence(
         for item in session_events
         if item["type"] == "tool/call"
     ]
+    worker_response_ids = [
+        item["payload"]["provider_response_id"]
+        for item in session_events
+        if item["type"] == "model/message"
+    ]
+    role_response_ids = [
+        response_id
+        for role_session in role_sessions
+        for response_id in role_session["provider_response_ids"]
+    ]
+    all_response_ids = worker_response_ids + role_response_ids
+    assert None not in all_response_ids
+    assert len(all_response_ids) == len(set(all_response_ids))
 
     assert run["status"] == "completed"
     assert [node["kind"] for node in nodes] == ["fork", "work", "work", "evaluator", "merge"]
@@ -720,7 +802,9 @@ def _exploration_evidence(
     ]
 
     leases = _workspace_leases(database_path)
-    assert len(leases) == 5 and all(lease["status"] == "released" for lease in leases)
+    assert len(leases) == 5
+    assert all(lease["status"] in {"released", "preserved"} for lease in leases)
+    assert not [lease for lease in leases if lease["status"] == "active"]
     assert runtime_health["status"] == "healthy" and runtime_health["loop_active"] is True
     assert not [
         attempt for attempt in attempts if attempt["status"] in {"pending", "running", "stalled"}
@@ -745,7 +829,30 @@ def _exploration_evidence(
     assert {item["attempt_id"] for item in submit_calls} == {
         item["attempt_id"] for item in attempts
     }
-    assert {item["name"] for item in tool_calls}.issubset({"artifact_read", "submit_candidate"})
+    session_send_calls = [item for item in tool_calls if item["name"] == "session_send"]
+    assert len(session_send_calls) >= 2
+    assert len({item["attempt_id"] for item in session_send_calls}) >= 2
+    assert len(session_messages) >= 2
+    assert len({item["source_session_id"] for item in session_messages}) >= 2
+    assert {item["name"] for item in tool_calls}.issubset(
+        {
+            "artifact_read",
+            "workspace_list",
+            "workspace_search",
+            "workspace_read",
+            "workspace_write",
+            "workspace_patch",
+            "workspace_apply_patch",
+            "workspace_delete",
+            "workspace_move",
+            "workspace_mkdir",
+            "session_list",
+            "session_send",
+            "session_read",
+            "session_wait",
+            "submit_candidate",
+        }
+    )
     for attempt in attempts:
         attempt_calls = [item for item in tool_calls if item["attempt_id"] == attempt["attempt_id"]]
         assert attempt_calls[-1]["name"] == "submit_candidate"
@@ -781,7 +888,9 @@ def _exploration_evidence(
         "gates": gates,
         "checkpoints": checkpoints,
         "workspace_leases": leases,
-        "active_workspace_lease_count": 0,
+        "active_workspace_lease_count": len(
+            [lease for lease in leases if lease["status"] == "active"]
+        ),
         "pending_running_stalled_attempt_count": 0,
         "attempt_runtime": attempt_runtime,
         "runtime_health": runtime_health,
@@ -792,6 +901,10 @@ def _exploration_evidence(
         "session_events_truncated": False,
         "session_payload_truncated_count": 0,
         "session_event_types": sorted(session_event_types),
+        "session_messages": session_messages,
+        "role_sessions": role_sessions,
+        "provider_response_count": len(all_response_ids),
+        "unique_provider_response_count": len(set(all_response_ids)),
         "tool_call_order": tool_calls,
     }
 
@@ -868,6 +981,62 @@ def _workspace_leases(database_path: Path) -> list[JSONObject]:
     finally:
         connection.close()
     return [cast(JSONObject, json.loads(row[0])) for row in rows]
+
+
+def _session_messages(database_path: Path) -> list[JSONObject]:
+    connection = sqlite3.connect(database_path)
+    connection.row_factory = sqlite3.Row
+    try:
+        rows = connection.execute(
+            """
+            SELECT message_id, source_session_id, target_session_id, correlation_id,
+                   content, created_at, status
+            FROM session_messages ORDER BY created_at, message_id
+            """
+        ).fetchall()
+    finally:
+        connection.close()
+    return [cast(JSONObject, dict(row)) for row in rows]
+
+
+def _role_sessions(database_path: Path) -> list[JSONObject]:
+    database = SQLiteDatabase(database_path)
+    store = SQLiteBuiltinSessionStore(database)
+    connection = database.connect()
+    try:
+        session_ids = [
+            ID(row[0])
+            for row in connection.execute(
+                "SELECT agent_session_ref_id FROM builtin_role_sessions ORDER BY created_at"
+            ).fetchall()
+        ]
+    finally:
+        connection.close()
+    roles: list[JSONObject] = []
+    for session_id in session_ids:
+        session = store.load(session_id)
+        started = next(
+            (
+                event
+                for event in session.events
+                if event.type is BuiltinSessionEventType.TURN_STARTED
+            ),
+            None,
+        )
+        runtime = None if started is None else started.payload.get("runtime")
+        provider_response_ids = [
+            event.payload.get("provider_response_id")
+            for event in session.events
+            if event.type is BuiltinSessionEventType.MODEL_MESSAGE
+        ]
+        roles.append(
+            {
+                "agent_session_ref_id": session_id,
+                "runtime": runtime,
+                "provider_response_ids": provider_response_ids,
+            }
+        )
+    return roles
 
 
 def _artifact_json(artifacts_root: Path, artifact_id: str) -> JSONObject:

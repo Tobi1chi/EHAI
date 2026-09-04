@@ -6,7 +6,7 @@ import sqlite3
 from collections.abc import Sequence
 
 P1_SCHEMA_VERSION = 2
-LATEST_SCHEMA_VERSION = 10
+LATEST_SCHEMA_VERSION = 11
 
 
 class SchemaVersionError(RuntimeError):
@@ -471,6 +471,24 @@ _MIGRATION_10: tuple[str, ...] = (
     """,
 )
 
+_MIGRATION_11: tuple[str, ...] = (
+    """
+    CREATE TABLE session_messages (
+        message_id TEXT PRIMARY KEY,
+        source_session_id TEXT NOT NULL,
+        target_session_id TEXT NOT NULL,
+        correlation_id TEXT NOT NULL,
+        content TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        status TEXT NOT NULL CHECK (status IN ('pending', 'delivered', 'read'))
+    )
+    """,
+    """
+    CREATE INDEX session_messages_target_idx
+        ON session_messages(target_session_id, correlation_id, created_at, message_id)
+    """,
+)
+
 _MIGRATIONS: dict[int, Sequence[str]] = {
     1: _MIGRATION_1,
     2: _MIGRATION_2,
@@ -482,6 +500,7 @@ _MIGRATIONS: dict[int, Sequence[str]] = {
     8: _MIGRATION_8,
     9: _MIGRATION_9,
     10: _MIGRATION_10,
+    11: _MIGRATION_11,
 }
 
 

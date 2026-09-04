@@ -383,7 +383,7 @@ def test_builtin_planner_reports_unknown_tool_and_continues_the_tool_loop() -> N
     tool_outputs = [
         message.content for message in client.requests[1].messages if message.role.value == "tool"
     ]
-    assert any("UNKNOWN_TOOL" in output for output in tool_outputs)
+    assert any("unknown_tool" in output for output in tool_outputs)
     assert len(proposal.plan_revision.branches) == 2
 
 

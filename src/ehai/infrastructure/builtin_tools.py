@@ -8,7 +8,7 @@ import os
 import re
 import signal
 import subprocess
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from contextlib import suppress
 from pathlib import Path
 from typing import cast
@@ -24,6 +24,7 @@ from ehai.application.builtin_agent import (
 )
 from ehai.application.builtin_runtime import ToolRegistry
 from ehai.application.ports import ArtifactStore
+from ehai.application.session_mailbox import SessionMailboxToolProvider
 from ehai.infrastructure.codex_transport import redact_codex_bytes
 from ehai.infrastructure.mcp_tools import MCPToolProvider
 from ehai.infrastructure.skill_loader import SkillToolProvider
@@ -62,6 +63,7 @@ _COMMAND_ENVIRONMENT_NAMES = frozenset(
 _SENSITIVE_ENVIRONMENT_NAME = re.compile(
     r"(?i)(?:AUTH|BEARER|COOKIE|CREDENTIAL|KEY|PASSWORD|SECRET|TOKEN)"
 )
+SubmitCandidateValidator = Callable[[Mapping[str, JsonValue]], None]
 
 
 class _CommandOutputBudget:
@@ -94,6 +96,8 @@ class BuiltinToolRuntime:
         web_provider: WebToolProvider | None = None,
         mcp_providers: tuple[MCPToolProvider, ...] = (),
         skill_provider: SkillToolProvider | None = None,
+        session_provider: SessionMailboxToolProvider | None = None,
+        submit_candidate_validator: SubmitCandidateValidator | None = None,
     ) -> None:
         self.artifact_store = artifact_store
         self.workspace = workspace.resolve()
@@ -122,6 +126,7 @@ class BuiltinToolRuntime:
         )
         self._shell_processes: dict[ID, tuple[asyncio.subprocess.Process, Mapping[str, str]]] = {}
         self._mcp_providers = tuple(mcp_providers)
+        self._submit_candidate_validator = submit_candidate_validator
         if command_timeout_seconds <= 0:
             raise ValueError("command_timeout_seconds must be positive")
         self.command_timeout_seconds = command_timeout_seconds
@@ -177,7 +182,7 @@ class BuiltinToolRuntime:
             handlers["git"] = self._git
         for provider in tuple(
             item
-            for item in (web_provider, *self._mcp_providers, skill_provider)
+            for item in (web_provider, *self._mcp_providers, skill_provider, session_provider)
             if item is not None
         ):
             for definition in provider.definitions:
@@ -691,7 +696,7 @@ class BuiltinToolRuntime:
         cancellation: CancellationToken,
     ) -> JsonValue:
         cancellation.raise_if_cancelled()
-        return {
+        result: dict[str, JsonValue] = {
             "name": _tool_non_empty_text(_required_string(arguments, "name"), "name"),
             "media_type": _tool_non_empty_text(
                 _required_string(arguments, "media_type"),
@@ -699,6 +704,9 @@ class BuiltinToolRuntime:
             ),
             "content": _required_string(arguments, "content", allow_empty=True),
         }
+        if self._submit_candidate_validator is not None:
+            self._submit_candidate_validator(result)
+        return result
 
     def _resolve(self, relative_path: str) -> Path:
         candidate = Path(relative_path)

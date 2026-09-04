@@ -807,7 +807,12 @@ def test_local_p2_api_runs_standalone_builtin_worker(tmp_path: Path) -> None:
                 "name": "local-builtin",
                 "kind": "builtin",
                 "model": "gpt-5.6-luna",
-                "capabilities": ["worker.builtin", "workspace.read", "workspace.write"],
+                "capabilities": [
+                    "session.message",
+                    "worker.builtin",
+                    "workspace.read",
+                    "workspace.write",
+                ],
                 "session_policy": "new",
                 "budget_ref": None,
                 "priority": 0,

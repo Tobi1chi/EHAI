@@ -20,6 +20,7 @@ from ehai.application.builtin_agent import (
     CancellationToken,
     ExecutionScope,
     ModelClient,
+    ModelMessage,
     PromptBuilder,
     ToolDefinition,
     ToolExecutor,
@@ -28,6 +29,7 @@ from ehai.application.builtin_agent import (
 )
 
 ContextBuilder = Callable[[Mapping[str, JsonValue]], Mapping[str, JsonValue]]
+BeforeStepMessages = Callable[[ID], tuple[ModelMessage, ...]]
 
 
 class BuiltinRole(StrEnum):
@@ -149,6 +151,7 @@ class BuiltinAgentRuntime:
         instruction: str,
         context: Mapping[str, JsonValue],
         cancellation: CancellationToken | None = None,
+        before_step_messages: BeforeStepMessages | None = None,
     ) -> str:
         tool_set, executor = registry.freeze(config)
         runtime_facts: dict[str, JsonValue] = {
@@ -167,6 +170,7 @@ class BuiltinAgentRuntime:
             tool_choice=config.tool_choice,
             runtime_facts=runtime_facts,
             final_tool_requires_only=config.final_tool_requires_only,
+            before_step_messages=before_step_messages,
         )
         agent = BuiltinAgent(loop)
         token = cancellation or CancellationToken()

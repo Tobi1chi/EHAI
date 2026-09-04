@@ -22,6 +22,7 @@ from ehai.application.execution_policy import ExecutionPolicy
 from ehai.application.queries import QueryService
 from ehai.application.runtime_control import RuntimeControlService
 from ehai.application.scheduler import CapacityPolicy, ConcurrentRuntime, Dispatcher
+from ehai.application.session_mailbox import SessionMailbox
 from ehai.application.workers import WorkerRequest
 from ehai.domain.workers import (
     WorkerCapability,
@@ -32,6 +33,7 @@ from ehai.domain.workers import (
 )
 from ehai.infrastructure.artifacts import FilesystemArtifactStore
 from ehai.infrastructure.builtin_sessions import SQLiteBuiltinSessionStore
+from ehai.infrastructure.session_mailbox import SQLiteSessionMailboxRepository
 from ehai.infrastructure.sqlite import SQLiteDatabase
 from ehai.infrastructure.workers import BuiltinAgentConnector, WorkerAdapterConnector
 from ehai.infrastructure.workspaces import WorkspaceManager
@@ -94,6 +96,7 @@ def create_local_app(
     )
     query_database = SQLiteDatabase(database_path)
     builtin_sessions = SQLiteBuiltinSessionStore(query_database)
+    session_mailbox = SessionMailbox(SQLiteSessionMailboxRepository(query_database))
     query_service = QueryService(
         read_session_factory=query_database.read_session,
         builtin_session_reader=builtin_sessions,
@@ -112,6 +115,7 @@ def create_local_app(
                 WorkerCapability("worker.builtin"),
                 WorkerCapability("workspace.read"),
                 WorkerCapability("workspace.write"),
+                WorkerCapability("session.message"),
             }
         )
         profile = WorkerProfile(
@@ -170,6 +174,7 @@ def create_local_app(
             model_client_factory=builtin_model_client_factory,
             workspace_resolver=workspace_resolver,
             budget=DEFAULT_AGENT_BUDGET if builtin_agent_budget is None else builtin_agent_budget,
+            mailbox=session_mailbox,
         )
     else:
         connector = WorkerAdapterConnector(execution_service.orchestrator.worker)

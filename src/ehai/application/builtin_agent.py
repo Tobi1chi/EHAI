@@ -347,6 +347,7 @@ class BuiltinSessionEventType(StrEnum):
     """Append-only facts for Built-in Agent Turn and Step replay."""
 
     TURN_STARTED = "turn/start"
+    MESSAGE_RECEIVED = "message/received"
     STEP_STARTED = "step/start"
     MODEL_MESSAGE = "model/message"
     TOOL_CALLED = "tool/call"
@@ -605,6 +606,7 @@ class BuiltinAgentLoop:
         tool_choice: Literal["auto", "required"] = "auto",
         runtime_facts: Mapping[str, JsonValue] | None = None,
         final_tool_requires_only: bool = True,
+        before_step_messages: Callable[[ID], tuple[ModelMessage, ...]] | None = None,
         monotonic_clock: Callable[[], float] = monotonic,
     ) -> None:
         self.model_client = model_client
@@ -619,6 +621,7 @@ class BuiltinAgentLoop:
         self.tool_choice = tool_choice
         self.runtime_facts = {} if runtime_facts is None else dict(runtime_facts)
         self.final_tool_requires_only = final_tool_requires_only
+        self.before_step_messages = before_step_messages
         self._monotonic_clock = monotonic_clock
 
     async def run(
@@ -690,6 +693,18 @@ class BuiltinAgentLoop:
             self._check_wall_clock(started_at)
             if step_count >= self.budget.max_steps:
                 raise AgentBudgetExceededError("Built-in Agent Step budget exhausted")
+            if self.before_step_messages is not None:
+                for message in self.before_step_messages(session.agent_session_ref_id):
+                    if message.role is not ModelRole.USER:
+                        raise BuiltinSessionStateError(
+                            "before-Step messages must have the user model role"
+                        )
+                    session.append(
+                        attempt_id,
+                        BuiltinSessionEventType.MESSAGE_RECEIVED,
+                        _message_document(message),
+                    )
+                persisted_sequence = self._persist(session, persisted_sequence)
             step_start = len(session.events)
             session.append(attempt_id, BuiltinSessionEventType.STEP_STARTED, {})
             request = ModelRequest(
@@ -909,8 +924,19 @@ def _validate_next_event(
     if previous is None:
         raise BuiltinSessionStateError("Attempt event requires turn/start")
     allowed: dict[BuiltinSessionEventType, frozenset[BuiltinSessionEventType]] = {
+        BuiltinSessionEventType.MESSAGE_RECEIVED: frozenset(
+            {
+                BuiltinSessionEventType.TURN_STARTED,
+                BuiltinSessionEventType.STEP_ENDED,
+                BuiltinSessionEventType.MESSAGE_RECEIVED,
+            }
+        ),
         BuiltinSessionEventType.STEP_STARTED: frozenset(
-            {BuiltinSessionEventType.TURN_STARTED, BuiltinSessionEventType.STEP_ENDED}
+            {
+                BuiltinSessionEventType.TURN_STARTED,
+                BuiltinSessionEventType.STEP_ENDED,
+                BuiltinSessionEventType.MESSAGE_RECEIVED,
+            }
         ),
         BuiltinSessionEventType.MODEL_MESSAGE: frozenset({BuiltinSessionEventType.STEP_STARTED}),
         BuiltinSessionEventType.TOOL_CALLED: frozenset(
@@ -1018,6 +1044,8 @@ def _replayed_messages(
     for event in events:
         if event.type is BuiltinSessionEventType.TURN_STARTED:
             history.extend(_turn_messages(event.payload))
+        elif event.type is BuiltinSessionEventType.MESSAGE_RECEIVED:
+            history.append(_message_from_document(event.payload))
         elif event.type is BuiltinSessionEventType.STEP_STARTED:
             pending_step = []
             pending_continuation_start = None

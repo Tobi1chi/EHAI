@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Callable, Mapping
 from functools import partial
 from pathlib import Path
 
 from openai.types.shared import ReasoningEffort
 
-from ehai import ID, JsonValue, json_dumps, new_id, normalize_id
+from ehai import ID, JsonValue, json_dumps, json_loads, new_id, normalize_id
 from ehai.application.async_runtime import (
     ConnectorExecution,
     ConnectorRecoveryRequest,
@@ -25,11 +25,13 @@ from ehai.application.builtin_agent import (
     BuiltinSessionStore,
     CancellationToken,
     ModelClient,
+    RecoverableToolError,
 )
 from ehai.application.builtin_runtime import BuiltinAgentRuntime, BuiltinRole, BuiltinRoleConfig
 from ehai.application.execution_policy import RetrySafety
 from ehai.application.orchestrator import Orchestrator
 from ehai.application.ports import ArtifactStore, UnitOfWork
+from ehai.application.session_mailbox import SessionMailbox, SessionMailboxToolProvider
 from ehai.application.workers import CandidateArtifact, WorkerRequest, WorkerResult
 from ehai.domain.artifacts import ArtifactKind
 from ehai.domain.planning import PlanNodeKind
@@ -75,6 +77,7 @@ class BuiltinAgentConnector:
         web_provider: WebToolProvider | None = None,
         mcp_providers: tuple[MCPToolProvider, ...] = (),
         skill_provider: SkillToolProvider | None = None,
+        mailbox: SessionMailbox | None = None,
         reasoning_effort: ReasoningEffort = None,
         model_client_factory: ModelClientFactory | None = None,
         workspace_resolver: WorkspaceResolver | None = None,
@@ -97,6 +100,7 @@ class BuiltinAgentConnector:
         self._web_provider = web_provider
         self._mcp_providers = tuple(mcp_providers)
         self._skill_provider = skill_provider
+        self._mailbox = mailbox
         self._reasoning_effort = reasoning_effort
         self._model_client_factory = model_client_factory or self._create_model_client
         self._workspace_resolver = workspace_resolver
@@ -242,6 +246,16 @@ class BuiltinAgentConnector:
         reference, session = self._execution_context(execution)
         cancellation = CancellationToken()
         self._cancellations[execution.attempt_id] = cancellation
+        context = _builtin_context(request)
+        messaging_enabled = (
+            self._mailbox is not None
+            and WorkerCapability("session.message") in self._profile.capabilities
+        )
+        session_provider = (
+            None
+            if not messaging_enabled or self._mailbox is None
+            else SessionMailboxToolProvider(self._mailbox, session.agent_session_ref_id)
+        )
         tools = BuiltinToolRuntime(
             artifact_store=self._artifact_store,
             workspace=workspace,
@@ -255,6 +269,8 @@ class BuiltinAgentConnector:
             web_provider=self._web_provider,
             mcp_providers=self._mcp_providers,
             skill_provider=self._skill_provider,
+            session_provider=session_provider,
+            submit_candidate_validator=partial(_validate_candidate_submission, request, context),
         )
         try:
             await self._runtime.run(
@@ -264,8 +280,13 @@ class BuiltinAgentConnector:
                 session=session,
                 execution=reference,
                 instruction=request.plan_node.instruction,
-                context=_builtin_context(request),
+                context=context,
                 cancellation=cancellation,
+                before_step_messages=(
+                    self._mailbox.inject
+                    if messaging_enabled and self._mailbox is not None
+                    else None
+                ),
             )
             return _candidate_result(session, execution.attempt_id)
         finally:
@@ -444,6 +465,8 @@ def _worker_role_config(
     if "shell_exec" in tool_names:
         permissions.add("shell.execute")
     permissions.update(tools.git_permissions)
+    if all(name in tool_names for name in ("session_list", "session_send", "session_read")):
+        permissions.add("session.message")
     return BuiltinRoleConfig(
         role=role,
         system_prompt=_DEFAULT_SYSTEM_PROMPT,
@@ -487,9 +510,46 @@ def _builtin_role_protocol(kind: PlanNodeKind) -> dict[str, JsonValue] | None:
                 "Use only context.selected_artifacts and context.branch_selection.",
                 "Do not read, reconstruct, or include content from a pruned branch.",
                 "Submit one final candidate artifact derived only from selected_artifact_ids.",
+                "If the output contains selected_artifact_ids or merged_from_artifact_ids, "
+                "each must exactly equal context.branch_selection.selected_artifact_ids; "
+                "evidence_artifact_ids are evaluator provenance and are not Merge inputs.",
             ],
         }
     return None
+
+
+def _validate_candidate_submission(
+    request: WorkerRequest,
+    context: dict[str, JsonValue],
+    submission: Mapping[str, JsonValue],
+) -> None:
+    if request.plan_node.kind is not PlanNodeKind.MERGE:
+        return
+    content = submission.get("content")
+    if not isinstance(content, str):
+        return
+    try:
+        document = json_loads(content)
+    except ValueError:
+        return
+    if not isinstance(document, dict):
+        return
+    selection = context.get("branch_selection")
+    if not isinstance(selection, dict):
+        raise RecoverableToolError(
+            "invalid_merge_candidate", "Merge context has no selected Artifact IDs"
+        )
+    expected = selection.get("selected_artifact_ids")
+    if not isinstance(expected, list):
+        raise RecoverableToolError(
+            "invalid_merge_candidate", "Merge context has no selected Artifact IDs"
+        )
+    for field_name in ("selected_artifact_ids", "merged_from_artifact_ids"):
+        if field_name in document and document[field_name] != expected:
+            raise RecoverableToolError(
+                "invalid_merge_candidate",
+                f"{field_name} must exactly equal context.branch_selection.selected_artifact_ids",
+            )
 
 
 def _required_text(
