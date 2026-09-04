@@ -140,14 +140,16 @@ def _replan_context(base_plan_node_id: ID) -> ReplanContext:
 
 
 class _PlannerModelClient:
-    def __init__(self, response: ModelResponse) -> None:
-        self.response = response
+    def __init__(self, responses: ModelResponse | tuple[ModelResponse, ...]) -> None:
+        self._responses = list(responses) if isinstance(responses, tuple) else [responses]
         self.requests: list[ModelRequest] = []
         self.closed = False
 
     async def complete(self, request: ModelRequest) -> ModelResponse:
         self.requests.append(request)
-        return self.response
+        if not self._responses:
+            raise AssertionError("PlannerModelClient has no scripted response left")
+        return self._responses.pop(0)
 
     async def aclose(self) -> None:
         self.closed = True
@@ -164,6 +166,69 @@ def _planner_document() -> dict[str, object]:
         "evaluator": {"title": "Evaluate", "instruction": "Compare evidence."},
         "merge": {"title": "Merge", "instruction": "Merge the selected result."},
     }
+
+
+def _graph_tool_responses() -> tuple[ModelResponse, ...]:
+    """Nodes, branches, edges, then finish_plan for a valid two-branch graph."""
+    nodes = (
+        ("fork", "fork"),
+        ("alpha", "work"),
+        ("beta", "work"),
+        ("evaluator", "evaluator"),
+        ("merge", "merge"),
+    )
+    step_one = tuple(
+        ToolCall(
+            f"node-{key}",
+            "add_plan_node",
+            {"key": key, "title": key, "instruction": f"Work on {key}", "kind": kind},
+        )
+        for key, kind in nodes
+    )
+    step_two = tuple(
+        ToolCall(
+            f"branch-{key}",
+            "set_plan_branch",
+            {
+                "branch_key": key,
+                "label": key,
+                "fork_node_key": "fork",
+                "node_keys": [key],
+                "merge_node_key": "merge",
+                "remove": False,
+            },
+        )
+        for key in ("alpha", "beta")
+    )
+    step_three = tuple(
+        ToolCall(
+            f"edge-{index}",
+            "add_plan_edge",
+            {
+                "source": source,
+                "target": target,
+                "edge_type": edge_type,
+                "branch_key": branch_key,
+                "condition": None,
+            },
+        )
+        for index, (source, target, edge_type, branch_key) in enumerate(
+            (
+                ("fork", "alpha", "exploration", "alpha"),
+                ("alpha", "merge", "merge", "alpha"),
+                ("fork", "beta", "exploration", "beta"),
+                ("beta", "merge", "merge", "beta"),
+                ("alpha", "evaluator", "dependency", None),
+                ("beta", "evaluator", "dependency", None),
+                ("evaluator", "merge", "dependency", None),
+            )
+        )
+    )
+    step_four = (ToolCall("finish", "finish_plan", {}),)
+    return tuple(
+        ModelResponse("", calls, provider_response_id=f"resp-{index}")
+        for index, calls in enumerate((step_one, step_two, step_three, step_four), start=1)
+    )
 
 
 def test_codex_planner_uses_independent_protocol_transport_and_event_mapping(
@@ -238,19 +303,7 @@ def test_codex_planner_uses_shared_builder_for_p1_criteria(
 
 
 def test_builtin_planner_uses_responses_model_client_without_worker_state() -> None:
-    client = _PlannerModelClient(
-        ModelResponse(
-            "",
-            (
-                ToolCall(
-                    "plan-1",
-                    "submit_plan",
-                    _planner_document(),
-                ),
-            ),
-            provider_response_id="resp-plan",
-        )
-    )
+    client = _PlannerModelClient(_graph_tool_responses())
     planner = BuiltinPlannerAdapter(
         model="gpt-test",
         model_client_factory=lambda _profile: client,
@@ -263,10 +316,19 @@ def test_builtin_planner_uses_responses_model_client_without_worker_state() -> N
     assert not hasattr(planner, "start")
     assert not hasattr(planner, "execute")
     assert client.closed
-    assert len(client.requests) == 1
+    assert len(client.requests) == 4
     request = client.requests[0]
-    assert request.tools[0].name == "submit_plan"
-    assert "EHAI BUILT-IN PLANNER PROTOCOL v1" in request.messages[1].content
+    assert [tool.name for tool in request.tools] == [
+        "add_plan_node",
+        "update_plan_node",
+        "remove_plan_node",
+        "add_plan_edge",
+        "remove_plan_edge",
+        "set_plan_branch",
+        "inspect_plan",
+        "finish_plan",
+    ]
+    assert "EHAI BUILT-IN PLANNER PROTOCOL v2" in request.messages[1].content
     assert "or as exactly one JSON object" not in request.messages[1].content
     assert COMMAND_EXIT_ZERO_CRITERION in request.messages[1].content
     assert proposal.check_specs[0].kind is CheckKind.COMMAND
@@ -296,35 +358,33 @@ def test_builtin_planner_rejects_no_tool_call_response(response: ModelResponse) 
         model_client_factory=lambda _profile: client,
     )
 
-    with pytest.raises(BuiltinPlannerError, match="exactly one submit_plan"):
+    with pytest.raises(BuiltinPlannerError, match="no ToolCalls"):
         planner.propose(_goal(), (NON_EMPTY_ARTIFACT_CRITERION,))
 
     assert client.closed
 
 
-@pytest.mark.parametrize(
-    "tool_calls",
-    [
-        (ToolCall("wrong", "submit_candidate", _planner_document()),),
-        (
-            ToolCall("plan-1", "submit_plan", _planner_document()),
-            ToolCall("plan-2", "submit_plan", _planner_document()),
-        ),
-    ],
-)
-def test_builtin_planner_rejects_wrong_or_multiple_tool_calls(
-    tool_calls: tuple[ToolCall, ...],
-) -> None:
-    client = _PlannerModelClient(ModelResponse("", tool_calls, provider_response_id="resp-plan"))
+def test_builtin_planner_reports_unknown_tool_and_continues_the_tool_loop() -> None:
+    unknown_tool = ModelResponse(
+        "",
+        (ToolCall("wrong", "submit_candidate", {}),),
+        provider_response_id="resp-unknown-tool",
+    )
+    client = _PlannerModelClient((unknown_tool, *_graph_tool_responses()))
     planner = BuiltinPlannerAdapter(
         model="gpt-test",
         model_client_factory=lambda _profile: client,
     )
 
-    with pytest.raises(BuiltinPlannerError, match="exactly one submit_plan"):
-        planner.propose(_goal(), (NON_EMPTY_ARTIFACT_CRITERION,))
+    proposal = planner.propose(_goal(), (NON_EMPTY_ARTIFACT_CRITERION,))
 
     assert client.closed
+    assert len(client.requests) == 5
+    tool_outputs = [
+        message.content for message in client.requests[1].messages if message.role.value == "tool"
+    ]
+    assert any("UNKNOWN_TOOL" in output for output in tool_outputs)
+    assert len(proposal.plan_revision.branches) == 2
 
 
 def test_builtin_planner_replans_with_fresh_contract_check_ids_and_base_lineage() -> None:
@@ -339,13 +399,7 @@ def test_builtin_planner_replans_with_fresh_contract_check_ids_and_base_lineage(
     confirmed = base_proposal.contract.confirm()
     aligned = goal.use_completion_contract(confirmed)
     base = base_proposal.plan_revision.approve(confirmed)
-    client = _PlannerModelClient(
-        ModelResponse(
-            "",
-            (ToolCall("plan-1", "submit_plan", _planner_document()),),
-            provider_response_id="resp-replan",
-        )
-    )
+    client = _PlannerModelClient(_graph_tool_responses())
     planner = BuiltinPlannerAdapter(
         model="gpt-test",
         model_client_factory=lambda _profile: client,
@@ -367,13 +421,7 @@ def test_builtin_planner_replans_with_fresh_contract_check_ids_and_base_lineage(
 
 
 def test_builtin_planner_semantic_criterion_uses_semantic_check_kind() -> None:
-    client = _PlannerModelClient(
-        ModelResponse(
-            "",
-            (ToolCall("plan-1", "submit_plan", _planner_document()),),
-            provider_response_id="resp-semantic",
-        )
-    )
+    client = _PlannerModelClient(_graph_tool_responses())
     planner = BuiltinPlannerAdapter(
         model="gpt-test",
         model_client_factory=lambda _profile: client,

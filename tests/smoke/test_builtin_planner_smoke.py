@@ -151,15 +151,13 @@ def test_real_builtin_planner_proposes_grounded_plan_without_execution(
     )
 
     assert plan.status is PlanRevisionStatus.DRAFT
-    assert tuple(node.kind for node in plan.nodes) == (
-        PlanNodeKind.FORK,
-        PlanNodeKind.WORK,
-        PlanNodeKind.WORK,
-        PlanNodeKind.EVALUATOR,
-        PlanNodeKind.MERGE,
-    )
-    assert len(plan.branches) == 2
-    assert len({branch.label for branch in plan.branches}) == 2
+    assert len(plan.nodes) >= 3
+    assert len(plan.branches) >= 2
+    kinds = {node.kind for node in plan.nodes}
+    assert PlanNodeKind.FORK in kinds
+    assert PlanNodeKind.EVALUATOR in kinds
+    assert PlanNodeKind.MERGE in kinds
+    assert len({branch.label for branch in plan.branches}) == len(plan.branches)
     assert all(node.required_check_ids for node in plan.nodes)
     generated_text = " ".join(
         (node.title + " " + node.instruction).casefold() for node in plan.nodes

@@ -565,6 +565,168 @@ Roadmap Readiness Gate 的四类 E2E 全部通过，工作树 clean，无已知�
 P3+ 非阻断项保持原边界：Dashboard、P4 Workflow、插件生态、新 Provider 与跨主机分布式调度均未
 提前实现。P2 继续使用有界双分支 PlanGraph，不把本次验收扩张为任意动态图或测试矩阵。
 
+### P2-I14：Built-in Planner 图操作 Tool 与长程超时语义
+
+**状态：** 已完成（2026-09-04）。固定 `two_branch_plan_template` 的 Built-in 路径已移除，由模型驱动的
+图操作 Tool Loop 取代；Provider 超时语义对齐长程执行。
+
+**必须交付**
+
+- Built-in Planner 暴露 `add_plan_node`、`update_plan_node`、`remove_plan_node`、`add_plan_edge`、
+  `remove_plan_edge`、`set_plan_branch`、`inspect_plan`、`finish_plan` 八个图操作 Tool；模型在本次
+  Planner 调用的普通内存图中直接构造 PlanGraph，不通过 HTTP 回调，也不立即写数据库。
+- 不引入 Plan IR v2、`submit_plan_ir`、`apply_plan_operations`、`PlanOperation`、`PlanPatchOperation`、
+  草稿持久化表、动态插件或通用 Workflow Engine；Tool Call 序列本身就是构图过程。
+- 继续复用 `PlanNodeTemplate`、`EdgeTemplate`、`BranchTemplate`、`PlanTemplate`、
+  `build_plan_proposal()` 与 `PlanRevision.validate()`；模型使用稳定本地 key，不生成 UUID；只有
+  `finish_plan` 成功后应用层才分配 UUID、创建 CheckSpec、CompletionContract 和 draft PlanRevision。
+- Dependency 只有模型侧一个真值：模型用 `add_plan_edge` 声明，`finish_plan` 时确定性派生
+  `PlanNodeTemplate.required_dependency_keys`。
+- 预算：`max_plan_operations = 128`、`max_validation_retries = 4`。每次新增/修改/删除 Node、Edge、
+  Branch 计为一次操作，被拒绝的修改同样计数；`inspect_plan` 与 `finish_plan` 不计数；达到 128 次后
+  不再接受修改但允许 inspect 和最后一次 finish；前 4 次 finish 完整校验失败返回 diagnostics 允许修复，
+  第 5 次失败以 `Planner validation budget exhausted` 终止。
+- `finish_plan` 完整校验：空图、未知引用、重复引用、自依赖、DAG 环、Branch fork/内部节点/merge
+  不完整、非法跨分支依赖、缺少 Evaluator/Merge、ExplorationBudget 超限、执行节点缺少必要 Check、
+  Merge 输入包含未选分支。diagnostics 使用模型可继续操作的本地 key（`code`、`location`、`message`、
+  `related_keys`），不返回 UUID 或 Python 异常文本。
+- Provider 长程语义：Built-in Planner 默认不设 Tool Loop wall-clock deadline；Stream idle timeout 默认
+  300 秒；HTTP 失败最多重试 4 次；流中断最多重连 5 次；已获得 response_id 时通过 retrieve 恢复同一
+  Response；queued/in_progress 继续等待；只有 completed/failed/cancelled/incomplete 或恢复预算耗尽才
+  结束。官方 Background Mode 可用时 Planner 优先 background + retrieve，端点明确拒绝时回退
+  stream=true、store=true 与现有 continuation，回退不静默创建重复 Response。
+- `ExecutionPolicy.absolute_attempt_timeout` 与 `max_run_duration` 改为可选（默认 None）；
+  `ehai-api` 新增显式 `--attempt-deadline-seconds`；heartbeat、no-progress、lease、cancel、用户显式
+  deadline 与 RetrySafety 限制全部保留。
+
+**边界**
+
+- 不设计新的 PlanPatchOperation；不可变 PlanRevision 与 evidence-driven ReplanContext 保持现状，
+  Replan 复用同一套图编辑 Tool 构造替换图。
+- 模型不得创建、删除、降低或绕过 CompletionContract 与 Check；CheckSpec 仍由应用层根据用户确认的
+  Completion Criteria 构造。
+- 不为超时/重连测试消耗真实模型 API；全部使用 Test Double。
+
+**退出条件**
+
+模型可通过多个 Tool Call 构造共享节点、多条多节点分支、Evaluator 与 Merge；分支入口可同时 ready
+并由现有 Scheduler 按 capacity 并发；校验失败能在同一 Planner 调用内修复；128/4 边界、idle 恢复、
+HTTP retry 与 Background Mode 均有离线测试证明。
+
+建议提交：`feat(planner): build plans through graph tools`、`fix(runtime): support long-running model execution`
+
+### P2-I15：通用 Built-in Agent Runtime 与 Role 配置
+
+**状态：** 已确认，待实现。
+
+**必须交付**
+
+- 将现有 Built-in Worker 使用的 ModelClient、Session/Event Store、Agent Loop、ToolExecutor、取消、预算、
+  恢复和 Trace 固定为通用 Built-in Agent Runtime；`BuiltinAgentConnector` 只保留 Worker Adapter 职责。
+- Tool 不再由 `BuiltinToolRuntime` 硬编码成单一集合，而是从受控 Tool Registry 按 Session 组合；Session
+  创建时冻结本次 ToolSet，恢复时使用同一快照。
+- Role 只声明 system prompt、Tool Profile、Context Builder、Finish Tool 与权限。Planner、Worker、
+  Evaluator、Merge、Visualizer、Reviewer 和 Assistance 不得实现独立模型循环或第二套 Session Store。
+- 首先让 Built-in Planner 与 Built-in Worker 复用该 Runtime；Evaluator/Merge 继续作为受现有
+  Orchestrator 约束的角色，不能越过 BranchSelection、Check 或 Gate。
+
+**边界**
+
+- “通用能力目录”不等于所有 Role 默认获得全部工具；每个 Session 只获得显式授权的 Tool Profile。
+- 不引入 DSH Cordis、Bundle/Patch 配置树、动态插件生命周期或第二套 Orchestrator。
+- 不改变 Codex CLI/App Server 作为 External Worker Connector 的边界。
+
+**退出条件**
+
+Planner 与 Worker 使用同一个 Agent Loop 和持久 Session 协议，分别以 `finish_plan` 和
+`submit_candidate` 结束；中断恢复、取消、Tool Event 与预算语义一致，且没有复制的 Provider 调用循环。
+
+建议提交：`refactor(agent): extract shared builtin runtime`
+
+### P2-I16：Workspace、Shell 与 Git Tool Pack
+
+**状态：** 已确认，待实现。
+
+**必须交付**
+
+- Workspace Tool 补齐 list/search/read/write/apply-patch/delete/move/mkdir；统一 diff 必须支持文本文件的
+  创建、修改、删除和移动，并在应用前验证目标路径、上下文与 Workspace 边界。
+- Endpoint 显式声明可用 Shell；Agent 通过统一 shell exec/write/terminate 接口使用宿主允许的
+  PowerShell、pwsh、bash 或 cmd，当前 Windows 默认原生 PowerShell。
+- 提供一个结构化 Git Tool，以 argv 覆盖 Git 子命令并按只读、本地写、远端写和危险操作分类；不为
+  每个 Git 子命令重复编写 Tool。
+- 保留进程树取消、输出限制、最小环境与凭证脱敏；Shell/Git 的 cwd 必须位于分配的 Workspace。
+- Role/Endpoint/用户审批共同决定权限。commit、merge、rebase、push、远端操作和破坏性操作不能仅因
+  Tool 存在而自动授权。
+
+**边界**
+
+- 不把 Shell 输出当作 Artifact 或完成证据；Worker 仍必须调用角色 Finish Tool，Check/Gate 仍拥有
+  完成权限。
+- 不跨 Session 工作区写文件，不自动修改用户 main，不为二进制 Patch 创建新的版本控制协议。
+
+**退出条件**
+
+一个 Built-in Worker 能在隔离 worktree 中创建、修改、移动和删除文本文件，运行宿主允许的 Shell/Git
+验证并提交候选；越界路径、未授权远端写和危险 Git 操作 fail closed，取消后无遗留子进程。
+
+建议提交：`feat(agent): add workspace shell and git tools`
+
+### P2-I17：Web、MCP 与 Skill Tool Provider
+
+**状态：** 已确认，待实现。
+
+**必须交付**
+
+- 将 search/open/find 暴露为统一 Web Tool，并把 Provider 内建搜索或外部 Search Connector 规范化为
+  相同的 Agent Tool Event、结果边界和引用元数据。
+- MCP Provider 读取 Server Tool Schema 并注册进 Tool Registry；记录 server、tool、arguments、
+  result/error、duration、approval 与恢复事实。Session 启动后不得静默改变其 ToolSet。
+- Skill Loader 读取 Skill 说明及明确引用的资源，把必要上下文交给 Agent，并解析其 Tool 需求；Skill
+  是指令与资源，不是权限，不能扩大 Role/Endpoint 已授予的 Tool 能力。
+- Planner、Worker、Visualizer 等 Role 通过同一 Tool Registry 使用 Web/MCP/Skill，不各写一套 Adapter。
+
+**边界**
+
+- 不实现插件市场、第三方插件 SDK、热安装/卸载、自动更新、OpenCode/Claude Code/DSH Connector。
+- 不把无界网页、MCP 返回或 Skill 目录整体注入上下文；所有结果遵循现有输出限制、脱敏和 Trace 规则。
+
+**退出条件**
+
+同一 Runtime 中的不同 Role 能按 Tool Profile 使用 Web、MCP 与 Skill；恢复后 Tool Schema 和权限不漂移，
+未授权 Skill/MCP Tool 无法执行，并有一个离线 MCP Test Double 与一个显式真实 Web Smoke 证明边界。
+
+建议提交：`feat(agent): add web mcp and skill providers`
+
+### P2-I18：Session Mailbox 与内部 Agent Role 闭环
+
+**状态：** 已确认，待实现。
+
+**必须交付**
+
+- 增加持久 Session Mailbox，消息至少包含 message/source/target/correlation ID、内容、创建时间和投递状态；
+  Message 进入双方可查询的 Event/Trace，并在目标 Session 下一 Model Step 前注入。
+- 提供受权限控制的 session list/send/read/wait Tool。第一阶段只允许与已存在 Session 通信，不自动派生
+  Agent 层级、共享可写 Workspace 或绕过 Orchestrator 创建执行 Attempt。
+- Planning Role 使用工作区读取、安全分析命令、Web/MCP/Skill 和 P2-I14 PlanGraph Tool 生成已校验
+  draft；Visualization Role 只读取 PlanGraph，生成 Mermaid/Archify-compatible 可视化 Artifact，不能
+  修改 PlanRevision。
+- 用户批准 PlanRevision 与 CompletionContract 后，现有 Orchestrator/Scheduler 才调度 Worker；
+  Evaluator、Merge、Reviewer 与 Assistance Role 逐步迁移到同一 Runtime 和 Mailbox。
+
+**边界**
+
+- 不把 Session Message 当成 Artifact、Check、Gate 或领域状态转换；消息不能宣告节点或 Run 完成。
+- 不在本 Increment 实现自动 spawn、层级多 Agent Orchestrator、跨主机 Message Broker 或 P3 UI。
+
+**退出条件**
+
+完成一个 `Goal → Planning Role → validated PlanGraph → Visualization Artifact → human approval → 至少两个
+Worker Session → Evaluator/Merge → Check/Gate/Checkpoint` E2E；至少两次跨 Session 消息可持久恢复，
+所有 Role 使用同一个 Runtime，最终 Trace 能区分 Role、Tool、Message、Artifact 与领域决定。
+
+建议提交：`feat(agent): add session messaging and role runtime`
+
 ## 最小充分测试策略
 
 测试只用于证明 Increment 退出条件、保护已发生回归、阻止状态损坏/重复副作用或跨 Session/Workspace

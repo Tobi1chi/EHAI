@@ -47,7 +47,12 @@ uv run ehai-api `
 ```
 
 Built-in Planner 使用同一 Responses ModelClient seam，但只生成 provider-neutral PlanTemplate；它不创建
-Worker Attempt、Workspace 或 Agent Session。Built-in Agent 只能通过严格 `submit_candidate` Tool 产生
+Worker Attempt、Workspace 或 Agent Session。模型通过 `add_plan_node`、`update_plan_node`、
+`remove_plan_node`、`add_plan_edge`、`remove_plan_edge`、`set_plan_branch`、`inspect_plan` 和
+`finish_plan` 图操作 Tool 直接在本次 Planner 调用的内存图中构造 PlanGraph，不存在第二套 Plan IR、
+Operation 或 Patch 协议；只有 `finish_plan` 完整校验通过后，应用层 builder 才分配 EHAI ID、
+CheckSpec 和 CompletionContract。图修改操作预算为 128 次，完整校验失败后的修复预算为 4 次。
+Built-in Agent 只能通过严格 `submit_candidate` Tool 产生
 候选 Artifact；普通 assistant 文本不会被当作执行结果。`Fake` Worker 仅用于离线测试，Codex CLI 是每
 Attempt 一个外部进程，Codex App Server Connector 则管理持久 Thread/Turn；三者不共享 Agent 框架。
 
@@ -63,8 +68,14 @@ Workspace read/patch 在分配完整内容前执行大小预检并以有界块�
 `truncation_reason` 显式说明未遍历完整的原因，并在遍历与读取期间响应取消。
 Built-in Agent 的 Step、ToolCall、内部 wall-clock 和累计输出预算可分别通过
 `--builtin-agent-max-steps`、`--builtin-agent-max-tool-calls`、
-`--builtin-agent-wall-clock-seconds` 和 `--builtin-agent-max-output-bytes` 调整；所有值始终为有限正数，
-外层 `--worker-timeout-seconds` 仍是 Attempt 的最终截止时间。
+`--builtin-agent-wall-clock-seconds` 和 `--builtin-agent-max-output-bytes` 调整；所有值始终为有限正数。
+外层 Attempt 不再默认设置短 wall-clock 截止时间：`--worker-timeout-seconds` 只控制 Codex CLI 子进程
+超时，绝对 Attempt 截止时间改为显式可选项 `--attempt-deadline-seconds`（默认不设置）。缺省情况下，
+长时间运行的 high/xhigh 模型调用由 heartbeat lease、no-progress 观察、Built-in Agent 自身预算和
+显式 cancel 约束，而不是被外层秒数提前终止。Responses 客户端默认 stream idle timeout 为 300 秒：
+HTTP 请求失败最多重试 4 次，流中断最多重连 5 次，已获得 response_id 时通过 retrieve 恢复同一个
+Response 而不是重复创建；queued/in_progress 状态会继续等待，只有 completed/failed/cancelled/
+incomplete 等明确终态才结束本次 Provider 执行。
 
 ## 真实 Codex CLI 闭环
 
@@ -105,8 +116,10 @@ uv run ehai @Common get-run --run-id $Run.run_id
 
 把 `--planner exploration` 改为 `--planner single` 可创建单节点计划；改为 `--planner codex` 会使用
 独立的 Codex Planner 协议生成受预算约束的探索图；改为 `--planner builtin` 并提供
-`--builtin-planner-model` 会使用 Responses Built-in Planner。`--planner-timeout-seconds` 只控制 Codex Planner，
-`--worker-timeout-seconds` 只控制 Worker Attempt。Worker 还可使用 `--codex-model` 和
+`--builtin-planner-model` 会使用 Responses Built-in Planner（模型通过图操作 Tool 自行选择线性或探索
+结构）。`--planner-timeout-seconds` 只控制 Codex Planner 子进程，
+`--worker-timeout-seconds` 只控制 Codex CLI Worker 子进程，两者都不是 Built-in Planner/Agent 的
+Provider 调用寿命。Worker 还可使用 `--codex-model` 和
 `--codex-reasoning-effort` 覆盖本次调用配置，不修改用户全局 Codex 配置。
 
 CLI 还提供 `pause-run`、`resume-run`、`cancel-run`、`restore-run` 和启动恢复用的 `recover`；参数以
@@ -263,7 +276,7 @@ durable Session Event 重放 function call/result；`store=true`、streaming 和
 ### 真实 Built-in Planner Smoke
 
 Planner Smoke 只生成并持久化一份 draft PlanRevision，不批准计划、创建 Run 或启动 Worker。它验证真实
-Responses `submit_plan`、双分支图校验和 Planner/Worker 状态隔离：
+Responses 图操作 Tool Loop、完整图校验和 Planner/Worker 状态隔离：
 
 ```powershell
 $env:EHAI_RUN_BUILTIN_PLANNER_SMOKE = "1"

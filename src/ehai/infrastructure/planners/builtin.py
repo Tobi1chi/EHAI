@@ -8,40 +8,68 @@ from datetime import datetime
 
 from openai.types.shared import ReasoningEffort
 
-from ehai import ID, JsonValue, json_dumps, json_loads, new_id, utc_now
+from ehai import ID, JsonValue, json_dumps, new_id, utc_now
 from ehai.application.builtin_agent import (
     ModelClient,
     ModelMessage,
     ModelRequest,
-    ModelResponse,
     ModelRole,
-    ToolDefinition,
 )
 from ehai.application.execution_contracts import OPENAI_CREDENTIAL_REF
 from ehai.application.planner import (
     ExplorationBudget,
-    ExplorationUsage,
     PlanProposal,
+    PlanTemplate,
     ReplanContext,
     build_plan_proposal,
     replan_from_template,
     require_p1_criteria,
     require_replan_context,
-    two_branch_plan_template,
 )
 from ehai.domain.goal import Goal, GoalStatus
 from ehai.domain.planning import PlanRevision
 from ehai.domain.workers import WorkerCapability, WorkerKind, WorkerProfile
 from ehai.infrastructure.openai_responses import OpenAIResponsesModelClient
-from ehai.infrastructure.planners.codex_protocol import (
-    CodexPlannerProtocolError,
-    ParsedCodexPlan,
-    build_codex_planner_input,
-    codex_planner_output_schema_json,
-    parse_codex_planner_result,
+from ehai.infrastructure.planners.codex_protocol import build_codex_planner_input
+from ehai.infrastructure.planners.plan_graph_tools import (
+    MAX_PLAN_OPERATIONS,
+    MAX_VALIDATION_RETRIES,
+    PlanGraphToolRuntime,
 )
 
-_P1_USAGE = ExplorationUsage(width=2, depth=1, attempts=5)
+_DEFAULT_PLANNER_BUDGET = ExplorationBudget(max_attempts=24, max_width=3, max_depth=4)
+
+_MAX_PLANNER_STEPS = 256
+"""Safety valve well above the 128-operation budget; not a functional limit.
+
+The Planner loop terminates through the operation budget, the validation repair
+budget, accepted finish_plan, or provider terminal states. This bound only stops
+a pathological client that never converges, and never limits a valid flow that
+respects the 128-mutation budget.
+"""
+
+_PLANNER_SYSTEM_PROMPT = "\n".join(
+    (
+        "You are the EHAI Built-in Planner. Propose a plan only.",
+        "Do not execute work, create Worker Attempts, create Sessions,",
+        "or claim the Goal is complete.",
+        "Construct the plan graph by calling the provided graph tools directly.",
+        "Reference nodes and branches with stable local keys;",
+        "EHAI assigns persistent IDs after finish_plan.",
+        "Declare ordering with add_plan_edge dependency edges;",
+        "node required dependencies are derived from them deterministically,",
+        "so never maintain a second dependency list.",
+        "Choose a linear dependency chain when the Goal is certain,",
+        "or a bounded exploration structure (fork, two or more branches,",
+        "evaluator, merge) when approaches must be compared.",
+        "Every accepted or rejected graph mutation counts toward the plan",
+        "operation budget; inspect_plan and finish_plan are free.",
+        "finish_plan runs full validation and returns issues with local-key",
+        "locations; repair them with the same tools, then call finish_plan again.",
+        "Checks and Gates outside this process retain all completion authority:",
+        "you cannot create, remove, or weaken completion criteria.",
+    )
+)
 
 
 class BuiltinPlannerError(RuntimeError):
@@ -66,7 +94,7 @@ class BuiltinPlannerAdapter:
     ) -> None:
         if not isinstance(model, str) or not model.strip():
             raise ValueError("BuiltinPlannerAdapter model must not be blank")
-        self._budget = budget or ExplorationBudget(max_attempts=5)
+        self._budget = budget or _DEFAULT_PLANNER_BUDGET
         if not isinstance(self._budget, ExplorationBudget):
             raise TypeError("budget must be an ExplorationBudget")
         self._profile = WorkerProfile(
@@ -108,7 +136,6 @@ class BuiltinPlannerAdapter:
         context: ReplanContext | None = None,
     ) -> PlanProposal:
         normalized_criteria = require_p1_criteria(criteria, "BuiltinPlannerAdapter")
-        _P1_USAGE.require_within(self._budget)
         input_document = build_codex_planner_input(
             goal,
             normalized_criteria,
@@ -116,80 +143,103 @@ class BuiltinPlannerAdapter:
             base,
             context,
         )
-        response = asyncio.run(self._complete(input_document))
-        parsed = self._parse_response(goal.goal_id, response)
+        template = asyncio.run(self._build_template(input_document))
         return build_plan_proposal(
             goal,
             normalized_criteria,
-            two_branch_plan_template(
-                fork_title=parsed.fork.title,
-                fork_instruction=parsed.fork.instruction,
-                first_label=parsed.branches[0].label,
-                first_title=parsed.branches[0].title,
-                first_instruction=parsed.branches[0].instruction,
-                second_label=parsed.branches[1].label,
-                second_title=parsed.branches[1].title,
-                second_instruction=parsed.branches[1].instruction,
-                evaluator_title=parsed.evaluator.title,
-                evaluator_instruction=parsed.evaluator.instruction,
-                merge_title=parsed.merge.title,
-                merge_instruction=parsed.merge.instruction,
-                budget=self._budget,
-                usage=_P1_USAGE,
-                planner_event_types=("planner.responses.completed",),
-            ),
+            template,
             id_factory=self._id_factory,
             clock=self._clock,
         )
 
-    async def _complete(self, input_document: Mapping[str, JsonValue]) -> ModelResponse:
+    async def _build_template(self, input_document: Mapping[str, JsonValue]) -> PlanTemplate:
+        """Drive the graph Tool loop until finish_plan accepts the draft graph.
+
+        The loop has no default wall-clock deadline: termination comes from the
+        128-mutation operation budget, the 4 validation repair attempts, an
+        accepted finish_plan, or provider terminal states.
+        """
         client = self._model_client_factory(self._profile)
         try:
-            return await client.complete(
-                ModelRequest(
-                    (
-                        ModelMessage(
-                            ModelRole.SYSTEM,
-                            "You are the EHAI Built-in Planner. Propose a plan only. "
-                            "Do not execute work, create Worker Attempts, create Sessions, "
-                            "or claim the Goal is complete.",
-                        ),
-                        ModelMessage(
-                            ModelRole.USER,
-                            "\n".join(
-                                (
-                                    "EHAI BUILT-IN PLANNER PROTOCOL v1",
-                                    "The graph shape is fixed: fork, two independent "
-                                    "branches, evaluator, then merge.",
-                                    "Checks and Gates outside this process retain all "
-                                    "completion authority.",
-                                    "Return the plan by calling submit_plan exactly once.",
-                                    "--- PLANNER_INPUT_JSON ---",
-                                    json_dumps(dict(input_document)),
-                                )
-                            ),
-                        ),
-                    ),
-                    (_submit_plan_tool(),),
-                )
+            runtime = PlanGraphToolRuntime(
+                self._budget,
+                planner_event_types=("planner.responses.completed",),
             )
+            history: list[ModelMessage] = [
+                ModelMessage(ModelRole.SYSTEM, _PLANNER_SYSTEM_PROMPT),
+                ModelMessage(
+                    ModelRole.USER,
+                    "\n".join(
+                        (
+                            "EHAI BUILT-IN PLANNER PROTOCOL v2",
+                            "Build the plan graph with the graph tools,",
+                            "then call finish_plan.",
+                            f"Graph mutation budget: {MAX_PLAN_OPERATIONS} operations;",
+                            f"validation repair budget: {MAX_VALIDATION_RETRIES} attempts",
+                            "after the first failed finish_plan.",
+                            "--- PLANNER_INPUT_JSON ---",
+                            json_dumps(dict(input_document)),
+                        )
+                    ),
+                ),
+            ]
+            pending: list[ModelMessage] = []
+            previous_response_id: str | None = None
+            steps = 0
+            while True:
+                steps += 1
+                if steps > _MAX_PLANNER_STEPS:
+                    raise BuiltinPlannerError(
+                        "Built-in Planner tool loop did not converge before the model step "
+                        f"safety valve ({_MAX_PLANNER_STEPS} steps)"
+                    )
+                request = ModelRequest(
+                    tuple(history),
+                    runtime.tool_definitions(),
+                    input_messages=tuple(pending) if previous_response_id else tuple(history),
+                    previous_response_id=previous_response_id,
+                )
+                response = await client.complete(request)
+                assistant = ModelMessage(
+                    ModelRole.ASSISTANT,
+                    response.content,
+                    tool_calls=response.tool_calls,
+                )
+                history.append(assistant)
+                if response.provider_response_id is not None:
+                    previous_response_id = response.provider_response_id
+                    pending = [assistant]
+                else:
+                    pending.append(assistant)
+                if not response.tool_calls:
+                    raise BuiltinPlannerError(
+                        "Built-in Planner response contained no ToolCalls; the plan must be built "
+                        "with the graph tools and submitted through finish_plan"
+                    )
+                for call in response.tool_calls:
+                    result = runtime.execute(call.name, call.arguments)
+                    tool_message = ModelMessage(
+                        ModelRole.TOOL,
+                        json_dumps(result),
+                        call_id=call.call_id,
+                    )
+                    history.append(tool_message)
+                    pending.append(tool_message)
+                    if runtime.validation_budget_exhausted:
+                        raise BuiltinPlannerError(
+                            "Built-in Planner validation budget exhausted: finish_plan failed "
+                            f"full validation {MAX_VALIDATION_RETRIES + 1} times"
+                        )
+                    if runtime.finished:
+                        return runtime.build_template()
         finally:
             await client.aclose()
-
-    def _parse_response(self, goal_id: ID, response: ModelResponse) -> ParsedCodexPlan:
-        try:
-            if len(response.tool_calls) != 1 or response.tool_calls[0].name != "submit_plan":
-                raise CodexPlannerProtocolError("Planner must call exactly one submit_plan tool")
-            return parse_codex_planner_result(json_dumps(response.tool_calls[0].arguments))
-        except (ValueError, CodexPlannerProtocolError) as error:
-            raise BuiltinPlannerError(
-                f"Goal {goal_id} Built-in Planner returned an invalid structured result: {error}"
-            ) from error
 
     def _create_model_client(self, profile: WorkerProfile) -> ModelClient:
         return OpenAIResponsesModelClient(
             profile,
             reasoning_effort=self._reasoning_effort,
+            background=True,
         )
 
     @staticmethod
@@ -200,14 +250,3 @@ class BuiltinPlannerAdapter:
             raise ValueError(f"Goal {goal.goal_id} must be open before planning")
         if not allow_completion_contract and goal.completion_contract is not None:
             raise ValueError(f"Goal {goal.goal_id} already has a CompletionContract")
-
-
-def _submit_plan_tool() -> ToolDefinition:
-    schema = json_loads(codex_planner_output_schema_json())
-    if not isinstance(schema, dict):
-        raise RuntimeError("planner output schema must be a JSON object")
-    return ToolDefinition(
-        "submit_plan",
-        "Submit one bounded EHAI exploration PlanTemplate.",
-        schema,
-    )

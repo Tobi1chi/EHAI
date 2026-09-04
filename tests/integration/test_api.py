@@ -85,49 +85,89 @@ class _BlockingApiBuiltinModelClient:
 
 
 class _ApiScriptedPlannerModelClient:
+    """Scripted graph-tool responses: nodes, branches, edges, then finish_plan."""
+
     def __init__(self) -> None:
         self.requests: list[ModelRequest] = []
         self.closed = False
 
     async def complete(self, request: ModelRequest) -> ModelResponse:
         self.requests.append(request)
-        return ModelResponse(
-            "",
-            (
+        step = len(self.requests)
+        if step == 1:
+            calls = tuple(
                 ToolCall(
-                    "submit-plan",
-                    "submit_plan",
+                    f"node-{key}",
+                    "add_plan_node",
+                    {"key": key, "title": title, "instruction": title, "kind": kind},
+                )
+                for key, title, kind in (
+                    ("fork", "Fork exploration", "fork"),
+                    ("alpha-first", "Explore alpha", "work"),
+                    ("alpha-second", "Refine alpha", "work"),
+                    ("beta-first", "Explore beta", "work"),
+                    ("beta-second", "Refine beta", "work"),
+                    ("evaluator", "Evaluate candidates", "evaluator"),
+                    ("merge", "Merge selection", "merge"),
+                )
+            )
+        elif step == 2:
+            calls = (
+                ToolCall(
+                    "branch-alpha",
+                    "set_plan_branch",
                     {
-                        "summary": "two bounded approaches",
-                        "fork": {
-                            "title": "Fork",
-                            "instruction": "Start both approaches.",
-                        },
-                        "branches": [
-                            {
-                                "label": "alpha",
-                                "title": "Alpha",
-                                "instruction": "Try alpha.",
-                            },
-                            {
-                                "label": "beta",
-                                "title": "Beta",
-                                "instruction": "Try beta.",
-                            },
-                        ],
-                        "evaluator": {
-                            "title": "Evaluate",
-                            "instruction": "Compare evidence.",
-                        },
-                        "merge": {
-                            "title": "Merge",
-                            "instruction": "Merge the selected result.",
-                        },
+                        "branch_key": "alpha",
+                        "label": "alpha",
+                        "fork_node_key": "fork",
+                        "node_keys": ["alpha-first", "alpha-second"],
+                        "merge_node_key": "merge",
+                        "remove": False,
                     },
                 ),
-            ),
-            provider_response_id="api-planner-response",
-        )
+                ToolCall(
+                    "branch-beta",
+                    "set_plan_branch",
+                    {
+                        "branch_key": "beta",
+                        "label": "beta",
+                        "fork_node_key": "fork",
+                        "node_keys": ["beta-first", "beta-second"],
+                        "merge_node_key": "merge",
+                        "remove": False,
+                    },
+                ),
+            )
+        elif step == 3:
+            calls = tuple(
+                ToolCall(
+                    f"edge-{index}",
+                    "add_plan_edge",
+                    {
+                        "source": source,
+                        "target": target,
+                        "edge_type": edge_type,
+                        "branch_key": branch_key,
+                        "condition": None,
+                    },
+                )
+                for index, (source, target, edge_type, branch_key) in enumerate(
+                    (
+                        ("fork", "alpha-first", "exploration", "alpha"),
+                        ("alpha-first", "alpha-second", "dependency", "alpha"),
+                        ("alpha-second", "merge", "merge", "alpha"),
+                        ("fork", "beta-first", "exploration", "beta"),
+                        ("beta-first", "beta-second", "dependency", "beta"),
+                        ("beta-second", "merge", "merge", "beta"),
+                        ("alpha-second", "evaluator", "dependency", None),
+                        ("beta-second", "evaluator", "dependency", None),
+                        ("evaluator", "merge", "dependency", None),
+                    )
+                )
+            )
+        else:
+            calls = (ToolCall("finish", "finish_plan", {}),)
+        return ModelResponse("", calls, provider_response_id=f"api-planner-{step}")
 
     async def aclose(self) -> None:
         self.closed = True
@@ -634,8 +674,9 @@ def test_api_execution_service_builtin_planner_proposes_and_approves_offline(
 
     assert approved.status_code == 200, approved.text
     assert approved.json()["data"]["status"] == "approved"
-    assert planner_model.closed and len(planner_model.requests) == 1
-    assert planner_model.requests[0].tools[0].name == "submit_plan"
+    assert planner_model.closed
+    tool_names = [tool.name for tool in planner_model.requests[0].tools]
+    assert tool_names[:3] == ["add_plan_node", "update_plan_node", "remove_plan_node"]
     with database.read_session() as session:
         check_specs = session.states.list_check_specs(plan["plan_revision_id"])
     assert len(check_specs) == 1

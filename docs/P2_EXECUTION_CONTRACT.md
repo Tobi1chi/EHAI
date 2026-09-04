@@ -79,3 +79,62 @@ P2 的数据库迁移必须从当前 P1 schema version 2 单向前进，并在 P
 
 现有 P1 exploration E2E、单节点 StartRun 幂等测试和 recovery 集成测试是这些语义的迁移保护。
 后续首次增加 P2 数据表时，必须用数据库备份 API 生成一致副本并同时验证迁移前后的上述事实。
+
+## Built-in Planner 图操作 Tool 契约（P2-I14）
+
+Built-in Planner 不再通过一次性 `submit_plan` 固定双分支模板。模型在本次 Planner 调用的普通内存图
+中直接调用图操作 Tool 构造 PlanGraph：`add_plan_node`、`update_plan_node`、`remove_plan_node`、
+`add_plan_edge`、`remove_plan_edge`、`set_plan_branch`、`inspect_plan`、`finish_plan`。Tool 操作不经过
+HTTP 回调、不立即写数据库，也不存在 Plan IR/Operation/Patch 第二套图表达。只有 `finish_plan` 完整
+校验通过后，应用层才通过现有 `build_plan_proposal()` 分配 UUID 并创建 CheckSpec、CompletionContract
+和 draft PlanRevision；模型使用稳定本地 key，永远不生成 UUID。依赖只有一个模型侧真值：模型通过
+`add_plan_edge` 声明 dependency，`finish_plan` 时确定性派生
+`PlanNodeTemplate.required_dependency_keys`。
+
+预算语义固定为：图修改操作共 128 次（被拒绝的修改同样计数），`inspect_plan`/`finish_plan` 不计数；
+达到 128 次后不再接受修改但允许 inspect 和最后一次 finish；前 4 次 finish 完整校验失败把带本地 key
+位置的 diagnostics 返回给模型并允许继续修复，第 5 次失败才以明确的 validation budget exhausted 终止。
+diagnostics 结构为 `{"accepted": false, "issues": [{"code", "location", "message", "related_keys"}]}`，
+错误位置必须使用模型能继续操作的本地 key，不能只返回 UUID 或 Python 异常文本。模型不得创建、删除、
+降低或绕过 CompletionContract 与 Check；执行节点一律保留必要 Check。
+
+## Provider 长程超时语义（P2-I14）
+
+timeout 是连接/无进展检测，不是短时总任务寿命：
+
+- Built-in Planner 默认不设 Tool Loop 的固定 wall-clock deadline；正常终止由 128 次图操作、4 次校验
+  修复、明确取消和 Provider 终态决定。
+- `OpenAIResponsesModelClient` 默认 stream idle timeout 300 秒；HTTP 请求失败最多重试 4 次；流中断
+  最多重连 5 次。已获得 response_id 时必须 retrieve/恢复同一个 Response，不得重新创建重复 Response。
+- queued/in_progress 表示仍在执行并继续等待；只有 completed、failed、cancelled、incomplete 等明确
+  终态，或恢复次数耗尽，才结束本次 Provider 执行。
+- 官方 Responses Background Mode 可用时，Built-in Planner 优先 background response + retrieve；兼容
+  端点明确拒绝 background 时回退 stream=true、store=true 与现有 continuation 机制，回退不得静默创建
+  重复请求或重复执行图操作。
+- `ExecutionPolicy.absolute_attempt_timeout` 与 `max_run_duration` 默认 None，即绝对截止时间为调用方
+  显式配置项（`ehai-api --attempt-deadline-seconds`）；heartbeat、no-progress、lease、cancel、用户
+  显式 deadline 和 RetrySafety 对未知外部副作用的限制全部保留。
+
+## 通用 Built-in Agent Runtime 契约（P2-I15–I18）
+
+Built-in Agent Runtime 是 EHAI 内部所有模型驱动 Role 的唯一 Agent 地基。Planner、Worker、Evaluator、
+Merge、Visualizer、Reviewer 和 Assistance 必须复用同一 ModelClient、Session/Event Store、Agent Loop、
+Tool Registry、取消、预算、恢复与 Trace；Role 差异只能通过 Prompt、Tool Profile、Context Builder、
+Finish Tool 和权限表达。任何模块不得为了特殊输出协议复制模型循环或另建 Session Store。
+
+Runtime 提供统一能力目录，但 Session 只能获得 Role、Endpoint 与用户策略共同授权的 ToolSet。ToolSet 在
+Session 创建时冻结并随恢复事实持久化；新增 MCP Server、Skill 或宿主 Shell 不能静默改变已存在 Session
+的工具和权限。Skill 只提供指令与资源引用，不授予能力；MCP/Web/Shell/Git 结果都必须进入相同的有界、
+脱敏 Tool Event。
+
+Workspace 写操作只能作用于分配的 Workspace/worktree。统一文本 diff 可以创建、修改、删除和移动文件；
+Shell 由 Endpoint 声明，Git 使用结构化 argv 并按只读、本地写、远端写和危险操作分类。能力存在不构成
+授权：远端写、commit/merge/rebase、破坏性 Git 和越界文件操作必须遵守显式策略与审批。Tool 成功不等于
+任务完成，角色仍须使用其 Finish Tool，Worker 结果仍须经过 Check/Gate。
+
+Session Mailbox 只传递持久消息与 correlation，不共享可写 Workspace、不替代 Artifact，也不推进
+PlanNode/Attempt/Run 状态。跨 Session 协作的产物必须通过 Artifact 引用；Orchestrator 仍是执行领域状态
+推进的唯一入口。Visualization Role 只能从已校验 PlanRevision 派生可视化 Artifact，不能修改计划真值。
+
+本阶段提前 MCP/Skill 的“运行时消费能力”，不提前 P5 的插件 SDK、市场、热安装、第三方 Agent Framework
+或跨主机分布式协调。
