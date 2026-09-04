@@ -16,7 +16,7 @@ from openai.types.shared import ReasoningEffort
 
 from ehai import ID, json_loads
 from ehai.application.async_runtime import RuntimeConnector, SingleSlotRuntime
-from ehai.application.builtin_agent import ModelClient
+from ehai.application.builtin_agent import DEFAULT_AGENT_BUDGET, AgentBudget, ModelClient
 from ehai.application.execution_contracts import OPENAI_CREDENTIAL_REF
 from ehai.application.execution_policy import ExecutionPolicy
 from ehai.application.queries import QueryService
@@ -59,6 +59,7 @@ def create_local_app(
     codex_reasoning_effort: str | None = None,
     builtin_model: str | None = None,
     builtin_reasoning_effort: str | None = None,
+    builtin_agent_budget: AgentBudget | None = None,
     builtin_allowed_commands: Sequence[Sequence[str]] = (),
     builtin_capacity: int = 1,
     builtin_model_client_factory: Callable[[WorkerProfile, WorkerRequest], ModelClient]
@@ -167,6 +168,7 @@ def create_local_app(
             reasoning_effort=cast(ReasoningEffort, builtin_reasoning_effort),
             model_client_factory=builtin_model_client_factory,
             workspace_resolver=workspace_resolver,
+            budget=DEFAULT_AGENT_BUDGET if builtin_agent_budget is None else builtin_agent_budget,
         )
     else:
         connector = WorkerAdapterConnector(execution_service.orchestrator.worker)
@@ -302,6 +304,30 @@ def create_parser() -> argparse.ArgumentParser:
         help="maximum concurrent Built-in Agent Sessions",
     )
     parser.add_argument(
+        "--builtin-agent-max-steps",
+        type=int,
+        default=DEFAULT_AGENT_BUDGET.max_steps,
+        help="maximum model steps in one Built-in Agent Attempt",
+    )
+    parser.add_argument(
+        "--builtin-agent-max-tool-calls",
+        type=int,
+        default=DEFAULT_AGENT_BUDGET.max_tool_calls,
+        help="maximum Tool calls in one Built-in Agent Attempt",
+    )
+    parser.add_argument(
+        "--builtin-agent-wall-clock-seconds",
+        type=float,
+        default=DEFAULT_AGENT_BUDGET.wall_clock_seconds,
+        help="Built-in Agent loop deadline inside the Runtime Attempt deadline",
+    )
+    parser.add_argument(
+        "--builtin-agent-max-output-bytes",
+        type=int,
+        default=DEFAULT_AGENT_BUDGET.max_output_bytes,
+        help="maximum accumulated model and Tool output per Built-in Agent Attempt",
+    )
+    parser.add_argument(
         "--command-check-argv",
         help="trusted host Command Check argv as a JSON string array",
     )
@@ -333,6 +359,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         codex_reasoning_effort=args.codex_reasoning_effort,
         builtin_model=args.builtin_model,
         builtin_reasoning_effort=args.builtin_reasoning_effort,
+        builtin_agent_budget=AgentBudget(
+            args.builtin_agent_max_steps,
+            args.builtin_agent_max_tool_calls,
+            args.builtin_agent_wall_clock_seconds,
+            args.builtin_agent_max_output_bytes,
+        ),
         builtin_allowed_commands=_parse_allowed_command_argv(args.builtin_allowed_command),
         builtin_capacity=args.builtin_capacity,
         p2_runtime=args.p2_runtime,

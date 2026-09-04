@@ -38,6 +38,8 @@ uv run ehai-api `
     --builtin-model gpt-5.6-luna `
     --builtin-reasoning-effort high `
     --builtin-capacity 2 `
+    --builtin-agent-max-steps 64 `
+    --builtin-agent-max-tool-calls 128 `
     --builtin-allowed-command '["uv","--version"]' `
     --p2-runtime `
     --host 127.0.0.1 `
@@ -59,6 +61,10 @@ Runtime 对完整 argv 的精确匹配，不依赖模型供应商是否支持数
 Workspace read/patch 在分配完整内容前执行大小预检并以有界块读取；list/search 对目录项、候选文件、
 累计扫描字节、匹配数、匹配行与返回体分别限流。Search 结果通过 `truncated` 和
 `truncation_reason` 显式说明未遍历完整的原因，并在遍历与读取期间响应取消。
+Built-in Agent 的 Step、ToolCall、内部 wall-clock 和累计输出预算可分别通过
+`--builtin-agent-max-steps`、`--builtin-agent-max-tool-calls`、
+`--builtin-agent-wall-clock-seconds` 和 `--builtin-agent-max-output-bytes` 调整；所有值始终为有限正数，
+外层 `--worker-timeout-seconds` 仍是 Attempt 的最终截止时间。
 
 ## 真实 Codex CLI 闭环
 

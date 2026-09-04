@@ -5,6 +5,7 @@ from fastapi.testclient import TestClient
 from pytest import MonkeyPatch, raises
 
 from ehai import new_id
+from ehai.application.builtin_agent import AgentBudget
 from ehai.application.execution_policy import ExecutionPolicy
 from ehai.domain.execution import Attempt, AttemptStatus, Run, RunStatus
 from ehai.domain.goal import CompletionContract, Goal, Project
@@ -27,6 +28,14 @@ def test_runtime_parser_accepts_standalone_builtin_configuration() -> None:
             "high",
             "--builtin-capacity",
             "3",
+            "--builtin-agent-max-steps",
+            "48",
+            "--builtin-agent-max-tool-calls",
+            "96",
+            "--builtin-agent-wall-clock-seconds",
+            "720",
+            "--builtin-agent-max-output-bytes",
+            "1048576",
             "--builtin-allowed-command",
             '["uv","--version"]',
             "--p2-runtime",
@@ -37,6 +46,10 @@ def test_runtime_parser_accepts_standalone_builtin_configuration() -> None:
     assert args.builtin_model == "gpt-5.6-luna"
     assert args.builtin_reasoning_effort == "high"
     assert args.builtin_capacity == 3
+    assert args.builtin_agent_max_steps == 48
+    assert args.builtin_agent_max_tool_calls == 96
+    assert args.builtin_agent_wall_clock_seconds == 720
+    assert args.builtin_agent_max_output_bytes == 1_048_576
     assert args.builtin_allowed_command == ['["uv","--version"]']
     assert runtime._parse_allowed_command_argv(args.builtin_allowed_command) == (
         ("uv", "--version"),
@@ -84,7 +97,16 @@ def test_builtin_runtime_wires_timeout_and_reports_supervisor_failure(
         def resume_run_scheduling(self, run_id: object) -> None:
             del run_id
 
+    class _CapturedConnector:
+        def __init__(self, **options: object) -> None:
+            captured["agent_budget"] = options["budget"]
+
+        async def close(self) -> None:
+            return None
+
     monkeypatch.setattr(runtime, "ConcurrentRuntime", _CrashingConcurrentRuntime)
+    monkeypatch.setattr(runtime, "BuiltinAgentConnector", _CapturedConnector)
+    budget = AgentBudget(48, 96, 700, 2 * 1024 * 1024)
     app = create_local_app(
         tmp_path / "supervisor.sqlite3",
         tmp_path / "supervisor-artifacts",
@@ -92,6 +114,7 @@ def test_builtin_runtime_wires_timeout_and_reports_supervisor_failure(
         worker_workspace=tmp_path,
         builtin_model="scripted",
         worker_timeout_seconds=17,
+        builtin_agent_budget=budget,
         p2_runtime=True,
     )
 
@@ -113,6 +136,7 @@ def test_builtin_runtime_wires_timeout_and_reports_supervisor_failure(
     policy = captured["policy"]
     assert isinstance(policy, ExecutionPolicy)
     assert policy.absolute_attempt_timeout == timedelta(seconds=17)
+    assert captured["agent_budget"] == budget
     assert calls == 3
 
 

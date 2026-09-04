@@ -166,6 +166,16 @@ def _branch_has_failed(branch: Branch, node_by_id: dict[ID, PlanNode]) -> bool:
     return any(node_by_id[node_id].status is PlanNodeStatus.FAILED for node_id in branch.node_ids)
 
 
+def _exhausted_branch_reason(plan: PlanRevision) -> str | None:
+    active = tuple(branch for branch in plan.branches if branch.status is BranchStatus.ACTIVE)
+    if not active:
+        return None
+    node_by_id = {node.plan_node_id: node for node in plan.nodes}
+    if not all(_branch_has_failed(branch, node_by_id) for branch in active):
+        return None
+    return "no viable Branch candidate; all active exploration branches failed"
+
+
 @dataclass(frozen=True, slots=True)
 class _ExecutionContext:
     run: Run
@@ -389,6 +399,20 @@ class Orchestrator:
                     self._event(EventType.RUN_STARTED, run, run.run_id, {"run_id": run.run_id})
                 )
             if run.status is not RunStatus.RUNNING:
+                return ()
+            exhausted_reason = _exhausted_branch_reason(plan)
+            if exhausted_reason is not None:
+                failed_run = run.fail(exhausted_reason, at=self._clock())
+                uow.states.put_run(failed_run)
+                uow.events.append(
+                    self._event(
+                        EventType.RUN_FAILED,
+                        failed_run,
+                        failed_run.run_id,
+                        {"run_id": failed_run.run_id, "reason": exhausted_reason},
+                    )
+                )
+                uow.commit()
                 return ()
             attempts = uow.states.list_attempts(run.run_id)
             active_nodes = {
@@ -847,6 +871,21 @@ class Orchestrator:
                 raise OrchestrationError(
                     f"run {run.run_id} must be pending or running, not {run.status.value}"
                 )
+
+            exhausted_reason = _exhausted_branch_reason(plan)
+            if exhausted_reason is not None:
+                failed_run = run.fail(exhausted_reason, at=self._clock())
+                uow.states.put_run(failed_run)
+                uow.events.append(
+                    self._event(
+                        EventType.RUN_FAILED,
+                        failed_run,
+                        failed_run.run_id,
+                        {"run_id": failed_run.run_id, "reason": exhausted_reason},
+                    )
+                )
+                uow.commit()
+                raise WorkerFailedError(exhausted_reason)
 
             already_ready = tuple(
                 node for node in plan.nodes if node.status is PlanNodeStatus.READY

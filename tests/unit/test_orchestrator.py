@@ -1424,7 +1424,7 @@ def test_depth_two_branch_failure_terminates_path_and_prunes_pending_tail(tmp_pa
     assert EventType.PLAN_NODE_PRUNED in event_types
 
 
-def test_all_failed_branches_fail_after_evaluator_cannot_select(tmp_path) -> None:
+def test_all_failed_branches_fail_before_evaluator_dispatch(tmp_path) -> None:
     database = SQLiteDatabase(tmp_path / "all-branches-failed.sqlite3")
     _, _, run, nodes, _ = _seed_exploration(database)
     worker = FakeWorker(
@@ -1456,12 +1456,44 @@ def test_all_failed_branches_fail_after_evaluator_cannot_select(tmp_path) -> Non
         nodes["fork"].plan_node_id,
         nodes["left"].plan_node_id,
         nodes["right"].plan_node_id,
-        nodes["evaluator"].plan_node_id,
     )
-    assert worker.calls[-1].plan_node_id == nodes["evaluator"].plan_node_id
-    assert worker.calls[-1].artifact_inputs == ()
+    assert worker.calls[-1].plan_node_id == nodes["right"].plan_node_id
     assert len(checkpoints) == 1
     assert EventType.BRANCH_SELECTED not in event_types
+    assert event_types[-1] is EventType.RUN_FAILED
+
+
+def test_background_queue_fails_when_all_branches_are_exhausted(tmp_path) -> None:
+    database = SQLiteDatabase(tmp_path / "background-all-branches-failed.sqlite3")
+    _, _, run, nodes, _ = _seed_exploration(database)
+    worker = FakeWorker()
+    artifact_store = FilesystemArtifactStore(tmp_path / "artifacts")
+    orchestrator = Orchestrator(
+        uow_factory=database.unit_of_work,
+        worker=worker,
+        artifact_store=artifact_store,
+        check_runner=_check_runner(artifact_store),
+        workspace=tmp_path,
+        clock=lambda: NOW,
+    )
+    queued = orchestrator.queue_ready_attempts(run.run_id, limit=10)
+    fork_attempt = queued[0]
+    branch_attempts = queued[1:]
+    fork_request = orchestrator.start_queued_attempt(fork_attempt.attempt_id)
+    orchestrator.accept_worker_result(fork_attempt.attempt_id, worker.execute(fork_request))
+    assert len(branch_attempts) == 2
+    for attempt in branch_attempts:
+        orchestrator.start_queued_attempt(attempt.attempt_id)
+        orchestrator.interrupt_attempt(attempt.attempt_id, "injected branch failure")
+
+    assert orchestrator.queue_ready_attempts(run.run_id, limit=10) == ()
+
+    with database.unit_of_work() as uow:
+        failed_run = uow.states.get_run(run.run_id)
+        attempts = uow.states.list_attempts(run.run_id)
+        event_types = tuple(item.event.type for item in uow.events.list_events())
+    assert failed_run is not None and failed_run.status is RunStatus.FAILED
+    assert nodes["evaluator"].plan_node_id not in {attempt.plan_node_id for attempt in attempts}
     assert event_types[-1] is EventType.RUN_FAILED
 
 

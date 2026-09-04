@@ -63,6 +63,8 @@ P2 Built-in Agent 的唯一真实模型入口固定为官方 OpenAI Python SDK �
 - `Replan` 面向 failed/cancelled 的终态 Run。调用方通过 `source_run_id` 显式选择证据来源；系统不猜测
   “最新 Run”。Planner 只接收有界、脱敏的 Attempt/Check/Checkpoint 摘要，产生保留 lineage 的 draft，
   仍需再次批准。
+- 探索分支可以局部失败并由 Evaluator 比较剩余可行候选；若所有 active 分支均已失败，Orchestrator
+  必须在创建 Evaluator Attempt 前将 Run 明确收敛为 failed，不能要求模型伪造空 BranchSelection。
 
 ## P1 迁移保护
 
