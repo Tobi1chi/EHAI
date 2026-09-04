@@ -13,6 +13,7 @@ from ehai.application.planner import (
     ExplorationBudget,
     ExplorationUsage,
     PlanProposal,
+    ReplanContext,
     build_plan_proposal,
     replan_from_template,
     require_p1_criteria,
@@ -93,11 +94,12 @@ class CodexPlannerAdapter(CodexProcessTransport):
         goal: Goal,
         base: PlanRevision,
         criteria: tuple[str, ...],
+        context: ReplanContext | None = None,
     ) -> PlanProposal:
         """Create a versioned replacement through the application GraphPatch boundary."""
         self._require_goal(goal, allow_completion_contract=True)
         require_replan_context(goal, base)
-        template = self._propose_template(goal, criteria, base=base)
+        template = self._propose_template(goal, criteria, base=base, context=context)
         return replan_from_template(goal, base, template)
 
     def _propose_template(
@@ -106,6 +108,7 @@ class CodexPlannerAdapter(CodexProcessTransport):
         criteria: tuple[str, ...],
         *,
         base: PlanRevision | None = None,
+        context: ReplanContext | None = None,
     ) -> PlanProposal:
         normalized_criteria = self._criteria(criteria)
         _P1_USAGE.require_within(self._budget)
@@ -114,6 +117,7 @@ class CodexPlannerAdapter(CodexProcessTransport):
             normalized_criteria,
             self._budget,
             base,
+            context,
         )
         prompt = build_codex_planner_prompt(input_document).encode("utf-8")
         with tempfile.TemporaryDirectory(prefix="ehai-codex-planner-") as temporary:

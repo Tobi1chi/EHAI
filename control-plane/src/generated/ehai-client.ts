@@ -420,6 +420,7 @@ export type ProposePlanRequest = {
 export type ReplanPlanRequest = {
   readonly idempotency_key: IdempotencyKey;
   readonly base_plan_revision_id: IdInput;
+  readonly source_run_id?: IdInput | null;
   readonly criteria: ReadonlyArray<P1CompletionCriterion>;
 };
 

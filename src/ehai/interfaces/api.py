@@ -211,6 +211,7 @@ def create_app(
                     request.idempotency_key,
                     _id(str(request.base_plan_revision_id)),
                     tuple(request.criteria),
+                    (None if request.source_run_id is None else _id(str(request.source_run_id))),
                 )
             )
         )

@@ -309,6 +309,7 @@ def test_parser_accepts_worker_runtime_configuration(tmp_path: Path) -> None:
 
 def test_parser_accepts_replan_product_command(tmp_path: Path) -> None:
     base_plan_revision_id = new_id()
+    source_run_id = new_id()
     args = cli.create_parser().parse_args(
         [
             "--database",
@@ -320,6 +321,8 @@ def test_parser_accepts_replan_product_command(tmp_path: Path) -> None:
             "replan",
             "--base-plan-revision-id",
             base_plan_revision_id,
+            "--source-run-id",
+            source_run_id,
             "--criterion",
             NON_EMPTY_ARTIFACT_CRITERION,
         ]
@@ -328,6 +331,7 @@ def test_parser_accepts_replan_product_command(tmp_path: Path) -> None:
     assert args.command == "replan-plan"
     assert args.idempotency_key == "replan"
     assert args.base_plan_revision_id == base_plan_revision_id
+    assert args.source_run_id == source_run_id
     assert args.criterion == [NON_EMPTY_ARTIFACT_CRITERION]
 
     class _Service:
@@ -350,6 +354,7 @@ def test_parser_accepts_replan_product_command(tmp_path: Path) -> None:
         "replan",
         base_plan_revision_id,
         (NON_EMPTY_ARTIFACT_CRITERION,),
+        source_run_id,
     )
     assert output["version"] == 2
     assert output["supersedes_plan_revision_id"] == base_plan_revision_id

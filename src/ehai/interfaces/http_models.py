@@ -60,6 +60,7 @@ class ReplanPlanRequest(_StrictRequest):
     idempotency_key: NonBlank
     base_plan_revision_id: UuidInput
     criteria: list[P1CompletionCriterion] = Field(min_length=1, max_length=1)
+    source_run_id: UuidInput | None = None
 
 
 class ApprovePlanRequest(_StrictRequest):

@@ -36,6 +36,7 @@ from ehai.application.planner import (
     ExplorationPlanRequest,
     Planner,
     PlanProposal,
+    ReplanContext,
 )
 from ehai.application.run_control import BackgroundRunController, RunControlError, RunController
 from ehai.application.service import ApplicationError, ExecutionService
@@ -81,6 +82,7 @@ class _ExplorationPlannerAdapter:
         goal: Goal,
         base: PlanRevision,
         criteria: tuple[str, ...],
+        context: ReplanContext | None = None,
     ) -> PlanProposal:
         return self._planner.replan(
             ExplorationPlanRequest(
@@ -89,6 +91,7 @@ class _ExplorationPlannerAdapter:
                 budget=self._budget,
             ),
             base,
+            context,
         )
 
 
@@ -277,6 +280,7 @@ def create_parser() -> argparse.ArgumentParser:
     replan = commands.add_parser("replan-plan", help="create a new draft from an approved plan")
     replan.add_argument("--idempotency-key", required=True)
     replan.add_argument("--base-plan-revision-id", required=True)
+    replan.add_argument("--source-run-id")
     replan.add_argument(
         "--criterion",
         action="append",
@@ -392,6 +396,7 @@ def _dispatch(service: ExecutionService, args: argparse.Namespace) -> dict[str, 
                 args.idempotency_key,
                 normalize_id(args.base_plan_revision_id),
                 tuple(args.criterion),
+                None if args.source_run_id is None else normalize_id(args.source_run_id),
             )
         )
         return {

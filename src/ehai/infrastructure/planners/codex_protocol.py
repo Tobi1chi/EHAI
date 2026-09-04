@@ -6,7 +6,13 @@ import json
 from dataclasses import dataclass
 
 from ehai import JsonValue, json_dumps
-from ehai.application.planner import ExplorationBudget
+from ehai.application.planner import (
+    MAX_REPLAN_ATTEMPT_SUMMARIES,
+    MAX_REPLAN_CHECK_SUMMARIES,
+    MAX_REPLAN_CHECKPOINT_ARTIFACT_IDS,
+    ExplorationBudget,
+    ReplanContext,
+)
 from ehai.domain.goal import Goal
 from ehai.domain.planning import PlanRevision
 
@@ -92,6 +98,113 @@ _BASE_PLAN_INPUT_SCHEMA: dict[str, JsonValue] = {
         "branches": {"type": "array", "items": _BRANCH_INPUT_SCHEMA},
     },
 }
+_REPLAN_ATTEMPT_SCHEMA: dict[str, JsonValue] = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["attempt_id", "plan_node_id", "sequence", "status", "reason"],
+    "properties": {
+        "attempt_id": _ID_SCHEMA,
+        "plan_node_id": _ID_SCHEMA,
+        "sequence": {"type": "integer", "minimum": 1},
+        "status": {
+            "type": "string",
+            "enum": [
+                "pending",
+                "running",
+                "succeeded",
+                "failed",
+                "timed_out",
+                "cancelled",
+                "interrupted",
+            ],
+        },
+        "reason": {"oneOf": [{"type": "string"}, {"type": "null"}]},
+    },
+}
+_REPLAN_CHECK_SCHEMA: dict[str, JsonValue] = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": [
+        "check_run_id",
+        "check_id",
+        "plan_node_id",
+        "attempt_id",
+        "status",
+        "passed",
+        "reason",
+    ],
+    "properties": {
+        "check_run_id": _ID_SCHEMA,
+        "check_id": _ID_SCHEMA,
+        "plan_node_id": _ID_SCHEMA,
+        "attempt_id": _ID_SCHEMA,
+        "status": {
+            "type": "string",
+            "enum": [
+                "pending",
+                "running",
+                "completed",
+                "failed",
+                "timed_out",
+                "cancelled",
+                "interrupted",
+            ],
+        },
+        "passed": {"oneOf": [{"type": "boolean"}, {"type": "null"}]},
+        "reason": {"oneOf": [{"type": "string"}, {"type": "null"}]},
+    },
+}
+_REPLAN_CHECKPOINT_SCHEMA: dict[str, JsonValue] = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["checkpoint_id", "event_offset", "artifact_ids"],
+    "properties": {
+        "checkpoint_id": _ID_SCHEMA,
+        "event_offset": {"type": "integer", "minimum": 1},
+        "artifact_ids": {
+            "type": "array",
+            "items": _ID_SCHEMA,
+            "maxItems": MAX_REPLAN_CHECKPOINT_ARTIFACT_IDS,
+            "uniqueItems": True,
+        },
+    },
+}
+_REPLAN_CONTEXT_SCHEMA: dict[str, JsonValue] = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": [
+        "source_run_id",
+        "source_run_status",
+        "source_run_reason",
+        "failed_plan_node_ids",
+        "attempts",
+        "failed_checks",
+        "consumed_attempt_count",
+        "latest_checkpoint",
+    ],
+    "properties": {
+        "source_run_id": _ID_SCHEMA,
+        "source_run_status": {"type": "string", "enum": ["failed", "cancelled"]},
+        "source_run_reason": {"oneOf": [{"type": "string"}, {"type": "null"}]},
+        "failed_plan_node_ids": {
+            "type": "array",
+            "items": _ID_SCHEMA,
+            "uniqueItems": True,
+        },
+        "attempts": {
+            "type": "array",
+            "items": _REPLAN_ATTEMPT_SCHEMA,
+            "maxItems": MAX_REPLAN_ATTEMPT_SUMMARIES,
+        },
+        "failed_checks": {
+            "type": "array",
+            "items": _REPLAN_CHECK_SCHEMA,
+            "maxItems": MAX_REPLAN_CHECK_SUMMARIES,
+        },
+        "consumed_attempt_count": {"type": "integer", "minimum": 0},
+        "latest_checkpoint": {"oneOf": [_REPLAN_CHECKPOINT_SCHEMA, {"type": "null"}]},
+    },
+}
 _INPUT_SCHEMA: dict[str, JsonValue] = {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "title": "EHAI Codex Planner input",
@@ -127,12 +240,18 @@ _INPUT_SCHEMA: dict[str, JsonValue] = {
             },
         },
         "base_plan_revision": _BASE_PLAN_INPUT_SCHEMA,
+        "replan_context": _REPLAN_CONTEXT_SCHEMA,
     },
     "oneOf": [
         {
             "properties": {"operation": {"const": "propose"}},
             "required": ["operation"],
-            "not": {"required": ["base_plan_revision"]},
+            "not": {
+                "anyOf": [
+                    {"required": ["base_plan_revision"]},
+                    {"required": ["replan_context"]},
+                ]
+            },
         },
         {
             "properties": {"operation": {"const": "replan"}},
@@ -218,8 +337,9 @@ def build_codex_planner_input(
     criteria: tuple[str, ...],
     budget: ExplorationBudget,
     base: PlanRevision | None = None,
+    context: ReplanContext | None = None,
 ) -> dict[str, JsonValue]:
-    """Build one explicit Planner input document without execution evidence."""
+    """Build one explicit Planner input document with optional bounded failure evidence."""
     document: dict[str, JsonValue] = {
         "operation": "replan" if base is not None else "propose",
         "goal": {
@@ -235,6 +355,10 @@ def build_codex_planner_input(
     }
     if base is not None:
         document["base_plan_revision"] = _base_plan_document(base)
+    if context is not None:
+        if base is None:
+            raise ValueError("ReplanContext requires a base PlanRevision")
+        document["replan_context"] = context.to_dict()
     return document
 
 

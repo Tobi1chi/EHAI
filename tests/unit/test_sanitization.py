@@ -1,5 +1,5 @@
 from ehai import json_dumps
-from ehai.application.sanitization import sanitize_json_object
+from ehai.application.sanitization import bounded_redacted_text, sanitize_json_object
 
 
 def test_session_payload_sanitization_redacts_and_bounds_encoded_json() -> None:
@@ -20,3 +20,8 @@ def test_session_payload_sanitization_redacts_and_bounds_encoded_json() -> None:
     assert b"sk-private-key" not in encoded
     assert b"ordinary-private-value" not in encoded
     assert b"[REDACTED]" in encoded
+
+    diagnostic = bounded_redacted_text("Bearer private-token " + "x" * 1_000, max_bytes=64)
+    assert diagnostic is not None
+    assert len(diagnostic.encode("utf-8")) <= 64
+    assert "private-token" not in diagnostic

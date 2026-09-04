@@ -269,6 +269,7 @@ def test_all_command_routes_convert_models_and_preserve_idempotency() -> None:
             {
                 "idempotency_key": "replan-1",
                 "base_plan_revision_id": plan_id,
+                "source_run_id": run_id,
                 "criteria": [NON_EMPTY_ARTIFACT_CRITERION],
             },
             201,
@@ -323,6 +324,7 @@ def test_all_command_routes_convert_models_and_preserve_idempotency() -> None:
         "resume-1",
         "cancel-1",
     ]
+    assert service.calls[3].source_run_id == run_id
 
 
 @pytest.mark.parametrize(

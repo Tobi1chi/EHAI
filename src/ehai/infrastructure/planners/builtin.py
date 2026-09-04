@@ -22,6 +22,7 @@ from ehai.application.planner import (
     ExplorationBudget,
     ExplorationUsage,
     PlanProposal,
+    ReplanContext,
     build_plan_proposal,
     replan_from_template,
     require_p1_criteria,
@@ -90,11 +91,12 @@ class BuiltinPlannerAdapter:
         goal: Goal,
         base: PlanRevision,
         criteria: tuple[str, ...],
+        context: ReplanContext | None = None,
     ) -> PlanProposal:
         """Create a versioned replacement through the application GraphPatch boundary."""
         self._require_goal(goal, allow_completion_contract=True)
         require_replan_context(goal, base)
-        template = self._propose_template(goal, criteria, base=base)
+        template = self._propose_template(goal, criteria, base=base, context=context)
         return replan_from_template(goal, base, template)
 
     def _propose_template(
@@ -103,6 +105,7 @@ class BuiltinPlannerAdapter:
         criteria: tuple[str, ...],
         *,
         base: PlanRevision | None = None,
+        context: ReplanContext | None = None,
     ) -> PlanProposal:
         normalized_criteria = require_p1_criteria(criteria, "BuiltinPlannerAdapter")
         _P1_USAGE.require_within(self._budget)
@@ -111,6 +114,7 @@ class BuiltinPlannerAdapter:
             normalized_criteria,
             self._budget,
             base,
+            context,
         )
         response = asyncio.run(self._complete(input_document))
         parsed = self._parse_response(goal.goal_id, response)

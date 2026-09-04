@@ -8,7 +8,9 @@ from ehai.application.planner import (
     NON_EMPTY_ARTIFACT_CRITERION,
     DeterministicPlanner,
     ExplorationBudget,
+    ReplanContext,
 )
+from ehai.domain.execution import RunStatus
 from ehai.domain.goal import Goal
 from ehai.infrastructure.planners.codex_protocol import (
     CodexPlannerProtocolError,
@@ -64,12 +66,22 @@ def test_codex_planner_input_schema_distinguishes_propose_and_replan() -> None:
         (NON_EMPTY_ARTIFACT_CRITERION,),
         budget,
         base,
+        ReplanContext(
+            source_run_id=new_id(),
+            source_run_status=RunStatus.FAILED,
+            source_run_reason="gate rejected",
+            failed_plan_node_ids=(base.nodes[0].plan_node_id,),
+            attempts=(),
+            failed_checks=(),
+            consumed_attempt_count=0,
+        ),
     )
     validator.validate(replanned)
     assert replanned["operation"] == "replan"
     base_document = replanned["base_plan_revision"]
     assert isinstance(base_document, dict)
     assert base_document["plan_revision_id"] == base.plan_revision_id
+    assert replanned["replan_context"]["source_run_status"] == "failed"
     assert set(base_document) == {
         "plan_revision_id",
         "version",
@@ -81,6 +93,11 @@ def test_codex_planner_input_schema_distinguishes_propose_and_replan() -> None:
     }
 
     proposed["unexpected"] = True
+    with pytest.raises(ValidationError):
+        validator.validate(proposed)
+
+    proposed.pop("unexpected")
+    proposed["replan_context"] = replanned["replan_context"]
     with pytest.raises(ValidationError):
         validator.validate(proposed)
 

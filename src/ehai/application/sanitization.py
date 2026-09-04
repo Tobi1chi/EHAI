@@ -27,6 +27,15 @@ def redact_sensitive_text(value: str) -> str:
     return _KEY_PATTERN.sub("[REDACTED]", redacted)
 
 
+def bounded_redacted_text(value: str | None, *, max_bytes: int = 500) -> str | None:
+    """Redact a diagnostic string and bound its UTF-8 representation."""
+    if value is None:
+        return None
+    if type(max_bytes) is not int or max_bytes < 32:
+        raise ValueError("max_bytes must be an integer of at least 32")
+    return _bounded_utf8(redact_sensitive_text(value), max_bytes)
+
+
 def sanitize_json_object(
     value: Mapping[str, JsonValue],
     *,

@@ -24,9 +24,20 @@ from ehai.application.commands import (
     StartRun,
 )
 from ehai.application.orchestrator import Orchestrator
-from ehai.application.planner import Planner
+from ehai.application.planner import (
+    MAX_REPLAN_ATTEMPT_SUMMARIES,
+    MAX_REPLAN_CHECK_SUMMARIES,
+    MAX_REPLAN_CHECKPOINT_ARTIFACT_IDS,
+    Planner,
+    ReplanAttemptSummary,
+    ReplanCheckpointSummary,
+    ReplanCheckSummary,
+    ReplanContext,
+)
 from ehai.application.ports import CommandReceipt, UnitOfWork
 from ehai.application.run_control import RunControllerPort
+from ehai.application.sanitization import bounded_redacted_text
+from ehai.domain.checking import CheckRun, CheckRunStatus
 from ehai.domain.events import Event, EventType
 from ehai.domain.execution import AttemptStatus, Run, RunStatus
 from ehai.domain.goal import CompletionContract, Goal, Project
@@ -220,8 +231,16 @@ class ExecutionService:
                 return _required_plan(uow, _result_id(existing, "plan_revision_id"))
             base = _required_plan(uow, command.base_plan_revision_id)
             goal = _required_goal(uow, base.goal_id)
+            source_run = (
+                None if command.source_run_id is None else _required_run(uow, command.source_run_id)
+            )
+            context = (
+                None
+                if source_run is None
+                else _build_replan_context(uow, source_run=source_run, base=base)
+            )
 
-        proposal = self._planner.replan(goal, base, command.criteria)
+        proposal = self._planner.replan(goal, base, command.criteria, context)
         aligned_goal = goal.use_completion_contract(proposal.contract)
         with self._uow_factory() as uow:
             existing = self._existing_result(
@@ -234,10 +253,19 @@ class ExecutionService:
                 return _required_plan(uow, _result_id(existing, "plan_revision_id"))
             current_goal = _required_goal(uow, goal.goal_id)
             current_base = _required_plan(uow, base.plan_revision_id)
-            if current_goal != goal or current_base != base:
+            current_context = (
+                None
+                if source_run is None
+                else _build_replan_context(
+                    uow,
+                    source_run=_required_run(uow, source_run.run_id),
+                    base=current_base,
+                )
+            )
+            if current_goal != goal or current_base != base or current_context != context:
                 raise ApplicationError(
-                    f"Goal {goal.goal_id} or base PlanRevision {base.plan_revision_id} "
-                    "changed while replanning"
+                    f"Goal {goal.goal_id}, base PlanRevision {base.plan_revision_id}, or source "
+                    "Run evidence changed while replanning"
                 )
             uow.states.put_completion_contract(proposal.contract)
             uow.states.put_goal(aligned_goal)
@@ -254,6 +282,7 @@ class ExecutionService:
                         "plan_revision_id": proposal.plan_revision.plan_revision_id,
                         "planner_diagnostics": list(proposal.planner_diagnostics),
                         "planner_event_types": list(proposal.planner_event_types),
+                        "replan_context": None if context is None else context.to_dict(),
                         "supersedes_plan_revision_id": base.plan_revision_id,
                     },
                 )
@@ -623,3 +652,104 @@ def _required_run(uow: UnitOfWork, run_id: ID) -> Run:
     if run is None:
         raise EntityNotFoundError(f"Run {run_id} does not exist")
     return run
+
+
+def _build_replan_context(
+    uow: UnitOfWork,
+    *,
+    source_run: Run,
+    base: PlanRevision,
+) -> ReplanContext:
+    if source_run.plan_revision_id != base.plan_revision_id or source_run.goal_id != base.goal_id:
+        raise ApplicationError(
+            f"Run {source_run.run_id} does not belong to base PlanRevision {base.plan_revision_id}"
+        )
+    if source_run.status not in {RunStatus.FAILED, RunStatus.CANCELLED}:
+        raise ApplicationError(
+            f"Run {source_run.run_id} must be failed or cancelled before it can guide replanning"
+        )
+
+    all_attempts = uow.states.list_attempts(source_run.run_id)
+    attempts = tuple(
+        ReplanAttemptSummary(
+            attempt_id=attempt.attempt_id,
+            plan_node_id=attempt.plan_node_id,
+            sequence=attempt.sequence,
+            status=attempt.status,
+            reason=bounded_redacted_text(attempt.outcome_reason or attempt.queue_reason),
+        )
+        for attempt in all_attempts[-MAX_REPLAN_ATTEMPT_SUMMARIES:]
+    )
+    failed_check_runs = tuple(
+        check_run
+        for check_run in uow.states.list_check_runs(source_run.run_id)
+        if _check_failed(check_run)
+    )
+    failed_checks = tuple(
+        ReplanCheckSummary(
+            check_run_id=check_run.check_run_id,
+            check_id=check_run.check_id,
+            plan_node_id=check_run.plan_node_id,
+            attempt_id=check_run.attempt_id,
+            status=check_run.status,
+            passed=None if check_run.result is None else check_run.result.passed,
+            reason=bounded_redacted_text(_check_failure_reason(check_run)),
+        )
+        for check_run in failed_check_runs[-MAX_REPLAN_CHECK_SUMMARIES:]
+    )
+    failed_node_ids = {
+        node.plan_node_id for node in base.nodes if node.status is PlanNodeStatus.FAILED
+    }
+    failed_node_ids.update(
+        attempt.plan_node_id
+        for attempt in all_attempts
+        if attempt.status
+        in {
+            AttemptStatus.FAILED,
+            AttemptStatus.TIMED_OUT,
+            AttemptStatus.CANCELLED,
+            AttemptStatus.INTERRUPTED,
+        }
+    )
+    failed_node_ids.update(check_run.plan_node_id for check_run in failed_check_runs)
+    ordered_failed_node_ids = tuple(
+        node.plan_node_id for node in base.nodes if node.plan_node_id in failed_node_ids
+    )
+    checkpoints = uow.states.list_checkpoints(source_run.run_id)
+    latest = checkpoints[-1] if checkpoints else None
+    checkpoint = (
+        None
+        if latest is None
+        else ReplanCheckpointSummary(
+            checkpoint_id=latest.checkpoint_id,
+            event_offset=latest.event_offset,
+            artifact_ids=latest.artifact_refs[-MAX_REPLAN_CHECKPOINT_ARTIFACT_IDS:],
+        )
+    )
+    return ReplanContext(
+        source_run_id=source_run.run_id,
+        source_run_status=source_run.status,
+        source_run_reason=bounded_redacted_text(source_run.status_reason),
+        failed_plan_node_ids=ordered_failed_node_ids,
+        attempts=attempts,
+        failed_checks=failed_checks,
+        consumed_attempt_count=len(all_attempts),
+        latest_checkpoint=checkpoint,
+    )
+
+
+def _check_failed(check_run: CheckRun) -> bool:
+    if check_run.status is CheckRunStatus.COMPLETED:
+        return check_run.result is not None and not check_run.result.passed
+    return check_run.status in {
+        CheckRunStatus.FAILED,
+        CheckRunStatus.TIMED_OUT,
+        CheckRunStatus.CANCELLED,
+        CheckRunStatus.INTERRUPTED,
+    }
+
+
+def _check_failure_reason(check_run: CheckRun) -> str | None:
+    if check_run.result is not None and not check_run.result.passed:
+        return check_run.result.failure_reason
+    return check_run.failure_reason

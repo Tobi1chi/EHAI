@@ -7,8 +7,9 @@ from dataclasses import dataclass, replace
 from datetime import datetime
 from typing import Protocol, runtime_checkable
 
-from ehai import ID, new_id, normalize_id, utc_now
-from ehai.domain.checking import CheckKind, CheckSpec
+from ehai import ID, JsonValue, new_id, normalize_id, utc_now
+from ehai.domain.checking import CheckKind, CheckRunStatus, CheckSpec
+from ehai.domain.execution import AttemptStatus, RunStatus
 from ehai.domain.goal import CompletionContract, Goal, GoalStatus
 from ehai.domain.planning import (
     Branch,
@@ -32,6 +33,97 @@ P1_COMPLETION_CRITERIA = frozenset(
         SEMANTIC_REQUIRED_TERMS_CRITERION,
     }
 )
+MAX_REPLAN_ATTEMPT_SUMMARIES = 20
+MAX_REPLAN_CHECK_SUMMARIES = 20
+MAX_REPLAN_CHECKPOINT_ARTIFACT_IDS = 50
+
+
+@dataclass(frozen=True, slots=True)
+class ReplanAttemptSummary:
+    """Bounded provider-neutral facts about one source Run Attempt."""
+
+    attempt_id: ID
+    plan_node_id: ID
+    sequence: int
+    status: AttemptStatus
+    reason: str | None = None
+
+    def to_dict(self) -> dict[str, JsonValue]:
+        return {
+            "attempt_id": self.attempt_id,
+            "plan_node_id": self.plan_node_id,
+            "sequence": self.sequence,
+            "status": self.status.value,
+            "reason": self.reason,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class ReplanCheckSummary:
+    """Bounded provider-neutral facts about one failed source Run Check."""
+
+    check_run_id: ID
+    check_id: ID
+    plan_node_id: ID
+    attempt_id: ID
+    status: CheckRunStatus
+    passed: bool | None
+    reason: str | None = None
+
+    def to_dict(self) -> dict[str, JsonValue]:
+        return {
+            "check_run_id": self.check_run_id,
+            "check_id": self.check_id,
+            "plan_node_id": self.plan_node_id,
+            "attempt_id": self.attempt_id,
+            "status": self.status.value,
+            "passed": self.passed,
+            "reason": self.reason,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class ReplanCheckpointSummary:
+    """Latest durable recovery boundary available to a replanning source Run."""
+
+    checkpoint_id: ID
+    event_offset: int
+    artifact_ids: tuple[ID, ...]
+
+    def to_dict(self) -> dict[str, JsonValue]:
+        return {
+            "checkpoint_id": self.checkpoint_id,
+            "event_offset": self.event_offset,
+            "artifact_ids": list(self.artifact_ids),
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class ReplanContext:
+    """Auditable failure evidence supplied to a Planner without transcript content."""
+
+    source_run_id: ID
+    source_run_status: RunStatus
+    source_run_reason: str | None
+    failed_plan_node_ids: tuple[ID, ...]
+    attempts: tuple[ReplanAttemptSummary, ...]
+    failed_checks: tuple[ReplanCheckSummary, ...]
+    consumed_attempt_count: int
+    latest_checkpoint: ReplanCheckpointSummary | None = None
+
+    def to_dict(self) -> dict[str, JsonValue]:
+        return {
+            "source_run_id": self.source_run_id,
+            "source_run_status": self.source_run_status.value,
+            "source_run_reason": self.source_run_reason,
+            "failed_plan_node_ids": list(self.failed_plan_node_ids),
+            "attempts": [attempt.to_dict() for attempt in self.attempts],
+            "failed_checks": [check.to_dict() for check in self.failed_checks],
+            "consumed_attempt_count": self.consumed_attempt_count,
+            "latest_checkpoint": (
+                None if self.latest_checkpoint is None else self.latest_checkpoint.to_dict()
+            ),
+        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -319,6 +411,7 @@ class Planner(Protocol):
         goal: Goal,
         base: PlanRevision,
         criteria: tuple[str, ...],
+        context: ReplanContext | None = None,
     ) -> PlanProposal:
         """Return a versioned replacement proposal for an approved base."""
         ...
@@ -361,8 +454,9 @@ class ConfiguredCheckPlanner:
         goal: Goal,
         base: PlanRevision,
         criteria: tuple[str, ...],
+        context: ReplanContext | None = None,
     ) -> PlanProposal:
-        return self._bind(self.planner.replan(goal, base, criteria))
+        return self._bind(self.planner.replan(goal, base, criteria, context))
 
     def _bind(self, proposal: PlanProposal) -> PlanProposal:
         configured: list[CheckSpec] = []
@@ -409,8 +503,10 @@ class DeterministicPlanner:
         goal: Goal,
         base: PlanRevision,
         criteria: tuple[str, ...],
+        context: ReplanContext | None = None,
     ) -> PlanProposal:
         """Create a single-node replacement through the explicit GraphPatch boundary."""
+        del context
         current_contract = require_replan_context(goal, base)
         normalized_criteria = tuple(criterion.strip() for criterion in criteria)
         if len(normalized_criteria) != 1 or normalized_criteria[0] not in P1_COMPLETION_CRITERIA:
@@ -470,8 +566,10 @@ class DeterministicExplorationPlanner:
         self,
         request: ExplorationPlanRequest,
         base: PlanRevision,
+        context: ReplanContext | None = None,
     ) -> PlanProposal:
         """Create an exploration replacement through the explicit GraphPatch boundary."""
+        del context
         current_contract = require_replan_context(request.goal, base)
         if len(request.criteria) != 1 or request.criteria[0] not in P1_COMPLETION_CRITERIA:
             raise ValueError(

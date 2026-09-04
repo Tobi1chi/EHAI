@@ -166,6 +166,12 @@
       "properties": {
         "idempotency_key": {"$ref": "common.schema.json#/$defs/IdempotencyKey"},
         "base_plan_revision_id": {"$ref": "common.schema.json#/$defs/IdInput"},
+        "source_run_id": {
+          "oneOf": [
+            {"$ref": "common.schema.json#/$defs/IdInput"},
+            {"type": "null"}
+          ]
+        },
         "criteria": {
           "type": "array",
           "minItems": 1,

@@ -501,6 +501,8 @@ P2-I0–I9 固定并实现执行内核；以下增量只关闭真实项目使用
 
 ### P2-I11：失败恢复与证据驱动 Replan
 
+**状态：** 已完成（2026-09-04）。离线故障注入闭环及真实 `gpt-5.6-luna/high` Replan Smoke 均通过。
+
 **必须交付**
 
 - 固定 retry、resume、Checkpoint restore 和 Replan 的选择规则。

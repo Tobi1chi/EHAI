@@ -52,6 +52,18 @@ P2 Built-in Agent 的唯一真实模型入口固定为官方 OpenAI Python SDK �
 `WorkerProfile` 显式提供，不允许从环境、登录态或 Provider 默认值推导。SDK 依赖和真实调用属于
 `P2-I3`，本 Increment 不提前引入。
 
+## 失败后的选择规则
+
+- `retry` 只用于 Runtime 能证明原执行未创建或没有执行句柄的 Attempt；未知写副作用一律不创建替代
+  Attempt，并受原 Plan 的 Attempt 预算约束。
+- `resume` 只继续已暂停的同一个 Run。受控取消、失败、中断或超时的节点可以重新进入 ready；Worker
+  已成功但 Check/Gate 失败时不得用 resume 绕过验证。
+- `Checkpoint restore` 只恢复同一 Run 最新、已持久化且通过 Gate 的 Checkpoint，恢复后保持 paused，
+  由调用方显式 resume。
+- `Replan` 面向 failed/cancelled 的终态 Run。调用方通过 `source_run_id` 显式选择证据来源；系统不猜测
+  “最新 Run”。Planner 只接收有界、脱敏的 Attempt/Check/Checkpoint 摘要，产生保留 lineage 的 draft，
+  仍需再次批准。
+
 ## P1 迁移保护
 
 P2 的数据库迁移必须从当前 P1 schema version 2 单向前进，并在 P1 数据库备份副本上验证。I0 不新增

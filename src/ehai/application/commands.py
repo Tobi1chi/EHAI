@@ -81,6 +81,7 @@ class ReplanPlan:
     idempotency_key: str
     base_plan_revision_id: ID
     criteria: tuple[str, ...]
+    source_run_id: ID | None = None
 
     def __post_init__(self) -> None:
         owner = type(self).__name__
@@ -94,6 +95,12 @@ class ReplanPlan:
         if not criteria:
             raise ValueError(f"{owner} criteria must not be empty")
         object.__setattr__(self, "criteria", criteria)
+        if self.source_run_id is not None:
+            object.__setattr__(
+                self,
+                "source_run_id",
+                _normalized_id(self.source_run_id, "source_run_id", owner),
+            )
 
     @property
     def fingerprint(self) -> str:
@@ -103,6 +110,7 @@ class ReplanPlan:
             {
                 "base_plan_revision_id": self.base_plan_revision_id,
                 "criteria": list(self.criteria),
+                "source_run_id": self.source_run_id,
             },
         )
 

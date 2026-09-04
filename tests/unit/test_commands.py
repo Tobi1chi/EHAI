@@ -44,13 +44,17 @@ def test_command_ids_are_normalized_and_text_is_trimmed() -> None:
     goal = CreateGoal("key", project_id.upper(), "  produce evidence  ")
     plan = ProposePlan("key", new_id().upper(), ["  first  ", "second"])  # type: ignore[arg-type]
     replan_id = new_id()
-    replan = ReplanPlan("key", replan_id.upper(), ["  first  "])  # type: ignore[arg-type]
+    source_run_id = new_id()
+    replan = ReplanPlan(  # type: ignore[arg-type]
+        "key", replan_id.upper(), ["  first  "], source_run_id.upper()
+    )
 
     assert goal.project_id == project_id
     assert goal.objective == "produce evidence"
     assert plan.criteria == ("first", "second")
     assert replan.base_plan_revision_id == replan_id
     assert replan.criteria == ("first",)
+    assert replan.source_run_id == source_run_id
 
 
 def test_command_inputs_are_frozen_and_snapshot_mutable_criteria() -> None:
@@ -81,6 +85,17 @@ def test_fingerprint_includes_command_type() -> None:
     start_run = StartRun("key", identifier)
 
     assert create_goal.fingerprint != start_run.fingerprint
+
+
+def test_replan_fingerprint_includes_explicit_source_run() -> None:
+    plan_id = new_id()
+    first_run_id = new_id()
+    second_run_id = new_id()
+
+    first = ReplanPlan("key", plan_id, ("criterion",), first_run_id)
+    second = ReplanPlan("key", plan_id, ("criterion",), second_run_id)
+
+    assert first.fingerprint != second.fingerprint
 
 
 @pytest.mark.parametrize(

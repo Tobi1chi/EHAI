@@ -2123,6 +2123,18 @@
             "pattern": "^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$",
             "title": "Base Plan Revision Id"
           },
+          "source_run_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Run Id"
+          },
           "criteria": {
             "items": {
               "type": "string",

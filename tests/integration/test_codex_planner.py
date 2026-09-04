@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from ehai import new_id
+from ehai import ID, new_id
 from ehai.application.builtin_agent import ModelRequest, ModelResponse, ToolCall
 from ehai.application.commands import (
     ApprovePlan,
@@ -24,10 +24,12 @@ from ehai.application.planner import (
     ExplorationBudget,
     ExplorationPlanRequest,
     Planner,
+    ReplanContext,
 )
 from ehai.application.workers import WorkerAdapter
 from ehai.domain.checking import CheckKind
 from ehai.domain.events import EventType
+from ehai.domain.execution import RunStatus
 from ehai.domain.goal import Goal
 from ehai.domain.planning import PlanRevisionStatus
 from ehai.infrastructure.codex_transport import CodexProcessTransport
@@ -123,6 +125,18 @@ def _adapter(
 
 def _goal() -> Goal:
     return Goal.create(new_id(), "produce verified evidence")
+
+
+def _replan_context(base_plan_node_id: ID) -> ReplanContext:
+    return ReplanContext(
+        source_run_id=new_id(),
+        source_run_status=RunStatus.FAILED,
+        source_run_reason="gate rejected",
+        failed_plan_node_ids=(base_plan_node_id,),
+        attempts=(),
+        failed_checks=(),
+        consumed_attempt_count=1,
+    )
 
 
 class _PlannerModelClient:
@@ -337,7 +351,8 @@ def test_builtin_planner_replans_with_fresh_contract_check_ids_and_base_lineage(
         model_client_factory=lambda _profile: client,
     )
 
-    replanned = planner.replan(aligned, base, (NON_EMPTY_ARTIFACT_CRITERION,))
+    context = _replan_context(base.nodes[0].plan_node_id)
+    replanned = planner.replan(aligned, base, (NON_EMPTY_ARTIFACT_CRITERION,), context)
 
     assert replanned.plan_revision.version == 2
     assert replanned.plan_revision.supersedes_plan_revision_id == base.plan_revision_id
@@ -348,6 +363,7 @@ def test_builtin_planner_replans_with_fresh_contract_check_ids_and_base_lineage(
     assert tuple(check.check_id for check in replanned.check_specs) == (
         *replanned.contract.required_check_ids,
     )
+    assert context.source_run_id in client.requests[0].messages[1].content
 
 
 def test_builtin_planner_semantic_criterion_uses_semantic_check_kind() -> None:
@@ -446,7 +462,8 @@ def test_codex_planner_rejects_budget_before_process_and_replans_with_lineage(
     base = base_proposal.plan_revision.approve(confirmed)
     planner, record_path = _adapter(tmp_path)
 
-    replanned = planner.replan(aligned, base, (NON_EMPTY_ARTIFACT_CRITERION,))
+    context = _replan_context(base.nodes[0].plan_node_id)
+    replanned = planner.replan(aligned, base, (NON_EMPTY_ARTIFACT_CRITERION,), context)
 
     assert replanned.plan_revision.version == 2
     assert replanned.plan_revision.supersedes_plan_revision_id == base.plan_revision_id
@@ -464,6 +481,7 @@ def test_codex_planner_rejects_budget_before_process_and_replans_with_lineage(
     assert len(base_input["branches"]) == 2
     assert "artifacts" not in json.dumps(base_input).lower()
     assert "executiontrace" not in json.dumps(base_input).lower()
+    assert planner_input["replan_context"] == context.to_dict()
 
 
 def test_codex_planner_rejects_invalid_replan_context_before_process(tmp_path: Path) -> None:

@@ -33,6 +33,7 @@ from ehai.application.planner import (
     ExplorationBudget,
     ExplorationPlanRequest,
     PlanProposal,
+    ReplanContext,
 )
 from ehai.application.service import ExecutionService
 from ehai.domain.checking import CheckKind
@@ -396,10 +397,12 @@ class _RealE2EPlannerAdapter:
         goal: Goal,
         base: PlanRevision,
         criteria: tuple[str, ...],
+        context: ReplanContext | None = None,
     ) -> PlanProposal:
         proposal = self._planner.replan(
             ExplorationPlanRequest(goal=goal, criteria=criteria, budget=self._budget),
             base,
+            context,
         )
         return _with_real_e2e_instructions(proposal)
 

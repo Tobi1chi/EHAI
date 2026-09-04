@@ -105,6 +105,9 @@ uv run ehai @Common get-run --run-id $Run.run_id
 
 CLI 还提供 `pause-run`、`resume-run`、`cancel-run`、`restore-run` 和启动恢复用的 `recover`；参数以
 `uv run ehai <全局参数> <子命令> --help` 为准。
+失败后需要改计划时，使用 `replan-plan --base-plan-revision-id <plan-id> --source-run-id <run-id>`
+显式绑定 failed/cancelled Run 的脱敏诊断；省略 `--source-run-id` 保留无执行上下文的兼容行为。新
+PlanRevision 始终是 draft，必须再次执行 `approve-plan`。
 
 ## 完成条件与 Check
 
