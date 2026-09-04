@@ -46,14 +46,20 @@ class EndpointHealthStatus(StrEnum):
 
 @dataclass(frozen=True, slots=True)
 class ExecutionPolicy:
-    """Bounded timing and Run-level resource policy for the P2 Runtime."""
+    """Bounded timing and Run-level resource policy for the P2 Runtime.
+
+    ``absolute_attempt_timeout`` and ``max_run_duration`` are opt-in caller
+    deadlines. They default to ``None`` so long-running high-reasoning model
+    executions are bounded by heartbeat leases, no-progress observation, and
+    explicit cancellation instead of a short wall-clock cutoff.
+    """
 
     start_timeout: timedelta = timedelta(seconds=30)
     heartbeat_lease: timedelta = timedelta(minutes=2)
     no_progress_timeout: timedelta = timedelta(minutes=10)
-    absolute_attempt_timeout: timedelta = timedelta(hours=1)
+    absolute_attempt_timeout: timedelta | None = None
     cancel_grace: timedelta = timedelta(seconds=2)
-    max_run_duration: timedelta = timedelta(hours=4)
+    max_run_duration: timedelta | None = None
     max_connector_calls: int = 100
     max_concurrency: int = 16
     max_provider_cost: float | None = None
@@ -63,13 +69,15 @@ class ExecutionPolicy:
             "start_timeout",
             "heartbeat_lease",
             "no_progress_timeout",
-            "absolute_attempt_timeout",
             "cancel_grace",
-            "max_run_duration",
         ):
             value = getattr(self, name)
             if not isinstance(value, timedelta) or value <= timedelta(0):
                 raise ValueError(f"{name} must be a positive timedelta")
+        for name in ("absolute_attempt_timeout", "max_run_duration"):
+            value = getattr(self, name)
+            if value is not None and (not isinstance(value, timedelta) or value <= timedelta(0)):
+                raise ValueError(f"{name} must be a positive timedelta or None")
         for name in ("max_connector_calls", "max_concurrency"):
             value = getattr(self, name)
             if type(value) is not int or value < 1:

@@ -498,7 +498,11 @@ class SingleSlotRuntime:
             if run is None:
                 raise RuntimeError(f"Run {run_id} is not persisted")
             events = uow.events.list_events()
-        if run.started_at is not None and now >= run.started_at + self._policy.max_run_duration:
+        if (
+            self._policy.max_run_duration is not None
+            and run.started_at is not None
+            and now >= run.started_at + self._policy.max_run_duration
+        ):
             return "Run time budget exhausted before Connector start"
         connector_calls = sum(
             event.event.type is EventType.ATTEMPT_BOUND
@@ -545,11 +549,15 @@ class SingleSlotRuntime:
             if run is None or run.started_at is None:
                 raise RuntimeError(f"Attempt {stored.attempt_id} has no running Run")
             observed_at = self._clock()
-            attempt_deadline = (
-                stored.started_at or observed_at
-            ) + self._policy.absolute_attempt_timeout
-            run_deadline = run.started_at + self._policy.max_run_duration
-            deadline_at = min(attempt_deadline, run_deadline)
+            deadline_candidates = []
+            if self._policy.absolute_attempt_timeout is not None:
+                deadline_candidates.append(
+                    (stored.started_at or observed_at) + self._policy.absolute_attempt_timeout
+                )
+            if self._policy.max_run_duration is not None:
+                assert run.started_at is not None
+                deadline_candidates.append(run.started_at + self._policy.max_run_duration)
+            deadline_at = min(deadline_candidates) if deadline_candidates else None
             lease_expires_at = observed_at + self._policy.heartbeat_lease
             session = AgentSessionRef(
                 run_id=stored.run_id,

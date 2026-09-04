@@ -55,6 +55,7 @@ def create_local_app(
     command_check_argv: Sequence[str] | None = None,
     semantic_required_terms: Sequence[str] = (),
     worker_timeout_seconds: float = 300.0,
+    attempt_deadline_seconds: float | None = None,
     codex_model: str | None = None,
     codex_reasoning_effort: str | None = None,
     builtin_model: str | None = None,
@@ -190,7 +191,11 @@ def create_local_app(
             ),
             connectors={endpoint.worker_endpoint_id: connector},
             policy=ExecutionPolicy(
-                absolute_attempt_timeout=timedelta(seconds=worker_timeout_seconds),
+                absolute_attempt_timeout=(
+                    None
+                    if attempt_deadline_seconds is None
+                    else timedelta(seconds=attempt_deadline_seconds)
+                ),
                 max_concurrency=endpoint_capacity,
             ),
             workspace_manager=workspace_manager,
@@ -280,6 +285,15 @@ def create_parser() -> argparse.ArgumentParser:
         choices=("none", "minimal", "low", "medium", "high", "xhigh", "max"),
     )
     parser.add_argument("--worker-timeout-seconds", type=float, default=300.0)
+    parser.add_argument(
+        "--attempt-deadline-seconds",
+        type=float,
+        default=None,
+        help=(
+            "opt-in absolute Attempt deadline; by default no wall-clock deadline "
+            "terminates a long-running high-reasoning model execution early"
+        ),
+    )
     parser.add_argument("--codex-model")
     parser.add_argument(
         "--codex-reasoning-effort",
@@ -355,6 +369,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         builtin_planner_model=args.builtin_planner_model,
         builtin_planner_reasoning_effort=args.builtin_planner_reasoning_effort,
         worker_timeout_seconds=args.worker_timeout_seconds,
+        attempt_deadline_seconds=args.attempt_deadline_seconds,
         codex_model=args.codex_model,
         codex_reasoning_effort=args.codex_reasoning_effort,
         builtin_model=args.builtin_model,

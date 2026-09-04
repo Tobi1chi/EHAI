@@ -14,7 +14,12 @@ from typing import cast
 
 import httpx
 import pytest
-from openai import AsyncOpenAI, BadRequestError, omit
+from openai import (
+    APIConnectionError,
+    AsyncOpenAI,
+    BadRequestError,
+    omit,
+)
 
 from ehai import JsonValue, json_dumps, json_loads, new_id
 from ehai.application.builtin_agent import (
@@ -58,7 +63,10 @@ from ehai.domain.workers import (
 from ehai.infrastructure import builtin_tools
 from ehai.infrastructure.builtin_sessions import SQLiteBuiltinSessionStore
 from ehai.infrastructure.builtin_tools import BuiltinToolRuntime
-from ehai.infrastructure.openai_responses import OpenAIResponsesModelClient
+from ehai.infrastructure.openai_responses import (
+    OpenAIResponsesModelClient,
+    OpenAIResponsesProtocolError,
+)
 from ehai.infrastructure.sqlite import SQLiteDatabase
 from ehai.infrastructure.workers.builtin import _builtin_role_protocol
 
@@ -127,21 +135,39 @@ class _FakeStream:
 
 
 class _FakeResponses:
-    def __init__(self, streams: tuple[_FakeStream | Exception, ...]) -> None:
+    def __init__(
+        self,
+        streams: tuple[_FakeStream | Exception, ...],
+        retrievals: tuple[object | Exception, ...] = (),
+    ) -> None:
         self._streams = list(streams)
+        self._retrievals = list(retrievals)
         self.requests: list[dict[str, object]] = []
+        self.retrieve_calls: list[str] = []
 
-    async def create(self, **kwargs: object) -> _FakeStream:
+    async def create(self, **kwargs: object) -> object:
         self.requests.append(kwargs)
         result = self._streams.pop(0)
         if isinstance(result, Exception):
             raise result
         return result
 
+    async def retrieve(self, response_id: str, **kwargs: object) -> object:
+        del kwargs
+        self.retrieve_calls.append(response_id)
+        result = self._retrievals.pop(0)
+        if isinstance(result, Exception):
+            raise result
+        return result
+
 
 class _FakeOpenAI:
-    def __init__(self, streams: tuple[_FakeStream | Exception, ...]) -> None:
-        self.responses = _FakeResponses(streams)
+    def __init__(
+        self,
+        streams: tuple[_FakeStream | Exception, ...],
+        retrievals: tuple[object | Exception, ...] = (),
+    ) -> None:
+        self.responses = _FakeResponses(streams, retrievals)
 
 
 def _execution_context(
@@ -617,6 +643,223 @@ def test_openai_responses_replays_durable_history_when_continuation_is_rejected(
         },
         {"type": "function_call_output", "call_id": "call-1", "output": '{"ok":true}'},
     ]
+
+
+def _connection_error() -> APIConnectionError:
+    return APIConnectionError(request=httpx.Request("POST", "https://example.invalid/responses"))
+
+
+def _terminal_response(
+    response_id: str,
+    status: str,
+    *,
+    output_text: str = "",
+) -> SimpleNamespace:
+    return SimpleNamespace(
+        id=response_id,
+        status=status,
+        output_text=output_text,
+        usage=None,
+        output=(),
+    )
+
+
+def _client_with(
+    fake: _FakeOpenAI,
+    **options: object,
+) -> OpenAIResponsesModelClient:
+    profile = WorkerProfile(
+        "openai-longrunning",
+        WorkerKind.BUILTIN,
+        "gpt-5.6-luna",
+        credential_ref=OPENAI_CREDENTIAL_REF,
+    )
+    return OpenAIResponsesModelClient(
+        profile,
+        client=cast(AsyncOpenAI, fake),
+        retry_delay_seconds=0.0,
+        poll_interval_seconds=0.0,
+        **options,
+    )
+
+
+def _single_tool_request() -> ModelRequest:
+    return ModelRequest(
+        (ModelMessage(ModelRole.SYSTEM, "system"), ModelMessage(ModelRole.USER, "user")),
+        (_tool("inspect"),),
+    )
+
+
+def test_openai_responses_recovers_same_response_id_after_stream_drop() -> None:
+    created = SimpleNamespace(
+        type="response.created",
+        response=SimpleNamespace(id="resp-drop", status="queued"),
+    )
+    dropped_stream = _FakeStream((created,))
+    completed = _terminal_response("resp-drop", "completed", output_text="recovered")
+    fake = _FakeOpenAI((dropped_stream,), (completed,))
+    client = _client_with(fake)
+
+    result = asyncio.run(client.complete(_single_tool_request()))
+
+    assert result.final_text == "recovered"
+    assert len(fake.responses.requests) == 1
+    assert fake.responses.retrieve_calls == ["resp-drop"]
+    assert dropped_stream.closed
+
+
+def test_openai_responses_retries_http_failures_up_to_four_times() -> None:
+    final_item = _Dumpable(
+        type="message",
+        document={"type": "message", "role": "assistant", "content": []},
+    )
+    response = SimpleNamespace(
+        id="resp-retry",
+        status="completed",
+        output_text="after retries",
+        usage=None,
+        output=(final_item,),
+    )
+    good_stream = _FakeStream(
+        (
+            SimpleNamespace(type="response.output_text.delta", delta="after retries"),
+            SimpleNamespace(type="response.completed", response=response),
+        )
+    )
+    fake = _FakeOpenAI(
+        (
+            _connection_error(),
+            _connection_error(),
+            _connection_error(),
+            _connection_error(),
+            good_stream,
+        )
+    )
+    client = _client_with(fake)
+
+    result = asyncio.run(client.complete(_single_tool_request()))
+
+    assert result.final_text == "after retries"
+    assert len(fake.responses.requests) == 5
+
+    exhausted = _FakeOpenAI(tuple(_connection_error() for _ in range(5)))
+    exhausted_client = _client_with(exhausted)
+    with pytest.raises(OpenAIResponsesProtocolError, match="HTTP retries"):
+        asyncio.run(exhausted_client.complete(_single_tool_request()))
+    assert len(exhausted.responses.requests) == 5
+
+
+def test_openai_responses_stream_reconnects_within_five_attempt_budget() -> None:
+    created = SimpleNamespace(
+        type="response.created",
+        response=SimpleNamespace(id="resp-reconnect", status="in_progress"),
+    )
+    dropped_stream = _FakeStream((created,))
+    completed = _terminal_response("resp-reconnect", "completed", output_text="reconnected")
+    fake = _FakeOpenAI(
+        (dropped_stream,),
+        (
+            _connection_error(),
+            _connection_error(),
+            _connection_error(),
+            _connection_error(),
+            completed,
+        ),
+    )
+    client = _client_with(fake)
+
+    result = asyncio.run(client.complete(_single_tool_request()))
+
+    assert result.final_text == "reconnected"
+    assert len(fake.responses.requests) == 1
+    assert len(fake.responses.retrieve_calls) == 5
+
+    failing = _FakeOpenAI((_FakeStream((created,)),))
+    failing.responses._retrievals = [_connection_error() for _ in range(6)]
+    failing_client = _client_with(failing)
+    with pytest.raises(OpenAIResponsesProtocolError, match="reconnects"):
+        asyncio.run(failing_client.complete(_single_tool_request()))
+    assert len(failing.responses.retrieve_calls) == 5
+
+
+def test_openai_responses_keeps_waiting_while_response_is_queued_or_in_progress() -> None:
+    created = SimpleNamespace(
+        type="response.created",
+        response=SimpleNamespace(id="resp-slow", status="queued"),
+    )
+    dropped_stream = _FakeStream((created,))
+    fake = _FakeOpenAI(
+        (dropped_stream,),
+        (
+            _terminal_response("resp-slow", "in_progress"),
+            _terminal_response("resp-slow", "in_progress"),
+            _terminal_response("resp-slow", "completed", output_text="finally done"),
+        ),
+    )
+    client = _client_with(fake)
+
+    result = asyncio.run(client.complete(_single_tool_request()))
+
+    assert result.final_text == "finally done"
+    assert len(fake.responses.requests) == 1
+    assert len(fake.responses.retrieve_calls) == 3
+
+
+def test_openai_responses_background_mode_polls_retrieve_until_terminal() -> None:
+    queued = _terminal_response("resp-bg", "queued")
+    fake = _FakeOpenAI(
+        (queued,),
+        (
+            _terminal_response("resp-bg", "in_progress"),
+            _terminal_response("resp-bg", "completed", output_text="background result"),
+        ),
+    )
+    client = _client_with(fake, background=True)
+
+    result = asyncio.run(client.complete(_single_tool_request()))
+
+    assert result.final_text == "background result"
+    assert fake.responses.requests[0]["background"] is True
+    assert "stream" not in fake.responses.requests[0]
+    assert fake.responses.retrieve_calls == ["resp-bg", "resp-bg"]
+
+
+def test_openai_responses_background_falls_back_to_streaming_when_rejected() -> None:
+    final_item = _Dumpable(
+        type="message",
+        document={"type": "message", "role": "assistant", "content": []},
+    )
+    response = SimpleNamespace(
+        id="resp-fallback",
+        status="completed",
+        output_text="fallback result",
+        usage=None,
+        output=(final_item,),
+    )
+    stream = _FakeStream(
+        (
+            SimpleNamespace(type="response.output_text.delta", delta="fallback result"),
+            SimpleNamespace(type="response.completed", response=response),
+        )
+    )
+    rejection = BadRequestError(
+        "background mode is not supported by this endpoint",
+        response=httpx.Response(
+            400,
+            request=httpx.Request("POST", "https://example.invalid/responses"),
+        ),
+        body={"error": {"message": "background is not supported"}},
+    )
+    fake = _FakeOpenAI((rejection, stream))
+    client = _client_with(fake, background=True)
+
+    result = asyncio.run(client.complete(_single_tool_request()))
+
+    assert result.final_text == "fallback result"
+    assert len(fake.responses.requests) == 2
+    assert fake.responses.requests[0]["background"] is True
+    assert fake.responses.requests[1]["stream"] is True
+    assert fake.responses.retrieve_calls == []
 
 
 def test_builtin_tool_runtime_fixes_controlled_patch_and_final_candidate(

@@ -114,6 +114,7 @@ def test_builtin_runtime_wires_timeout_and_reports_supervisor_failure(
         worker_workspace=tmp_path,
         builtin_model="scripted",
         worker_timeout_seconds=17,
+        attempt_deadline_seconds=23,
         builtin_agent_budget=budget,
         p2_runtime=True,
     )
@@ -135,7 +136,7 @@ def test_builtin_runtime_wires_timeout_and_reports_supervisor_failure(
 
     policy = captured["policy"]
     assert isinstance(policy, ExecutionPolicy)
-    assert policy.absolute_attempt_timeout == timedelta(seconds=17)
+    assert policy.absolute_attempt_timeout == timedelta(seconds=23)
     assert captured["agent_budget"] == budget
     assert calls == 3
 
