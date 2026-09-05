@@ -7,6 +7,9 @@
 [P2 Implementation Plan](P2_IMPLEMENTATION_PLAN.md) 的当前重整章节。
 R1 已增加规划讨论接口、讨论事件及版本化设计；执行挂起求助和完整需求验收仍需要后续状态迁移。
 普通 `ehai` 保留 P1 同步兼容，P2 后台模式使用持久 DispatchWork。
+当前 R2 已接入 Planner 到代码执行所需的任务图、最终行为 Gate 和代码工作区边界；真实 Worker 试跑等待
+第三方端点数据发送授权，
+不能据此宣布 R2 或 P2 已通过。
 
 ## 平台调用边界
 
@@ -28,8 +31,9 @@ CLI、顶层通用 Agent、未来 UI 和 Routines 使用同一公开应用语义
 | Orchestrator | `pending/running/succeeded/failed/timed_out/cancelled/interrupted` | Attempt 生命周期 |
 | Runtime/Connector observation | `queued/running/waiting/stalled` | 当前活动，不直接推进领域状态 |
 
-Worker 正常返回或提交候选只能使 Attempt 得到候选结果。Checker 产生 `CheckResult`，Gate 是
-`PlanNode` 和 `Run` 完成的唯一入口；Scheduler 和 Connector 不得判断完成。
+Worker 正常返回或提交候选只能使 Attempt 得到候选结果。带 required Checks 的 `PlanNode` 必须由 Checker
+产生 `CheckResult` 并由 Gate 完成；无 required Check 且仍有后续边的中间节点可由宿主接收任务交接，但不满足
+Goal。Scheduler 和 Connector 不得判断最终完成。
 
 ## Agent 执行 Connector Port 与 SessionPolicy
 
@@ -53,7 +57,8 @@ P2 的 `StartRun` 必须在同一个事务中持久化新 `Run`、pending dispat
 创建第二个 Run 或第二份 dispatch work；同键不同 fingerprint 必须冲突失败。
 
 上述行为适用于后台模式，不应误读为现有同步 CLI 已具备独立后台宿主。
-目标 CLI 必须明确启动、附接、查询与关闭宿主的方式，不能由验收 Harness 隐式补齐生命周期。
+R2 的 `execute-plan` / `resume-session` 拥有前台宿主生命周期，`get-result` 只读查询交付；
+不能由验收 Harness 隐式补齐生命周期。API 的后台宿主仍由启动它的进程负责关闭。
 
 ## Built-in Agent Provider 入口
 
@@ -89,11 +94,31 @@ Replan 仅支持 failed/cancelled 来源，所有探索分支失败会收敛为 
 
 Planner 可提出需求、设计和验收建议，获批方案将其绑定到明确的版本。公共 builder/校验边界创建领域
 CheckSpec 和 CompletionContract，模型不能绕过它直接推进状态或在执行中改写条件。
-任务检查与最终交付检查按对应范围定义，不要求每个中间节点满足整个最终 solution 的条件。
-现有三种检查可以组合，配置随契约持久化；任意需求检查及任务级区分仍待细化。
+任务检查与最终交付检查按对应范围定义，不要求每个中间节点满足整个最终 solution 的条件。R2 的 Built-in
+proposal 允许中间节点的 `required_check_ids` 为空；宿主在候选证据已持久化后调用 `accept_intermediate` 完成
+任务交接。该交接不创建假 Gate 或 Checkpoint，不满足 Goal，也不能让最终节点跳过 Gate。
+最终单一 integration/terminal 节点持有全部 required Check IDs；最终获批行为 Gate 在实际合并后的代码工作区上运行。
+现有三种检查可以组合，配置随契约持久化。
 Artifact 非空、命令成功或指定词匹配只能证明具体检查项；代码完成需要需求相关行为及交付证据。
 宿主 Check Runner 在候选提交后执行配置的检查；Planner 不应额外创建仅用于重复这些检查的 Worker 节点。
 宿主检查 argv 不等于 Worker 的工具执行授权，不能要求 Worker 绕过自身 Tool Profile 执行它。
+
+Planner 可以通过 `set_final_gate` 提出最终行为命令 argv。应用层将其写入 `PlanTemplate.final_gate_argv`，
+再冻结到 `CheckSpec.command_argv`；用户批准的 PlanRevision/CompletionContract 是执行时的真值，不再依赖
+一个只存在于宿主配置中的模板。显式 host argv 若与 Planner 提议冲突，必须 fail closed，不能静默改写批准内容。
+
+## R2 代码交接与工作区
+
+`CodeRuntimeConnector` 包装既有 `RuntimeConnector`，在启动 Attempt 前通过 `GitCodeWorkspace` 准备 EHAI-owned
+worktree：Run 首次固定 base commit，依赖节点和已选分支的代码提交作为上游合并；缺失上游快照或冲突时不能
+伪造候选。候选返回时由宿主从实际 worktree 捕获 `GitCodeResult`，并附加受保护的代码快照与 diff；模型不能
+冒充这些 host-owned code artifacts。完成、停止或恢复时保留可核对的 worktree/metadata，供最终 Gate 和交付查询
+使用。
+
+最终 Gate 检查的是最终 integration 节点准备好的实际合并工作区，而不是模型文字报告或单独的候选 Artifact。
+Planner 的图预算与 Worker 的模型执行预算相互独立：Planner 使用有限的图操作/校验和 `ExplorationBudget`；
+默认 Built-in Worker 使用 `LONG_RUNNING_AGENT_BUDGET`，其模型步数、Tool 次数、wall-clock 和输出上限可不设，
+但仍受取消、heartbeat、显式 deadline、Provider 终态和恢复策略约束。当前真实试跑仍未完成，以上不是验收记录。
 
 R1 的 `discuss-plan` / `POST /planning/discuss` 在执行前接收讨论。用户消息和模型回复通过现有 Event Log
 关联为一个逻辑 conversation；每轮引用共享 Runtime 的执行 Session，不创建 Worker Attempt 或 Run。
@@ -110,7 +135,7 @@ P2 的数据库迁移必须从当前 P1 schema version 2 单向前进，并在 P
 表或改变 schema version。后续迁移不得削弱以下已持久化语义：
 
 - Attempt 必须属于同一 Run 的 PlanRevision 中的 PlanNode。
-- Check/Gate 必须引用同一 Run、PlanNode、Attempt 和证据 Artifact；Worker 成功不能绕过 Gate。
+- 最终 Check/Gate 必须引用同一 Run、PlanNode、Attempt 和证据 Artifact；Worker 成功不能绕过最终 Gate。
 - Evaluator 的比较证据必须覆盖候选分支，Merge 只能读取明确选中的 Artifact。
 - Checkpoint 必须引用确定的 PlanRevision、Run、通过的 Gate Event offset、分支选择和 Artifact。
 - 恢复只能使用已持久化的最新 Checkpoint 和原执行事实，不得重复外部副作用或创建替代执行。
@@ -125,19 +150,25 @@ P2 的数据库迁移必须从当前 P1 schema version 2 单向前进，并在 P
 
 Built-in Planner 不再通过一次性 `submit_plan` 固定双分支模板。模型在本次 Planner 调用的普通内存图
 中直接调用图操作 Tool 构造 PlanGraph：`add_plan_node`、`update_plan_node`、`remove_plan_node`、
-`add_plan_edge`、`remove_plan_edge`、`set_plan_branch`、`inspect_plan`、`finish_plan`。Tool 操作不经过
+`add_plan_edge`、`remove_plan_edge`、`set_plan_branch`、`set_final_gate`、`inspect_plan`、`finish_plan`。Tool 操作不经过
 HTTP 回调、不立即写数据库，也不存在 Plan IR/Operation/Patch 第二套图表达。只有 `finish_plan` 完整
 校验通过后，应用层才通过现有 `build_plan_proposal()` 分配 UUID 并创建 CheckSpec、CompletionContract
 和 draft PlanRevision；模型使用稳定本地 key，永远不生成 UUID。依赖只有一个模型侧真值：模型通过
 `add_plan_edge` 声明 dependency，`finish_plan` 时确定性派生
 `PlanNodeTemplate.required_dependency_keys`。
 
+Built-in 图必须有一个最终 integration sink，所有工作路径都指向它；普通 dependency DAG 可以有多个并行
+前驱并在该节点收敛，替代方案则使用 fork、至少两个分支、evaluator 和 merge。`set_final_gate` 接收非 shell
+的 argv 数组。应用层在 Built-in final-node 模式下只把全部 required Check IDs 绑定到该 sink，中间节点可以
+保持空的 `required_check_ids`，由宿主以候选证据完成任务交接。
+
 预算语义固定为：图修改操作共 128 次（被拒绝的修改同样计数），`inspect_plan`/`finish_plan` 不计数；
 达到 128 次后不再接受修改但允许 inspect 和最后一次 finish；前 4 次 finish 完整校验失败把带本地 key
 位置的 diagnostics 返回给模型并允许继续修复，第 5 次失败才以明确的 validation budget exhausted 终止。
 diagnostics 结构为 `{"accepted": false, "issues": [{"code", "location", "message", "related_keys"}]}`，
 错误位置必须使用模型能继续操作的本地 key，不能只返回 UUID 或 Python 异常文本。模型不得创建、删除、
-降低或绕过 CompletionContract 与 Check；执行节点一律保留必要 Check。
+降低或绕过 CompletionContract 与 Check；最终节点必须保留全部 required Check，中间节点不通过假 Check 宣布
+Goal 完成。
 
 ## Provider 长程超时语义（P2-I14）
 
@@ -145,6 +176,8 @@ timeout 是连接/无进展检测，不是短时总任务寿命：
 
 - Built-in Planner 默认不设 Tool Loop 的固定 wall-clock deadline；正常终止由 128 次图操作、4 次校验
   修复、明确取消和 Provider 终态决定。
+- Planner 的 `ExplorationBudget` 和内部 `AgentBudget` 仍限制图规模、模型步数、Tool 次数及输出；这与默认
+  Built-in Worker 的 `LONG_RUNNING_AGENT_BUDGET` 不同，不能用 Planner 的有限预算解释或截断 Worker 的长任务。
 - `OpenAIResponsesModelClient` 默认 stream idle timeout 300 秒；HTTP 请求失败最多重试 4 次；流中断
   最多重连 5 次。已获得 response_id 时必须 retrieve/恢复同一个 Response，不得重新创建重复 Response。
 - queued/in_progress 表示仍在执行并继续等待；只有 completed、failed、cancelled、incomplete 等明确

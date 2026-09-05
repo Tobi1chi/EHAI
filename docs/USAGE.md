@@ -368,10 +368,75 @@ durable Session Event 重放 function call/result；`store=true`、streaming 和
 代表性真实 CLI 试用已完成需求澄清、设计生成、审查修订和审批隔离，见 P2 实施文档；
 这不等于 Worker 编码或最终 E2E 已通过。
 
-### Codex App Server Adapter 的当前边界
+## R2 前台编码会话
+
+入口已经实现；真实 Worker 编码、退出恢复和长时间运行仍需实际试用验证，不把静态检查当成产品通过。
+R2 使用 Git 仓库和 EHAI 拥有的隔离 worktree，不直接改写用户当前分支。运行基线固定为仓库的 Git HEAD；
+开始前先提交希望纳入任务的源码，未提交的源文件修改不会自动纳入基线。
+
+Planner 可通过 `set_final_gate` 提出 `command:exit-zero` 的具体 argv，随方案和契约批准。
+Builtin 新方案只有一个最终节点绑定行为检查；中间节点交接不运行虚构 Gate。
+`get-plan-checks` 必须在批准前审查，尤其是 Planner 提议的命令。显式宿主 argv 与提议冲突时拒绝，
+不在批准后改写检查。
+
+将以下无凭证配置保存到仓库外或被 Git 忽略的 `execution.json`：
+
+```json
+{
+  "config_version": 1,
+  "worker_kind": "builtin",
+  "model": "<your-worker-model>",
+  "reasoning_effort": "low",
+  "capacity": 3,
+  "workspace": "D:/workspace/target-repository",
+  "allowed_commands": [],
+  "available_shells": [],
+  "git_permissions": ["git.read"],
+  "endpoint_capabilities": {
+    "supports_background": true,
+    "supports_unique_items": true,
+    "supports_idempotent_create": null
+  },
+  "command_timeout_seconds": 30
+}
+```
+
+模型名按端点实际支持填写；可以与 Planner 的模型不同。兼容端点不支持 background 或 uniqueItems 时，
+将相应配置改为 `false`。凭证仍由进程环境提供，不放入 JSON；当前模型 base URL 仍取自
+`OPENAI_BASE_URL`，恢复前应使用同一提供方。
+`allowed_commands` 是允许的精确 argv 数组；`available_shells` 显式开放 Shell，Git 操作需对应
+`git.read` / `git.local_write` / `git.remote_write` / `git.dangerous` 权限。
+不需要命令时保持空数组。Shell 授权不是操作系统沙箱；全局删除黑名单及可撤销删除尚未实现。
+
+```powershell
+uv run ehai --database .ehai/state.sqlite3 --artifacts .ehai/artifacts `
+    execute-plan --plan-revision-id $PlanId --idempotency-key run-001 `
+    --execution-config execution.json --authorize
+uv run ehai --database .ehai/state.sqlite3 --artifacts .ehai/artifacts `
+    resume-session --run-id $RunId
+uv run ehai --database .ehai/state.sqlite3 --artifacts .ehai/artifacts `
+    get-result --run-id $RunId
+```
+
+- `execute-plan` 只接受已批准的当前版本，`--authorize` 确认首次执行配置；相同 Run 不能更换配置。
+- `resume-session` 使用持久配置，不隐式扩大工具权限；一个前台宿主独占其数据库内的活动 Run。
+- 进展输出到 stderr，结果 JSON 输出到 stdout。正常关闭或 Ctrl+C 时收敛 Worker、保存并暂停，
+  重开后继续同一 Run；硬杀进程后的未知操作仍需核对，不能承诺任意外部副作用自动续接。
+- 整体 Built-in 会话不设总时长、总 Step、总工具调用或总输出字节上限；模型输入保留初始任务与最近
+  完整步骤窗口，持久事件不裁剪。单次调用、工具输出和授权边界仍受控。
+- 完成的 worktree 保留；宿主捕获实际代码的 Git 提交与 `solution.patch`。`get-result` 返回成果位置、
+  基线/候选 commit、diff Artifact 和最终 Attempt 的检查结果。失败历史保留，不误算为最终 Gate 仍失败。
+- 最终 Gate 在整合后的真实 worktree 执行。失败时返回原始检查证据，在同一获批方案下修代码并重新检查；
+  `report_blocked` 用于说明阻塞原因、证据和所需条件，不伪造成功。完整人工问答回路属于 R3。
+
+### Codex App Server 的接入边界
 
 App Server Connector 只使用一个 Endpoint 对应一个 `codex app-server --listen stdio://` JSONL 连接。
-独立 Thread/Turn 的历史验证不代表已经开放完整多框架 CLI 调度能力；正常入口的装配仍需按 P2 整理。
+前台执行配置可将 `worker_kind` 改为 `codex-server`，`model` 填写该端点支持的显式模型，
+并配置 `"codex_server": {"executable": ["codex"], "approval_policy": "on-request",
+"sandbox": "workspace-write"}`。默认启动本机 stdio App Server，而不是 `codex exec`。
+也可从 `ehai-api --p2-runtime --worker codex-server` 进入同一装配。当前不承诺连接现有桌面进程或在桌面显示会话，
+不以历史 Thread/Turn 验证代替本轮真实调用。
 
 该 Connector 不使用 WebSocket、远程 listener、Review、Skills、Apps 或 Auth 登录接口，也不修改用户
 全局 Codex 配置。
@@ -397,8 +462,8 @@ npm.cmd run build
 ## 当前基线限制
 
 - Built-in Planner 已有独立讨论入口及只读 Workspace 工具；更完整的交互体验仍需真实使用确认。
-- 公共计划构建可组合三种现有检查；任务级与最终验收尚未完整细分，非空 Artifact 不代表 solution 正确。
-- 全部分支失败收敛为 failed、Replan 仅支持终态来源是待迁移的现有行为，不是目标人工回路。
+- 公共计划构建仍支持三种检查；Builtin 新方案将最终检查集中到单一最终节点，非空 Artifact 不代表 solution 正确。
+- 编码模式的阻塞和外部安全重试耗尽可暂停并给出 notice；复杂回复、改授权与跨方案恢复仍待 R3。
 - 顶层通用 Agent、外部意见的完整平台交互和事件驱动 Routines 尚未交付。
 - P2 只支持单 Execution Plane 进程；SQLite lease 用于崩溃恢复，不宣称分布式一致性。
 - 本地 Built-in `ehai-api --p2-runtime` 使用单 Endpoint `ConcurrentRuntime`，并发上限由

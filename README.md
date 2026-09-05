@@ -45,12 +45,16 @@ Orchestrator → Scheduler / Dispatcher → Worker → 代码与 Artifact
 ```
 
 `PlanGraph` 描述预期执行路径；`ExecutionTrace` 保存实际发生的 Attempt、事件、检查和结果。Worker
-只能提交候选结果，PlanNode 和 Run 只能在必需 Gate 通过后完成。此图描述目标流程；
+只能提交候选结果；中间任务由宿主接收交接，最终 Run/Goal 必须通过获批 Gate 才能完成。此图描述目标流程；
 多轮规划与设计版本已接入 CLI/API，规划侧代表性真实 CLI 试用已通过；完整执行人工回路和需求验收尚未完成。
 
 当前 R1 入口：`discuss-plan` 接收目标和用户意见，`get-discussion` 查询持久讨论；
 `get-plan` 返回该版本的 `design_document` 和图，`get-plan-checks` 查看实际检查配置。
 用法、能力边界与兼容端点参数见 [Usage](docs/USAGE.md)。
+
+R2 已新增前台 `execute-plan`、`resume-session` 和只读 `get-result`，接入实际代码快照、并行成果衔接、
+最终行为 Gate 和失败修复；支持配置 Built-in 或 Codex App Server Worker。实现与本地检查不等于真实
+编码验收：本轮真实 Planner 已生成并修订方案，Worker 试用因第三方端点的数据发送授权待确认而尚未运行。
 
 ## Development Status
 

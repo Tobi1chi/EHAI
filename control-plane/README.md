@@ -8,6 +8,9 @@ Control Plane 使用；这里还没有 P3 Dashboard、组件、路由或浏览�
 计划审查、人工阻塞回复和最终代码验收在 P3 映射为界面，不能由 UI 单独实现另一套执行状态机。
 R1 Client 已生成 `discussPlan`、`getPlanningConversation` 和可选 `PlanGraph.design_document`，
 可由后续界面使用；R1 已有真实 CLI 试用记录，但不表示 P3 UI 或完整编码流程已完成验收。
+R2 的执行结果仍由 Python Execution Plane 负责：中间节点的完成是带 Artifact 证据的任务交接，不是 Goal
+完成；最终获批行为 Gate 在实际合并后的代码 worktree 上运行。Planner 提议的最终 command argv 会随获批
+`CheckSpec` 冻结，不能由 UI 或 host 模板静默替换。当前真实 CLI 试跑仍在进行，不在此处声明 R2/P2 PASS。
 
 ## 目录
 
@@ -34,4 +37,5 @@ npm.cmd run build
 旧 Python 契约测试已退役，新的定位测试只在实际失败后放到仓库外；见 [测试策略](../tests/README.md)。
 Control Plane 只能通过公开 Command、Query 和 Event 契约访问 Execution Plane；它不能读取 SQLite、导入
 Python 内部模型，也不能复制 Run、Attempt、Branch、Check 或 Gate 的状态规则。交互和展示状态属于
-未来 P3 UI，执行状态与合法转换始终属于 Python Execution Plane。
+未来 P3 UI，执行状态与合法转换始终属于 Python Execution Plane。UI 应展示 Execution Plane 返回的中间交接、
+最终 Gate、代码交付和证据，不自行把中间状态映射成 Goal 完成。

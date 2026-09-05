@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import sqlite3
 import sys
 from collections.abc import Sequence
@@ -10,6 +11,7 @@ from io import TextIOWrapper
 from pathlib import Path
 from typing import cast
 
+from fastapi import FastAPI
 from openai.types.shared import ReasoningEffort
 
 from ehai import JsonValue, json_dumps, json_loads, normalize_id
@@ -66,6 +68,15 @@ from ehai.infrastructure.planners import (
 from ehai.infrastructure.sqlite import SQLiteDatabase
 from ehai.infrastructure.workers import CodexWorkerAdapter, FakeWorker
 from ehai.interfaces.public_documents import public_json_value
+from ehai.interfaces.session_host import (
+    ExecutionConfig,
+    ForegroundSessionHost,
+    SessionHostError,
+    get_result_document,
+    load_execution_config,
+    prepare_execute_run,
+    prepare_resume_run,
+)
 
 
 class _ExplorationPlannerAdapter:
@@ -114,13 +125,14 @@ def build_service(
     builtin_planner_reasoning_effort: str | None = None,
     command_check_argv: Sequence[str] | None = None,
     semantic_required_terms: Sequence[str] = (),
+    command_check_timeout_seconds: float = 30.0,
     worker_timeout_seconds: float = 300.0,
     codex_model: str | None = None,
     codex_reasoning_effort: str | None = None,
     background_start: bool = False,
     endpoint_capabilities: ResponsesEndpointCapabilities | None = None,
 ) -> ExecutionService:
-    """Build the local P1 service from concrete infrastructure Adapters."""
+    """Build the local service from concrete infrastructure Adapters."""
     database_path.parent.mkdir(parents=True, exist_ok=True)
     database = SQLiteDatabase(database_path)
     artifact_store = FilesystemArtifactStore(artifact_root)
@@ -134,9 +146,9 @@ def build_service(
             model=codex_model,
             reasoning_effort=codex_reasoning_effort,
         )
-    elif worker_kind == "builtin":
+    elif worker_kind in {"builtin", "codex-server"}:
         if not background_start:
-            raise ValueError("Built-in Worker requires the P2 background Runtime")
+            raise ValueError("this Worker requires the P2 background Runtime")
         worker = None
     else:
         raise ValueError(f"unsupported Worker: {worker_kind}")
@@ -178,7 +190,11 @@ def build_service(
             {},
             default_rule=ArtifactCheckRule(minimum_count=1, require_non_empty=True),
         ),
-        CheckKind.COMMAND: CommandCheckAdapter({}, store=artifact_store),
+        CheckKind.COMMAND: CommandCheckAdapter(
+            {},
+            store=artifact_store,
+            timeout_seconds=command_check_timeout_seconds,
+        ),
         CheckKind.SEMANTIC: SemanticCheckAdapter(artifact_store, {}),
     }
     check_runner = CheckRunner(
@@ -219,7 +235,7 @@ def create_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--worker",
-        choices=("fake", "codex"),
+        choices=("fake", "codex", "codex-server", "builtin"),
         default="fake",
         help="Worker Adapter (default: fake)",
     )
@@ -251,6 +267,12 @@ def create_parser() -> argparse.ArgumentParser:
         type=float,
         default=300.0,
         help="Codex Worker wall-clock timeout (default: 300)",
+    )
+    parser.add_argument(
+        "--command-check-timeout-seconds",
+        type=float,
+        default=30.0,
+        help="host Command Check timeout (default: 30)",
     )
     parser.add_argument("--codex-model", help="Codex model override for Worker invocations")
     parser.add_argument(
@@ -349,6 +371,28 @@ def create_parser() -> argparse.ArgumentParser:
     )
     trace_query.add_argument("--run-id", required=True)
 
+    result_query = commands.add_parser(
+        "get-result", help="read retained code delivery and execution evidence"
+    )
+    result_query.add_argument("--run-id", required=True)
+
+    execute = commands.add_parser(
+        "execute-plan", help="authorize and execute an approved plan in the foreground"
+    )
+    execute.add_argument("--idempotency-key", required=True)
+    execute.add_argument("--plan-revision-id", required=True)
+    execute.add_argument("--execution-config", type=Path, required=True)
+    execute.add_argument(
+        "--authorize",
+        action="store_true",
+        help="explicitly authorize the exact execution configuration for this Run",
+    )
+
+    resume_session = commands.add_parser(
+        "resume-session", help="resume a durable foreground execution session"
+    )
+    resume_session.add_argument("--run-id", required=True)
+
     discuss = commands.add_parser(
         "discuss-plan", help="discuss or revise a plan without executing it"
     )
@@ -373,9 +417,17 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = create_parser()
     args = parser.parse_args(argv)
     try:
-        if args.command in {"get-plan", "get-plan-checks", "get-trace", "get-discussion"}:
+        if args.command in {
+            "get-plan",
+            "get-plan-checks",
+            "get-trace",
+            "get-result",
+            "get-discussion",
+        }:
             print(json_dumps(_dispatch_query(args)))
             return 0
+        if args.command in {"execute-plan", "resume-session"}:
+            return _run_foreground(args)
         service = build_service(
             args.database,
             args.artifacts,
@@ -387,6 +439,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             builtin_planner_reasoning_effort=args.builtin_planner_reasoning_effort,
             command_check_argv=_parse_command_argv(args.command_check_argv),
             semantic_required_terms=tuple(args.semantic_required_term),
+            command_check_timeout_seconds=args.command_check_timeout_seconds,
             worker_timeout_seconds=args.worker_timeout_seconds,
             codex_model=args.codex_model,
             codex_reasoning_effort=args.codex_reasoning_effort,
@@ -421,6 +474,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         QueryNotFoundError,
         RecoveryError,
         RunControlError,
+        SessionHostError,
         ValueError,
         OSError,
         sqlite3.Error,
@@ -431,6 +485,91 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 2
     print(json_dumps(output))
     return 0
+
+
+def _run_foreground(args: argparse.Namespace) -> int:
+    if args.command == "execute-plan" and not args.authorize:
+        raise SessionHostError("execute-plan requires the explicit --authorize flag")
+    if args.command == "execute-plan":
+        config = ExecutionConfig.from_path(args.execution_config)
+        app = _build_foreground_app(args, config)
+        composition = app.state.runtime_composition
+        run = prepare_execute_run(
+            composition.execution_service,
+            composition.database,
+            normalize_id(args.plan_revision_id),
+            args.idempotency_key,
+            config,
+        )
+    else:
+        database = SQLiteDatabase(args.database)
+        config = load_execution_config(database, normalize_id(args.run_id))
+        app = _build_foreground_app(args, config)
+        composition = app.state.runtime_composition
+        run, config = prepare_resume_run(
+            composition.execution_service,
+            database,
+            normalize_id(args.run_id),
+        )
+    composition = app.state.runtime_composition
+    host = ForegroundSessionHost(composition, stderr=sys.stderr)
+    try:
+        output = asyncio.run(host.run(run.run_id))
+    except KeyboardInterrupt:
+        output = get_result_document(args.database, args.artifacts, run.run_id)
+        output["notice"] = {
+            "kind": "cli_interrupted",
+            "message": "CLI interrupted; the Run was quiesced and paused for resume-session",
+            "attempt_id": None,
+        }
+        print(json_dumps(output))
+        return 130
+    print(json_dumps(output))
+    return 0
+
+
+def _build_foreground_app(
+    args: argparse.Namespace,
+    config: ExecutionConfig | None,
+) -> FastAPI:
+    from ehai.interfaces.runtime import create_local_app
+
+    if config is None:
+        return create_local_app(
+            args.database,
+            args.artifacts,
+            worker_kind="builtin",
+            worker_workspace=Path.cwd(),
+            planner_kind="single",
+            p2_runtime=True,
+            runtime_autostart=False,
+        )
+    return create_local_app(
+        args.database,
+        args.artifacts,
+        worker_kind=config.worker_kind,
+        worker_workspace=config.workspace,
+        planner_kind="single",
+        command_check_timeout_seconds=config.command_timeout_seconds,
+        builtin_model=config.model if config.worker_kind == "builtin" else None,
+        builtin_reasoning_effort=(
+            config.reasoning_effort if config.worker_kind == "builtin" else None
+        ),
+        builtin_allowed_commands=config.allowed_commands,
+        available_shells=config.available_shells,
+        git_permissions=tuple(config.git_permissions),
+        builtin_capacity=config.capacity,
+        codex_model=config.model if config.worker_kind == "codex-server" else None,
+        codex_reasoning_effort=(
+            config.reasoning_effort if config.worker_kind == "codex-server" else None
+        ),
+        codex_server_executable=config.codex_server_executable,
+        codex_server_approval_policy=config.codex_server_approval_policy,
+        codex_server_sandbox=config.codex_server_sandbox,
+        endpoint_capabilities=config.endpoint_capabilities,
+        p2_runtime=True,
+        runtime_autostart=False,
+    )
 
 
 def _dispatch_query(args: argparse.Namespace) -> JsonValue:
@@ -449,6 +588,12 @@ def _dispatch_query(args: argparse.Namespace) -> JsonValue:
     if args.command == "get-discussion":
         return public_json_value(
             queries.get_planning_conversation(normalize_id(args.conversation_id))
+        )
+    if args.command == "get-result":
+        return get_result_document(
+            database_path,
+            Path(args.artifacts),
+            normalize_id(args.run_id),
         )
     return public_json_value(queries.get_execution_trace(normalize_id(args.run_id)))
 
