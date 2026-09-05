@@ -262,7 +262,9 @@ def validate_branch_selection(
     if set(selection.compared_artifact_ids) != required_compared_ids:
         raise BranchSelectionProtocolError(
             "compared_artifact_ids evidence must include every active Branch candidate Artifact "
-            "in the selected sibling group"
+            "in the selected sibling group; "
+            f"missing={sorted(required_compared_ids - set(selection.compared_artifact_ids))}; "
+            f"unexpected={sorted(set(selection.compared_artifact_ids) - required_compared_ids)}"
         )
     for branch_id in viable_branch_ids:
         artifact_ids = candidate_ids_by_branch[branch_id]

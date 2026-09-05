@@ -7,9 +7,8 @@
 [P2 Implementation Plan](P2_IMPLEMENTATION_PLAN.md) 的当前重整章节。
 R1 已增加规划讨论接口、讨论事件及版本化设计；执行挂起求助和完整需求验收仍需要后续状态迁移。
 普通 `ehai` 保留 P1 同步兼容，P2 后台模式使用持久 DispatchWork。
-当前 R2 已接入 Planner 到代码执行所需的任务图、最终行为 Gate 和代码工作区边界；真实 Worker 试跑等待
-第三方端点数据发送授权，
-不能据此宣布 R2 或 P2 已通过。
+当前 R2 已接入任务图、最终行为 Gate 和代码工作区；代表性 Built-in 真实编码链路已通过，
+完整会话生命周期、长运行与 Server 实际调用仍需验证，不能据此宣布整个 R2 或 P2 已通过。
 
 ## 平台调用边界
 
@@ -98,6 +97,10 @@ CheckSpec 和 CompletionContract，模型不能绕过它直接推进状态或在
 proposal 允许中间节点的 `required_check_ids` 为空；宿主在候选证据已持久化后调用 `accept_intermediate` 完成
 任务交接。该交接不创建假 Gate 或 Checkpoint，不满足 Goal，也不能让最终节点跳过 Gate。
 最终单一 integration/terminal 节点持有全部 required Check IDs；最终获批行为 Gate 在实际合并后的代码工作区上运行。
+探索节点必须等待 fork 交接完成后再调度。中间候选落库与接收之间若发生中断，恢复可继续接收已持久化的
+成功 Attempt，不重复调用 Worker，也不生成假检查。SQLite 仅允许有成功候选证据的无检查中间节点直接完成交接。
+评估器的候选在 Built-in 提交工具中使用宿主同一规则预校验；遗漏比较证据时返回可修正的工具错误，
+不得以放宽证据覆盖规则来接受结果。
 现有三种检查可以组合，配置随契约持久化。
 Artifact 非空、命令成功或指定词匹配只能证明具体检查项；代码完成需要需求相关行为及交付证据。
 宿主 Check Runner 在候选提交后执行配置的检查；Planner 不应额外创建仅用于重复这些检查的 Worker 节点。

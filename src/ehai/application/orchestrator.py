@@ -49,6 +49,7 @@ from ehai.domain.goal import CompletionContract, Goal
 from ehai.domain.planning import (
     Branch,
     BranchStatus,
+    EdgeType,
     PlanNode,
     PlanNodeKind,
     PlanNodeStatus,
@@ -113,6 +114,8 @@ def ready_nodes(plan_revision: PlanRevision) -> tuple[PlanNode, ...]:
     for node in plan_revision.nodes:
         if node.status is not PlanNodeStatus.PENDING:
             continue
+        if not _exploration_dependencies_completed(plan_revision, node):
+            continue
         containing_branch = _branch_containing(plan_revision, node.plan_node_id)
         if containing_branch is not None and containing_branch.status is BranchStatus.PRUNED:
             continue
@@ -146,6 +149,15 @@ def ready_nodes(plan_revision: PlanRevision) -> tuple[PlanNode, ...]:
             continue
         ready.append(node)
     return tuple(ready)
+
+
+def _exploration_dependencies_completed(plan: PlanRevision, node: PlanNode) -> bool:
+    node_by_id = {item.plan_node_id: item for item in plan.nodes}
+    return all(
+        node_by_id[edge.source_node_id].status is PlanNodeStatus.COMPLETED
+        for edge in plan.edges
+        if edge.target_node_id == node.plan_node_id and edge.edge_type is EdgeType.EXPLORATION
+    )
 
 
 def _branch_containing(plan: PlanRevision, plan_node_id: ID) -> Branch | None:
@@ -436,7 +448,12 @@ class Orchestrator:
             candidates = tuple(
                 node
                 for node in (
-                    tuple(node for node in plan.nodes if node.status is PlanNodeStatus.READY)
+                    tuple(
+                        node
+                        for node in plan.nodes
+                        if node.status is PlanNodeStatus.READY
+                        and _exploration_dependencies_completed(plan, node)
+                    )
                     or ready_nodes(plan)
                 )
                 if node.plan_node_id not in active_nodes
@@ -644,6 +661,39 @@ class Orchestrator:
             )
             uow.commit()
             return run
+
+    def recover_candidate_results(self, run_id: ID) -> None:
+        """Finish persisted candidates whose acceptance transaction was interrupted."""
+        with self._uow_factory() as uow:
+            run = _required_run(uow, run_id)
+            if run.status is not RunStatus.RUNNING:
+                return
+            plan = _required_plan(uow, run.plan_revision_id)
+            candidates = {
+                node.plan_node_id for node in plan.nodes if node.status is PlanNodeStatus.CANDIDATE
+            }
+            latest = {
+                attempt.plan_node_id: attempt
+                for attempt in sorted(
+                    uow.states.list_attempts(run_id), key=lambda item: item.sequence
+                )
+                if attempt.plan_node_id in candidates and attempt.status is AttemptStatus.SUCCEEDED
+            }
+            artifacts = uow.states.list_artifacts_for_run(run_id)
+            specs = {
+                node_id: _required_check_specs(uow, plan, _required_node(plan, node_id))
+                for node_id in latest
+            }
+        for node_id, attempt in latest.items():
+            self._check_and_complete(
+                run_id,
+                attempt.attempt_id,
+                tuple(
+                    artifact for artifact in artifacts if artifact.attempt_id == attempt.attempt_id
+                ),
+                specs[node_id],
+                branch_local=_branch_containing(plan, node_id) is not None,
+            )
 
     def interrupt_attempt(
         self,
@@ -1046,20 +1096,7 @@ class Orchestrator:
                 return False
             if not any(branch.status is BranchStatus.ACTIVE for branch in plan.branches):
                 return False
-            branch_node_ids = {node_id for branch in plan.branches for node_id in branch.node_ids}
-            attempts = tuple(
-                attempt
-                for attempt in uow.states.list_attempts(run.run_id)
-                if attempt.plan_node_id in branch_node_ids
-            )
-            artifact_ids = {
-                artifact_id for attempt in attempts for artifact_id in attempt.artifact_ids
-            }
-            artifacts = tuple(
-                artifact
-                for artifact in uow.states.list_artifacts_for_run(run.run_id)
-                if artifact.artifact_id in artifact_ids
-            )
+            context = _branch_evaluation_context(uow, plan, run)
             evaluator_attempts = tuple(
                 attempt
                 for attempt in uow.states.list_attempts(run.run_id)
@@ -1077,7 +1114,6 @@ class Orchestrator:
                 if artifact.artifact_id in evaluator_artifact_ids
                 and artifact.kind in {ArtifactKind.CANDIDATE, ArtifactKind.PATCH}
             )
-        context = BranchEvaluationContext(plan, run, attempts, artifacts)
         try:
             if self._branch_evaluator is None:
                 if len(evaluator_artifacts) != 1:
@@ -1102,6 +1138,17 @@ class Orchestrator:
                 f"run {run.run_id} branch evaluation failed: {type(error).__name__}: {error}"
             ) from error
         return True
+
+    def validate_evaluator_candidate(self, attempt_id: ID, document: str) -> None:
+        """Validate selection before a Worker finishes, so it can repair its proposal."""
+        with self._uow_factory() as uow:
+            attempt = _required_attempt(uow, attempt_id)
+            run = _required_run(uow, attempt.run_id)
+            plan = _required_plan(uow, run.plan_revision_id)
+            if _required_node(plan, attempt.plan_node_id).kind is not PlanNodeKind.EVALUATOR:
+                raise OrchestrationError("Only evaluator nodes submit branch selections")
+            context = _branch_evaluation_context(uow, plan, run)
+        parse_branch_selection(document, context)
 
     def _record_branch_selection(
         self,
@@ -2183,6 +2230,31 @@ class Orchestrator:
             payload=payload,
             occurred_at=self._clock(),
         )
+
+
+def _branch_evaluation_context(
+    uow: UnitOfWork, plan: PlanRevision, run: Run
+) -> BranchEvaluationContext:
+    branch_nodes = {node_id for branch in plan.branches for node_id in branch.node_ids}
+    attempts = tuple(
+        attempt
+        for attempt in uow.states.list_attempts(run.run_id)
+        if attempt.plan_node_id in branch_nodes
+    )
+    latest = {
+        attempt.plan_node_id: attempt
+        for attempt in sorted(attempts, key=lambda item: item.sequence)
+        if attempt.status is AttemptStatus.SUCCEEDED
+    }
+    artifact_ids = {
+        artifact_id for attempt in latest.values() for artifact_id in attempt.artifact_ids
+    }
+    artifacts = tuple(
+        artifact
+        for artifact in uow.states.list_artifacts_for_run(run.run_id)
+        if artifact.artifact_id in artifact_ids
+    )
+    return BranchEvaluationContext(plan, run, attempts, artifacts)
 
 
 def _rebind_check_run(persisted: CheckRun, executed: CheckRun) -> CheckRun:

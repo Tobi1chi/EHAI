@@ -1353,6 +1353,26 @@ class SQLiteCurrentStateRepository:
                 f"PlanRevision {plan_revision.plan_revision_id} approval timestamp changed"
             )
         for previous_node, current_node in zip(existing.nodes, plan_revision.nodes, strict=True):
+            if (
+                previous_node.status is PlanNodeStatus.CANDIDATE
+                and current_node.status is PlanNodeStatus.COMPLETED
+                and not current_node.required_check_ids
+                and any(
+                    edge.source_node_id == current_node.plan_node_id for edge in plan_revision.edges
+                )
+            ):
+                evidence = self._connection.execute(
+                    """
+                    SELECT a.snapshot_json FROM attempts a JOIN runs r ON r.run_id = a.run_id
+                    WHERE a.plan_node_id = ? AND r.plan_revision_id = ?
+                    ORDER BY a.sequence DESC LIMIT 1
+                    """,
+                    (current_node.plan_node_id, plan_revision.plan_revision_id),
+                ).fetchone()
+                if evidence is not None:
+                    attempt = decode_attempt(_row_index_string(evidence, 0))
+                    if attempt.status is AttemptStatus.SUCCEEDED and attempt.artifact_ids:
+                        continue
             if current_node.status not in _PLAN_NODE_STATUS_TRANSITIONS[previous_node.status]:
                 raise PersistenceConflictError(
                     f"PlanNode {current_node.plan_node_id} has an illegal persisted "

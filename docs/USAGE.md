@@ -370,7 +370,8 @@ durable Session Event 重放 function call/result；`store=true`、streaming 和
 
 ## R2 前台编码会话
 
-入口已经实现；真实 Worker 编码、退出恢复和长时间运行仍需实际试用验证，不把静态检查当成产品通过。
+代表性 Built-in 真实 CLI 编码已通过：并行任务、双代码分支、选中成果整合和一个最终行为 Gate。
+主动关闭后的恢复、长时间运行和 Codex App Server 实际编码仍需验证，不把单次试用当成完整 P2 验收。
 R2 使用 Git 仓库和 EHAI 拥有的隔离 worktree，不直接改写用户当前分支。运行基线固定为仓库的 Git HEAD；
 开始前先提交希望纳入任务的源码，未提交的源文件修改不会自动纳入基线。
 

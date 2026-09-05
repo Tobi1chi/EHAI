@@ -53,8 +53,9 @@ Orchestrator → Scheduler / Dispatcher → Worker → 代码与 Artifact
 用法、能力边界与兼容端点参数见 [Usage](docs/USAGE.md)。
 
 R2 已新增前台 `execute-plan`、`resume-session` 和只读 `get-result`，接入实际代码快照、并行成果衔接、
-最终行为 Gate 和失败修复；支持配置 Built-in 或 Codex App Server Worker。实现与本地检查不等于真实
-编码验收：本轮真实 Planner 已生成并修订方案，Worker 试用因第三方端点的数据发送授权待确认而尚未运行。
+最终行为 Gate 和失败修复；支持配置 Built-in 或 Codex App Server Worker。代表性 Built-in 真实 CLI
+编码试用已通过：三槽并行、两个实际代码分支、选中成果整合和一个最终行为 Gate。
+完整长运行、主动关闭后的恢复及 Codex App Server 实际编码仍待验证，不据此宣布整个 R2/P2 完成。
 
 ## Development Status
 

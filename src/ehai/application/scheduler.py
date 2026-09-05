@@ -348,6 +348,8 @@ class ConcurrentRuntime:
         """Recover every bound Attempt using its original Endpoint and Workspace."""
         await self._refresh_endpoint_health()
         works = self._claim_all_work()
+        for run_id in works:
+            self._orchestrator.recover_candidate_results(run_id)
         tasks: dict[asyncio.Task[Run], _ActiveExecution] = {}
         with self._uow_factory() as uow:
             for work in works.values():

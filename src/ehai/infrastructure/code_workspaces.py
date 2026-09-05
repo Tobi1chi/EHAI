@@ -8,6 +8,7 @@ import tempfile
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from threading import Lock
 
 from ehai import JsonValue, json_dumps, json_loads, normalize_id
 
@@ -65,6 +66,7 @@ class GitCodeWorkspace:
         ):
             raise ValueError("The user workspace cannot be an owned execution workspace")
         self._common_dir: Path | None = None
+        self._pin_lock = Lock()
 
     def _repository(self) -> Path:
         if self._common_dir is None:
@@ -79,6 +81,10 @@ class GitCodeWorkspace:
         return self._common_dir
 
     def pin_run_base(self, *, run_id: str, base_commit: str) -> RunBasePin:
+        with self._pin_lock:
+            return self._pin_run_base(run_id=run_id, base_commit=base_commit)
+
+    def _pin_run_base(self, *, run_id: str, base_commit: str) -> RunBasePin:
         path = self._path(run_id, "base.json")
         commit = self._commit_id(self.base_workspace, base_commit)
         if path.exists():

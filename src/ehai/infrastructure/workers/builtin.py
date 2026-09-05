@@ -28,6 +28,7 @@ from ehai.application.builtin_agent import (
     RecoverableToolError,
 )
 from ehai.application.builtin_runtime import BuiltinAgentRuntime, BuiltinRole, BuiltinRoleConfig
+from ehai.application.evaluation import BranchSelectionProtocolError
 from ehai.application.execution_policy import RetrySafety
 from ehai.application.orchestrator import Orchestrator
 from ehai.application.ports import ArtifactStore, UnitOfWork
@@ -285,7 +286,7 @@ class BuiltinAgentConnector:
             mcp_providers=self._mcp_providers,
             skill_provider=self._skill_provider,
             session_provider=session_provider,
-            submit_candidate_validator=partial(_validate_candidate_submission, request, context),
+            submit_candidate_validator=partial(self._validate_submission, request, context),
         )
         try:
             await self._runtime.run(
@@ -320,6 +321,24 @@ class BuiltinAgentConnector:
             if reference is None:
                 raise RuntimeError(f"Attempt {execution.attempt_id} is not a Built-in execution")
         return reference, self._session_store.load(reference.agent_session_ref_id)
+
+    def _validate_submission(
+        self,
+        request: WorkerRequest,
+        context: dict[str, JsonValue],
+        submission: Mapping[str, JsonValue],
+    ) -> None:
+        _validate_candidate_submission(request, context, submission)
+        if request.plan_node.kind is PlanNodeKind.EVALUATOR:
+            content = submission.get("content")
+            if not isinstance(content, str):
+                raise RecoverableToolError(
+                    "invalid_branch_selection", "Selection must be JSON text"
+                )
+            try:
+                self._orchestrator.validate_evaluator_candidate(request.attempt_id, content)
+            except BranchSelectionProtocolError as error:
+                raise RecoverableToolError("invalid_branch_selection", str(error)) from error
 
     def _completed_result(self, execution: ConnectorExecution) -> WorkerResult:
         _, session = self._execution_context(execution)
@@ -515,8 +534,9 @@ def _builtin_role_protocol(kind: PlanNodeKind) -> dict[str, JsonValue] | None:
             "rules": [
                 "Compare every viable entry in context.candidate_branches using its artifacts.",
                 "Select exactly one viable branch and prune every active sibling branch.",
-                "compared_artifact_ids must cover every viable branch that has "
-                "candidate artifacts.",
+                "compared_artifact_ids must equal ALL candidate Artifact IDs from every active "
+                "sibling branch, including both reports and host code snapshots; not merely one "
+                "Artifact per branch.",
                 "selected_artifact_ids must contain only artifacts owned by the selected branch.",
                 "Submit minified JSON content with exactly the required keys and no "
                 "markdown wrapper.",
