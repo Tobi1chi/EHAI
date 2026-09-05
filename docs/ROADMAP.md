@@ -1,173 +1,153 @@
 # EHAI Roadmap
 
-## 产品目标
+## 产品目标与文档依据
 
-EHAI（Enhanced Human-Agent Interface）用于建立可规划、可探索、可检查、可恢复且允许人类干预的 Agent 执行环境。Roadmap 按可验收的纵向能力划分；每一期都必须形成独立的产品闭环，而不是只完成一组孤立组件。
+长期目标是通用 Agent 平台；EHAI 的规划、审批、执行、检查、恢复与人工介入机制是平台核心。
+编码是当前首先验证的完整场景，不是平台永久边界。产品职责和用户流程以
+[Product Scope](PRODUCT_SCOPE.md) 为准；本文只划分阶段，不复制一套产品定义。
+
+平台包含顶层通用 Agent、EHAI 核心、不同外部 Agent 框架，以及外部服务 Connector/Routines。
+顶层 Agent 协助用户使用平台，不等于 Planner；Planner 是可被直接交互或调用的专门规划能力。
+CLI、顶层 Agent、未来 UI 和 Routines 复用相同的公开应用语义，不各自拥有执行状态机。
 
 ## 总体原则
 
-- P1 优先证明最小闭环，不做过度工程化，也不单独进行系统性代码审查。
-- P2 至 P5 每期结束后进行代码、架构和测试审查。
-- Execution Plane 使用 Python，拥有 Agent 执行状态和领域规则；Control Plane 使用 TypeScript，拥有交互与展示状态。
-- 两个 Plane 通过版本化 API、Command/Event Schema 和生成类型通信，不直接读写对方的数据存储。
-- `PlanGraph` 表示计划，`ExecutionTrace` 表示实际轨迹；二者分开存储、可叠加展示。
-- Worker 只能提交候选结果，任务完成必须由预先确认的检查条件决定。
-- 每一期必须定义范围、非目标、演示场景和退出条件。
+- 每期交付可验证的用户能力，不以组件数量、测试数量或模型调用成功作为完成标准。
+- 区分目标设计、基线实现、分支实现和验收记录；历史 PASS 不覆盖后来确认的产品范围。
+- Execution Plane 使用 Python；TypeScript Control Plane 拥有交互与展示状态，通过版本化 API、
+  Command/Query/Event 和生成 Client 使用执行核心，不直接访问其数据库。
+- PlanGraph 与 ExecutionTrace 分开；可读方案和可执行图对应同一版本，执行只使用获批内容。
+- Worker 只提交候选；Check/Gate 决定完成，检查条件必须能证明获批需求而非只证明产物存在。
+- 授权内的分支选择与安全重试自主完成；无法决定、无可行路线或预算耗尽时挂起求助。
+- 每期定义范围、非目标、演示和退出条件。P2 至 P5 进行与当期变更相关的代码、架构和测试审查。
 
-## P1：可运行的探索闭环
+## P1：探索执行原型
 
-**状态：** 已完成（包含真实端到端验收及 P1.1 语义修复）。
+**状态：** 历史增量已完成，包括 P1.1 修复；不代表新的交互式编码产品范围已通过验收。
 
-**目标：** 验证从目标对齐到自动执行、检查和恢复的完整链路。
-
-详细编码顺序和验收方法见 [P1 Implementation Plan](P1_IMPLEMENTATION_PLAN.md)。
-
-范围：
-
-- Project、Goal、PlanRevision、PlanNode、Branch、Run、Attempt 等核心模型。
-- 非线性 PlanGraph，支持分支、汇合、选择和剪枝。
-- Planner 生成计划和版本化 `CompletionContract`。
-- Orchestrator 计算就绪节点并调度 Worker。
-- Codex External Worker Connector。
-- Event、Artifact、Check、Gate 和 Checkpoint 服务。
-- SQLite 持久化及中断恢复。
-- Python 实现的最小 CLI/API 和事件流，用于确认计划、启动、暂停和查看结果。
-- 为 Command、Event 和查询模型建立语言无关、可版本化的 Schema。
-
-退出条件：用户确认目标和检查条件后，系统能让 Codex 探索至少两个分支，自动比较结果，完成最终检查，创建 Checkpoint，并在重启后恢复轨迹。
-
-非目标：正式 TypeScript Control Plane、多 Worker、分布式执行、通用插件系统和复杂权限模型。
-
-## P2：稳定的多 Worker 执行内核
-
-**状态：** 多 Worker 执行内核与 Planning & Execution Readiness Gate 已完成；进入 P3 前先完成
-Built-in Agent Foundation 扩展。
-
-**目标：** 将 P1 原型升级为可靠、可扩展的 Agent Runtime。
-
-详细编码顺序和验收方法见 [P2 Implementation Plan](P2_IMPLEMENTATION_PLAN.md)。
+**目标：** 验证 Goal、PlanRevision、Run/Attempt、候选 Artifact、分支选择、Check/Gate 和恢复的基本语义。
 
 范围：
 
-- Built-in Worker Agent Framework。
-- 统一 Worker Adapter 与能力声明协议。
-- Codex App Server External Worker Connector，并保留现有 Codex CLI Connector。
-- Orchestrator 保留就绪判断和领域状态推进；Scheduler 管理执行队列与并发；
-  Dispatcher 根据能力与容量选择 Worker Endpoint。
-- 将每个 Attempt 持久化绑定到外部 Agent Session 和一次 provider execution，并通过事件、心跳、
-  查询和租约跟踪运行状态。
-- 并发、重试、超时、取消和资源预算。
-- 分支上下文与 Git worktree 隔离。
-- Artifact、日志、上下文摘要和 Event Replay。
-- Check Runner 静态注册与恢复测试。
-- 稳定 OpenAPI/JSON Schema，并建立 TypeScript 类型和 API Client 的生成流程。
+- 版本化 Goal/CompletionContract，非线性计划图和受控分支选择。
+- Codex CLI Worker、串行 Orchestrator、SQLite 当前状态和追加式事件。
+- 最小 CLI/API、Checkpoint 和公开 Schema。
 
-退出条件：同一 PlanRevision 能混合调度多个 Worker；运行失败或进程重启后可恢复；每个决策均能追溯到事件和证据。完成首次系统性代码审查。
+历史退出场景为用户确认后执行双分支、比较并整合选中产物、通过检查并恢复轨迹。
+原型固定模板、检查种类及终态恢复限制保留在
+[P1 Implementation Plan](P1_IMPLEMENTATION_PLAN.md) 中，不作为通用平台的永久限制。
 
-### P2→P3 Planning & Execution Readiness Gate
+## P2：做实可审查、可干预的编码闭环
 
-**状态：** 已通过（2026-09-04）。随后确认的 Built-in Agent Foundation 扩展成为新的 P3 前置门禁，
-因此 P3 尚未进入实现。
+**状态：** 执行内核已有实现；当前产品闭环重新细化中，不能宣布 P2 整体完成。
 
-**目标：** 在开发 Control Plane 前，把 P1/P2 的规划、执行、干预、恢复和重规划能力调整到可用于
-真实项目的稳定状态，并用 EHAI 开发 EHAI 的一次小型代码任务证明完整闭环。
+**目标：** 用户从正常 CLI 提交真实编码目标，与 Planner 讨论和修订详细方案，批准后在确认的
+workspace 执行，获得符合需求的代码、验证结果与交付证据。
 
 范围：
 
-- 真实 Built-in Planner 根据受控仓库上下文生成、校验并持久化 PlanGraph。
-- 真实 Built-in/Codex Worker 在隔离 Workspace 中执行小型代码任务。
-- 验证分支选择、选中变更晋升、组合 Check、Gate、Checkpoint 和可读 Trace。
-- 对可安全重试、未知副作用、Checkpoint 恢复和带失败上下文的版本化 Replan 分别验收。
-- 完成一次 `Goal → Plan approval → isolated implementation → verification → selection → delivery`
-  自举闭环。
+- 规划时只读调查仓库，记录范围、约束、假设和偏好；用户可直接讨论或带回外部 Agent 的审查意见。
+- 详细方案包含设计、任务依赖、输入输出、探索规则、需求相关验收和授权边界。
+- 批准绑定具体方案版本与 CompletionContract；局部实现保持自由，重大变化必须重新批准。
+- 复用多 Worker 调度、Built-in Agent 和 Codex Connector、Session、Git worktree 隔离与资源管理。
+- 在授权与预算内自主选择或放弃分支、安全修复重试；无法自主继续时挂起并展示问题和证据。
+- 用户回复后继续原方案，或批准修订方案；保留仍适用的成果与原执行轨迹。
+- Provider、Role、工具、存储和恢复能力必须接入正常启动入口，不能只存在于测试构造器。
+- 生成 Client、API 和事件接口继续为其他入口复用核心提供基础。
 
-退出条件：真实规划 E2E、真实执行 E2E、失败恢复/重规划 E2E 和自举代码任务 E2E 全部通过；没有
-pending/running Attempt 或活跃 Workspace lease；最终变更通过人工 Gate 和仓库完整验证。
+**演示目标：** 一个真实仓库编码任务，经需求讨论、用户修订、明确批准、隔离执行和实际代码验证后
+交付；分支处理与人工介入如何进入唯一 E2E，待能力开放后与用户确定，不先扩建测试。
 
-验收结果：真实 `gpt-5.6-luna/high` Planner、Built-in 双分支执行、失败证据 Replan 与 EHAI 自举代码
-任务均通过；真实 Codex CLI Worker Smoke 通过。自举任务的两个实现分支并发且隔离，Evaluator 选择后
-Merge 精确复现 selected ChangeSet，宿主完整验证通过，用户 main 工作树未被自动修改。
+**退出条件：** 正常 CLI 路径可用；执行与批准版本一致；代码满足需求相关条件；需人工决策的问题可
+挂起、回复和继续；无遗留活跃执行或失控副作用。唯一产品 E2E 的真实用户路径证据可复核；
+故障定位单测只放仓库外临时目录，不进入长期测试体系。
 
-本 Gate 不实现 P3 UI、P4 Workflow、插件生态、新 Worker Provider 或跨主机分布式调度。详细增量见
-[P2 Implementation Plan](P2_IMPLEMENTATION_PLAN.md) 的 `P2-I10` 至 `P2-I13`。
+**非目标：** P3 UI、完整顶层通用 Agent 产品、P4 Workflow/Routines、插件市场、新外部 Agent 生态和
+跨主机分布式调度。外部 Agent 辅助审查先采用用户携带意见的方式，不以前置完整 Reviewer Framework
+阻塞本期。
 
-### P2→P3 Built-in Agent Foundation 扩展
+实现顺序、现有代码复用与历史增量见 [P2 Implementation Plan](P2_IMPLEMENTATION_PLAN.md)。
 
-**状态：** 已确认，待实现。P3 UI 暂不开始，先将现有 Built-in Worker 提炼为所有内部 Agent 角色
-共用的运行地基。
+### 历史 Planning & Execution Readiness Gate
 
-**目标：** Planner、Worker、Evaluator、Merge、Visualizer、Reviewer 和 Assistance Role 共用同一套
-ModelClient、Session/Event Store、Agent Loop、Tool Registry、取消、预算、恢复和 Trace；角色之间只
-配置 Prompt、Tool Profile、Context Builder 与 Finish Tool，禁止各自复制 Agent Loop。
+2026-09-04 的 I10–I13 记录了真实 Planner、双分支执行、失败证据 Replan、Codex Worker 和自举任务
+通过的结果。这些证据仍有价值，但只覆盖当时的场景；部分验证由独立 acceptance runner 执行，不能
+据此声称正常产品入口已实现完整需求验收和人工回路。详细记录保留在 P2 实施文档。
 
-范围：
+原先“该 Gate 通过即可进入 P3”的规则已由本次 P2 产品退出条件取代，不删除历史结果，也不重复开发
+已经存在的能力。
 
-- 完整 Workspace 能力：读取、搜索、创建、修改、统一 diff、删除、移动与创建目录。
-- 可按 Endpoint 选择的 Shell，以及覆盖全部 Git 子命令的结构化 Git Tool；实际权限继续按角色、沙箱
-  和审批策略授予，远端写入与危险操作不得因“通用能力”而默认放行。
-- 统一 Web Search Tool；MCP Tool Schema 接入；Skill 说明与资源加载。提前的是运行时消费能力，P5 的
-  插件 SDK、市场、动态安装与第三方生态仍不在本阶段。
-- 持久 Session Mailbox，使已存在的 Agent Session 能发送、读取和等待消息；跨 Workspace 协作通过
-  Message 与 Artifact，不直接写入其他 Session 的工作区。
-- Planner 使用工作区读取、分析命令和 PlanGraph Tool；Visualizer 从已校验的 draft PlanRevision 生成
-  可视化 Artifact；用户批准后仍由现有 Orchestrator/Scheduler 调度 Worker。
+### Built-in Agent Foundation 的位置
 
-退出条件：至少一个真实任务能完成 `Goal → Agent-assisted planning → validated PlanGraph → visualization
-→ human approval → multi-Worker execution → Check/Gate/Checkpoint`；参与角色共用同一 Agent Runtime，
-Session 通信、权限、恢复和 Trace 可从持久证据复核。
+共享 Runtime/Role、Workspace/Shell/Git、Web/MCP/Skill、Mailbox 和 Visualizer 是支持核心流程的地基。
+I14–I18 的分支实现需要对照正常入口重新验收；共享 Runtime 或角色枚举存在，不代表完整角色产品已交付。
+工具接入不等于默认授权，Mailbox 不等于自动 spawn，MCP/Skill 消费不等于 P5 插件生态。
+
+### 顶层通用 Agent 的交付安排
+
+其产品职责已确定：与用户协作审查方案、查询执行、解释阻塞，并调用获授权的平台能力。
+独立增量和交付阶段尚未固定，应在规划该增量时明确；不能静默归入 Planner、用 Assistance 枚举宣称完成，
+也不能因未排期把它从平台长期范围删除。内部实现复用 Built-in Agent Runtime 和公开应用能力。
 
 ## P3：可观察、可干预的 Control Plane
 
-**目标：** 让用户通过可视界面理解并控制 Agent 的执行过程。
+**状态：** 目标设计，尚未开始 UI 实现。
+
+**目标：** 让用户通过界面理解并控制同一核心流程，不另建执行引擎。
 
 范围：
 
-- 使用 TypeScript 构建 Control Plane；启用严格类型检查，具体 UI 框架和包管理器通过 ADR 固定。
-- Dashboard 与实时 PlanGraph/ExecutionTrace 可视化。
-- 分支结果、Artifact、Check 和 Checkpoint 展示。
-- 暂停、继续、取消、重新规划和人工 Gate。
-- Projects、Settings、Calendar、Gantt 和 Activity Heatmap。
-- 节点级人—Agent 对话与反馈。
-- 使用生成的 API Client 发送 Command，通过 SSE 或 WebSocket 消费带版本的 Event。
-- Control Plane 不直接修改 Execution Plane 数据库或复制其领域状态机。
+- TypeScript Dashboard、方案说明、PlanGraph 与实际 ExecutionTrace 叠加展示。
+- 计划审查与修订、分支结果、Artifact、Check、Checkpoint 和最终代码交付展示。
+- 暂停、继续、取消、重规划、审批、阻塞问题与用户回复。
+- Projects、Settings、Calendar、Gantt、Activity Heatmap，以及节点级人—Agent 对话和反馈。
+- 通过生成 Client 发送 Command/Query，通过 SSE 或 WebSocket 消费可恢复的版本化 Event。
+- UI 框架与包管理器在实施前通过 ADR 固定；日历等展示不提前承担 P4 Routine 调度。
 
-退出条件：用户无需 CLI 即可完成任务创建、计划确认、过程观察、分支干预和最终验收。完成交互、性能与代码审查。
+**退出条件：** 无需 CLI 即可创建任务、审查批准方案、观察执行、干预分支或阻塞并验收结果；
+完成交互、性能和代码审查。
 
-## P4：可复用工作流与外部连接
+## P4：Workflow、外部服务与事件驱动 Routines
 
-**目标：** 将一次性任务扩展为可重复运行的自动化能力。
+**状态：** 目标设计。
+
+**目标：** 让用户组合 Agent 和外部服务形成可重复的自动化能力。
 
 范围：
 
-- Workflow 定义、模板、版本和运行历史。
-- TypeScript 提供 Workflow 编辑体验，Python 负责校验、调度和实际执行。
-- Routines：定时、事件触发和周期执行。
-- Universal Connector Hub。
-- Email、Weather、Navigation 和 Notification Service。
-- Secret、权限范围、审批、幂等与副作用补偿。
-- Workflow 级 Checkpoint 和恢复。
+- Workflow 定义、模板、版本、运行历史；TypeScript 提供编辑体验，Python 校验并复用执行核心。
+- 定时、周期和事件触发的 Routines；外部事件经 Connector、条件判断和授权后发起平台操作。
+- 服务与事件 Connector Hub：Email、Weather、Navigation 和 Notification Service 等。
+- 顶层 Agent 可参与理解复杂事件；简单规则或获批模板不强制每次调用 Planner。
+- Secret、权限范围、审批、事件幂等、副作用补偿，以及 Workflow 级 Checkpoint 和恢复。
+- 已获授权模板可自动运行；超出授权、新方案或无法决定时进入同一人工回路。
 
-退出条件：用户能组合 Agent 与外部服务形成可重复工作流，并安全地定时执行、暂停、恢复和审计。完成安全与代码审查。
+Agent 执行 Connector 与服务/事件 Connector 各守职责，不强行共用 Worker 协议。
+收到邮件不等于获得执行权限，领域 Event 也不自动等于 Routine 触发器。
 
-## P5：开放生态与高阶自主
+**退出条件：** 用户能配置一个外部事件驱动的真实工作流，自动执行授权任务、通知结果，并能够暂停、
+恢复和审计；重复事件不造成重复业务副作用，未授权情况可请求批准。完成安全与代码审查。
 
-**目标：** 建立无需修改核心代码即可扩展的 Agent 协作平台。
+## P5：开放扩展与高阶协作
+
+**状态：** 候选范围，具体连接器和协作形式在对应增量中确认。
+
+**目标：** 第三方无需修改核心代码即可扩展 Agent 协作平台。
 
 候选范围：
 
-- Claude Code、OpenCode External Worker Connectors。
-- External Assistance Agent Framework 与 OpenClaw 系列。
-- DSH 接入；其职责和边界明确后再固定具体位置。
-- Worker、Checker 和 Connector 插件 SDK。
-- 语言无关的扩展协议，以及 Python/TypeScript 对应的 SDK。
-- 多 Agent 协作及分层 Orchestrator。
-- 跨项目上下文、策略、配额、权限、审计和沙箱。
+- Claude Code、OpenCode 等 External Worker Connectors。
+- External Assistance Agent Framework、OpenClaw 系列及职责待明确的 DSH 接入。
+- Worker、Checker、Connector 插件 SDK，以及语言无关协议和 Python/TypeScript SDK。
+- 多 Agent 协作、分层 Orchestrator、跨项目上下文与策略。
+- 配额、权限、审计和沙箱，以及扩展安装、运行和兼容性边界。
 
-退出条件：第三方扩展可通过稳定 SDK 安装运行；复杂协作任务仍具备明确权限、预算、证据和恢复路径。完成发布级架构、安全及稳定性审查。
+**退出条件：** 第三方扩展通过稳定 SDK 安装运行；复杂协作仍具备明确授权、预算、证据、恢复和人工
+介入路径。完成发布级架构、安全与稳定性审查。
 
 ## 阶段管理
 
-新功能必须归属一个阶段，并说明是否影响当前退出条件。未通过本期端到端验收前，不提前实现后续阶段的大型能力。范围变化应通过 Roadmap 变更记录，而不是静默扩大实现范围。
-
-每个 P2 Increment 完成后，只把已经验证可用的能力同步到 README，并更新对应限制；设计中或尚未
-验收的能力继续保留在 Roadmap，不得在项目首页写成已交付功能。
+新增或重构能力先说明用户路径、模块边界、阶段归属和验收，再决定实现。范围变化更新 Product Scope
+和本文；操作变化同步 Usage，已验证交付同步 README。未确认的接口和状态明确标记待设计。
+不得用固定节点示例、专项 Smoke、测试数量或分支提交名替代阶段退出条件，也不为未来阶段预建无调用方
+的抽象或测试矩阵。
