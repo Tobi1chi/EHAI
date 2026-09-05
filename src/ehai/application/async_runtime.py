@@ -509,7 +509,10 @@ class SingleSlotRuntime:
             for event in events
             if event.event.run_id == run_id
         )
-        if connector_calls >= self._policy.max_connector_calls:
+        if (
+            self._policy.max_connector_calls is not None
+            and connector_calls >= self._policy.max_connector_calls
+        ):
             return (
                 "Connector call budget exhausted: "
                 f"consumed={connector_calls}, limit={self._policy.max_connector_calls}"

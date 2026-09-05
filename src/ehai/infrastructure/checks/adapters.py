@@ -65,12 +65,18 @@ class CommandCheckAdapter:
         with tempfile.TemporaryDirectory(prefix="ehai-check-") as check_dir:
             check_path = Path(check_dir).resolve(strict=True)
             materialized = (
-                self._materialize_artifacts(context, check_path) if self._store is not None else ()
+                self._materialize_artifacts(context, check_path)
+                if self._store is not None and not context.code_workspace
+                else ()
             )
             try:
                 completed = subprocess.run(
                     argv,
-                    cwd=check_path if self._store is not None else context.workspace,
+                    cwd=(
+                        check_path
+                        if self._store is not None and not context.code_workspace
+                        else context.workspace
+                    ),
                     stdin=subprocess.DEVNULL,
                     capture_output=True,
                     check=False,

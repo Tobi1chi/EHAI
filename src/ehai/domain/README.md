@@ -14,12 +14,12 @@ R1 已将可读设计绑定到 PlanRevision，保存、批准与恢复保留同�
 | 文件 | 职责 |
 | --- | --- |
 | [`goal.py`](goal.py) | `Project`、版本化 `Goal` 与 `CompletionContract`；保存目标、完成条件及确认关系。 |
-| [`planning.py`](planning.py) | `PlanRevision`、`PlanNode`、`Edge` 与 `Branch`；验证图结构、探索分支和节点/分支状态转换。 |
+| [`planning.py`](planning.py) | `PlanRevision`、`PlanNode`、`Edge` 与 `Branch`；验证图结构、探索分支和节点/分支状态转换，并区分中间交接与最终完成。 |
 | [`execution.py`](execution.py) | `Run` 与 `Attempt` 生命周期；区分计划状态和实际执行状态。 |
 | [`workers.py`](workers.py) | Worker Profile/Endpoint、能力、Session/Execution 引用和运行活动状态。 |
 | [`workspaces.py`](workspaces.py) | Workspace 引用与 Lease 生命周期；表示隔离范围和占用状态。 |
 | [`artifacts.py`](artifacts.py) | 不可变 Artifact 元数据、归属、内容摘要和大小。 |
-| [`checking.py`](checking.py) | `CheckSpec`、`CheckRun`、`CheckResult`、`GateDecision`、`Gate` 与 `Checkpoint`。 |
+| [`checking.py`](checking.py) | `CheckSpec`（含冻结的 `command_argv`）、`CheckRun`、`CheckResult`、`GateDecision`、`Gate` 与 `Checkpoint`。 |
 | [`events.py`](events.py) | 不可变领域 Event 及其类型；记录已发生事实，不承担命令处理。 |
 | [`runtime.py`](runtime.py) | 持久化后台 `DispatchWork` 状态，用于 Runtime 调度与恢复。 |
 
@@ -33,7 +33,9 @@ R1 已将可读设计绑定到 PlanRevision，保存、批准与恢复保留同�
 - Check 产生 `CheckResult`，Gate 根据必需 Check 作出决定，Checkpoint 固化可恢复状态。Event 记录这些
   已提交的事实。
 - Worker 只执行 `WorkerRequest` 并提交候选 Artifact。它不能把 PlanNode 或 Run 标记为完成，也不能
-  绕过 Check/Gate。只有 Orchestrator 在必需 Check 完成且 Gate 通过后才能完成节点，最终完成 Run。
+  绕过 Check/Gate。对 `required_check_ids` 为空且已有后续边的中间节点，Orchestrator 可在候选证据已持久化后
+  调用 `PlanNode.accept_intermediate()` 完成任务交接；这不创建 Gate/Checkpoint，也不满足 Goal。最终节点必须
+  在全部 required Check 完成且 Gate 通过后才能完成，随后才可能完成 Run。
 - Workspace Lease、Worker Session/Execution 引用和 DispatchWork 分别拥有自己的生命周期；释放或恢复
   不等于业务完成。
 

@@ -298,6 +298,8 @@ class PlanTemplate:
     planner_diagnostics: tuple[str, ...] = ()
     planner_event_types: tuple[str, ...] = ()
     design_document: str | None = None
+    final_node_key: str | None = None
+    final_gate_argv: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         nodes = tuple(self.nodes)
@@ -325,6 +327,28 @@ class PlanTemplate:
             referenced = {branch.fork_node_key, branch.merge_node_key, *branch.node_keys}
             if not referenced.issubset(known_nodes):
                 raise ValueError(f"PlanTemplate branch {branch.key} references an unknown node")
+        final_node_key = self.final_node_key
+        if final_node_key is not None:
+            final_node_key = _template_key(final_node_key, "PlanTemplate final_node_key")
+            if final_node_key not in known_nodes:
+                raise ValueError(
+                    f"PlanTemplate final_node_key {final_node_key!r} references an unknown node"
+                )
+            terminal_keys = tuple(
+                key for key in node_keys if not any(edge.source_node_key == key for edge in edges)
+            )
+            if terminal_keys != (final_node_key,):
+                raise ValueError(
+                    "PlanTemplate final_node_key must be the graph's single terminal node"
+                )
+            if any(node.require_completion_checks for node in nodes if node.key != final_node_key):
+                raise ValueError(
+                    "PlanTemplate final-node mode cannot require checks on intermediate nodes"
+                )
+        final_gate_argv = _normalize_argv(
+            self.final_gate_argv,
+            "PlanTemplate final_gate_argv",
+        )
         if (self.budget is None) != (self.usage is None):
             raise ValueError("PlanTemplate budget and usage must be provided together")
         if self.budget is not None and self.usage is not None:
@@ -332,6 +356,8 @@ class PlanTemplate:
         object.__setattr__(self, "nodes", nodes)
         object.__setattr__(self, "edges", edges)
         object.__setattr__(self, "branches", branches)
+        object.__setattr__(self, "final_node_key", final_node_key)
+        object.__setattr__(self, "final_gate_argv", final_gate_argv)
         object.__setattr__(
             self,
             "planner_diagnostics",
@@ -487,9 +513,18 @@ class ConfiguredCheckPlanner:
         configured: list[CheckSpec] = []
         for spec in proposal.check_specs:
             if spec.kind is CheckKind.COMMAND:
-                if not self.command_argv:
+                if (
+                    self.command_argv
+                    and spec.command_argv
+                    and spec.command_argv != self.command_argv
+                ):
+                    raise ValueError(
+                        "Planner command Check conflicts with explicit host command argv"
+                    )
+                if self.command_argv:
+                    spec = replace(spec, command_argv=self.command_argv)
+                elif not spec.command_argv:
                     raise ValueError("Command Check requires configured argv before persistence")
-                spec = replace(spec, command_argv=self.command_argv)
             elif spec.kind is CheckKind.SEMANTIC:
                 if not self.semantic_required_terms:
                     raise ValueError(
@@ -512,8 +547,6 @@ class ConfiguredCheckPlanner:
                 "This Planner does not support discussion; select the Built-in Planner"
             )
         normalized = require_p1_criteria(criteria, "Planning discussion")
-        if COMMAND_EXIT_ZERO_CRITERION in normalized and not self.command_argv:
-            raise ValueError("Command Check requires configured argv before discussion")
         if SEMANTIC_REQUIRED_TERMS_CRITERION in normalized and not self.semantic_required_terms:
             raise ValueError("Semantic Check requires configured terms before discussion")
         reply = self.planner.discuss(goal, normalized, message, history, base)
@@ -716,7 +749,7 @@ def _graph_usage(
         groups[key] = groups.get(key, 0) + 1
     width = max(groups.values(), default=0)
     depth = max((len(branch.node_ids) for branch in branches), default=0)
-    attempts = sum(bool(node.required_check_ids) for node in nodes)
+    attempts = len(nodes)
     return ExplorationUsage(width=width, depth=depth, attempts=attempts)
 
 
@@ -725,6 +758,17 @@ def _planner_messages(values: tuple[str, ...], field_name: str) -> tuple[str, ..
     if any(not isinstance(value, str) or not value.strip() for value in snapshot):
         raise ValueError(f"PlanProposal {field_name} must contain non-blank strings")
     return snapshot
+
+
+def _normalize_argv(value: tuple[str, ...], field_name: str) -> tuple[str, ...]:
+    if isinstance(value, str):
+        raise ValueError(f"{field_name} must be an argv sequence, not shell text")
+    argv = tuple(value)
+    if any(
+        not isinstance(argument, str) or not argument or "\x00" in argument for argument in argv
+    ):
+        raise ValueError(f"{field_name} contains an invalid argument")
+    return argv
 
 
 def build_plan_proposal(
@@ -749,6 +793,9 @@ def build_plan_proposal(
             description=criterion,
             required=True,
             check_id=id_factory(),
+            command_argv=(
+                template.final_gate_argv if criterion == COMMAND_EXIT_ZERO_CRITERION else ()
+            ),
         )
         for criterion in normalized_criteria
     )
@@ -770,7 +817,14 @@ def build_plan_proposal(
             required_dependency_ids=tuple(
                 node_ids[dependency_key] for dependency_key in node.required_dependency_keys
             ),
-            required_check_ids=required_check_ids if node.require_completion_checks else (),
+            required_check_ids=(
+                required_check_ids
+                if (
+                    (template.final_node_key is not None and node.key == template.final_node_key)
+                    or (template.final_node_key is None and node.require_completion_checks)
+                )
+                else ()
+            ),
         )
         for node in template.nodes
     )

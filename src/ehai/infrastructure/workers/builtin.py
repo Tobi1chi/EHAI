@@ -58,8 +58,18 @@ WorkspaceResolver = Callable[[ID], Path | None]
 _DEFAULT_SYSTEM_PROMPT = """You are the EHAI Built-in Agent. Work only inside the assigned
 Workspace and use only the provided tools. Complete the requested PlanNode, validate the
 result with an allowed command when appropriate, and finish only by calling submit_candidate.
+The host dispatches tasks, prepares upstream code and prunes branches; you do not spawn,
+schedule, or cancel other Workers. For a fork, submit its starting context for host dispatch.
 Follow context.role_protocol exactly when it is present. Do not claim that a Run or PlanNode is
-complete; EHAI Check and Gate own completion."""
+complete; EHAI Check and Gate own completion. Follow the detailed approved task rather than
+redesigning the whole solution. The workspace already contains the applicable upstream code;
+resolve any reported merge conflicts without discarding either required change. Do not create
+branches or commits: the host owns code snapshots and integration history. Stage resolved
+conflict files with the permitted Git tool when necessary. Do not create
+or run additional test/lint suites unless the approved task requires them. Final acceptance is
+run by the host; if gate_failures is present, repair the code against that unchanged Gate.
+If an external dependency, permission, or requirement prevents progress, call report_blocked
+with concrete evidence and what is needed. Do not submit a fake successful candidate."""
 
 
 class BuiltinAgentConnector:
@@ -397,6 +407,9 @@ def _candidate_result(session: BuiltinSession, attempt_id: ID) -> WorkerResult:
     for event in reversed(session.events):
         if event.attempt_id != attempt_id or event.type is not BuiltinSessionEventType.TOOL_CALLED:
             continue
+        if event.payload.get("name") == "report_blocked":
+            arguments = event.payload.get("arguments")
+            raise RuntimeError(f"Worker notice: {json_dumps(arguments)}")
         if event.payload.get("name") == "submit_candidate":
             value = event.payload.get("call_id")
             call_id = value if isinstance(value, str) else None

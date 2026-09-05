@@ -56,11 +56,11 @@ class ExecutionPolicy:
 
     start_timeout: timedelta = timedelta(seconds=30)
     heartbeat_lease: timedelta = timedelta(minutes=2)
-    no_progress_timeout: timedelta = timedelta(minutes=10)
+    no_progress_timeout: timedelta | None = timedelta(minutes=10)
     absolute_attempt_timeout: timedelta | None = None
     cancel_grace: timedelta = timedelta(seconds=2)
     max_run_duration: timedelta | None = None
-    max_connector_calls: int = 100
+    max_connector_calls: int | None = 100
     max_concurrency: int = 16
     max_provider_cost: float | None = None
 
@@ -68,20 +68,23 @@ class ExecutionPolicy:
         for name in (
             "start_timeout",
             "heartbeat_lease",
-            "no_progress_timeout",
             "cancel_grace",
         ):
             value = getattr(self, name)
             if not isinstance(value, timedelta) or value <= timedelta(0):
                 raise ValueError(f"{name} must be a positive timedelta")
-        for name in ("absolute_attempt_timeout", "max_run_duration"):
+        for name in ("absolute_attempt_timeout", "max_run_duration", "no_progress_timeout"):
             value = getattr(self, name)
             if value is not None and (not isinstance(value, timedelta) or value <= timedelta(0)):
                 raise ValueError(f"{name} must be a positive timedelta or None")
-        for name in ("max_connector_calls", "max_concurrency"):
+        for name in ("max_concurrency",):
             value = getattr(self, name)
             if type(value) is not int or value < 1:
                 raise ValueError(f"{name} must be a positive integer")
+        if self.max_connector_calls is not None and (
+            type(self.max_connector_calls) is not int or self.max_connector_calls < 1
+        ):
+            raise ValueError("max_connector_calls must be a positive integer or None")
         if self.max_provider_cost is not None and (
             not isinstance(self.max_provider_cost, (int, float))
             or isinstance(self.max_provider_cost, bool)
@@ -127,7 +130,11 @@ class ExecutionWatchdog:
                 )
             )
         progress_at = attempt.progress_at or attempt.started_at
-        if attempt.activity is not AttemptActivity.WAITING and progress_at is not None:
+        if (
+            self.policy.no_progress_timeout is not None
+            and attempt.activity is not AttemptActivity.WAITING
+            and progress_at is not None
+        ):
             deadlines.append(
                 (
                     progress_at + self.policy.no_progress_timeout,
@@ -147,7 +154,11 @@ class ExecutionWatchdog:
         if attempt.lease_expires_at is not None:
             candidates.append(attempt.lease_expires_at)
         progress_at = attempt.progress_at or attempt.started_at
-        if attempt.activity is not AttemptActivity.WAITING and progress_at is not None:
+        if (
+            self.policy.no_progress_timeout is not None
+            and attempt.activity is not AttemptActivity.WAITING
+            and progress_at is not None
+        ):
             candidates.append(progress_at + self.policy.no_progress_timeout)
         if not candidates:
             raise ValueError(f"Attempt {attempt.attempt_id} has no watchdog clock")

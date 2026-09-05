@@ -202,6 +202,17 @@ class BuiltinToolRuntime:
             )
         )
         handlers["submit_candidate"] = self._submit_candidate
+        definitions.append(
+            _definition(
+                "report_blocked",
+                "Stop with a concrete blocker, evidence, and what is needed to continue",
+                "reason",
+                "evidence",
+                "needed",
+                ends_turn=True,
+            )
+        )
+        handlers["report_blocked"] = self._report_blocked
         self.registry = ToolRegistry(tuple(definitions), handlers)
         self.tool_set = ToolSet(tuple(definitions))
         self.executor = ToolExecutor(self.tool_set, handlers)
@@ -707,6 +718,17 @@ class BuiltinToolRuntime:
         if self._submit_candidate_validator is not None:
             self._submit_candidate_validator(result)
         return result
+
+    async def _report_blocked(
+        self,
+        arguments: dict[str, JsonValue],
+        cancellation: CancellationToken,
+    ) -> JsonValue:
+        cancellation.raise_if_cancelled()
+        return {
+            name: _tool_non_empty_text(_required_string(arguments, name), name)
+            for name in ("reason", "evidence", "needed")
+        }
 
     def _resolve(self, relative_path: str) -> Path:
         candidate = Path(relative_path)

@@ -9,7 +9,7 @@ from datetime import datetime
 from hashlib import sha256
 from pathlib import Path
 
-from ehai import ID, JsonValue, new_id, normalize_id, utc_now
+from ehai import ID, JsonValue, json_loads, new_id, normalize_id, utc_now
 from ehai.application.checks import CheckContext, CheckRunner
 from ehai.application.evaluation import (
     BranchEvaluationContext,
@@ -220,6 +220,11 @@ class Orchestrator:
         self._cancellation_settle_seconds = float(cancellation_settle_seconds)
         self._branch_evaluator = branch_evaluator
         self._attempt_budget = attempt_budget
+        self._execution_workspace: Callable[[ID], Path | None] | None = None
+
+    def enable_code_execution(self, workspace_resolver: Callable[[ID], Path | None]) -> None:
+        """Bind isolated code workspaces and authorized final-Gate repair at composition."""
+        self._execution_workspace = workspace_resolver
 
     @property
     def worker(self) -> WorkerAdapter:
@@ -402,11 +407,19 @@ class Orchestrator:
                 return ()
             exhausted_reason = _exhausted_branch_reason(plan)
             if exhausted_reason is not None:
-                failed_run = run.fail(exhausted_reason, at=self._clock())
+                failed_run = (
+                    run.pause()
+                    if self._execution_workspace is not None
+                    else run.fail(exhausted_reason, at=self._clock())
+                )
                 uow.states.put_run(failed_run)
                 uow.events.append(
                     self._event(
-                        EventType.RUN_FAILED,
+                        (
+                            EventType.RUN_PAUSED
+                            if self._execution_workspace is not None
+                            else EventType.RUN_FAILED
+                        ),
                         failed_run,
                         failed_run.run_id,
                         {"run_id": failed_run.run_id, "reason": exhausted_reason},
@@ -603,6 +616,35 @@ class Orchestrator:
             branch_local=branch_local,
         )
 
+    def _accept_intermediate(self, run_id: ID, attempt_id: ID) -> Run:
+        with self._uow_factory() as uow:
+            run = _required_run(uow, run_id)
+            plan = _required_plan(uow, run.plan_revision_id)
+            attempt = _required_attempt(uow, attempt_id)
+            node = _required_node(plan, attempt.plan_node_id)
+            if not any(edge.source_node_id == node.plan_node_id for edge in plan.edges):
+                raise OrchestrationError("A final node must have an approved acceptance Gate")
+            if attempt.status is not AttemptStatus.SUCCEEDED or not attempt.artifact_ids:
+                raise OrchestrationError(
+                    "Intermediate acceptance requires persisted result evidence"
+                )
+            completed = node.accept_intermediate()
+            uow.states.put_plan_revision(_replace_node(plan, completed))
+            uow.events.append(
+                self._event(
+                    EventType.PLAN_NODE_COMPLETED,
+                    run,
+                    node.plan_node_id,
+                    {
+                        "plan_node_id": node.plan_node_id,
+                        "acceptance": "intermediate_result",
+                        "attempt_id": attempt_id,
+                    },
+                )
+            )
+            uow.commit()
+            return run
+
     def interrupt_attempt(
         self,
         attempt_id: ID,
@@ -712,16 +754,29 @@ class Orchestrator:
                     {"plan_node_id": node.plan_node_id, "reason": reason},
                 )
             )
-            if len(attempts) >= self._attempt_budget:
+            retry_count = (
+                sum(item.plan_node_id == node.plan_node_id for item in attempts)
+                if self._execution_workspace is not None
+                else len(attempts)
+            )
+            if retry_count >= self._attempt_budget:
                 exhausted_reason = (
-                    f"safe retry exhausted Attempt budget: consumed={len(attempts)}, "
+                    f"safe retry exhausted Attempt budget: consumed={retry_count}, "
                     f"limit={self._attempt_budget}; {reason}"
                 )
-                failed_run = run.fail(exhausted_reason, at=self._clock())
+                failed_run = (
+                    run.pause()
+                    if self._execution_workspace is not None
+                    else run.fail(exhausted_reason, at=self._clock())
+                )
                 uow.states.put_run(failed_run)
                 uow.events.append(
                     self._event(
-                        EventType.RUN_FAILED,
+                        (
+                            EventType.RUN_PAUSED
+                            if self._execution_workspace is not None
+                            else EventType.RUN_FAILED
+                        ),
                         failed_run,
                         run.run_id,
                         {"run_id": run.run_id, "reason": exhausted_reason},
@@ -1250,10 +1305,19 @@ class Orchestrator:
         if not source_node_ids:
             return ()
         with self._uow_factory() as uow:
+            latest = {
+                attempt.plan_node_id: attempt.attempt_id
+                for attempt in sorted(
+                    uow.states.list_attempts(context.run.run_id), key=lambda item: item.sequence
+                )
+                if attempt.status is AttemptStatus.SUCCEEDED
+                and attempt.plan_node_id in source_node_ids
+            }
             artifacts = tuple(
                 artifact
                 for artifact in uow.states.list_artifacts_for_run(context.run.run_id)
                 if artifact.plan_node_id in source_node_ids
+                and artifact.attempt_id == latest.get(artifact.plan_node_id)
                 and artifact.kind in {ArtifactKind.CANDIDATE, ArtifactKind.PATCH}
             )
         return self._artifact_input_snapshots(artifacts)
@@ -1265,6 +1329,7 @@ class Orchestrator:
     ) -> dict[str, JsonValue]:
         if context.plan_node.kind is PlanNodeKind.EVALUATOR:
             return {
+                **self._code_task_context(context),
                 "approved_design_document": context.plan_revision.design_document,
                 "candidate_branches": _candidate_branch_context(
                     context.plan_revision,
@@ -1272,7 +1337,10 @@ class Orchestrator:
                 ),
             }
         if context.plan_node.kind is not PlanNodeKind.MERGE:
-            return {"approved_design_document": context.plan_revision.design_document}
+            return {
+                **self._code_task_context(context),
+                "approved_design_document": context.plan_revision.design_document,
+            }
         selected = _required_selected_branch(
             context.plan_revision,
             context.plan_node.plan_node_id,
@@ -1354,6 +1422,7 @@ class Orchestrator:
                 f"selected Branch {selected.branch_id} has no selected Artifact content"
             )
         return {
+            **self._code_task_context(context),
             "approved_design_document": context.plan_revision.design_document,
             "branch_selection": {
                 "selected_branch_id": selected.branch_id,
@@ -1365,6 +1434,38 @@ class Orchestrator:
                 "selected_artifact_ids": selected_json,
             },
             "selected_artifacts": contents,
+        }
+
+    def _code_task_context(self, context: _ExecutionContext) -> dict[str, JsonValue]:
+        if self._execution_workspace is None:
+            return {}
+        with self._uow_factory() as uow:
+            checks = tuple(
+                check
+                for check in uow.states.list_check_runs(context.run.run_id)
+                if check.plan_node_id == context.plan_node.plan_node_id
+                and (check.result is None or not check.result.passed)
+            )[-3:]
+        failures: list[JsonValue] = [
+            {
+                "check_id": check.check_id,
+                "attempt_id": check.attempt_id,
+                "reason": (
+                    check.failure_reason if check.result is None else check.result.failure_reason
+                ),
+                "output": None if check.result is None else (check.result.output or "")[-16000:],
+            }
+            for check in checks
+        ]
+        return {
+            "code_execution": True,
+            "gate_failures": failures,
+            "workspace_semantics": (
+                "The host prepares an isolated worktree containing applicable predecessor code. "
+                "Continue from its files, resolve merge conflicts if present, and submit a concise "
+                "candidate report. The host captures the actual code, not just the report. "
+                "Only the final node runs the approved behavioral Gate."
+            ),
         }
 
     def _artifact_input_snapshots(
@@ -1505,12 +1606,29 @@ class Orchestrator:
                 )
             uow.states.put_attempt(succeeded)
             uow.states.put_plan_revision(plan)
+            outcome: dict[str, JsonValue] = {
+                "attempt_id": attempt.attempt_id,
+                "summary": result.summary,
+            }
+            if self._execution_workspace is not None:
+                for candidate in result.artifacts:
+                    if candidate.media_type != "application/vnd.ehai.code-snapshot+json":
+                        continue
+                    delivery = json_loads(candidate.content.decode("utf-8"))
+                    if not isinstance(delivery, dict):
+                        raise OrchestrationError("Host code snapshot must be an object")
+                    delivery["diff_artifact_ids"] = [
+                        artifact.artifact_id
+                        for artifact in artifacts
+                        if artifact.name == "solution.patch"
+                    ]
+                    outcome["code_delivery"] = delivery
             uow.events.append(
                 self._event(
                     EventType.ATTEMPT_SUCCEEDED,
                     run,
                     attempt.attempt_id,
-                    {"attempt_id": attempt.attempt_id, "summary": result.summary},
+                    outcome,
                 )
             )
             uow.events.append(
@@ -1562,6 +1680,8 @@ class Orchestrator:
         *,
         branch_local: bool,
     ) -> Run:
+        if not check_specs:
+            return self._accept_intermediate(run_id, attempt_id)
         context, prepared = self._start_checks(run_id, attempt_id, artifacts, check_specs)
         check_runs: list[CheckRun] = []
         for spec, running_check in prepared:
@@ -1593,12 +1713,33 @@ class Orchestrator:
             at=self._clock(),
         )
         if not decision.passed:
+            repair = self._execution_workspace is not None
             self._record_gate_failure(
                 run_id,
                 terminal_checks,
                 decision,
-                fail_run=not branch_local,
+                fail_run=not branch_local and not repair,
             )
+            if repair:
+                with self._uow_factory() as uow:
+                    run = _required_run(uow, run_id)
+                    plan = _required_plan(uow, run.plan_revision_id)
+                    node = _required_node(plan, decision.plan_node_id)
+                    uow.states.put_plan_revision(_replace_node(plan, node.retry()))
+                    uow.events.append(
+                        self._event(
+                            EventType.PLAN_NODE_READIED,
+                            run,
+                            node.plan_node_id,
+                            {
+                                "plan_node_id": node.plan_node_id,
+                                "reason": "repair the candidate against the unchanged Gate",
+                                "gate_id": decision.gate_id,
+                            },
+                        )
+                    )
+                    uow.commit()
+                    return run
             if branch_local:
                 with self._uow_factory() as uow:
                     return _required_run(uow, run_id)
@@ -1665,9 +1806,22 @@ class Orchestrator:
             attempt=attempt,
             plan_node=verifying_node,
             artifacts=evidence_artifacts,
-            workspace=self._workspace,
+            workspace=(
+                self._workspace
+                if self._execution_workspace is None
+                else self._required_execution_workspace(attempt_id)
+            ),
+            code_workspace=self._execution_workspace is not None,
         )
         return context, tuple(zip(check_specs, check_runs, strict=True))
+
+    def _required_execution_workspace(self, attempt_id: ID) -> Path:
+        if self._execution_workspace is None:
+            raise OrchestrationError("Code execution workspace resolver is missing")
+        workspace = self._execution_workspace(attempt_id)
+        if workspace is None:
+            raise OrchestrationError(f"Code workspace for Attempt {attempt_id} is missing")
+        return workspace
 
     def _record_completion(
         self,
@@ -2080,10 +2234,8 @@ def _required_check_specs(
     required_specs = tuple(
         specs_by_id[check_id] for check_id in node.required_check_ids if check_id in specs_by_id
     )
-    if (
-        not required_specs
-        or len(required_specs) != len(node.required_check_ids)
-        or any(not spec.required for spec in required_specs)
+    if len(required_specs) != len(node.required_check_ids) or any(
+        not spec.required for spec in required_specs
     ):
         raise OrchestrationError(
             f"PlanNode {node.plan_node_id} required CheckSpecs are missing or optional"
@@ -2211,8 +2363,6 @@ def _is_final_completion(plan: PlanRevision, completed_node: PlanNode) -> bool:
         return False
     if len(plan.nodes) == 1:
         return True
-    if plan.branches and completed_node.kind is not PlanNodeKind.MERGE:
-        return False
     pruned_branch_node_ids = {
         node_id
         for branch in plan.branches

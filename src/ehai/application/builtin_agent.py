@@ -52,27 +52,33 @@ class AgentBudgetExceededError(BuiltinAgentError):
 
 @dataclass(frozen=True, slots=True)
 class AgentBudget:
-    """Finite Step, Tool, wall-clock, and output limits for one Turn."""
+    """Execution safety limits and a bounded model-input history window."""
 
-    max_steps: int
-    max_tool_calls: int
+    max_steps: int | None
+    max_tool_calls: int | None
     wall_clock_seconds: float | None
-    max_output_bytes: int
+    max_output_bytes: int | None
+    max_history_steps: int | None = None
 
     def __post_init__(self) -> None:
         for name in ("max_steps", "max_tool_calls", "max_output_bytes"):
             value = getattr(self, name)
-            if type(value) is not int or value < 1:
-                raise ValueError(f"AgentBudget {name} must be a positive integer")
+            if value is not None and (type(value) is not int or value < 1):
+                raise ValueError(f"AgentBudget {name} must be a positive integer or None")
         if self.wall_clock_seconds is not None and (
             not isinstance(self.wall_clock_seconds, (int, float))
             or isinstance(self.wall_clock_seconds, bool)
             or self.wall_clock_seconds <= 0
         ):
             raise ValueError("AgentBudget wall_clock_seconds must be positive or None")
+        if self.max_history_steps is not None and (
+            type(self.max_history_steps) is not int or self.max_history_steps < 1
+        ):
+            raise ValueError("AgentBudget max_history_steps must be a positive integer or None")
 
 
 DEFAULT_AGENT_BUDGET = AgentBudget(32, 64, 600.0, 8 * 1024 * 1024)
+LONG_RUNNING_AGENT_BUDGET = AgentBudget(None, None, None, None, max_history_steps=16)
 
 
 class ModelRole(StrEnum):
@@ -485,19 +491,29 @@ class BuiltinSession:
                 pending.pop(call_id, None)
         return next(reversed(pending.values()), None) if pending else None
 
-    def model_messages(self) -> tuple[ModelMessage, ...]:
-        history, _, _ = _replayed_messages(self.events)
+    def model_messages(self, *, max_history_steps: int | None = None) -> tuple[ModelMessage, ...]:
+        history, _, _, _ = _replayed_messages(self.events, max_history_steps=max_history_steps)
         return history
 
-    def last_provider_response_id(self) -> str | None:
+    def last_provider_response_id(self, *, max_history_steps: int | None = None) -> str | None:
         """Return the latest durable provider continuation handle."""
-        _, response_id, _ = _replayed_messages(self.events)
-        return response_id
+        _, response_id, _, history_truncated = _replayed_messages(
+            self.events,
+            max_history_steps=max_history_steps,
+        )
+        return None if history_truncated else response_id
 
-    def continuation_messages(self) -> tuple[ModelMessage, ...]:
+    def continuation_messages(
+        self,
+        *,
+        max_history_steps: int | None = None,
+    ) -> tuple[ModelMessage, ...]:
         """Return model inputs after the latest provider Response handle."""
-        history, response_id, start = _replayed_messages(self.events)
-        return history if response_id is None else history[start:]
+        history, response_id, start, history_truncated = _replayed_messages(
+            self.events,
+            max_history_steps=max_history_steps,
+        )
+        return history if response_id is None or history_truncated else history[start:]
 
     def close(self) -> None:
         self._closed = True
@@ -691,7 +707,7 @@ class BuiltinAgentLoop:
         while True:
             scope.cancellation.raise_if_cancelled()
             self._check_wall_clock(started_at)
-            if step_count >= self.budget.max_steps:
+            if self.budget.max_steps is not None and step_count >= self.budget.max_steps:
                 raise AgentBudgetExceededError("Built-in Agent Step budget exhausted")
             if self.before_step_messages is not None:
                 for message in self.before_step_messages(session.agent_session_ref_id):
@@ -708,10 +724,14 @@ class BuiltinAgentLoop:
             step_start = len(session.events)
             session.append(attempt_id, BuiltinSessionEventType.STEP_STARTED, {})
             request = ModelRequest(
-                session.model_messages(),
+                session.model_messages(max_history_steps=self.budget.max_history_steps),
                 self.tool_set.definitions,
-                input_messages=session.continuation_messages(),
-                previous_response_id=session.last_provider_response_id(),
+                input_messages=session.continuation_messages(
+                    max_history_steps=self.budget.max_history_steps,
+                ),
+                previous_response_id=session.last_provider_response_id(
+                    max_history_steps=self.budget.max_history_steps,
+                ),
                 tool_choice=self.tool_choice,
             )
             response = await self.model_client.complete(request)
@@ -719,8 +739,7 @@ class BuiltinAgentLoop:
             output_bytes += len(response.content.encode("utf-8"))
             if response.final_text is not None:
                 output_bytes += len(response.final_text.encode("utf-8"))
-            if output_bytes > self.budget.max_output_bytes:
-                raise AgentBudgetExceededError("Built-in Agent output byte budget exhausted")
+            self._check_output_budget(output_bytes)
             assistant = ModelMessage(
                 ModelRole.ASSISTANT,
                 response.content,
@@ -738,7 +757,10 @@ class BuiltinAgentLoop:
                 ),
             )
             if response.tool_calls:
-                if tool_call_count + len(response.tool_calls) > self.budget.max_tool_calls:
+                if (
+                    self.budget.max_tool_calls is not None
+                    and tool_call_count + len(response.tool_calls) > self.budget.max_tool_calls
+                ):
                     raise AgentBudgetExceededError("Built-in Agent Tool Call budget exhausted")
                 for index, call in enumerate(response.tool_calls):
                     self._check_wall_clock(started_at)
@@ -840,7 +862,7 @@ class BuiltinAgentLoop:
             raise AgentBudgetExceededError("Built-in Agent wall-clock budget exhausted")
 
     def _check_output_budget(self, output_bytes: int) -> None:
-        if output_bytes > self.budget.max_output_bytes:
+        if self.budget.max_output_bytes is not None and output_bytes > self.budget.max_output_bytes:
             raise AgentBudgetExceededError("Built-in Agent output byte budget exhausted")
 
     @staticmethod
@@ -1035,18 +1057,34 @@ def _turn_messages(document: Mapping[str, JsonValue]) -> tuple[ModelMessage, ...
 
 def _replayed_messages(
     events: tuple[BuiltinSessionEvent, ...],
-) -> tuple[tuple[ModelMessage, ...], str | None, int]:
+    *,
+    max_history_steps: int | None = None,
+) -> tuple[tuple[ModelMessage, ...], str | None, int, bool]:
+    _require_history_window(max_history_steps)
     history: list[ModelMessage] = []
+    initial_messages: tuple[ModelMessage, ...] | None = None
+    completed_steps: list[tuple[tuple[ModelMessage, ...], tuple[ModelMessage, ...]]] = []
+    progress_messages: list[ModelMessage] = []
+    step_progress: tuple[ModelMessage, ...] = ()
     pending_step: list[ModelMessage] = []
     response_id: str | None = None
     pending_continuation_start: int | None = None
     continuation_start = 0
     for event in events:
         if event.type is BuiltinSessionEventType.TURN_STARTED:
-            history.extend(_turn_messages(event.payload))
+            messages = _turn_messages(event.payload)
+            history.extend(messages)
+            if initial_messages is None:
+                initial_messages = messages
+            else:
+                progress_messages.extend(messages)
         elif event.type is BuiltinSessionEventType.MESSAGE_RECEIVED:
-            history.append(_message_from_document(event.payload))
+            message = _message_from_document(event.payload)
+            history.append(message)
+            progress_messages.append(message)
         elif event.type is BuiltinSessionEventType.STEP_STARTED:
+            step_progress = tuple(progress_messages)
+            progress_messages = []
             pending_step = []
             pending_continuation_start = None
         elif event.type is BuiltinSessionEventType.MODEL_MESSAGE:
@@ -1061,11 +1099,54 @@ def _replayed_messages(
             pending_step.append(_tool_error_message(event.payload))
         elif event.type is BuiltinSessionEventType.STEP_ENDED:
             history.extend(pending_step)
+            completed_steps.append((step_progress, tuple(pending_step)))
             if pending_continuation_start is not None:
                 continuation_start = pending_continuation_start
+            step_progress = ()
             pending_step = []
             pending_continuation_start = None
-    return tuple(history), response_id, continuation_start
+    if max_history_steps is None:
+        return tuple(history), response_id, continuation_start, False
+    bounded_history, bounded_continuation_start, history_truncated = _bounded_model_history(
+        initial_messages or (),
+        completed_steps,
+        step_progress if step_progress else tuple(progress_messages),
+        max_history_steps,
+        continuation_start,
+    )
+    return bounded_history, response_id, bounded_continuation_start, history_truncated
+
+
+def _bounded_model_history(
+    initial_messages: tuple[ModelMessage, ...],
+    completed_steps: list[tuple[tuple[ModelMessage, ...], tuple[ModelMessage, ...]]],
+    latest_progress: tuple[ModelMessage, ...],
+    max_history_steps: int,
+    continuation_start: int,
+) -> tuple[tuple[ModelMessage, ...], int, bool]:
+    omitted_steps = max(len(completed_steps) - max_history_steps, 0)
+    retained_steps = completed_steps[omitted_steps:]
+    messages: list[ModelMessage] = list(initial_messages)
+    for progress, step_messages in retained_steps:
+        messages.extend(progress)
+        messages.extend(step_messages)
+    messages.extend(latest_progress)
+    omitted_messages = sum(
+        len(progress) + len(step_messages)
+        for progress, step_messages in completed_steps[:omitted_steps]
+    )
+    return (
+        tuple(messages),
+        max(0, continuation_start - omitted_messages),
+        omitted_steps > 0,
+    )
+
+
+def _require_history_window(max_history_steps: int | None) -> None:
+    if max_history_steps is not None and (
+        type(max_history_steps) is not int or max_history_steps < 1
+    ):
+        raise ValueError("max_history_steps must be a positive integer or None")
 
 
 def _turn_usage(

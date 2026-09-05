@@ -175,6 +175,12 @@ class PlanNode:
         """Move a candidate into Check execution."""
         return self._transition(PlanNodeStatus.VERIFYING, allowed_from=(PlanNodeStatus.CANDIDATE,))
 
+    def accept_intermediate(self) -> Self:
+        """Accept an unchecked intermediate result without satisfying the Goal."""
+        if self.required_check_ids:
+            raise PlanTransitionError("A node with required Checks must pass its Gate")
+        return self._transition(PlanNodeStatus.COMPLETED, allowed_from=(PlanNodeStatus.CANDIDATE,))
+
     def complete(self, decision: GateDecision) -> Self:
         """Complete a verifying node only from a passing, evidenced Gate."""
         owner = f"PlanNode {self.plan_node_id}"

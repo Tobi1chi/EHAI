@@ -32,6 +32,7 @@ from ehai.application.builtin_runtime import (
 )
 from ehai.application.execution_contracts import OPENAI_CREDENTIAL_REF
 from ehai.application.planner import (
+    COMMAND_EXIT_ZERO_CRITERION,
     ExplorationBudget,
     PlanningReply,
     PlanProposal,
@@ -72,6 +73,10 @@ _PLANNER_SYSTEM_PROMPT = "\n".join(
         "Use set_plan_design to record requirements, scope, exclusions, assumptions,",
         "implementation design, and how requirements will be verified within authorized checks.",
         "Keep the design and graph consistent; describe task inputs, outputs and file boundaries.",
+        "Every Worker node instruction must be implementation-ready for a smaller model: name the",
+        "files or modules to inspect/change, exact interfaces or symbols, concrete ordered steps,",
+        "dependencies and upstream inputs, expected outputs, and the local choices the Worker",
+        "may make.",
         "Use the user's discussion history and current plan, including external review feedback.",
         "In discussion mode, ask_user ends this turn with a clarification or review response",
         "without creating or approving a plan. Do not force a graph before requirements are clear.",
@@ -81,8 +86,25 @@ _PLANNER_SYSTEM_PROMPT = "\n".join(
         "node required dependencies are derived from them deterministically,",
         "so never maintain a second dependency list.",
         "Choose a linear dependency chain when the Goal is certain,",
-        "or a bounded exploration structure (fork, two or more branches,",
-        "evaluator, merge) when approaches must be compared.",
+        "or use a general DAG when work can be genuinely parallel: omit artificial edges between",
+        "independent cooperating tasks and converge them at one integration node that depends",
+        "on all.",
+        "Use a bounded exploration structure (fork, two or more mutually alternative branches,",
+        "evaluator, merge) only when approaches must be compared; state evaluator selection",
+        "criteria.",
+        "For coding alternatives, candidate Workers must implement real code in their isolated",
+        "worktrees, not merely return competing design suggestions unless the user asks for that.",
+        "The host, not Workers, launches tasks, schedules dependencies, prunes branches, and",
+        "prepares merged upstream code. Do not instruct a fork or merge Worker to dispatch Agents.",
+        "Preserve exact user-supplied literals, signatures, punctuation and whitespace in both",
+        "the design and final Gate; do not normalize them or invent different assumptions.",
+        "The graph must have one final work or merge integration sink and every task must feed it.",
+        "The final sink owns the required completion checks; intermediate Workers do not need",
+        "fake Gates.",
+        "When command:exit-zero is selected, call set_final_gate with the exact behavioral argv",
+        "sequence.",
+        "If host_check_configuration contains an explicit command argv, use that exact argv.",
+        "Do not invent a generic lint or unit-test checklist as the final behavioral gate.",
         "Every accepted or rejected graph mutation counts toward the plan",
         "operation budget; inspect_plan and finish_plan are free.",
         "finish_plan runs full validation and returns issues with local-key",
@@ -195,7 +217,12 @@ class BuiltinPlannerAdapter:
             base,
             context,
         )
-        template = asyncio.run(self._build_template(input_document))
+        template = asyncio.run(
+            self._build_template(
+                input_document,
+                require_final_gate=COMMAND_EXIT_ZERO_CRITERION in normalized_criteria,
+            )
+        )
         return build_plan_proposal(
             goal,
             normalized_criteria,
@@ -218,7 +245,13 @@ class BuiltinPlannerAdapter:
         document["discussion_history"] = [dict(item) for item in history]
         document["user_message"] = message
         document["current_design_document"] = None if base is None else base.design_document
-        template, answer, session_id = asyncio.run(self._run_planner(document, discussion=True))
+        template, answer, session_id = asyncio.run(
+            self._run_planner(
+                document,
+                discussion=True,
+                require_final_gate=COMMAND_EXIT_ZERO_CRITERION in normalized,
+            )
+        )
         proposal = (
             None
             if template is None
@@ -228,18 +261,32 @@ class BuiltinPlannerAdapter:
         )
         return PlanningReply(answer, session_id, proposal)
 
-    async def _build_template(self, input_document: Mapping[str, JsonValue]) -> PlanTemplate:
-        template, _, _ = await self._run_planner(input_document, discussion=False)
+    async def _build_template(
+        self,
+        input_document: Mapping[str, JsonValue],
+        *,
+        require_final_gate: bool,
+    ) -> PlanTemplate:
+        template, _, _ = await self._run_planner(
+            input_document,
+            discussion=False,
+            require_final_gate=require_final_gate,
+        )
         if template is None:
             raise BuiltinPlannerError("Proposal finished without a plan")
         return template
 
     async def _run_planner(
-        self, input_document: Mapping[str, JsonValue], *, discussion: bool
+        self,
+        input_document: Mapping[str, JsonValue],
+        *,
+        discussion: bool,
+        require_final_gate: bool,
     ) -> tuple[PlanTemplate | None, str, ID]:
         graph = PlanGraphToolRuntime(
             self._budget,
             planner_event_types=("planner.responses.completed",),
+            require_final_gate=require_final_gate,
         )
         design: dict[str, str] = {}
         answer: dict[str, str] = {}

@@ -33,6 +33,7 @@ class CheckContext:
     plan_node: PlanNode
     artifacts: tuple[Artifact, ...]
     workspace: Path
+    code_workspace: bool = False
 
     def __post_init__(self) -> None:
         if not isinstance(self.run, Run):

@@ -52,11 +52,13 @@ class WorkspaceManager:
         base_workspace: Path,
         owned_root: Path,
         clock: Callable[[], datetime] = utc_now,
+        preserve_completed: bool = False,
     ) -> None:
         self.database = database
         self.base_workspace = base_workspace.resolve()
         self.owned_root = owned_root.resolve()
         self.clock = clock
+        self.preserve_completed = preserve_completed
 
     def allocate(
         self,
@@ -141,6 +143,10 @@ class WorkspaceManager:
         stored = self._load_ref(reference.workspace_ref_id)
         if stored != reference or stored.ownership_token != reference.ownership_token:
             raise ValueError("Workspace ownership record does not match cleanup request")
+        if self.preserve_completed:
+            preserved = lease.preserve(at=self.clock())
+            self._update_lease(preserved, preserved_path=reference.path)
+            return preserved
         dirty = subprocess.run(
             ["git", "-C", str(path), "status", "--porcelain"],
             check=True,

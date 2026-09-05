@@ -219,7 +219,7 @@ class WorkerRequest:
         if not isinstance(completion_contract, CompletionContract):
             raise ValueError("WorkerRequest completion_contract must be a CompletionContract")
         checks = tuple(required_check_specs)
-        if not checks or not all(isinstance(check, CheckSpec) for check in checks):
+        if not all(isinstance(check, CheckSpec) for check in checks):
             raise ValueError("WorkerRequest required_check_specs must contain CheckSpecs")
         if not isinstance(context, Mapping):
             raise ValueError("WorkerRequest context must be a JSON object")
@@ -252,7 +252,7 @@ class WorkerRequest:
             raise ValueError(f"{owner} required CheckSpecs must not contain duplicate IDs")
         if set(check_ids) != set(plan_node.required_check_ids):
             raise ValueError(f"{owner} required CheckSpecs do not match its PlanNode")
-        if set(check_ids) != set(completion_contract.required_check_ids):
+        if not set(check_ids).issubset(completion_contract.required_check_ids):
             raise ValueError(f"{owner} required CheckSpecs do not match its CompletionContract")
         if any(not check.required for check in checks):
             raise ValueError(f"{owner} required CheckSpecs cannot be optional")

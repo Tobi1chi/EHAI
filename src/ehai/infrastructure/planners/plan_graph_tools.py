@@ -34,6 +34,7 @@ _MUTATION_TOOLS = (
     "add_plan_edge",
     "remove_plan_edge",
     "set_plan_branch",
+    "set_final_gate",
 )
 
 
@@ -106,15 +107,20 @@ class PlanGraphToolRuntime:
         budget: ExplorationBudget,
         *,
         planner_event_types: tuple[str, ...] = (),
+        require_final_gate: bool = False,
     ) -> None:
         self._budget = budget
         self._planner_event_types = planner_event_types
+        if not isinstance(require_final_gate, bool):
+            raise TypeError("require_final_gate must be a boolean")
+        self._require_final_gate = require_final_gate
         self._nodes: dict[str, _DraftNode] = {}
         self._edges: dict[tuple[str, str, EdgeType, str | None], _DraftEdge] = {}
         self._branches: dict[str, _DraftBranch] = {}
         self._operations_used = 0
         self._validation_failures = 0
         self._finished_template: PlanTemplate | None = None
+        self._final_gate_argv: tuple[str, ...] = ()
 
     @property
     def operations_used(self) -> int:
@@ -393,11 +399,42 @@ class PlanGraphToolRuntime:
             )
         self._branches[branch_key] = _DraftBranch(branch_key, label, fork, node_keys, merge)
 
+    def _tool_set_final_gate(self, arguments: Mapping[str, JsonValue]) -> None:
+        value = arguments.get("argv")
+        if not isinstance(value, list) or not value:
+            raise _ToolRejection(
+                PlanIssue(
+                    "INVALID_ARGUMENT",
+                    "final_gate.argv",
+                    "argv must be a non-empty array of command arguments",
+                )
+            )
+        if any(not isinstance(argument, str) for argument in value):
+            raise _ToolRejection(
+                PlanIssue(
+                    "INVALID_ARGUMENT",
+                    "final_gate.argv",
+                    "argv must contain only strings",
+                )
+            )
+        argv = tuple(argument for argument in value if isinstance(argument, str))
+        if any(not argument or "\x00" in argument for argument in argv):
+            raise _ToolRejection(
+                PlanIssue(
+                    "INVALID_ARGUMENT",
+                    "final_gate.argv",
+                    "argv must contain non-empty strings without null bytes",
+                )
+            )
+        self._final_gate_argv = argv
+
     def _inspect(self) -> dict[str, JsonValue]:
         return {
             "nodes": [_node_document(node) for node in self._nodes.values()],
             "edges": [_edge_document(edge) for edge in self._edges.values()],
             "branches": [_branch_document(branch) for branch in self._branches.values()],
+            "final_gate_argv": list(self._final_gate_argv),
+            "require_final_gate": self._require_final_gate,
             "operations_used": self._operations_used,
             "operations_remaining": MAX_PLAN_OPERATIONS - self._operations_used,
             "validation_failures": self._validation_failures,
@@ -494,6 +531,45 @@ class PlanGraphToolRuntime:
                         missing,
                     )
                 )
+        terminal_keys = self._terminal_node_keys()
+        if len(terminal_keys) != 1:
+            issues.append(
+                PlanIssue(
+                    "SINGLE_FINAL_SINK_REQUIRED",
+                    "graph",
+                    "The plan must have exactly one terminal integration node; "
+                    f"found {list(terminal_keys)}",
+                    terminal_keys,
+                )
+            )
+        else:
+            final_node = self._nodes[terminal_keys[0]]
+            if final_node.kind in {PlanNodeKind.FORK, PlanNodeKind.EVALUATOR}:
+                issues.append(
+                    PlanIssue(
+                        "FINAL_SINK_INVALID",
+                        f"nodes.{final_node.key}",
+                        "The single terminal node must be a work or merge integration node",
+                        (final_node.key,),
+                    )
+                )
+            if any(terminal_keys[0] in branch.nodes for branch in self._branches.values()):
+                issues.append(
+                    PlanIssue(
+                        "FINAL_SINK_PRUNABLE",
+                        f"nodes.{terminal_keys[0]}",
+                        "The final integration node cannot be an exploration branch interior",
+                        (terminal_keys[0],),
+                    )
+                )
+        if self._require_final_gate and not self._final_gate_argv:
+            issues.append(
+                PlanIssue(
+                    "FINAL_GATE_REQUIRED",
+                    "final_gate",
+                    "Set the final behavioral gate with set_final_gate before finishing",
+                )
+            )
         issues.extend(self._validate_cycle())
         fork_nodes = {branch.fork for branch in self._branches.values()}
         merge_nodes = {branch.merge for branch in self._branches.values()}
@@ -738,6 +814,10 @@ class PlanGraphToolRuntime:
             if edge.target == node_key and edge.edge_type is EdgeType.DEPENDENCY
         )
 
+    def _terminal_node_keys(self) -> tuple[str, ...]:
+        sources = {edge.source for edge in self._edges.values()}
+        return tuple(key for key in self._nodes if key not in sources)
+
     def _usage(self) -> ExplorationUsage:
         groups: dict[tuple[str, str], int] = {}
         for branch in self._branches.values():
@@ -748,6 +828,7 @@ class PlanGraphToolRuntime:
         return ExplorationUsage(width=width, depth=depth, attempts=len(self._nodes))
 
     def _compose_template(self) -> PlanTemplate:
+        final_node_key = self._terminal_node_keys()[0]
         dependencies: dict[str, list[str]] = {}
         for edge in self._edges.values():
             if edge.edge_type is EdgeType.DEPENDENCY:
@@ -758,6 +839,7 @@ class PlanGraphToolRuntime:
                 title=node.title,
                 instruction=node.instruction,
                 kind=node.kind,
+                require_completion_checks=node.key == final_node_key,
                 required_dependency_keys=tuple(dependencies.get(node.key, ())),
             )
             for node in self._nodes.values()
@@ -790,6 +872,8 @@ class PlanGraphToolRuntime:
             budget=self._budget,
             usage=usage,
             planner_event_types=self._planner_event_types,
+            final_node_key=final_node_key,
+            final_gate_argv=self._final_gate_argv,
         )
 
 
@@ -943,6 +1027,11 @@ _LABEL_PROPERTY: dict[str, JsonValue] = {"type": "string", "minLength": 1, "maxL
 _INSTRUCTION_PROPERTY: dict[str, JsonValue] = {"type": "string", "minLength": 1, "maxLength": 4000}
 _NODE_KIND_PROPERTY: dict[str, JsonValue] = {"type": "string", "enum": list(_NODE_KINDS)}
 _EDGE_TYPE_PROPERTY: dict[str, JsonValue] = {"type": "string", "enum": list(_EDGE_TYPES)}
+_FINAL_GATE_ARG_PROPERTY: dict[str, JsonValue] = {
+    "type": "string",
+    "minLength": 1,
+    "maxLength": 4096,
+}
 
 _NODE_PARAMETERS: dict[str, JsonValue] = {
     "key": _KEY_PROPERTY,
@@ -958,6 +1047,7 @@ _TOOL_ORDER = (
     "add_plan_edge",
     "remove_plan_edge",
     "set_plan_branch",
+    "set_final_gate",
     "inspect_plan",
     "finish_plan",
 )
@@ -1050,6 +1140,23 @@ _TOOL_DEFINITIONS: dict[str, ToolDefinition] = {
                 },
                 "merge_node_key": {**_KEY_PROPERTY, "type": ["string", "null"]},
                 "remove": {"type": "boolean"},
+            },
+        },
+    ),
+    "set_final_gate": ToolDefinition(
+        "set_final_gate",
+        "Set the final behavioral Command Check as an argv array, never shell text.",
+        {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["argv"],
+            "properties": {
+                "argv": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 128,
+                    "items": _FINAL_GATE_ARG_PROPERTY,
+                }
             },
         },
     ),

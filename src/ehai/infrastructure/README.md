@@ -20,8 +20,25 @@ Agent 执行 Connector 管理 Session 和执行协议，未来服务/事件 Conn
 | [`artifacts/`](artifacts/) | 文件系统 Artifact Store；按不可变 ID 保存并校验内容。 |
 | [`checks/`](checks/) | Artifact、command 和 semantic Check Adapter。 |
 | [`workers/`](workers/) | Fake、Built-in、Codex CLI、Codex App Server Connector 及 WorkerAdapter→Runtime Connector 桥。 |
+| [`workers/code.py`](workers/code.py) | `CodeRuntimeConnector`；在 Worker Connector 外包住实际代码 worktree 的准备、上游合并、快照和 diff 捕获。 |
+| [`code_workspaces.py`](code_workspaces.py) | `GitCodeWorkspace`；固定 Run base commit，在 EHAI-owned Git worktree 中合并上游代码并保存不可变代码结果。 |
 | [`planners/`](planners/) | Built-in Responses 与 Codex Planner Adapter；只返回 Application `PlanProposal`。 |
 | [`workspaces.py`](workspaces.py) | Workspace Manager；分配 EHAI-owned Git worktree 或受控本地 Workspace，并管理 Lease 清理。 |
+
+## Code Execution
+
+`CodeRuntimeConnector` 实现现有 Runtime Connector 边界，不让模型文字或候选 Artifact 冒充实际代码。它在
+`start` 前确认 Attempt 拥有 EHAI 分配的隔离 worktree，使用 `GitCodeWorkspace` 固定 Run 的 base commit，
+把依赖节点和已选择分支的 `GitCodeResult.commit` 合并进当前 worktree；上游缺失或 Git 冲突会阻止继续。
+
+候选事件到达时，Connector 从真实 worktree 调用 `capture_result`，生成受 host 控制的代码快照和 `solution.patch`。
+`GitCodeResult` 同时记录 repository、worktree、base/结果 commit、diff 路径、变更路径和摘要。关闭、恢复和
+最终交付保留可核对的 worktree 与 metadata；最终获批行为 Gate 运行在最终 integration 节点准备好的实际合并
+工作区，不运行在模型的文本报告上。
+
+Planner 的有限图/Agent 预算不等于 Worker 的执行预算。默认 Built-in Worker 使用
+`LONG_RUNNING_AGENT_BUDGET`；Runtime 的 no-progress 和绝对 deadline 也可保持未设置，长任务仍由取消、
+heartbeat、显式 deadline、Provider 终态和恢复策略收敛。
 
 ## 安全、资源与恢复边界
 
