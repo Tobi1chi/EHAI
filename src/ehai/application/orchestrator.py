@@ -735,19 +735,20 @@ class Orchestrator:
                     {"plan_node_id": node.plan_node_id, "reason": reason},
                 )
             )
-            if not branch_local:
-                paused = run.pause()
-                uow.states.put_run(paused)
+            result = run
+            if not branch_local and run.status is RunStatus.RUNNING:
+                result = run.pause()
+                uow.states.put_run(result)
                 uow.events.append(
                     self._event(
                         EventType.RUN_PAUSED,
-                        paused,
+                        result,
                         run.run_id,
                         {"run_id": run.run_id, "reason": reason},
                     )
                 )
             uow.commit()
-            return run if branch_local else paused
+            return result
 
     def retry_attempt(
         self,

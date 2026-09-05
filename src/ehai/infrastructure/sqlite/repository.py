@@ -696,7 +696,10 @@ class SQLiteCurrentStateRepository:
                     DispatchWorkStatus.CLAIMED,
                     DispatchWorkStatus.COMPLETED,
                 },
-                DispatchWorkStatus.COMPLETED: {DispatchWorkStatus.COMPLETED},
+                DispatchWorkStatus.COMPLETED: {
+                    DispatchWorkStatus.PENDING,
+                    DispatchWorkStatus.COMPLETED,
+                },
             }
             if work.status not in allowed[existing.status]:
                 raise PersistenceConflictError(

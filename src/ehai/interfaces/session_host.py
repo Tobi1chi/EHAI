@@ -332,14 +332,11 @@ def ensure_dispatch_work(database: SQLiteDatabase, run: Run) -> None:
     if run.status is not RunStatus.RUNNING:
         return
     with database.unit_of_work() as uow:
-        work = tuple(
-            item
-            for item in uow.states.list_dispatch_work()
-            if item.run_id == run.run_id
-            and item.status in {DispatchWorkStatus.PENDING, DispatchWorkStatus.CLAIMED}
-        )
+        work = tuple(item for item in uow.states.list_dispatch_work() if item.run_id == run.run_id)
         if not work:
             uow.states.put_dispatch_work(DispatchWork(run_id=run.run_id))
+        elif work[0].status is DispatchWorkStatus.COMPLETED:
+            uow.states.put_dispatch_work(work[0].requeue())
         uow.commit()
 
 

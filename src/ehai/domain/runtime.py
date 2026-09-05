@@ -164,6 +164,19 @@ class DispatchWork:
             _rehydrate_token=_REHYDRATE,
         )
 
+    def requeue(self) -> Self:
+        """Reuse a settled dispatch request when its Run is explicitly resumed."""
+        if self.status is not DispatchWorkStatus.COMPLETED:
+            raise ValueError(f"DispatchWork {self.dispatch_work_id} is not completed")
+        return replace(
+            self,
+            status=DispatchWorkStatus.PENDING,
+            claimed_at=None,
+            completed_at=None,
+            claim_owner=None,
+            lease_expires_at=None,
+        )
+
 
 def _utc(value: datetime) -> datetime:
     if value.tzinfo is None or value.utcoffset() is None:
