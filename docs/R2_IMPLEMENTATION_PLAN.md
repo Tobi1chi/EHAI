@@ -103,6 +103,44 @@ R2 不把可自由执行的 Shell 黑名单宣传成操作系统级隔离。
 - `get-result` 在执行进程退出后仍能查询成果和通过的 Gate。证据包括 `execution-v3.json`、持久轨迹、
   分支代码提交与 `solution.patch`。
 
-这证明代表性的 Built-in“方案到代码”真实链路，尚不覆盖 Gate 失败后的完整自主修复、
+以上试用证明代表性的 Built-in“方案到代码”真实链路，当时尚不覆盖 Gate 失败后的完整自主修复、
 主动关闭/重开、5–6 小时运行和 Codex App Server 实际 Worker 调用。R2 尚未标记总验收完成，
 最终产品 E2E 也尚未创建。
+
+### 固定 Gate 修复与前台暂停恢复（2026-09-05）
+
+本轮仅补充上述两条路径，不开展 Server 实跑或长时间运行。通过正常 Planner 讨论、审查修订、
+批准及前台 CLI 使用真实 `gpt-5.6-luna/low` Built-in Worker，capacity 2。用户授权发送的内容仅为
+仓库外临时示例、方案与工具输出；没有发送 EHAI 源码、预写实现答案或修改真实数据库状态制造通过。
+
+**固定 Gate 失败后修复：**
+
+- 受控方案明确要求首次候选保留未实现的示例基线，收到 `gate_failures` 后才由真实 Worker 实现；
+  这是故障恢复试用，不是自然失败场景，也不是最终产品 E2E。
+- Planner 初稿把最终 Gate 修复错误拆为两个节点，先经正常讨论入口修订，再批准单最终节点方案。
+- Run `a1595669-be53-483e-98fa-1574e4a4bc66` 的首个 Gate 因 `greet` 尚不接受 `locale` 而失败；
+  后续 Attempt 修改代码和文档后通过。两次 Check ID 和 argv 完全一致，没有修改或降低标准。
+- 最终 commit 为 `c4cf1bcd5ff4c248f1f0eb1b1feab0870e2b5cae`，正常 `get-result` 可重读通过结果。
+
+**Ctrl+C 与同一 Run 恢复：**
+
+- Run `24f8902c-31bc-497b-bcc5-2609835c0f5d` 完成 helper、README、messages 三个上游任务后，
+  在最终 Worker 审查阶段收到实际 Ctrl+C；进程退出、Run paused、最终 Attempt interrupted，
+  已整合的代码 commit `0662da71bdd649ade5e444d41e25d87e2dfb0af5` 保留。
+- 首次立即 `resume-session` 暴露 `runtime_idle`：宿主把 claimed 调度项直接重建为 pending，
+  SQLite 拒绝迁移，而宿主吞掉错误，导致新宿主在旧租约到期前无法接手。
+- 修复将释放操作交回 Runtime：只释放本宿主持有的、已收敛且停止的 Run 租约；领域和持久层支持
+  claimed → pending，保留同一调度项身份；暂停错误不再吞掉，收敛失败不标记为成功。
+- 修复后再次恢复原 Run 并发送 Ctrl+C，实际中断点落在最终 Gate 命令执行期间，检查如实记录
+  中断退出码 `3221225786`，不判成功。退出后的调度项为 pending，随后原 Run 继续并通过原 Gate。
+- 新宿主在 UTC `10:48:41` 接手，早于旧租约的 `10:52:38` 到期时间，不是等待租约自然到期。
+  Run 最终 completed，共六个 Attempt；三个已完成上游各只有原来的一个 Attempt，记录不变。
+  最终结果保留上述 commit，Gate 的 Check ID 和 argv 不变，未遗留示例执行进程。
+
+两项试用均未改动原示例仓库 HEAD 或工作区。证据保存在系统临时目录
+`ehai-r2-recovery-b7876b8b0c3b47a4905d3f0ae133a2b7`：`recovery-evidence.json`、两份最终查询、
+暂停前后快照、SQLite 轨迹及保留 worktree。实际失败后的三项诊断只位于仓库外临时目录，
+修复前复现两项失败，修复后三项通过；未增加常驻测试。
+
+这覆盖有序 Ctrl+C、中间成果保留、立即续接和固定 Gate 重新验收，不证明任意关窗/强杀、
+未提交文件写入途中恢复、5–6 小时运行或 Codex App Server 实跑；R2/P2 总验收仍未完成。

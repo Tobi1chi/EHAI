@@ -371,7 +371,8 @@ durable Session Event 重放 function call/result；`store=true`、streaming 和
 ## R2 前台编码会话
 
 代表性 Built-in 真实 CLI 编码已通过：并行任务、双代码分支、选中成果整合和一个最终行为 Gate。
-主动关闭后的恢复、长时间运行和 Codex App Server 实际编码仍需验证，不把单次试用当成完整 P2 验收。
+固定 Gate 失败后修复、Ctrl+C 后同一 Run 立即恢复且已完成上游不重跑，已通过真实模型受控试用。
+任意关窗/强杀、写入途中恢复、长时间运行和 Codex App Server 实际编码仍需验证，不当成完整 P2 验收。
 R2 使用 Git 仓库和 EHAI 拥有的隔离 worktree，不直接改写用户当前分支。运行基线固定为仓库的 Git HEAD；
 开始前先提交希望纳入任务的源码，未提交的源文件修改不会自动纳入基线。
 
@@ -421,8 +422,11 @@ uv run ehai --database .ehai/state.sqlite3 --artifacts .ehai/artifacts `
 
 - `execute-plan` 只接受已批准的当前版本，`--authorize` 确认首次执行配置；相同 Run 不能更换配置。
 - `resume-session` 使用持久配置，不隐式扩大工具权限；一个前台宿主独占其数据库内的活动 Run。
-- 进展输出到 stderr，结果 JSON 输出到 stdout。正常关闭或 Ctrl+C 时收敛 Worker、保存并暂停，
-  重开后继续同一 Run；硬杀进程后的未知操作仍需核对，不能承诺任意外部副作用自动续接。
+- 进展输出到 stderr，结果 JSON 输出到 stdout。使用 Ctrl+C 停止并等待进程退出，宿主收敛 Worker、
+  保存进度并暂停，释放自己的调度租约；重开后可立即继续同一 Run，无需等待旧租约到期。
+  已完成的上游任务不重跑，未完成的最终节点可创建后续 Attempt，沿用保留代码和原 Gate。
+  已验证边界为最终 Worker 审查及最终 Gate 命令执行期间中断；直接关窗、硬杀进程和未提交写入途中
+  的恢复未验证，未知外部操作仍需核对。暂停持久化失败会报错，不能视作成功暂停。
 - 整体 Built-in 会话不设总时长、总 Step、总工具调用或总输出字节上限；模型输入保留初始任务与最近
   完整步骤窗口，持久事件不裁剪。单次调用、工具输出和授权边界仍受控。
 - 完成的 worktree 保留；宿主捕获实际代码的 Git 提交与 `solution.patch`。`get-result` 返回成果位置、
