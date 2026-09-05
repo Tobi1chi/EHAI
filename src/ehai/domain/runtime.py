@@ -141,6 +141,19 @@ class DispatchWork:
             _rehydrate_token=_REHYDRATE,
         )
 
+    def release(self, owner: str) -> Self:
+        """Return a quiesced host's claim to the queue without changing its identity."""
+        if self.status is not DispatchWorkStatus.CLAIMED or self.claim_owner != owner:
+            raise ValueError(f"DispatchWork {self.dispatch_work_id} is not claimed by {owner}")
+        return replace(
+            self,
+            status=DispatchWorkStatus.PENDING,
+            claimed_at=None,
+            completed_at=None,
+            claim_owner=None,
+            lease_expires_at=None,
+        )
+
     def complete(self, *, at: datetime | None = None) -> Self:
         if self.status is not DispatchWorkStatus.CLAIMED:
             raise ValueError(f"DispatchWork {self.dispatch_work_id} is not claimed")

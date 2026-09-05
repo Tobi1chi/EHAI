@@ -292,6 +292,28 @@ class ConcurrentRuntime:
                 f"{type(cancellation_error).__name__}"
             ) from cancellation_error
 
+    def release_run_dispatch(self, run_id: ID) -> None:
+        """Release only this host's claim after the Run has quiesced and stopped."""
+        normalized_id = normalize_id(run_id)
+        if normalized_id not in self._controlled_runs:
+            raise RuntimeError(f"Run {normalized_id} must be quiesced before releasing dispatch")
+        with self._uow_factory() as uow:
+            run = uow.states.get_run(normalized_id)
+            if run is None or run.status in {RunStatus.PENDING, RunStatus.RUNNING}:
+                raise RuntimeError(f"Run {normalized_id} must be stopped before releasing dispatch")
+            for attempt_id, task in self._active_tasks.items():
+                attempt = uow.states.get_attempt(attempt_id)
+                if attempt is not None and attempt.run_id == normalized_id and not task.done():
+                    raise RuntimeError(f"Run {normalized_id} still has an active execution")
+            for work in uow.states.list_dispatch_work(DispatchWorkStatus.CLAIMED):
+                if work.run_id == normalized_id and work.claim_owner == self._claim_owner:
+                    uow.states.put_dispatch_work(
+                        work.release(self._claim_owner)
+                        if run.status is RunStatus.PAUSED
+                        else work.complete()
+                    )
+            uow.commit()
+
     def resume_run_scheduling(self, run_id: ID) -> None:
         self._controlled_runs.discard(normalize_id(run_id))
 

@@ -461,19 +461,14 @@ class ForegroundSessionHost:
         if not isinstance(runtime, ConcurrentRuntime):
             return
         if not self._quiesced:
-            try:
-                await runtime.quiesce_run(run_id)
-            finally:
-                self._quiesced = True
-        try:
-            current = self._read_run(run_id)
-            if current.status in {RunStatus.PENDING, RunStatus.RUNNING}:
-                self._composition.execution_service.pause_run(
-                    PauseRun(str(new_id()), normalize_id(run_id))
-                )
-            _release_dispatch_claims(self._composition.database, normalize_id(run_id))
-        except Exception:
-            return
+            await runtime.quiesce_run(run_id)
+            self._quiesced = True
+        current = self._read_run(run_id)
+        if current.status in {RunStatus.PENDING, RunStatus.RUNNING}:
+            self._composition.execution_service.pause_run(
+                PauseRun(str(new_id()), normalize_id(run_id))
+            )
+        runtime.release_run_dispatch(run_id)
 
     async def _document(
         self,
@@ -664,26 +659,6 @@ def _authorized(events: Sequence[object], run_id: ID) -> bool:
         if isinstance(authorization, dict) and authorization.get("explicit") is True:
             return True
     return False
-
-
-def _release_dispatch_claims(database: SQLiteDatabase, run_id: ID) -> None:
-    with database.unit_of_work() as uow:
-        for work in uow.states.list_dispatch_work(DispatchWorkStatus.CLAIMED):
-            if work.run_id != run_id:
-                continue
-            uow.states.put_dispatch_work(
-                DispatchWork.rehydrate(
-                    run_id=work.run_id,
-                    dispatch_work_id=work.dispatch_work_id,
-                    status=DispatchWorkStatus.PENDING,
-                    created_at=work.created_at,
-                    claimed_at=None,
-                    completed_at=None,
-                    claim_owner=None,
-                    lease_expires_at=None,
-                )
-            )
-        uow.commit()
 
 
 def _checks_passed(checks: Sequence[JsonValue]) -> bool | None:

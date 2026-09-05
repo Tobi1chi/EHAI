@@ -692,6 +692,7 @@ class SQLiteCurrentStateRepository:
                     DispatchWorkStatus.CLAIMED,
                 },
                 DispatchWorkStatus.CLAIMED: {
+                    DispatchWorkStatus.PENDING,
                     DispatchWorkStatus.CLAIMED,
                     DispatchWorkStatus.COMPLETED,
                 },
