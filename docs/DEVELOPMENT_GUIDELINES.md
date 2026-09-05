@@ -1,5 +1,15 @@
 # EHAI 开发与文档写作规范
 
+## 产品依据与模块细化
+
+[Product Scope](PRODUCT_SCOPE.md) 是产品定位、职责和用户流程的基线；
+[Roadmap](ROADMAP.md) 固定阶段，[P2 Implementation Plan](P2_IMPLEMENTATION_PLAN.md) 开头固定当前
+重整顺序。历史增量、ADR 和原型测试按其适用范围使用，不能覆盖新 scope。
+EHAI 是通用平台的规划执行核心，编码只是当前验证场景，不把长期平台缩成编码工具或把未来功能提前塞入 P2。
+
+每个模块先说明用户目标、输入输出、调用方、状态与权限所有者、失败处理和正常入口验收，再决定复用、
+接通或重构。不能凭类名、角色枚举、底层构造器或测试数量宣称产品完成。
+
 ## 领域语言
 
 代码、API、数据库和文档必须使用一致的领域名词。不得用多个名称表示同一概念，也不得因实现方便而改变其语义。
@@ -7,7 +17,7 @@
 - `Project`：长期工作空间，不是一次任务。
 - `Goal`：用户希望满足的结果，不包含执行步骤。
 - `CompletionContract`：执行前确认的版本化完成标准。
-- `PlanRevision`：某一版本的计划图；重新规划必须创建新版本。
+- `PlanRevision`：某一版本的执行计划；可读方案与计划图须对应同一版本，重新规划必须创建新版本。
 - `PlanNode`：可调度或可判断的计划单元，不是一次 Agent 调用。
 - `Run`：对指定 PlanRevision 的一次执行。
 - `Attempt`：Worker 执行 PlanNode 的一次尝试。
@@ -24,19 +34,25 @@ Attempt 对应的一次 turn 或 job。平台原生 ID 通过这些引用保存�
 
 ## 职责边界与不变量
 
-- Planner 创建 PlanRevision、探索分支、GraphPatch 和节点能力要求，但不执行节点，也不选择运行时
-  Endpoint。
+- 顶层通用 Agent 协助用户讨论、审查和使用平台；Planner 是专门规划能力，二者不能混为一谈。
+- Planner 调查仓库、澄清需求、提出设计及验收建议，再形成或修订 PlanRevision、探索分支和节点能力
+  要求；不执行编码节点，不自行批准，也不选择运行时 Endpoint。
+- 可读方案与可执行图对应同一批准版本，不维护两套互不校验的计划事实。Worker 在获批边界内保留局部
+  实现自由；关键设计、范围、验收或权限变化需修订并重新批准。
 - Orchestrator 计算就绪节点并推进领域状态，但不负责平台容量与 Session 分配。
 - Scheduler 管理可运行 Attempt 的队列、并发、重试、超时和资源预算；Dispatcher 根据能力、容量、
   Project 隔离和 Session 策略选择 WorkerProfile 与 WorkerEndpoint。
 - Worker Connector 封装外部 Agent 平台的启动、事件、状态查询、取消和恢复协议，不决定
   PlanNode 或 Run 是否完成。
+- 服务/事件 Connector 不强制采用 Worker 协议；未来 Routines 根据事件与授权复用核心，外部内容不是授权。
 - Worker 只提交候选结果、Artifact 和事件，不得直接标记节点或 Goal 完成。
 - Checker 产生带证据的 CheckResult；Gate 根据策略作出状态转换决定。
 - 没有通过必需 Gate，PlanNode 不得进入 `completed`。
 - 已确认的 CompletionContract 不得被静默修改。
 - 被剪枝的 Branch 必须保留历史轨迹。
 - Checkpoint 必须引用确定的 PlanRevision、Run 和 Event Offset。
+- 自动重试/剪枝受批准条件、预算和副作用安全约束；无法决定、无可行路线或尝试耗尽时挂起求助，保存
+  问题和证据。当前 failed/paused/Replan 限制需迁移，不用修改展示文案代替实现。
 
 状态变更应经过领域方法或应用服务，禁止业务代码直接修改持久化字段。
 
@@ -69,6 +85,7 @@ docs/
 ```
 
 Python 领域层不得依赖具体 Worker SDK、数据库或 Web 框架。外部实现通过 Protocol/Adapter 接入。Control Plane 不得导入 Python 内部模型，必须使用从 `schemas/` 生成的 TypeScript 类型和 API Client。
+CLI、顶层 Agent、UI 和 Routines 都通过公开应用能力操作核心，不各自实现审批或执行状态机。
 
 ## Python 代码规范
 
@@ -98,6 +115,7 @@ Python 领域层不得依赖具体 Worker SDK、数据库或 Web 框架。外部
 - EHAI 内部凡是需要模型推理、Tool 调用与 Session 的功能，必须优先复用通用 Built-in Agent Runtime；
   不得为 Planner、Worker、Evaluator、Merge、Visualizer、Reviewer 或 Assistance 复制 Agent Loop、
   ModelClient、Session Store、取消、预算、恢复或 Trace。
+- 顶层通用 Agent 遵守相同复用规则；其交付阶段需单独确认，不因基础 Role 配置存在而默认已交付。
 - Role 特有行为只通过 Prompt、Tool Profile、Context Builder、Finish Tool 与权限表达。Tool Registry
   提供能力目录，实际 Session ToolSet 必须由 Role、Endpoint 与用户策略显式授权并在创建时冻结。
 - Workspace、Shell、Git、Web、MCP、Skill 与 Session Message 使用统一 ToolDefinition/ToolExecutor 和
@@ -113,18 +131,19 @@ Command 使用祈使语义，例如 `StartRun`、`CancelAttempt`；Event 使用�
 
 ## 测试与完成标准
 
-- Python 使用 `pytest`，测试文件命名为 `test_*.py`。
-- TypeScript 使用 `package.json` 中固定的测试脚本，并分别覆盖纯逻辑、组件交互和关键用户路径。
-- 单元测试覆盖领域状态机、Gate 和图不变量。
-- 集成测试覆盖持久化、Event Replay、Connector 和 Check Runner。
-- 契约测试验证 Python 响应与 Schema 一致，并验证生成的 TypeScript Client 能正确消费。
-- 每一期至少维护一个代表其退出条件的端到端场景。
-- Bug 修复必须包含回归测试。
-- 测试不得默认访问真实外部服务；使用 Fake Adapter 或受控 Fixture。
+- 先暴露正常 CLI/API 能力，再与用户确定唯一产品 E2E；仓库只保留这一条最终 E2E 的必要测试代码。
+- 当前 E2E 尚未制定。旧 unit、integration、contract、smoke 和原型 E2E 已退役，不恢复或迁移到其他
+  仓库目录，也不提前另建专项测试体系。
+- 正常使用或 E2E 失败时，必要的定位单测放在仓库外临时目录，用 `uv run pytest <临时文件>` 运行。
+  修复后复测原失败路径，临时测试不提交，也不默认永久保留为回归测试。
+- 不为推测风险、低概率组合、覆盖率或模型协议提前堆测试；不创建 Fixture Framework 或测试矩阵。
+- E2E 不得替换生产装配、代办用户决策、预写获胜方案或答案；消息消费和需求相关代码行为必须来自真实路径。
+- 精简开发测试不等于删除产品运行时 Check/Gate；后者仍负责获批任务的验收。
+- Ruff、format、mypy 及生成 Client 构建仍是适用的静态检查。纯文档检查内容、相对链接和 diff。
+- 真实调用显式运行，失败先区分代码、配置和外部服务，不降低断言或无限重试。
 
-开发过程中优先运行与改动直接相关的最小测试。提交前再运行 Python 和 TypeScript 各自的完整测试、lint 与类型检查；若全量检查失败，先聚焦修复失败项，再重新执行全量检查。
-
-功能只有在代码、测试、必要文档和适用检查全部完成后才满足 Definition of Done。P1 保持必要验证；P2 至 P5 每期结束后执行系统性审查。
+能力已暴露、可实际使用、已通过最终 E2E 是不同状态。未实现或未运行 E2E 不得报告为产品通过；
+阶段完成仍须满足产品退出条件，而不是只减少了测试文件或通过了静态检查。
 
 ## 文档写作规范
 
@@ -132,6 +151,8 @@ Command 使用祈使语义，例如 `StartRun`、`CancelAttempt`；Event 使用�
 - 规范性要求使用“必须”“不得”“可以”，避免含糊措辞。
 - 首次出现的领域名词使用固定英文名称，并给出中文解释。
 - 示例必须与当前实现一致；未实现内容标注为“计划中”或对应阶段。
+- 产品范围更新先修改 Product Scope，再同步 Roadmap 和当前实施计划；Usage 仅写真实入口，README
+  区分已有地基与目标流程。历史记录明确当时范围，不能与当前产品状态混写。
 - 架构决策记录在 `docs/adr/`，文件名使用 `NNNN-short-title.md`。
 - 功能或语义变化必须同步更新相关文档，禁止只修改代码。
 
