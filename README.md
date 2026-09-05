@@ -1,19 +1,26 @@
 # EHAI
 
-EHAI（Enhanced Human-Agent Interface）是一个面向人—Agent 协作的执行环境。它把用户目标、
-完成条件、探索计划和实际执行轨迹组织成可检查、可恢复的图运行过程，让 Agent 能够探索多种方案，
-但不能绕过预先确认的证据标准自行宣布任务完成。
+EHAI（Enhanced Human-Agent Interface）是通用 Agent 平台的规划与执行核心。长期平台包含顶层通用
+Agent、不同外部 Agent 框架、服务 Connector 和事件驱动 Routines；它们复用目标、方案、审批、
+调度、检查、恢复与人工介入机制。
 
-> 当前状态：P1/P1.1、P2 多 Worker 执行内核及 Planning & Execution Readiness Gate 已完成；
-> P2 Built-in Agent Foundation 扩展已规划，P3 Control Plane 尚未开始。
+当前首先做实编码场景：用户与 Planner 对齐需求并审查详细方案，批准后在指定 workspace 调度 Worker，
+最终获得代码和需求相关证据。编码不是平台的永久边界，顶层通用 Agent 也不等于 Planner。
+
+> 当前状态：已有 P1/P1.1 与 P2 执行内核及历史验收记录；P2 正按新的产品范围重整，尚未完成
+> 正常 CLI 下的完整交互与验收闭环。当前工作树已整合 Foundation 扩展代码，产品接入与验收仍待完成，P3 UI 尚未开始。
+> 产品定义以 [Product Scope](docs/PRODUCT_SCOPE.md) 为准，操作与限制见 [Usage](docs/USAGE.md)。
 
 ## Why EHAI
 
 现有 Agent 通常擅长执行单次指令，但复杂任务还需要明确的计划版本、探索边界、完成标准和恢复路径。
-EHAI 将这些约束放入独立的 Execution Plane，使人类能够在执行前对齐目标，在执行中保留分支证据，
-并在最终 Gate 通过后确认任务完成。
+EHAI 将这些约束放入独立的 Execution Plane。目标是允许授权内自主探索，遇到无法决定或尝试耗尽时
+挂起求助，而不是无限重试或把所有阻塞都当作终态失败。Check/Gate 只能证明其配置的条件，
+不能用“文件存在”或“测试数量”替代用户需求是否得到满足。
 
-## Core Capabilities
+## Existing Execution Foundations
+
+以下是已有执行模块，不等于整个目标产品已完成；正常入口与专项 Adapter 的可用范围见 Usage。
 
 - 使用版本化 `Goal`、`CompletionContract` 和 `PlanRevision` 对齐目标与完成标准。
 - 使用非线性 `PlanGraph` 表达探索、分支、评估、剪枝和汇合。
@@ -24,33 +31,36 @@ EHAI 将这些约束放入独立的 Execution Plane，使人类能够在执行�
 - 支持 Built-in Agent、Codex CLI 与 Codex App Server Thread/Turn Connector。
 - 通过 CLI、HTTP API、OpenAPI/JSON Schema、SSE 和严格 TypeScript Client 暴露执行能力。
 
-## How It Works
+## Target User Flow
 
 ```text
-Goal + CompletionContract
+CLI 目标 + 只读仓库调查 ↔ Planner 讨论与修订
           ↓
-       Planner → PlanGraph
-                     ↓
-               Orchestrator
-                     ↓
-              Worker Attempt
-                     ↓
-       Artifact → Check/Gate → Checkpoint
-                     ↓
-              ExecutionTrace
+详细方案 + PlanGraph + CompletionContract → 用户审查 / 外部 Agent 意见
+          ↓ 明确批准版本与执行边界
+Orchestrator → Scheduler / Dispatcher → Worker → 代码与 Artifact
+          ↓
+需求相关 Check/Gate → 选中结果交付 + Checkpoint / ExecutionTrace
+          ↘ 无法自主继续：挂起求助 → 用户回复 / 修订再批准
 ```
 
 `PlanGraph` 描述预期执行路径；`ExecutionTrace` 保存实际发生的 Attempt、事件、检查和结果。Worker
-只能提交候选结果，PlanNode 和 Run 只能在必需 Gate 通过后完成。
+只能提交候选结果，PlanNode 和 Run 只能在必需 Gate 通过后完成。此图描述目标流程；
+多轮规划与设计版本已接入 CLI/API，规划侧代表性真实 CLI 试用已通过；完整执行人工回路和需求验收尚未完成。
+
+当前 R1 入口：`discuss-plan` 接收目标和用户意见，`get-discussion` 查询持久讨论；
+`get-plan` 返回该版本的 `design_document` 和图，`get-plan-checks` 查看实际检查配置。
+用法、能力边界与兼容端点参数见 [Usage](docs/USAGE.md)。
 
 ## Development Status
 
 | 阶段 | 状态 | 范围 |
 | --- | --- | --- |
 | P1/P1.1 | 已完成 | 单 Worker 串行闭环、Codex CLI、分支评估、Check/Gate、Checkpoint、API/SSE |
-| P2 | 核心已完成，扩展中 | 异步调度、Built-in/Codex Worker、Agent Session、并发、恢复与资源管理 |
-| P2→P3 Readiness Gate | 已通过 | 真实规划、失败重规划、自举代码任务与最终执行能力验收 |
-| P3+ | 已规划 | Dashboard、可复用 Workflow 和开放扩展生态 |
+| P2 | 执行地基已有，产品闭环重整中 | 方案讨论与批准、指定 workspace 编码、人工介入、真实入口验收 |
+| 历史 Readiness Gate | 当时场景已通过 | 规划/执行 Smoke、失败 Replan、自举任务；不代表新 scope 完成 |
+| 顶层通用 Agent | 职责已明确，交付增量待定 | 协助用户审查、查询、决策并调用平台，不替代 Planner |
+| P3–P5 | 已规划 | UI、Workflow/Routines、外部服务事件与开放 Agent 生态 |
 
 P2-I0–I9 已提供可恢复 Built-in Agent、OpenAI Responses ModelClient、受控并发 Scheduler、
 Codex App Server 多 Session Connector、EHAI-owned Git worktree、超时/租约/安全重试与 Event Replay。
@@ -84,10 +94,11 @@ npm.cmd run typecheck
 
 ## Documentation
 
+- [Product Scope](docs/PRODUCT_SCOPE.md)：产品定位、模块职责、用户流程和统一验收基线；优先阅读。
 - [Usage Guide](docs/USAGE.md)：真实 Codex、CLI、API、SSE 和离线验证。
 - [Roadmap](docs/ROADMAP.md)：P1 至 P5 的产品阶段、范围和退出条件。
 - [P1 Implementation Plan](docs/P1_IMPLEMENTATION_PLAN.md)：P1 增量、验收与完成记录。
-- [P2 Implementation Plan](docs/P2_IMPLEMENTATION_PLAN.md)：P2 增量、异步调度与多 Worker 验收计划。
+- [P2 Implementation Plan](docs/P2_IMPLEMENTATION_PLAN.md)：当前产品重整顺序，以及保留的历史执行增量。
 - [Development Guidelines](docs/DEVELOPMENT_GUIDELINES.md)：领域语言、模块边界和开发规范。
 - [Architecture Decision Records](docs/adr/)：持久化、接口和 Codex 通道等关键决策。
 - [Codex CLI Spike](docs/spikes/codex-cli-local-channel.md)：真实 Codex 通道与验收观察。
@@ -104,7 +115,6 @@ npm.cmd run typecheck
 ## Development
 
 ```powershell
-uv run pytest
 uv run ruff check .
 uv run ruff format --check .
 uv run mypy
@@ -115,4 +125,5 @@ npm.cmd run typecheck
 npm.cmd run build
 ```
 
-开发期间先运行最小相关测试；准备提交时再运行受影响技术栈的完整测试。
+先暴露正常 CLI/API 能力，再与用户确定唯一产品 E2E。旧测试已退役，目前没有最终 E2E，不把无测试
+收集当作验收通过。实际失败时再用仓库外临时单测定位，定位文件不提交。见 [测试策略](tests/README.md)。

@@ -297,6 +297,7 @@ class PlanTemplate:
     usage: ExplorationUsage | None = None
     planner_diagnostics: tuple[str, ...] = ()
     planner_event_types: tuple[str, ...] = ()
+    design_document: str | None = None
 
     def __post_init__(self) -> None:
         nodes = tuple(self.nodes)
@@ -418,6 +419,30 @@ class Planner(Protocol):
 
 
 @dataclass(frozen=True, slots=True)
+class PlanningReply:
+    text: str
+    agent_session_ref_id: ID
+    proposal: PlanProposal | None = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.text, str) or not self.text.strip() or len(self.text) > 64_000:
+            raise ValueError("Planning reply must contain 1-64000 characters")
+        object.__setattr__(self, "agent_session_ref_id", normalize_id(self.agent_session_ref_id))
+
+
+@runtime_checkable
+class ConversationalPlanner(Protocol):
+    def discuss(
+        self,
+        goal: Goal,
+        criteria: tuple[str, ...],
+        message: str,
+        history: tuple[dict[str, JsonValue], ...],
+        base: PlanRevision | None,
+    ) -> PlanningReply: ...
+
+
+@dataclass(frozen=True, slots=True)
 class ConfiguredCheckPlanner:
     """Bind host-approved Check configuration into each immutable proposal snapshot."""
 
@@ -474,6 +499,28 @@ class ConfiguredCheckPlanner:
             configured.append(spec)
         return replace(proposal, check_specs=tuple(configured))
 
+    def discuss(
+        self,
+        goal: Goal,
+        criteria: tuple[str, ...],
+        message: str,
+        history: tuple[dict[str, JsonValue], ...],
+        base: PlanRevision | None,
+    ) -> PlanningReply:
+        if not isinstance(self.planner, ConversationalPlanner):
+            raise ValueError(
+                "This Planner does not support discussion; select the Built-in Planner"
+            )
+        normalized = require_p1_criteria(criteria, "Planning discussion")
+        if COMMAND_EXIT_ZERO_CRITERION in normalized and not self.command_argv:
+            raise ValueError("Command Check requires configured argv before discussion")
+        if SEMANTIC_REQUIRED_TERMS_CRITERION in normalized and not self.semantic_required_terms:
+            raise ValueError("Semantic Check requires configured terms before discussion")
+        reply = self.planner.discuss(goal, normalized, message, history, base)
+        return replace(
+            reply, proposal=None if reply.proposal is None else self._bind(reply.proposal)
+        )
+
 
 @dataclass(frozen=True, slots=True)
 class DeterministicPlanner:
@@ -488,14 +535,7 @@ class DeterministicPlanner:
             raise ValueError(f"Goal {goal.goal_id} must be open before planning")
         if goal.completion_contract is not None:
             raise ValueError(f"Goal {goal.goal_id} already has a CompletionContract")
-        normalized_criteria = tuple(criterion.strip() for criterion in criteria)
-        if not normalized_criteria or any(not criterion for criterion in normalized_criteria):
-            raise ValueError(f"Goal {goal.goal_id} requires non-empty completion criteria")
-        if len(normalized_criteria) != 1 or normalized_criteria[0] not in P1_COMPLETION_CRITERIA:
-            raise ValueError(
-                "DeterministicPlanner supports exactly one P1 completion criterion: "
-                + ", ".join(sorted(P1_COMPLETION_CRITERIA))
-            )
+        normalized_criteria = require_p1_criteria(criteria, "DeterministicPlanner")
         return self._build_proposal(goal, normalized_criteria)
 
     def replan(
@@ -508,12 +548,7 @@ class DeterministicPlanner:
         """Create a single-node replacement through the explicit GraphPatch boundary."""
         del context
         current_contract = require_replan_context(goal, base)
-        normalized_criteria = tuple(criterion.strip() for criterion in criteria)
-        if len(normalized_criteria) != 1 or normalized_criteria[0] not in P1_COMPLETION_CRITERIA:
-            raise ValueError(
-                "DeterministicPlanner supports exactly one P1 completion criterion: "
-                + ", ".join(sorted(P1_COMPLETION_CRITERIA))
-            )
+        normalized_criteria = require_p1_criteria(criteria, "DeterministicPlanner")
         template = self._build_proposal(goal, normalized_criteria)
         return _replan_from_template(base, current_contract, template)
 
@@ -555,11 +590,7 @@ class DeterministicExplorationPlanner:
             raise ValueError(f"Goal {goal.goal_id} must be open before planning")
         if goal.completion_contract is not None:
             raise ValueError(f"Goal {goal.goal_id} already has a CompletionContract")
-        if len(request.criteria) != 1 or request.criteria[0] not in P1_COMPLETION_CRITERIA:
-            raise ValueError(
-                "DeterministicExplorationPlanner supports exactly one P1 completion criterion: "
-                + ", ".join(sorted(P1_COMPLETION_CRITERIA))
-            )
+        require_p1_criteria(request.criteria, "DeterministicExplorationPlanner")
         return self._build_proposal(request)
 
     def replan(
@@ -571,11 +602,7 @@ class DeterministicExplorationPlanner:
         """Create an exploration replacement through the explicit GraphPatch boundary."""
         del context
         current_contract = require_replan_context(request.goal, base)
-        if len(request.criteria) != 1 or request.criteria[0] not in P1_COMPLETION_CRITERIA:
-            raise ValueError(
-                "DeterministicExplorationPlanner supports exactly one P1 completion criterion: "
-                + ", ".join(sorted(P1_COMPLETION_CRITERIA))
-            )
+        require_p1_criteria(request.criteria, "DeterministicExplorationPlanner")
         template = self._build_proposal(request)
         return _replan_from_template(base, current_contract, template)
 
@@ -622,6 +649,7 @@ class GraphPatch:
     branches: tuple[Branch, ...]
     budget: ExplorationBudget
     usage: ExplorationUsage
+    design_document: str | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -674,6 +702,7 @@ class GraphPatch:
             self.branches,
             plan_revision_id=plan_revision_id,
             created_at=created_at,
+            design_document=self.design_document,
         )
 
 
@@ -775,6 +804,7 @@ def build_plan_proposal(
         branches=branches,
         plan_revision_id=id_factory(),
         created_at=proposed_at,
+        design_document=template.design_document,
     )
     return PlanProposal(
         contract=contract,
@@ -792,9 +822,11 @@ def require_p1_criteria(criteria: tuple[str, ...], owner: str) -> tuple[str, ...
     normalized = tuple(criterion.strip() for criterion in criteria)
     if not normalized or any(not criterion for criterion in normalized):
         raise ValueError(f"{owner} requires non-empty completion criteria")
-    if len(normalized) != 1 or normalized[0] not in P1_COMPLETION_CRITERIA:
+    if len(set(normalized)) != len(normalized):
+        raise ValueError(f"{owner} completion criteria must be unique")
+    if not set(normalized).issubset(P1_COMPLETION_CRITERIA):
         raise ValueError(
-            f"{owner} supports exactly one P1 completion criterion: "
+            f"{owner} supports these executable completion criteria: "
             + ", ".join(sorted(P1_COMPLETION_CRITERIA))
         )
     return normalized
@@ -928,6 +960,7 @@ def _replan_from_template(
         nodes=template.plan_revision.nodes,
         edges=template.plan_revision.edges,
         branches=template.plan_revision.branches,
+        design_document=template.plan_revision.design_document,
         budget=budget,
         usage=usage,
     )

@@ -3,6 +3,11 @@
 `ehai.interfaces` 是 Execution Plane 的输入/输出边界。它把 CLI、HTTP 和 SSE 请求转换为 Application
 Command/Query，并把结果转换为公开 JSON；状态规则仍由 Domain/Application 层拥有。
 
+目标交互见 [Product Scope](../../../docs/PRODUCT_SCOPE.md)。CLI、顶层通用 Agent、未来 UI 和
+Routines 都使用同一公开应用语义。R1 已接入多轮规划讨论、设计版本和查询；执行挂起回复及通用 Agent
+交互尚未完成。新能力必须接入正常 Composition Root；不得依赖测试 monkeypatch 或直接构造组件补全
+用户流程。CLI 与后台宿主的生命周期也属于入口验收。
+
 ## 文件职责
 
 | 文件 | 职责 |
@@ -11,6 +16,7 @@ Command/Query，并把结果转换为公开 JSON；状态规则仍由 Domain/App
 | [`api.py`](api.py) | FastAPI Command/Query route、错误映射和公开响应组装。 |
 | [`http_models.py`](http_models.py) | 严格 Pydantic 请求/响应 envelope；拒绝未知字段。 |
 | [`public_events.py`](public_events.py) | 领域 Event 到稳定公开 Event 文档的映射。 |
+| [`public_documents.py`](public_documents.py) | CLI/HTTP 共用的公开 DTO 编码，保留字段边界和时间格式。 |
 | [`sse.py`](sse.py) | 可恢复 SSE；支持 Event ID、`Last-Event-ID` 和 `after_event_id` cursor。 |
 | [`runtime.py`](runtime.py) | `ehai-api` Composition Root；装配数据库、Planner、Worker/Connector、Runtime、健康状态和 Uvicorn。 |
 
@@ -25,8 +31,8 @@ Worker 完成，也不复制调度逻辑；Composition Root 负责启动/关闭�
 `/api/v1/runtime/health` 暴露循环健康状态。
 
 公开跨 Plane 契约位于 [`schemas/v1`](../../../schemas/v1)，不是从内部 dataclass 自动推断的替代品。
-API route 与审核后的 OpenAPI 一致性由
-[`tests/contract/test_v1_schemas.py`](../../../tests/contract/test_v1_schemas.py) 验证。CLI、HTTP 和 SSE 测试
-分别位于 [`tests/unit/test_cli.py`](../../../tests/unit/test_cli.py)、
-[`tests/integration/test_api.py`](../../../tests/integration/test_api.py) 和
-[`tests/integration/test_sse.py`](../../../tests/integration/test_sse.py)。
+CLI 已开放 `get-plan`、`get-plan-checks`、`get-trace`，直接使用现有 QueryService 和与 HTTP 相同的
+公开编码，不构造模型或 Worker。另有 `discuss-plan`、`get-discussion` 与对应 HTTP 讨论接口；
+讨论可以澄清而不生成计划，也可以创建新草稿版本。执行期间的人工回复仍待后续实现。
+旧 CLI/API/契约测试已退役；实际失败用仓库外临时文件定位，唯一产品 E2E 待能力开放后确认，
+见 [测试策略](../../../tests/README.md)。

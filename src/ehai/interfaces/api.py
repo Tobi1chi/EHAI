@@ -2,23 +2,20 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
-from dataclasses import fields, is_dataclass
-from datetime import datetime
-from enum import Enum
-from typing import Annotated, Any, cast
+from typing import Annotated, Any
 
 from fastapi import APIRouter, FastAPI, Header, Query
 from fastapi.exceptions import RequestValidationError
 from fastapi.requests import Request
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 
-from ehai import ID, JsonValue, format_utc_datetime, normalize_id
+from ehai import ID, normalize_id
 from ehai.application.commands import (
     ApprovePlan,
     CancelRun,
     CreateGoal,
     CreateProject,
+    DiscussPlan,
     PauseRun,
     ProposePlan,
     ReplanPlan,
@@ -36,16 +33,16 @@ from ehai.application.service import (
     IdempotencyConflictError,
 )
 from ehai.domain.checking import InvalidCheckRunTransition
-from ehai.domain.events import Event
 from ehai.domain.execution import InvalidAttemptTransition, InvalidRunTransition
 from ehai.domain.goal import GoalInvariantError
-from ehai.domain.planning import PlanInvariantError, PlanNode, PlanTransitionError
+from ehai.domain.planning import PlanInvariantError, PlanTransitionError
 from ehai.interfaces.http_models import (
     ApprovePlanRequest,
     CancelRunRequest,
     CreateGoalRequest,
     CreateProjectRequest,
     DataResponse,
+    DiscussPlanRequest,
     ErrorDetail,
     ErrorResponse,
     ExtendAttemptDeadlineRequest,
@@ -56,7 +53,7 @@ from ehai.interfaces.http_models import (
     StartRunRequest,
     UuidInput,
 )
-from ehai.interfaces.public_events import public_event_document
+from ehai.interfaces.public_documents import public_json_value
 from ehai.interfaces.sse import create_event_stream_endpoint
 
 
@@ -197,6 +194,37 @@ def create_app(
                 )
             )
         )
+
+    @router.post(
+        "/planning/discuss",
+        response_model=DataResponse,
+        responses={
+            200: _response_contract(
+                "queries.schema.json#/$defs/PlanningConversationResponse", "Planning discussion"
+            ),
+            **_WRITE_RESPONSES,
+        },
+    )
+    def discuss_plan(request: DiscussPlanRequest) -> DataResponse:
+        return _response(
+            execution_service.discuss_plan(
+                DiscussPlan(
+                    request.idempotency_key,
+                    _id(str(request.goal_id)),
+                    request.message,
+                    tuple(request.criteria),
+                    None if request.conversation_id is None else _id(str(request.conversation_id)),
+                )
+            )
+        )
+
+    @router.get(
+        "/planning/{conversation_id}",
+        response_model=DataResponse,
+        responses=_read_responses("PlanningConversationResponse", "Planning discussion"),
+    )
+    def get_planning_conversation(conversation_id: UuidInput) -> DataResponse:
+        return _response(query_service.get_planning_conversation(_id(str(conversation_id))))
 
     @router.post(
         "/plans/replan",
@@ -502,35 +530,7 @@ def create_app(
 
 
 def _response(value: object) -> DataResponse:
-    return DataResponse(data=_json_value(value))
-
-
-def _json_value(value: object) -> JsonValue:
-    """Encode public DTOs with the repository's canonical cross-plane conventions."""
-    if isinstance(value, Event):
-        return public_event_document(value)
-    if isinstance(value, datetime):
-        return format_utc_datetime(value)
-    if isinstance(value, Enum):
-        return _json_value(value.value)
-    if value is None or isinstance(value, (bool, int, float, str)):
-        return cast(JsonValue, value)
-    if is_dataclass(value) and not isinstance(value, type):
-        hidden_fields = (
-            {"required_capabilities", "session_policy"} if isinstance(value, PlanNode) else set()
-        )
-        return {
-            item.name: _json_value(getattr(value, item.name))
-            for item in fields(value)
-            if not item.name.startswith("_") and item.name not in hidden_fields
-        }
-    if isinstance(value, Mapping):
-        if not all(isinstance(key, str) for key in value):
-            raise TypeError("public JSON object keys must be strings")
-        return {key: _json_value(item) for key, item in value.items()}
-    if isinstance(value, (list, tuple)):
-        return [_json_value(item) for item in value]
-    raise TypeError(f"unsupported public response value: {type(value).__name__}")
+    return DataResponse(data=public_json_value(value))
 
 
 def _id(value: str) -> ID:

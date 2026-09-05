@@ -1265,13 +1265,14 @@ class Orchestrator:
     ) -> dict[str, JsonValue]:
         if context.plan_node.kind is PlanNodeKind.EVALUATOR:
             return {
+                "approved_design_document": context.plan_revision.design_document,
                 "candidate_branches": _candidate_branch_context(
                     context.plan_revision,
                     artifact_inputs,
-                )
+                ),
             }
         if context.plan_node.kind is not PlanNodeKind.MERGE:
-            return {}
+            return {"approved_design_document": context.plan_revision.design_document}
         selected = _required_selected_branch(
             context.plan_revision,
             context.plan_node.plan_node_id,
@@ -1353,6 +1354,7 @@ class Orchestrator:
                 f"selected Branch {selected.branch_id} has no selected Artifact content"
             )
         return {
+            "approved_design_document": context.plan_revision.design_document,
             "branch_selection": {
                 "selected_branch_id": selected.branch_id,
                 "fork_node_id": selected.fork_node_id,
@@ -2120,6 +2122,7 @@ def _rehydrate_plan(
         status=plan.status,
         approved_at=plan.approved_at,
         supersedes_plan_revision_id=plan.supersedes_plan_revision_id,
+        design_document=plan.design_document,
     )
 
 

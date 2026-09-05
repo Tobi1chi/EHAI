@@ -25,6 +25,8 @@ const requiredOperations = [
   "create_project_api_v1_projects_post",
   "create_goal_api_v1_goals_post",
   "propose_plan_api_v1_plans_propose_post",
+  "discuss_plan_api_v1_planning_discuss_post",
+  "get_planning_conversation_api_v1_planning__conversation_id__get",
   "approve_plan_api_v1_plans_approve_post",
   "start_run_api_v1_runs_start_post",
   "get_run_api_v1_runs__run_id__get",
@@ -177,6 +179,14 @@ export class EhaiApiClient {
 
   replanPlan(request: ReplanPlanRequest): Promise<PlanGraphResponse> {
     return this.request("/plans/replan", "POST", request);
+  }
+
+  discussPlan(request: DiscussPlanRequest): Promise<PlanningConversationResponse> {
+    return this.request("/planning/discuss", "POST", request);
+  }
+
+  getPlanningConversation(conversationId: string): Promise<PlanningConversationResponse> {
+    return this.request(\`/planning/\${encodeURIComponent(conversationId)}\`, "GET");
   }
 
   approvePlan(request: ApprovePlanRequest): Promise<PlanGraphResponse> {

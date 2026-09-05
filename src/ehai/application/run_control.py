@@ -547,6 +547,7 @@ def _replace_node(plan: PlanRevision, replacement: PlanNode) -> PlanRevision:
         status=plan.status,
         approved_at=plan.approved_at,
         supersedes_plan_revision_id=plan.supersedes_plan_revision_id,
+        design_document=plan.design_document,
     )
 
 
@@ -564,6 +565,7 @@ def _replace_nodes(plan: PlanRevision, nodes: tuple[PlanNode, ...]) -> PlanRevis
         status=plan.status,
         approved_at=plan.approved_at,
         supersedes_plan_revision_id=plan.supersedes_plan_revision_id,
+        design_document=plan.design_document,
     )
 
 

@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
+from dataclasses import replace
 from datetime import datetime
 from threading import Lock
 
-from ehai import ID, JsonValue, new_id, normalize_id, utc_now
+from ehai import ID, JsonValue, json_dumps, new_id, normalize_id, utc_now
 from ehai.application.checkpointing import (
     STARTUP_PAUSE_REASONS,
     RecoveryReport,
@@ -17,6 +18,7 @@ from ehai.application.commands import (
     CancelRun,
     CreateGoal,
     CreateProject,
+    DiscussPlan,
     PauseRun,
     ProposePlan,
     ReplanPlan,
@@ -28,19 +30,23 @@ from ehai.application.planner import (
     MAX_REPLAN_ATTEMPT_SUMMARIES,
     MAX_REPLAN_CHECK_SUMMARIES,
     MAX_REPLAN_CHECKPOINT_ARTIFACT_IDS,
+    ConversationalPlanner,
     Planner,
+    PlanProposal,
     ReplanAttemptSummary,
     ReplanCheckpointSummary,
     ReplanCheckSummary,
     ReplanContext,
+    require_p1_criteria,
 )
+from ehai.application.planning_dialogue import PlanningConversationView, planning_conversation
 from ehai.application.ports import CommandReceipt, UnitOfWork
 from ehai.application.run_control import RunControllerPort
-from ehai.application.sanitization import bounded_redacted_text
+from ehai.application.sanitization import bounded_redacted_text, redact_sensitive_text
 from ehai.domain.checking import CheckRun, CheckRunStatus
 from ehai.domain.events import Event, EventType
 from ehai.domain.execution import AttemptStatus, Run, RunStatus
-from ehai.domain.goal import CompletionContract, Goal, Project
+from ehai.domain.goal import CompletionContract, Goal, GoalStatus, Project
 from ehai.domain.planning import PlanNodeStatus, PlanRevision, PlanRevisionStatus
 from ehai.domain.runtime import DispatchWork
 
@@ -73,6 +79,7 @@ class ExecutionService:
         clock: Callable[[], datetime] = utc_now,
         id_factory: Callable[[], ID] = new_id,
         background_start: bool = False,
+        planning_workspace: str | None = None,
     ) -> None:
         self._uow_factory = uow_factory
         self._planner = planner
@@ -82,6 +89,7 @@ class ExecutionService:
         self._clock = clock
         self._id_factory = id_factory
         self._background_start = background_start
+        self._planning_workspace = planning_workspace
         self._execution_lock = Lock()
 
     @property
@@ -217,6 +225,148 @@ class ExecutionService:
             )
             uow.commit()
             return proposal.plan_revision
+
+    def discuss_plan(self, command: DiscussPlan) -> PlanningConversationView:
+        require_p1_criteria(command.criteria, "Planning discussion")
+        if not isinstance(self._planner, ConversationalPlanner):
+            raise ApplicationError("Configured Planner does not support discussion")
+        with self._uow_factory() as uow:
+            receipt = self._existing_result(
+                uow, command.idempotency_key, type(command).__name__, command.fingerprint
+            )
+            if receipt is not None:
+                conversation_id = _result_id(receipt, "conversation_id")
+                view = _required_conversation(uow, conversation_id)
+                turn_id = _result_id(receipt, "turn_id")
+                turn = next(item for item in view.turns if item.turn_id == turn_id)
+                if turn.status != "completed":
+                    raise ApplicationError(
+                        f"Planning turn {turn_id} is {turn.status}; inspect conversation "
+                        f"{conversation_id}. This idempotency key will not repeat a model call."
+                    )
+                return view
+            goal = _required_goal(uow, command.goal_id)
+            if goal.status is not GoalStatus.OPEN:
+                raise ApplicationError("Only an open Goal can be discussed")
+            _require_no_active_runs(uow, goal.goal_id)
+            conversation_id = command.conversation_id or self._id_factory()
+            previous = (
+                None
+                if command.conversation_id is None
+                else _required_conversation(uow, conversation_id)
+            )
+            if previous is not None:
+                if (
+                    previous.goal_id != goal.goal_id
+                    or previous.workspace != self._planning_workspace
+                ):
+                    raise ApplicationError("Planning conversation Goal or workspace does not match")
+                if any(turn.status == "running" for turn in previous.turns):
+                    raise ApplicationError("The previous planning turn has an unresolved outcome")
+                if len(previous.turns) >= 24:
+                    raise ApplicationError("Start a new discussion using the retained current plan")
+            plans = uow.states.list_plan_revisions(goal.goal_id)
+            base = plans[-1] if plans else None
+            history: tuple[dict[str, JsonValue], ...] = (
+                ()
+                if previous is None
+                else tuple(
+                    {"user": turn.message, "planner": turn.reply, "error": turn.error}
+                    for turn in previous.turns
+                )
+            )
+            if len(json_dumps(list(history)).encode("utf-8")) > 64_000:
+                raise ApplicationError("Discussion context is full; start a new conversation")
+            turn_id = self._id_factory()
+            uow.events.append(
+                self._event(
+                    EventType.PLANNING_TURN_STARTED,
+                    conversation_id,
+                    {
+                        "turn_id": turn_id,
+                        "goal_id": goal.goal_id,
+                        "workspace": self._planning_workspace,
+                        "message": command.message,
+                        "criteria": list(command.criteria),
+                        "base_plan_revision_id": None if base is None else base.plan_revision_id,
+                    },
+                )
+            )
+            self._record_receipt(
+                uow,
+                command.idempotency_key,
+                type(command).__name__,
+                command.fingerprint,
+                {"conversation_id": conversation_id, "turn_id": turn_id},
+            )
+            uow.commit()
+        try:
+            reply = self._planner.discuss(goal, command.criteria, command.message, history, base)
+            with self._uow_factory() as uow:
+                if _required_goal(uow, goal.goal_id) != goal:
+                    raise ApplicationError(
+                        "Goal or approval changed while the Planner was responding"
+                    )
+                _require_no_active_runs(uow, goal.goal_id)
+                current_plans = uow.states.list_plan_revisions(goal.goal_id)
+                if (current_plans[-1] if current_plans else None) != base:
+                    raise ApplicationError("Plan changed while the Planner was responding")
+                proposal = reply.proposal
+                if proposal is not None:
+                    proposal = _discussion_revision(goal, base, proposal)
+                    uow.states.put_completion_contract(proposal.contract)
+                    uow.states.put_goal(goal.use_completion_contract(proposal.contract))
+                    uow.states.put_plan_revision(proposal.plan_revision)
+                    for spec in proposal.check_specs:
+                        uow.states.put_check_spec(proposal.plan_revision.plan_revision_id, spec)
+                    uow.events.append(
+                        self._event(
+                            EventType.PLAN_REVISION_PROPOSED,
+                            proposal.plan_revision.plan_revision_id,
+                            {
+                                "goal_id": goal.goal_id,
+                                "plan_revision_id": proposal.plan_revision.plan_revision_id,
+                                "completion_contract_id": proposal.contract.completion_contract_id,
+                                "conversation_id": conversation_id,
+                            },
+                        )
+                    )
+                uow.events.append(
+                    self._event(
+                        EventType.PLANNING_TURN_COMPLETED,
+                        conversation_id,
+                        {
+                            "turn_id": turn_id,
+                            "reply": redact_sensitive_text(reply.text),
+                            "agent_session_ref_id": reply.agent_session_ref_id,
+                            "plan_revision_id": (
+                                None
+                                if proposal is None
+                                else proposal.plan_revision.plan_revision_id
+                            ),
+                        },
+                    )
+                )
+                result = _required_conversation(uow, conversation_id)
+                uow.commit()
+                return result
+        except Exception as error:
+            with self._uow_factory() as uow:
+                uow.events.append(
+                    self._event(
+                        EventType.PLANNING_TURN_FAILED,
+                        conversation_id,
+                        {
+                            "turn_id": turn_id,
+                            "error": bounded_redacted_text(str(error), max_bytes=2000),
+                        },
+                    )
+                )
+                uow.commit()
+            raise ApplicationError(
+                f"Planning turn failed; inspect conversation {conversation_id}: "
+                f"{bounded_redacted_text(str(error), max_bytes=2000)}"
+            ) from error
 
     def replan_plan(self, command: ReplanPlan) -> PlanRevision:
         """Create a new draft revision without mutating its approved base or history."""
@@ -610,6 +760,52 @@ class ExecutionService:
             payload=payload,
             occurred_at=self._clock(),
         )
+
+
+def _required_conversation(uow: UnitOfWork, conversation_id: ID) -> PlanningConversationView:
+    result = planning_conversation(uow.events.list_events(), conversation_id)
+    if result is None:
+        raise EntityNotFoundError(f"PlanningConversation {conversation_id} was not found")
+    return result
+
+
+def _require_no_active_runs(uow: UnitOfWork, goal_id: ID) -> None:
+    if any(
+        run.status in {RunStatus.PENDING, RunStatus.RUNNING, RunStatus.PAUSED}
+        for run in uow.states.list_runs(goal_id)
+    ):
+        raise ApplicationError("An active Run must be resolved before revising its Goal")
+
+
+def _discussion_revision(
+    goal: Goal, base: PlanRevision | None, proposal: PlanProposal
+) -> PlanProposal:
+    if proposal.plan_revision.design_document is None:
+        raise ApplicationError("A discussion proposal must include its reviewable design")
+    if base is None:
+        return proposal
+    current = goal.completion_contract
+    if current is None or current.completion_contract_id != base.completion_contract_id:
+        raise ApplicationError("Current plan and Goal completion contract do not match")
+    contract = current.revise(
+        proposal.contract.criteria,
+        proposal.contract.required_check_ids,
+        completion_contract_id=proposal.contract.completion_contract_id,
+        created_at=proposal.contract.created_at,
+    )
+    plan = PlanRevision.draft(
+        goal_id=goal.goal_id,
+        completion_contract=contract,
+        nodes=proposal.plan_revision.nodes,
+        edges=proposal.plan_revision.edges,
+        branches=proposal.plan_revision.branches,
+        plan_revision_id=proposal.plan_revision.plan_revision_id,
+        version=base.version + 1,
+        supersedes_plan_revision_id=base.plan_revision_id,
+        created_at=proposal.plan_revision.created_at,
+        design_document=proposal.plan_revision.design_document,
+    )
+    return replace(proposal, contract=contract, plan_revision=plan)
 
 
 def _result_id(result: Mapping[str, JsonValue], key: str) -> ID:

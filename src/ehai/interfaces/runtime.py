@@ -33,12 +33,13 @@ from ehai.domain.workers import (
 )
 from ehai.infrastructure.artifacts import FilesystemArtifactStore
 from ehai.infrastructure.builtin_sessions import SQLiteBuiltinSessionStore
+from ehai.infrastructure.openai_responses import ResponsesEndpointCapabilities
 from ehai.infrastructure.session_mailbox import SQLiteSessionMailboxRepository
 from ehai.infrastructure.sqlite import SQLiteDatabase
 from ehai.infrastructure.workers import BuiltinAgentConnector, WorkerAdapterConnector
 from ehai.infrastructure.workspaces import WorkspaceManager
 from ehai.interfaces.api import create_app
-from ehai.interfaces.cli import build_service
+from ehai.interfaces.cli import add_responses_arguments, build_service, responses_capabilities
 
 _MAX_RUNTIME_RESTARTS = 2
 _RUNTIME_RESTART_BASE_SECONDS = 0.05
@@ -68,6 +69,7 @@ def create_local_app(
     builtin_model_client_factory: Callable[[WorkerProfile, WorkerRequest], ModelClient]
     | None = None,
     p2_runtime: bool = False,
+    endpoint_capabilities: ResponsesEndpointCapabilities | None = None,
 ) -> FastAPI:
     """Construct one long-lived Command service and short-lived read sessions."""
     execution_service = build_service(
@@ -93,6 +95,7 @@ def create_local_app(
         codex_model=codex_model,
         codex_reasoning_effort=codex_reasoning_effort,
         background_start=p2_runtime,
+        endpoint_capabilities=endpoint_capabilities,
     )
     query_database = SQLiteDatabase(database_path)
     builtin_sessions = SQLiteBuiltinSessionStore(query_database)
@@ -175,6 +178,7 @@ def create_local_app(
             workspace_resolver=workspace_resolver,
             budget=DEFAULT_AGENT_BUDGET if builtin_agent_budget is None else builtin_agent_budget,
             mailbox=session_mailbox,
+            endpoint_capabilities=endpoint_capabilities,
         )
     else:
         connector = WorkerAdapterConnector(execution_service.orchestrator.worker)
@@ -274,6 +278,7 @@ def create_local_app(
 def create_parser() -> argparse.ArgumentParser:
     """Create the local API server command line."""
     parser = argparse.ArgumentParser(prog="ehai-api", description="EHAI P1 HTTP API")
+    add_responses_arguments(parser)
     parser.add_argument("--database", type=Path, default=Path(".ehai/state.sqlite3"))
     parser.add_argument("--artifacts", type=Path, default=Path(".ehai/artifacts"))
     parser.add_argument("--worker", choices=("fake", "builtin", "codex"), default="fake")
@@ -390,6 +395,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         p2_runtime=args.p2_runtime,
         command_check_argv=_parse_command_argv(args.command_check_argv),
         semantic_required_terms=tuple(args.semantic_required_term),
+        endpoint_capabilities=responses_capabilities(args),
     )
     uvicorn.run(app, host=args.host, port=args.port)
     return 0

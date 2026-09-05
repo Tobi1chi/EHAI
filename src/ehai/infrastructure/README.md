@@ -3,6 +3,11 @@
 `ehai.infrastructure` 实现 Application 层定义的 Port，并把供应商协议、文件系统和 SQLite 行为隔离在
 Adapter 内。领域层和 Application 层不导入这些具体实现。
 
+本页是已有 Adapter 索引。平台目标见 [Product Scope](../../../docs/PRODUCT_SCOPE.md)；
+Foundation 分支的工具 Provider/Role 需要正常入口装配与验收，不能以可注入构造器代替交付。
+Agent 执行 Connector 管理 Session 和执行协议，未来服务/事件 Connector 管理外部输入输出，不强行
+共用 Worker 协议。扩展应复用现有 Port，不提前搭建尚无调用方的插件或 Connector 抽象。
+
 ## Adapter 目录
 
 | 文件或目录 | 职责 |
@@ -33,10 +38,5 @@ Adapter 内。领域层和 Application 层不导入这些具体实现。
 - Workspace 清理与 Lease 释放必须在成功、失败、取消和恢复路径收敛；不能把“外部进程已退出”当成
   Run 已完成。
 
-对应验证见 [`tests/integration/test_sqlite_uow.py`](../../../tests/integration/test_sqlite_uow.py)、
-[`tests/integration/test_artifact_store.py`](../../../tests/integration/test_artifact_store.py)、
-[`tests/unit/test_check_adapters.py`](../../../tests/unit/test_check_adapters.py)、
-[`tests/integration/test_codex_worker.py`](../../../tests/integration/test_codex_worker.py)、
-[`tests/integration/test_codex_planner.py`](../../../tests/integration/test_codex_planner.py)、
-[`tests/integration/test_workspace_sessions.py`](../../../tests/integration/test_workspace_sessions.py) 和
-[`tests/contract/test_p2_workers.py`](../../../tests/contract/test_p2_workers.py)。
+旧集成、契约和专项 Smoke 已退役。Adapter 能力先接入正常入口，实际使用失败时才在仓库外临时定位；
+最终只保留用户确认的一条产品 E2E，不新增长期 Adapter 测试矩阵。见 [测试策略](../../../tests/README.md)。

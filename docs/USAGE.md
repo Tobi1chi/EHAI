@@ -4,6 +4,19 @@
 `ehai-api --p2-runtime` 使用持久 dispatch work 和后台 Runtime，使 `StartRun` 快速返回并通过
 Query/SSE 观察进展。
 
+## 实现与目标的边界
+
+本页是当前入口参考，不是目标产品说明。目标流程与职责见 [Product Scope](PRODUCT_SCOPE.md)，
+实施状态见 [P2 Implementation Plan](P2_IMPLEMENTATION_PLAN.md)。
+现有命令已接入规划讨论、草稿修订、批准及查询；仍不能据此宣称需求相关最终验收以及
+“执行阻塞 → 用户回复 → 继续”的完整产品流程已完成。真实模型交互与最终 E2E 另行验证。
+本页不为尚未实现的交互编造命令；下列演示中固定计划或产物的成功只证明其对应协议。
+旧测试脚本已退役，先通过正常入口暴露能力，再与用户确定唯一产品 E2E；失败定位文件仅放仓库外。
+
+Foundation 扩展分支中的工具 Provider、共享 Role、Mailbox 和 Visualizer 需要与正常入口逐项核对。
+底层构造器可注入，不代表所有工具已有 CLI 选项。Responses capability 已通过下文正式参数接入，
+不能靠测试替换 Adapter 作为使用方法。
+
 ## 安装与前置条件
 
 需要 Python 3.12 和 `uv`。Standalone Built-in Agent 和 Built-in Planner 通过官方 OpenAI Python SDK 调用 Responses
@@ -18,6 +31,91 @@ codex --version
 ```
 
 所有 Python 命令均通过 `uv run` 执行，不使用裸 `python` 或 `pip`。
+`ehai` 的 stdout/stderr JSON 固定使用 UTF-8，包括 Windows 管道和文件重定向；不依赖系统 GBK locale。
+
+## 查看方案、验收条件与执行轨迹
+
+CLI 查询直接复用 HTTP API 的 QueryService 与公开 JSON 编码，不构造 Planner/Worker，不要求模型凭证：
+
+```powershell
+uv run ehai --database .ehai/state.sqlite3 --artifacts .ehai/artifacts `
+    get-plan --plan-revision-id $PlanId
+uv run ehai --database .ehai/state.sqlite3 --artifacts .ehai/artifacts `
+    get-plan-checks --plan-revision-id $PlanId
+uv run ehai --database .ehai/state.sqlite3 --artifacts .ehai/artifacts `
+    get-trace --run-id $RunId
+```
+
+数据库必须已经存在。`get-plan` 返回方案版本、批准状态、节点指令、依赖和分支；`get-plan-checks`
+返回该版本持久化的检查配置；`get-trace` 返回运行、Attempt、产物、事件及有界 Built-in Session 轨迹。
+`design_document` 保存该版本的可读方案，旧版本可能为 null。多项检查仍使用现有检查器，
+不是任意需求到执行检查的自动转换；执行阻塞的人工回路仍待实现。
+
+## 与 Planner 讨论并修订方案
+
+讨论使用 Built-in Planner，先配置有权限的模型和正常凭证；只读调查范围由 `--worker-workspace` 指定。
+下面沿用已创建的 `$GoalId`。每条新消息使用新的幂等键，首次不传 conversation ID：
+示例的非空产物条件只用于演示规划操作，不是编码任务的充分验收条件。
+
+```powershell
+$Planning = @(
+    '--database', '.ehai/state.sqlite3',
+    '--artifacts', '.ehai/artifacts',
+    '--worker-workspace', (Get-Location).Path,
+    '--planner', 'builtin',
+    '--builtin-planner-model', 'gpt-5.6-luna',
+    '--builtin-planner-reasoning-effort', 'high'
+)
+$Discussion = uv run ehai @Planning discuss-plan --idempotency-key planning-1 `
+    --goal-id $GoalId --criterion artifact:non-empty `
+    --message '先调查现有代码，指出需要澄清的问题，不要开始编码。' | ConvertFrom-Json
+$ConversationId = $Discussion.conversation_id
+uv run ehai @Planning get-discussion --conversation-id $ConversationId
+uv run ehai @Planning discuss-plan --idempotency-key planning-2 `
+    --goal-id $GoalId --conversation-id $ConversationId --criterion artifact:non-empty `
+    --message-file .\review-feedback.txt
+```
+
+`--message-file` 读取 UTF-8 用户意见或外部 Agent 审查意见，与 `--message` 二选一；消息最多 8000 字符。
+Planner 可通过 `ask_user` 提问或回应审查，此时该轮 `plan_revision_id` 为 null，不创建草稿或执行任务。
+准备方案时调用 `set_plan_design` 记录需求、范围、非目标、假设、实现设计、验收与权限，再通过图工具
+构建执行图并 `finish_plan`。返回的 turn 含新 `plan_revision_id`，可用 `get-plan` / `get-plan-checks` 查看。
+
+继续讨论时会携带历史消息、当前计划及设计。逻辑讨论 ID 持久保存在现有 Event Log；每轮模型执行使用
+共享 Built-in Runtime 和 Session Store，响应记录其 `agent_session_ref_id`，不另建 Agent Loop。
+同一讨论固定 Goal 和 workspace，最多 24 轮且历史上下文有 64 KB 边界；达到边界时明确要求开新讨论，
+新讨论仍可参考该 Goal 的当前方案，不静默丢弃旧记录。
+
+新草稿形成新的计划版本和 CompletionContract 版本，旧草稿/批准记录保留；仍需用已有 `approve-plan`
+明确批准返回版本，讨论不会自动批准或启动 Run。Goal 有 pending/running/paused Run 时暂不允许讨论修订，
+执行中的人工介入留给后续 R3。重复成功消息键只读取已有结果，不重复调用模型。
+
+缺少配置或 Provider 失败会留下可查询的 failed turn；重复该消息键不会重新调用模型，应查看错误后用
+新键继续。若进程中断留下 running/未知结果，同一讨论暂不继续；需先调查原执行，必要时显式开新讨论，
+不宣称此入口已经实现自动模型执行恢复。
+
+HTTP 使用相同能力：
+
+- `POST /api/v1/planning/discuss`：`idempotency_key`、`goal_id`、`message`、`criteria`，可选 `conversation_id`。
+- `GET /api/v1/planning/{conversation_id}`：查询讨论；TypeScript Client 提供对应生成方法。
+
+### 多项完成条件
+
+`propose-plan`、`replan-plan`、`discuss-plan` 的 `--criterion` 可以重复，最多组合当前三种不同检查。
+`command:exit-zero` 必须同时配置宿主允许的 `--command-check-argv`，`semantic:required-terms` 必须
+配置 `--semantic-required-term`。Planner 能查看这些配置，但不能擅自创建命令权限或减少已传入的条件。
+条件变化随新契约版本再次批准；按节点区分验收和最终交付的更丰富检查安排仍待 R2 实现。
+
+### Responses Endpoint capability
+
+`ehai` 与 `ehai-api` 共用以下参数，适用于 Built-in Planner；后台 Built-in Worker 也接收同一配置：
+
+- `--no-responses-background`：仅在端点明确不支持 background 时关闭。
+- `--no-responses-unique-items`：仅在端点不接受该 Tool Schema 关键字时关闭。
+- `--responses-idempotent-create` / `--no-responses-idempotent-create`：显式声明端点是否保证 create 幂等。
+  未指定时保持未知，不应为了绕过错误擅自声称端点有幂等保证。
+
+这些参数不代替凭证，也不关闭协议检查或任意重放未知副作用。
 
 ## Standalone Built-in Agent
 
@@ -242,30 +340,20 @@ curl.exe -N -H "Accept: text/event-stream" `
 `Last-Event-ID` 与 `after_event_id` 同时提供但不一致时会被拒绝。公开 JSON 契约位于
 `schemas/v1/`。
 
-## 真实 Codex Smoke
+## 历史真实验收与当前方式
 
-自动化测试默认不会调用真实 Codex。显式设置开关后才使用本机可执行文件和认证状态：
-
-```powershell
-$env:EHAI_RUN_CODEX_SMOKE = "1"
-uv run pytest tests/smoke/test_codex_worker_smoke.py -q
-Remove-Item Env:EHAI_RUN_CODEX_SMOKE
-```
+旧 Codex、Responses、Planner 和 App Server Smoke 脚本已退役，不再提供对应 pytest 调用命令。
+当前先使用正常 CLI/API，最终只保留与用户确认的一条产品 E2E。正常使用失败时，定位测试写在仓库外
+临时目录；不能通过测试专用 Adapter 或直接调用 Tool Handler 来代替产品入口。
 
 历史验证结果与 App Server 可见性观察见
 [Codex CLI 本地通道技术验证](spikes/codex-cli-local-channel.md)。
 
-## 真实 OpenAI Responses Smoke
+### Responses 配置与恢复
 
 Built-in Agent 只从 `OPENAI_API_KEY` 读取凭证；数据库保存的是引用
-`env:OPENAI_API_KEY`，不会保存 key。显式 Smoke 固定使用 `gpt-5.6-luna` 和 `high`，并验证
-Runtime、Responses、Workspace Tool、Artifact、Gate 与 Checkpoint 的完整链路：
-
-```powershell
-$env:EHAI_RUN_OPENAI_SMOKE = "1"
-uv run pytest tests/smoke/test_openai_responses_smoke.py -q
-Remove-Item Env:EHAI_RUN_OPENAI_SMOKE
-```
+`env:OPENAI_API_KEY`，不会保存 key。模型、推理强度与调用权限由正常入口配置，不通过旧 Smoke 环境
+变量代替产品设置，也不在查询方案时隐式调用模型。
 
 请求优先使用持久化的 `previous_response_id`。兼容端点若明确拒绝该字段，Adapter 会省略该句柄并从
 durable Session Event 重放 function call/result；`store=true`、streaming 和严格 Tool Schema 保持
@@ -273,30 +361,17 @@ durable Session Event 重放 function call/result；`store=true`、streaming 和
 
 不要把 `OPENAI_API_KEY` 写入命令历史、配置文件、Event、Artifact 或数据库。
 
-### 真实 Built-in Planner Smoke
+### Built-in Planner 的当前边界
 
-Planner Smoke 只生成并持久化一份 draft PlanRevision，不批准计划、创建 Run 或启动 Worker。它验证真实
-Responses 图操作 Tool Loop、完整图校验和 Planner/Worker 状态隔离：
+当前 propose 操作生成并持久化 draft PlanRevision，不批准计划、创建 Run 或启动 Worker。
+生成后可通过 `get-plan` 和 `get-plan-checks` 查看；`discuss-plan` 已接入多轮讨论、详细方案与草稿修订，
+代表性真实 CLI 试用已完成需求澄清、设计生成、审查修订和审批隔离，见 P2 实施文档；
+这不等于 Worker 编码或最终 E2E 已通过。
 
-```powershell
-$env:EHAI_RUN_BUILTIN_PLANNER_SMOKE = "1"
-uv run pytest tests/smoke/test_builtin_planner_smoke.py -q
-Remove-Item Env:EHAI_RUN_BUILTIN_PLANNER_SMOKE
-```
-
-模型和 reasoning effort 可分别通过 `EHAI_BUILTIN_PLANNER_MODEL` 与
-`EHAI_BUILTIN_PLANNER_REASONING_EFFORT` 覆盖；默认使用 `gpt-5.6-luna` 和 `high`。
-
-## 真实 Codex App Server 双 Session Smoke
+### Codex App Server Adapter 的当前边界
 
 App Server Connector 只使用一个 Endpoint 对应一个 `codex app-server --listen stdio://` JSONL 连接。
-显式 Smoke 会启动两个独立 Thread/Turn，并精确中断其中一个：
-
-```powershell
-$env:EHAI_RUN_CODEX_APP_SERVER_SMOKE = "1"
-uv run pytest tests/smoke/test_codex_app_server_smoke.py -q
-Remove-Item Env:EHAI_RUN_CODEX_APP_SERVER_SMOKE
-```
+独立 Thread/Turn 的历史验证不代表已经开放完整多框架 CLI 调度能力；正常入口的装配仍需按 P2 整理。
 
 该 Connector 不使用 WebSocket、远程 listener、Review、Skills、Apps 或 Auth 登录接口，也不修改用户
 全局 Codex 配置。
@@ -321,6 +396,10 @@ npm.cmd run build
 
 ## 当前基线限制
 
+- Built-in Planner 已有独立讨论入口及只读 Workspace 工具；更完整的交互体验仍需真实使用确认。
+- 公共计划构建可组合三种现有检查；任务级与最终验收尚未完整细分，非空 Artifact 不代表 solution 正确。
+- 全部分支失败收敛为 failed、Replan 仅支持终态来源是待迁移的现有行为，不是目标人工回路。
+- 顶层通用 Agent、外部意见的完整平台交互和事件驱动 Routines 尚未交付。
 - P2 只支持单 Execution Plane 进程；SQLite lease 用于崩溃恢复，不宣称分布式一致性。
 - 本地 Built-in `ehai-api --p2-runtime` 使用单 Endpoint `ConcurrentRuntime`，并发上限由
   `--builtin-capacity` 控制；本地 Fake/Codex CLI 组合仍为单槽位。多 Endpoint 路由由应用层组合，

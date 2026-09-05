@@ -44,7 +44,10 @@ from ehai.domain.workers import (
 )
 from ehai.infrastructure.builtin_tools import BuiltinToolRuntime
 from ehai.infrastructure.mcp_tools import MCPToolProvider
-from ehai.infrastructure.openai_responses import OpenAIResponsesModelClient
+from ehai.infrastructure.openai_responses import (
+    OpenAIResponsesModelClient,
+    ResponsesEndpointCapabilities,
+)
 from ehai.infrastructure.skill_loader import SkillToolProvider
 from ehai.infrastructure.web_tools import WebToolProvider
 
@@ -85,6 +88,7 @@ class BuiltinAgentConnector:
         system_prompt: str = _DEFAULT_SYSTEM_PROMPT,
         command_timeout_seconds: float = 120.0,
         id_factory: Callable[[], ID] = new_id,
+        endpoint_capabilities: ResponsesEndpointCapabilities | None = None,
     ) -> None:
         if profile.kind is not WorkerKind.BUILTIN:
             raise ValueError("BuiltinAgentConnector requires a Built-in WorkerProfile")
@@ -102,6 +106,7 @@ class BuiltinAgentConnector:
         self._skill_provider = skill_provider
         self._mailbox = mailbox
         self._reasoning_effort = reasoning_effort
+        self._endpoint_capabilities = endpoint_capabilities
         self._model_client_factory = model_client_factory or self._create_model_client
         self._workspace_resolver = workspace_resolver
         self._budget = budget
@@ -340,6 +345,7 @@ class BuiltinAgentConnector:
         return OpenAIResponsesModelClient(
             profile,
             reasoning_effort=self._reasoning_effort,
+            endpoint_capabilities=self._endpoint_capabilities,
         )
 
     def _workspace_path(self, value: str | None) -> Path:

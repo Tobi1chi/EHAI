@@ -2,9 +2,18 @@
 
 ## 目的与范围
 
-本文固定 `P2-I0` 后续 Increment 必须遵守的执行名词、状态所有权、API 行为和 Provider 入口。
-本 Increment 不实现 Runtime、Scheduler、Worker Registry、新数据库模型或真实模型调用。P1 的同步
-执行实现继续用于回归验证；`P2-I4` 才按本文固定的 `StartRun` 行为切换为后台 Runtime。
+本文固定执行核心的不变量，并区分原型行为和重整后的目标语义。产品定义以
+[Product Scope](PRODUCT_SCOPE.md) 为准，工作顺序见
+[P2 Implementation Plan](P2_IMPLEMENTATION_PLAN.md) 的当前重整章节。
+R1 已增加规划讨论接口、讨论事件及版本化设计；执行挂起求助和完整需求验收仍需要后续状态迁移。
+普通 `ehai` 保留 P1 同步兼容，P2 后台模式使用持久 DispatchWork。
+
+## 平台调用边界
+
+CLI、顶层通用 Agent、未来 UI 和 Routines 使用同一公开应用语义。Planner 是调查、讨论、提出与修订
+方案的专门能力，不等于顶层通用 Agent。只读规划授权与指定 workspace 的执行授权分开。
+可读设计、执行图、验收和权限对应同一获批版本；执行不得静默改变范围或降低完成条件。
+外部审查意见是规划输入，不构成批准。Worker 保留方案边界内的局部实现自由。
 
 ## 执行映射与状态所有权
 
@@ -22,9 +31,9 @@
 Worker 正常返回或提交候选只能使 Attempt 得到候选结果。Checker 产生 `CheckResult`，Gate 是
 `PlanNode` 和 `Run` 完成的唯一入口；Scheduler 和 Connector 不得判断完成。
 
-## Connector Port 与 SessionPolicy
+## Agent 执行 Connector Port 与 SessionPolicy
 
-所有 P2 Connector 必须实现异步 `start`、`events`、`inspect`、`cancel`、`recover` Port：
+所有 P2 Agent 执行 Connector 必须实现异步 `start`、`events`、`inspect`、`cancel`、`recover` Port：
 
 - `start` 启动或解析幂等执行。
 - `events` 从可选 Provider cursor 后输出标准化事件。
@@ -34,7 +43,8 @@ Worker 正常返回或提交候选只能使 Attempt 得到候选结果。Checker
 
 `SessionPolicy` 只允许 `new`、`reuse`、`fork`。Capability 使用小写不透明名称并做显式集合匹配；
 未知 requirement 可以保留，但在 Worker 未显式声明时必须 fail closed。具体 WorkerProfile、Endpoint、
-SessionRef 和 ExecutionRef 结构属于 `P2-I1`，不在本 Increment 定义。
+SessionRef 和 ExecutionRef 结构由领域对象与公开 Schema 定义。未来服务与事件 Connector 不强制采用
+此 Worker 协议；Routine 通过应用入口发起任务，不能绕过同一批准、执行和恢复规则。
 
 ## StartRun 行为
 
@@ -42,29 +52,57 @@ P2 的 `StartRun` 必须在同一个事务中持久化新 `Run`、pending dispat
 立即返回，不在请求调用栈中执行 Worker。相同幂等键和相同 fingerprint 必须返回同一个 `Run`，不得
 创建第二个 Run 或第二份 dispatch work；同键不同 fingerprint 必须冲突失败。
 
-`P2-I0` 只固定上述行为。pending dispatch work 的持久化模型和后台领取实现属于 `P2-I4`，因此本
-Increment 不修改当前 P1 `ExecutionService.start_run` 的同步执行路径。
+上述行为适用于后台模式，不应误读为现有同步 CLI 已具备独立后台宿主。
+目标 CLI 必须明确启动、附接、查询与关闭宿主的方式，不能由验收 Harness 隐式补齐生命周期。
 
 ## Built-in Agent Provider 入口
 
 P2 Built-in Agent 的唯一真实模型入口固定为官方 OpenAI Python SDK 的 Responses API。凭证只允许保存
 引用 `env:OPENAI_API_KEY`；不得把密钥写入 PlanGraph、Event、Artifact 或数据库。模型名必须由
-`WorkerProfile` 显式提供，不允许从环境、登录态或 Provider 默认值推导。SDK 依赖和真实调用属于
-`P2-I3`，本 Increment 不提前引入。
+`WorkerProfile` 显式提供，不允许从环境、登录态或 Provider 默认值推导。
+Provider capability、Role Tool Profile、凭证引用与 workspace 必须经正常装配入口传入；
+测试专用配置不构成用户可用的配置方式。
 
-## 失败后的选择规则
+## 失败后的目标选择规则
 
-- `retry` 只用于 Runtime 能证明原执行未创建或没有执行句柄的 Attempt；未知写副作用一律不创建替代
-  Attempt，并受原 Plan 的 Attempt 预算约束。
-- `resume` 只继续已暂停的同一个 Run。受控取消、失败、中断或超时的节点可以重新进入 ready；Worker
-  已成功但 Check/Gate 失败时不得用 resume 绕过验证。
-- `Checkpoint restore` 只恢复同一 Run 最新、已持久化且通过 Gate 的 Checkpoint，恢复后保持 paused，
-  由调用方显式 resume。
-- `Replan` 面向 failed/cancelled 的终态 Run。调用方通过 `source_run_id` 显式选择证据来源；系统不猜测
-  “最新 Run”。Planner 只接收有界、脱敏的 Attempt/Check/Checkpoint 摘要，产生保留 lineage 的 draft，
-  仍需再次批准。
-- 探索分支可以局部失败并由 Evaluator 比较剩余可行候选；若所有 active 分支均已失败，Orchestrator
-  必须在创建 Evaluator Attempt 前将 Run 明确收敛为 failed，不能要求模型伪造空 BranchSelection。
+- 仍有可行路线时，依据获批条件比较、继续或取消局部分支，不自动猜测用户偏好。
+- 自动修复和重试必须在授权、预算及副作用安全范围内。未知写入结果不盲目创建替代执行；
+  Check/Gate 失败不能通过 resume 直接跳过验证。
+- 全部分支阻塞、某步尝试耗尽或无法决定取舍时，应停止相关自动调度、保留状态和产物，挂起求助。
+  不得要求模型伪造空 BranchSelection，也不一律以终态 failed 代替等待用户。
+- 挂起需记录阻塞任务、尝试和证据、具体问题及可选行动；用户回复后继续原方案或提出修订。
+- 修订关键设计、范围、验收或权限必须重新批准；旧批准不能被新方案复用。证据来源显式选择，
+  不猜测“最新 Run”，保留原计划、执行和产物 lineage。
+- Checkpoint 保留已通过 Gate 的恢复事实；它不是整个文件系统或外部服务的任意回滚快照。
+  恢复与继续执行分开，不能重复未知副作用或无条件重新运行已完成任务。
+- 用户明确放弃、取消或确定不可恢复时仍可终止；终止、暂停和等待人工决定应可区分。
+
+### 当前实现与待迁移限制
+
+现有基线的 `retry` 采用保守 RetrySafety；`resume` 继续 paused Run，Checkpoint restore 后保持 paused。
+Replan 仅支持 failed/cancelled 来源，所有探索分支失败会收敛为 failed。后两项是待迁移的原型行为，
+不再是目标产品规则。实施人工回路时必须定义状态转换、在途 Worker 收敛、用户回复入口、旧数据库兼容
+和新旧 Run 的关联，不能仅把 failed 文案改成“挂起”。
+自动选择更符合偏好的分支也须经批准条件和 Orchestrator，不从本契约推导出已经存在提前取消工具。
+
+## 方案与验收契约
+
+Planner 可提出需求、设计和验收建议，获批方案将其绑定到明确的版本。公共 builder/校验边界创建领域
+CheckSpec 和 CompletionContract，模型不能绕过它直接推进状态或在执行中改写条件。
+任务检查与最终交付检查按对应范围定义，不要求每个中间节点满足整个最终 solution 的条件。
+现有三种检查可以组合，配置随契约持久化；任意需求检查及任务级区分仍待细化。
+Artifact 非空、命令成功或指定词匹配只能证明具体检查项；代码完成需要需求相关行为及交付证据。
+宿主 Check Runner 在候选提交后执行配置的检查；Planner 不应额外创建仅用于重复这些检查的 Worker 节点。
+宿主检查 argv 不等于 Worker 的工具执行授权，不能要求 Worker 绕过自身 Tool Profile 执行它。
+
+R1 的 `discuss-plan` / `POST /planning/discuss` 在执行前接收讨论。用户消息和模型回复通过现有 Event Log
+关联为一个逻辑 conversation；每轮引用共享 Runtime 的执行 Session，不创建 Worker Attempt 或 Run。
+澄清回复不产生 PlanRevision；形成方案时设计与图一起保存。修订草稿或已批准方案均创建新版本和
+CompletionContract，旧批准不能批准新内容。`design_document` 属于不可变计划结构，Checkpoint、查询
+和 Worker 上下文保留该版本内容；旧存量计划按 null 读取。
+
+同一消息幂等键在模型调用前持久领取，重复请求不会再次调用模型。失败可查询；进程中断的未知结果
+不自动重放。当前不在 active Run 的 Goal 上修订，运行期人工回路仍归后续 R3，不把规划回复冒充执行恢复。
 
 ## P1 迁移保护
 
@@ -77,10 +115,13 @@ P2 的数据库迁移必须从当前 P1 schema version 2 单向前进，并在 P
 - Checkpoint 必须引用确定的 PlanRevision、Run、通过的 Gate Event offset、分支选择和 Artifact。
 - 恢复只能使用已持久化的最新 Checkpoint 和原执行事实，不得重复外部副作用或创建替代执行。
 
-现有 P1 exploration E2E、单节点 StartRun 幂等测试和 recovery 集成测试是这些语义的迁移保护。
-后续首次增加 P2 数据表时，必须用数据库备份 API 生成一致副本并同时验证迁移前后的上述事实。
+旧 P1 exploration、幂等和 recovery 测试已退役，不是要求恢复的长期测试套件。迁移仍需保护上述事实：
+在备份副本上核对实际迁移结果；发现失败时才在仓库外写必要的临时定位单测，遵守当前测试策略。
 
-## Built-in Planner 图操作 Tool 契约（P2-I14）
+## 已有 Built-in Planner 图操作 Tool 契约（P2-I14）
+
+本节定义图构建协议，不是完整 Planner 产品接口。只读仓库调查、多轮用户对齐和方案审查在同一规划
+能力中补齐；图校验通过不等于方案已被用户批准，也不等于需求被正确理解。
 
 Built-in Planner 不再通过一次性 `submit_plan` 固定双分支模板。模型在本次 Planner 调用的普通内存图
 中直接调用图操作 Tool 构造 PlanGraph：`add_plan_node`、`update_plan_node`、`remove_plan_node`、
@@ -115,7 +156,9 @@ timeout 是连接/无进展检测，不是短时总任务寿命：
   显式配置项（`ehai-api --attempt-deadline-seconds`）；heartbeat、no-progress、lease、cancel、用户
   显式 deadline 和 RetrySafety 对未知外部副作用的限制全部保留。
 
-## 通用 Built-in Agent Runtime 契约（P2-I15–I18）
+## 通用 Built-in Agent Runtime 目标契约（P2-I15–I18）
+
+以下为复用约束；Foundation 分支有相关实现，角色与工具在正常入口中的可用性仍需分别验收。
 
 Built-in Agent Runtime 是 EHAI 内部所有模型驱动 Role 的唯一 Agent 地基。Planner、Worker、Evaluator、
 Merge、Visualizer、Reviewer 和 Assistance 必须复用同一 ModelClient、Session/Event Store、Agent Loop、
@@ -137,4 +180,5 @@ PlanNode/Attempt/Run 状态。跨 Session 协作的产物必须通过 Artifact �
 推进的唯一入口。Visualization Role 只能从已校验 PlanRevision 派生可视化 Artifact，不能修改计划真值。
 
 本阶段提前 MCP/Skill 的“运行时消费能力”，不提前 P5 的插件 SDK、市场、热安装、第三方 Agent Framework
-或跨主机分布式协调。
+或跨主机分布式协调。未来顶层通用 Agent 也复用此地基，通过平台能力协助用户；它不是 Planner 别名，
+不能因定义 Assistance Role 就宣称已经实现平台交互产品。

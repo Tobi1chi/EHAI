@@ -200,6 +200,7 @@
         "status": {"$ref": "#/$defs/PlanRevisionStatus"},
         "approved_at": {"$ref": "#/$defs/NullableUtcDateTime"},
         "supersedes_plan_revision_id": {"$ref": "#/$defs/NullableId"},
+        "design_document": {"type": ["string", "null"], "maxLength": 64000},
         "nodes": {
           "type": "array",
           "items": {"$ref": "#/$defs/PlanNode"}
@@ -213,6 +214,39 @@
           "items": {"$ref": "#/$defs/Branch"}
         }
       }
+    },
+    "PlanningTurn": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "turn_id", "message", "status", "reply", "plan_revision_id", "agent_session_ref_id", "error"
+      ],
+      "properties": {
+        "turn_id": {"$ref": "common.schema.json#/$defs/Id"},
+        "message": {"type": "string"},
+        "status": {"enum": ["running", "completed", "failed"]},
+        "reply": {"type": ["string", "null"]},
+        "plan_revision_id": {"$ref": "#/$defs/NullableId"},
+        "agent_session_ref_id": {"$ref": "#/$defs/NullableId"},
+        "error": {"type": ["string", "null"]}
+      }
+    },
+    "PlanningConversation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["conversation_id", "goal_id", "workspace", "turns"],
+      "properties": {
+        "conversation_id": {"$ref": "common.schema.json#/$defs/Id"},
+        "goal_id": {"$ref": "common.schema.json#/$defs/Id"},
+        "workspace": {"type": ["string", "null"]},
+        "turns": {"type": "array", "items": {"$ref": "#/$defs/PlanningTurn"}}
+      }
+    },
+    "PlanningConversationResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["data"],
+      "properties": {"data": {"$ref": "#/$defs/PlanningConversation"}}
     },
     "Attempt": {
       "type": "object",

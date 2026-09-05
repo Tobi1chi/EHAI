@@ -1793,6 +1793,7 @@ def _plan_structure(plan_revision: PlanRevision) -> tuple[object, ...]:
         plan_revision.completion_contract_version,
         plan_revision.created_at,
         plan_revision.supersedes_plan_revision_id,
+        plan_revision.design_document,
         nodes,
         edges,
         branches,

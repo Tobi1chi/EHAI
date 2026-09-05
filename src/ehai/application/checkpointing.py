@@ -369,6 +369,7 @@ def _replace_nodes(plan: PlanRevision, replacements: dict[ID, PlanNode]) -> Plan
         status=plan.status,
         approved_at=plan.approved_at,
         supersedes_plan_revision_id=plan.supersedes_plan_revision_id,
+        design_document=plan.design_document,
     )
 
 

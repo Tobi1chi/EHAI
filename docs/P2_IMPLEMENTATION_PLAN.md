@@ -2,16 +2,79 @@
 
 ## 状态与目标
 
-- 状态：`P2-I0–I13` 已完成；`P2-I14` 已实现但仍有提交前修复门禁；`P2-I15–I18` 已确认、待实现。
-- Roadmap 阶段：P2——稳定的多 Worker 执行内核。
+- 状态：执行地基已有实现，当前编码产品闭环重新细化中；不得把 `P2-I0–I18` 提交或历史 PASS 等同于 P2 完成。
+- 产品依据：[Product Scope](PRODUCT_SCOPE.md)；Roadmap 阶段：P2——做实可审查、可干预的编码闭环。
 - P1/P1.1 执行语义基线：提交 `a1a41b1`。
 
-P2 将 P1 的单 Worker、同步串行执行升级为可持久化、可观察、可恢复的异步 Agent Runtime。
-Planner 生成 PlanGraph，Orchestrator 判断 ready 并推进领域状态，Scheduler 管理队列与并发，
-Dispatcher 选择 Worker/Endpoint，Built-in Agent 或 Codex Connector 执行 Attempt。Worker 仍只能提交
-候选结果，Check/Gate 仍是 PlanNode 和 Run 完成的唯一入口。
+本工作树已从 `2ef5611` 快进整合到 `codex/ehai-p2` 的 `e0907f2`，包含 I14 修复和 I15–I18 扩展，
+并保留本次产品文档重整。代码整合不代表正常产品接入与最终验收完成，也不表示其他工作树的 `main` 已更新。
+执行前必须重新检查实际分支、diff 和能力，不按旧“待实现”标签重写已有代码。
 
-## P2 完成后的能力
+P2 使用既有多 Worker 内核做实用户路径：CLI 提交目标 → Planner 调查、讨论和修订 → 用户审查批准
+具体方案 → 指定 workspace 编码 → 需求相关检查和代码交付。授权内自主处理失败，不能决定时挂起求助。
+顶层通用 Agent 是平台交互者，Planner 是专门能力；完整顶层 Agent 的交付增量另行确定。
+
+## 当前重整顺序
+
+本节是后续实施入口。先定义用户行为和模块契约，再复用、接通或重构代码，不要求推翻全部底座。
+下面的工作项尚未完成；每项具体 Schema、命令和状态迁移在实施前明确，不先造占位接口。
+
+| 顺序 | 要暴露的用户能力 | 已有实现与当前差距 | 实施边界 |
+| --- | --- | --- | --- |
+| R1 契约和规划链路 | 查看方案与检查条件，调查仓库、多轮讨论、修订和批准版本 | 已接入讨论/查询、只读 Workspace 工具、版本化设计和多项检查；代表性真实 CLI 讨论、修订与审批隔离已通过 | 讨论可以先澄清而不生成图；新草稿重建批准关系，运行中 Goal 暂不修订；不把规划侧试用等同于最终编码 E2E |
+| R2 获批方案到代码 | 指定 workspace 执行获批任务，调度 Worker，整合并交付选中代码 | Orchestrator、Scheduler、Connector 和 Artifact 已有；Shell/Git/Web/MCP/Skill 正常装配、按任务配置检查与可用交付入口仍不足 | 复用执行地基，接通配置和结果；不复制 Agent Loop 或静默扩大批准范围 |
+| R3 失败与人工介入 | 授权内重试/剪枝，阻塞时查看问题、回复、继续或修订 | 有 pause/resume 和 Worker request；全部分支失败仍终止，Replan 限终态来源，缺完整任务级人工回路 | 定义阻塞信息、在途任务收敛、状态迁移和回复语义，不只把 failed 改名 |
+| R4 P2 总验收与接口收口 | CLI/API 可完整操作同一后端能力，查看运行与交付证据，为 P3 提供接口 | HTTP Query 已有，CLI 已补 `get-trace`；缺统一交互链路、完整配置和宿主使用流程 | 能力入口先随 R1–R3 开放，再与用户确定唯一产品 E2E；不由测试代办装配、审批或关键步骤 |
+
+R4 的入口在前面各项开发时同步接通，不等最后才开始集成。每项说明输入输出、调用方、权限/状态所有者、
+失败处理和用户证据。先实际使用暴露的能力，不预写单测；真实失败时才用仓库外临时测试定位。
+R 编号是当前重整工作项，I 编号保留历史实现定位；不要同时把两套清单当成互相独立的必做项目。
+
+当前入口实现索引：[`cli.py`](../src/ehai/interfaces/cli.py)、[`api.py`](../src/ehai/interfaces/api.py)；
+状态与审批：[`service.py`](../src/ehai/application/service.py)；
+Planner：[`builtin.py`](../src/ehai/infrastructure/planners/builtin.py)；
+执行：[`orchestrator.py`](../src/ehai/application/orchestrator.py)。
+R1 本轮已接入讨论与设计持久化、草稿修订、公共查询/API 和正式 Endpoint capability 配置，
+并通过新生成 Client 暴露。R1 代表性真实 CLI 试用结果见下节；R2–R4 未完成，不因此宣布 P2 完成。
+
+### R1 真实入口试用记录（2026-09-05）
+
+使用配置 `gpt-5.6-luna/high` 和用户提供的兼容端点，经正常 CLI 完成三轮讨论；端点使用正式
+`--no-responses-background`、`--no-responses-unique-items` 参数，没有替换生产 Adapter。
+
+- 模型通过 Workspace Tool 读取临时 Python 仓库，先询问未定需求，不创建方案或执行任务。
+- 用户澄清后生成 v1 设计、执行图和两项检查配置；审查意见再将参数改为 keyword-only `locale`，
+  生成 v2 计划与 v2 契约，没有把上一版未实现的设计误当作既有接口。
+- v1 批准后再修订，v1 设计和批准记录不变，v2 初始为 draft。未批准 v2 与旧批准均不能启动任务；
+  v2 需单独显式批准，批准不修改其设计。
+- 持久记录含三轮完成的讨论、33 个模型 Step，以及 Workspace、澄清、设计和图操作事件。
+  Run、Attempt 和 Workspace lease 均为零，示例源码未修改；没有执行 Worker 或宿主代码检查。
+- 试用发现 Windows CLI 管道以 GBK 输出导致中文乱码，已修复为 UTF-8；仓库外临时单测复现并通过，
+  原真实记录经正常 CLI 重读正常。另修正 Planner 提示约束，避免把宿主检查重复安排为 Worker 任务。
+
+证据保留在仓库外临时目录 `ehai-r1-real-e938d2ba6f5747859f9b56d63d4019cc`，
+包括 `summary.json`、讨论、两版方案、检查配置和审批记录。凭证未写入仓库。
+本记录只证明这条规划侧用户路径，不代表 R2 编码、R3 人工执行恢复或唯一产品 E2E 已通过。
+
+## 需要对齐的现有差距
+
+- Built-in Planner 已接入讨论和只读调查；输入理解、设计和图的一致性仍需真实使用判断。
+- 公共 builder 已允许组合三种检查；更丰富的需求表达、任务级与最终验收仍需要细化。
+- Endpoint capability 已接入正式入口；Shell/Git/Web/MCP/Skill 和可视化的完整生产配置仍待接通。
+- Mailbox 发送落库不等于接收、消费及恢复闭环，协作验收必须检查接收方行为。
+- 旧代码将全部分支失败收敛为 failed、Replan 限制终态来源；新的挂起求助语义需明确状态和 API 迁移。
+- 用户可在平台外请 Agent 审查并带回意见；不先实现完整外部评审框架或通用顶层 Agent 才能开始编码闭环。
+
+## 当前产品退出条件
+
+一个真实仓库编码需求从正常 CLI 开始，经过 Planner 调查与讨论、一次用户修订、具体版本批准和指定
+workspace 执行，产生通过需求相关检查的代码，并可查看交付与执行证据。
+自主分支处理、挂起求助与继续属于产品能力；其如何进入唯一 E2E，待正常入口开放后与用户确定，
+不因此新建多套测试。预算或未知副作用不能被无限重试绕过。
+不得在目标里预写固定节点、获胜方案和产物答案来替代规划，不得 monkeypatch 生产装配或直接构造
+遗漏模块获得产品 PASS。真实模型 Smoke 与用户路径 E2E 分开报告，代码存在不等于已验收。
+
+## 已有执行地基与历史范围
 
 - `StartRun` 持久化并排队后快速返回，调用方通过 Query/SSE 观察后台进展。
 - 多个 ready PlanNode 可以在 capacity 与 Workspace 隔离允许时并发执行。
@@ -114,7 +177,13 @@ Endpoint  1 ── N 并发 Session（受 capacity 限制）
 - 新依赖必须直接服务当前 Increment；同一外部协议不同时维护多套 Client。
 - 每个 Increment 完成前不提前搭建后续 Increment 的抽象、TODO 实现或占位服务。
 
-## 编码增量
+## 历史编码增量（I0–I18）
+
+以下保留原增量设计与当时的验收记录，供定位实现和回归边界，不是新产品的独立执行指令。
+其中“已完成”只对应原增量范围，“待实现”指该条目的历史基线；当前分支情况见本文开头。
+旧固定双分支、Session 限制、失败终态、检查模板和测试组织要求，若与 Product Scope 或当前 R1–R4
+冲突，以新定义为目标并安排迁移，不能直接改状态标签冒充实现。
+以下提到的旧测试文件和强制单测/Smoke 指令属于历史记录，现已退役；不得按历史条目重新补回仓库。
 
 ### P2-I0：执行契约与迁移基线
 
@@ -480,7 +549,7 @@ Run 不会因 Worker/Runtime 故障永久悬挂，每次等待、重试、失败
 
 建议提交：`test(e2e): verify p2 multi-worker runtime`
 
-## P2→P3 Planning & Execution Readiness Gate
+## 历史 P2→P3 Planning & Execution Readiness Gate
 
 P2-I0–I9 固定并实现执行内核；以下增量只关闭真实项目使用前仍缺少的组合证据，不重新设计 P2，
 也不提前开发 P3 UI。每项必须复用现有 Test Double、API、Trace 和 Smoke 基础，避免再次扩张测试框架。
@@ -499,7 +568,8 @@ P2-I0–I9 固定并实现执行内核；以下增量只关闭真实项目使用
 
 **边界**
 
-- Planner 不读取整个仓库、不创建 Worker Attempt/Session，也不批准或执行计划。
+- 当时 Planner 不读取整个仓库、不创建 Worker Attempt/Session，也不批准或执行计划。后续独立 Planning
+  Session 和只读调查能力按当前 scope 接入，不把本条解释为禁止所有规划 Session。
 - 本 Increment 不要求模型生成任意 DAG，并以有界双分支完成当时验收；该限制随后由 `P2-I14` 的
   直接 PlanGraph Tool 和 ExplorationBudget 取代。
 - 真实 Smoke 默认跳过，只在显式开关和凭证存在时调用一次。
@@ -553,6 +623,7 @@ lease 均可从 trajectory 复核。
 全部通过；两个 work 分支存在真实时间重叠且使用独立 worktree。节点使用结构化非空 Artifact Gate，
 代码正确性由 acceptance runner 另外执行 focused/full pytest、Ruff、format、mypy、diff-check 和两文件
 scope 检查，并由人工 Gate 比较 selected/pruned diff；因此没有用非空 Artifact 替代正确性验证。
+这证明当时宿主验收检查了代码，不证明这些检查已全部接入公开产品入口；当前 R2/R4 必须补齐后一项。
 
 ### P2-I13：Readiness 最终验收
 
@@ -567,7 +638,8 @@ scope 检查，并由人工 Gate 比较 selected/pruned diff；因此没有用�
 
 **退出条件**
 
-Roadmap Readiness Gate 的四类 E2E 全部通过，工作树 clean，无已知阻断缺陷，才允许启动 P3 UI。
+当时的退出要求是四类 E2E 全部通过、工作树 clean 且无已知阻断缺陷。
+现在进入 P3 的依据改为本文的“当前产品退出条件”，不以此历史 Gate 单独放行。
 
 P3+ 非阻断项保持原边界：Dashboard、P4 Workflow、插件生态、新 Provider 与跨主机分布式调度均未
 提前实现。此处“有界双分支”只记录 `P2-I13` Readiness Gate 当时的验收形态；后续 `P2-I14` 已用
@@ -575,9 +647,9 @@ P3+ 非阻断项保持原边界：Dashboard、P4 Workflow、插件生态、新 P
 
 ### P2-I14：Built-in Planner 图操作 Tool 与长程超时语义
 
-**状态：** 已实现（2026-09-04）；固定 `two_branch_plan_template` 的 Built-in 路径已移除，由模型驱动的
-图操作 Tool Loop 取代，Provider 超时语义已调整为长程执行。合入远端前仍须通过下列修复门禁与真实
-Planner Smoke。
+**状态：** 初始实现已进入基线（2026-09-04）；固定 `two_branch_plan_template` 的 Built-in 路径已移除，
+由模型驱动的图操作 Tool Loop 取代。下列复审修复在 `codex/ehai-p2` 已有提交，需核对实际实现和生产
+配置证据；此处不授权合并、提交或推送，也不代表当前用户路径已完成。
 
 **必须交付**
 
@@ -627,7 +699,7 @@ HTTP retry 与 Background Mode 均有离线测试证明。
 
 #### P2-I14 提交前修复门禁
 
-以下三项来自提交 `bfec3be` 与 `28b2fcb` 的复审，必须在开始 `P2-I15` 前修复：
+以下三项来自提交 `bfec3be` 与 `28b2fcb` 的历史复审，是原 I15 的前置门禁。核对已有修复，不重复实现：
 
 1. **统一 HTTP retry 所有权。** `OpenAIResponsesModelClient` 自己维护 4 次 HTTP retry 时，内部创建的
    `AsyncOpenAI` 必须关闭 SDK 默认 retry，避免 SDK 默认 2 次与外层 4 次叠加。测试必须证明一次逻辑
@@ -646,7 +718,7 @@ HTTP retry 与 Background Mode 均有离线测试证明。
 
 ### P2-I15：通用 Built-in Agent Runtime 与 Role 配置
 
-**状态：** 已确认，待实现。
+**状态：** 扩展代码已整合到当前工作树，正常产品接入与验收待完成。
 
 **必须交付**
 
@@ -676,7 +748,7 @@ Event，证明不是 ScriptedModelClient/Test Double 在替代 Agent 决策。
 
 ### P2-I16：Workspace、Shell 与 Git Tool Pack
 
-**状态：** 已确认，待实现。
+**状态：** 扩展代码已整合到当前工作树，正常产品接入与验收待完成。
 
 **必须交付**
 
@@ -707,7 +779,7 @@ Event，证明不是 ScriptedModelClient/Test Double 在替代 Agent 决策。
 
 ### P2-I17：Web、MCP 与 Skill Tool Provider
 
-**状态：** 已确认，待实现。
+**状态：** 扩展代码已整合到当前工作树，正常产品接入与验收待完成。
 
 **必须交付**
 
@@ -735,7 +807,7 @@ Event，证明不是 ScriptedModelClient/Test Double 在替代 Agent 决策。
 
 ### P2-I18：Session Mailbox 与内部 Agent Role 闭环
 
-**状态：** 已确认，待实现。
+**状态：** 扩展代码已整合到当前工作树；消息实际消费、完整角色接入与用户路径验收仍待完成。
 
 **必须交付**
 
@@ -763,17 +835,16 @@ Session 消息由真实 Agent 自主发送或读取并可持久恢复。所有 R
 
 建议提交：`feat(agent): add session messaging and role runtime`
 
-## P2-I14–I18 重构 Agent 执行说明
+## P2-I14–I18 历史实施顺序与保留边界
 
-本节与 `P2-I14` 修复门禁、`P2-I15–I18` Increment 一起构成后续重构 Agent 的完整任务依据；不得再为
-同一轮实现创建平行的 Plan/Prompt 文档。
+本节记录 Foundation 的依赖顺序，不再构成当前完整产品任务书；以后续 R1–R4 和 Product Scope 为准。
+已经存在的 I14–I18 分支提交先核对和复用，不按旧提示词重新创建同一实现。
 
 ### 启动与顺序
 
-- 只在包含 `P2-I14` 两个提交及本节文档的干净独立 branch/worktree 中开始；先检查 `git status`、HEAD
-  与最近提交。基线缺失或存在未知修改时停止并报告，不得重做 I14 或覆盖用户文件。
-- 严格按 `I14 修复门禁 → I15 → I16 → I17 → I18` 执行。每个 Increment 完成聚焦验证和只读复审后
-  单独提交，再进入下一项；一个长程 Session 可以持续负责，但不能把四个 Increment 压成一个提交。
+- 先检查 `git status`、HEAD、最近提交及用户修改；确认实际基线，不覆盖用户文件或修改其他 worktree。
+- 原实现依赖为 `I14 修复门禁 → I15 → I16 → I17 → I18`。这不是重做已存在提交的指令；
+  当前按用户能力接通并验收，仅在用户要求时提交，不从历史建议提交名推导提交授权。
 - `I15` 先统一 Runtime/Role，`I16` 再扩 Workspace/Shell/Git，`I17` 接入 Web/MCP/Skill，`I18` 最后
   增加 Mailbox、Visualizer 与完整 Role 闭环。后续能力不得反向驱动前一 Increment 提前搭建占位抽象。
 
@@ -807,53 +878,23 @@ Session 消息由真实 Agent 自主发送或读取并可持久恢复。所有 R
 - 最终报告必须映射每个 Increment 的实现文件、Role/Tool/Finish 配置、权限与恢复语义、真实/离线验证、
   E2E 轨迹、提交列表、HEAD 和工作树状态，并明确所有未运行的真实外部验证。
 
-## 最小充分测试策略
+## 当前最小充分测试策略
 
-测试只用于证明 Increment 退出条件、保护已发生回归、阻止状态损坏/重复副作用或跨 Session/Workspace
-串线。以上“最小验证”是风险清单，可以由同一场景覆盖多项，不代表每一条创建独立测试脚本。
+用户已明确要求先暴露能力，再确定唯一产品 E2E；这取代历史增量的测试分层和每次修复强制入库单测规则。
+旧常驻测试和辅助脚本已退役，参见 [Tests](../tests/README.md)。当前不预造最终 E2E，也不把无测试收集
+或历史 PASS 当作新产品通过。
 
-### 测试层次
-
-- 纯状态机/映射使用 unit test。
-- SQLite、Runtime、Scheduler、Workspace 使用 integration test。
-- Built-in/Codex Worker 共用参数化 contract test；只为各自特有协议补最少测试。
-- P2 只维护一个代表最终退出条件的 E2E 场景。
-- 真实外部调用保留一个 Responses Worker Smoke、一个 Responses Planner Smoke、一个 Codex App Server
-  双 Session Smoke 和现有 Codex CLI Smoke；默认日常测试不访问网络或用户 Session，但相关 Increment
-  在标记完成前必须显式运行对应真实 Smoke。Test Double 不能替代真实 Agent 验收。
-
-预计新增的主要测试模块不超过以下职责集合；优先复用现有文件：
+- 仓库最终只保留一个正常入口的产品 E2E，不另建长期 unit、integration、contract 或 smoke 套件。
+- 实际使用或 E2E 失败时，必要的定位单测在仓库外临时目录编写，通过 `uv` 定向运行。
+- 定位并修复后复测原失败路径；临时文件不提交、不复制回仓库、不默认变成永久回归测试。
+- 产物非空、工具调用次数和消息发送次数不能替代需求结果；E2E 不代办生产装配或 Agent 决策。
+- Ruff、format、mypy、生成 Client 构建和文档检查继续使用；不为推测的低概率情况建立测试矩阵。
 
 ```text
-tests/unit/test_builtin_agent.py
-tests/integration/test_async_runtime.py
-tests/integration/test_scheduler.py
-tests/integration/test_workspace_sessions.py
-tests/contract/test_p2_workers.py
-tests/e2e/test_p2_runtime.py
-```
-
-### 禁止测试膨胀
-
-- 不设置行覆盖率目标，不为覆盖不可达分支修改生产接口。
-- 不为 dataclass getter、Python/SQLite/OpenAI SDK/Codex 自身保证的行为重复测试。
-- 不对状态、capacity、timeout 和平台做笛卡尔积矩阵；选择能证明不变量的代表值。
-- 同一行为不同时复制为 unit、integration、contract 和 E2E；使用最低且足够的层级。
-- 默认不新增 `tests/helpers/*.py` 独立脚本。只有真实子进程边界无法在 pytest Fixture 内表达时才允许，
-  并必须在测试旁说明必要性。
-- Test Double 默认放在使用它的测试模块；至少三个模块复用后才提取公共 Fixture。
-- 不建立自定义测试 DSL、Fixture Framework、Snapshot 系统或 P3–P5 预留 Fixture。
-- Bug 修复增加一个最小回归测试；不得借机扩成相邻功能的全量审计。
-- 行为迁移时更新现有测试，不保留两套互相矛盾的旧/新测试。
-
-### 执行节奏
-
-```text
-修改代码
-→ 运行最小相关测试
-→ 修复并复测失败子测试
-→ Increment 准备提交时运行全部受影响测试与检查
-→ P2 最终验收时运行仓库全量测试
+暴露正常 CLI/API 能力
+→ 用户实际查看与使用
+→ 确定并运行唯一产品 E2E
+→ 如有失败：仓库外临时定位 → 修复 → 复测原路径
 ```
 
 ## 接口依据与环境快照

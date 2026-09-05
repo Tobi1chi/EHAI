@@ -542,6 +542,7 @@ def _plan_revision_document(revision: PlanRevision) -> dict[str, JsonValue]:
         "status": revision.status.value,
         "approved_at": _format_optional_datetime(revision.approved_at),
         "supersedes_plan_revision_id": revision.supersedes_plan_revision_id,
+        "design_document": revision.design_document,
     }
 
 
@@ -564,6 +565,7 @@ def _decode_plan_revision_document(
         status=PlanRevisionStatus(_string(document, "status")),
         approved_at=_optional_datetime(document, "approved_at"),
         supersedes_plan_revision_id=_optional_id(document, "supersedes_plan_revision_id"),
+        design_document=_optional_string(document, "design_document"),
     )
 
 

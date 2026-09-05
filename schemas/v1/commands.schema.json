@@ -63,7 +63,7 @@
         "criteria": {
           "type": "array",
           "minItems": 1,
-          "maxItems": 1,
+          "maxItems": 3,
           "items": {"$ref": "#/$defs/P1CompletionCriterion"}
         },
         "required_check_ids": {
@@ -154,7 +154,7 @@
         "criteria": {
           "type": "array",
           "minItems": 1,
-          "maxItems": 1,
+          "maxItems": 3,
           "items": {"$ref": "#/$defs/P1CompletionCriterion"}
         }
       }
@@ -175,8 +175,27 @@
         "criteria": {
           "type": "array",
           "minItems": 1,
-          "maxItems": 1,
+          "maxItems": 3,
           "items": {"$ref": "#/$defs/P1CompletionCriterion"}
+        }
+      }
+    },
+    "DiscussPlanRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["idempotency_key", "goal_id", "message", "criteria"],
+      "properties": {
+        "idempotency_key": {"$ref": "common.schema.json#/$defs/IdempotencyKey"},
+        "goal_id": {"$ref": "common.schema.json#/$defs/IdInput"},
+        "message": {"type": "string", "minLength": 1, "maxLength": 8000, "pattern": "\\S"},
+        "criteria": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 3,
+          "items": {"$ref": "#/$defs/P1CompletionCriterion"}
+        },
+        "conversation_id": {
+          "oneOf": [{"$ref": "common.schema.json#/$defs/IdInput"}, {"type": "null"}]
         }
       }
     },

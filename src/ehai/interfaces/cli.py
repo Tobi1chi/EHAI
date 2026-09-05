@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import argparse
+import sqlite3
 import sys
 from collections.abc import Sequence
+from io import TextIOWrapper
 from pathlib import Path
 from typing import cast
 
@@ -18,6 +20,7 @@ from ehai.application.commands import (
     CancelRun,
     CreateGoal,
     CreateProject,
+    DiscussPlan,
     PauseRun,
     ProposePlan,
     ReplanPlan,
@@ -38,6 +41,7 @@ from ehai.application.planner import (
     PlanProposal,
     ReplanContext,
 )
+from ehai.application.queries import QueryNotFoundError, QueryService
 from ehai.application.run_control import BackgroundRunController, RunControlError, RunController
 from ehai.application.service import ApplicationError, ExecutionService
 from ehai.application.workers import WorkerAdapter
@@ -52,6 +56,7 @@ from ehai.infrastructure.checks import (
     CommandCheckAdapter,
     SemanticCheckAdapter,
 )
+from ehai.infrastructure.openai_responses import ResponsesEndpointCapabilities
 from ehai.infrastructure.planners import (
     BuiltinPlannerAdapter,
     BuiltinPlannerError,
@@ -60,6 +65,7 @@ from ehai.infrastructure.planners import (
 )
 from ehai.infrastructure.sqlite import SQLiteDatabase
 from ehai.infrastructure.workers import CodexWorkerAdapter, FakeWorker
+from ehai.interfaces.public_documents import public_json_value
 
 
 class _ExplorationPlannerAdapter:
@@ -112,6 +118,7 @@ def build_service(
     codex_model: str | None = None,
     codex_reasoning_effort: str | None = None,
     background_start: bool = False,
+    endpoint_capabilities: ResponsesEndpointCapabilities | None = None,
 ) -> ExecutionService:
     """Build the local P1 service from concrete infrastructure Adapters."""
     database_path.parent.mkdir(parents=True, exist_ok=True)
@@ -150,6 +157,13 @@ def build_service(
             model=builtin_planner_model,
             reasoning_effort=cast(ReasoningEffort, builtin_planner_reasoning_effort),
             session_store=SQLiteBuiltinSessionStore(database),
+            workspace=worker_workspace or Path.cwd(),
+            artifact_store=artifact_store,
+            endpoint_capabilities=endpoint_capabilities,
+            check_configuration={
+                "command_argv": [] if command_check_argv is None else list(command_check_argv),
+                "semantic_required_terms": list(semantic_required_terms),
+            },
         )
     else:
         raise ValueError(f"unsupported Planner: {planner_kind}")
@@ -188,12 +202,14 @@ def build_service(
         ),
         recovery_service=RecoveryService(uow_factory=database.unit_of_work),
         background_start=background_start,
+        planning_workspace=str((worker_workspace or Path.cwd()).resolve()),
     )
 
 
 def create_parser() -> argparse.ArgumentParser:
     """Create the stable argparse surface used by tests and the console script."""
     parser = argparse.ArgumentParser(prog="ehai", description="EHAI P1 Execution Plane")
+    add_responses_arguments(parser)
     parser.add_argument("--database", type=Path, required=True, help="SQLite database path")
     parser.add_argument(
         "--artifacts",
@@ -276,7 +292,7 @@ def create_parser() -> argparse.ArgumentParser:
         "--criterion",
         action="append",
         required=True,
-        help="P1 requires exactly one value: " + ", ".join(sorted(P1_COMPLETION_CRITERIA)),
+        help="repeat for executable checks: " + ", ".join(sorted(P1_COMPLETION_CRITERIA)),
     )
 
     replan = commands.add_parser("replan-plan", help="create a new draft from an approved plan")
@@ -287,7 +303,7 @@ def create_parser() -> argparse.ArgumentParser:
         "--criterion",
         action="append",
         required=True,
-        help="P1 requires exactly one value: " + ", ".join(sorted(P1_COMPLETION_CRITERIA)),
+        help="repeat for executable checks: " + ", ".join(sorted(P1_COMPLETION_CRITERIA)),
     )
 
     approve = commands.add_parser("approve-plan", help="confirm and approve a proposal")
@@ -319,14 +335,47 @@ def create_parser() -> argparse.ArgumentParser:
 
     query = commands.add_parser("get-run", help="query one Run")
     query.add_argument("--run-id", required=True)
+
+    plan_query = commands.add_parser(
+        "get-plan", help="read a stored plan without invoking a Planner"
+    )
+    plan_query.add_argument("--plan-revision-id", required=True)
+
+    checks_query = commands.add_parser("get-plan-checks", help="read the plan's completion checks")
+    checks_query.add_argument("--plan-revision-id", required=True)
+
+    trace_query = commands.add_parser(
+        "get-trace", help="read execution, Artifact and Agent evidence"
+    )
+    trace_query.add_argument("--run-id", required=True)
+
+    discuss = commands.add_parser(
+        "discuss-plan", help="discuss or revise a plan without executing it"
+    )
+    discuss.add_argument("--idempotency-key", required=True)
+    discuss.add_argument("--goal-id", required=True)
+    discuss.add_argument("--conversation-id")
+    discuss.add_argument("--criterion", action="append", required=True)
+    message = discuss.add_mutually_exclusive_group(required=True)
+    message.add_argument("--message")
+    message.add_argument("--message-file", type=Path)
+
+    conversation = commands.add_parser("get-discussion", help="read durable planning discussion")
+    conversation.add_argument("--conversation-id", required=True)
     return parser
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    """Run one CLI Command and emit exactly one JSON object."""
+    """Run one CLI Command and emit exactly one JSON document."""
+    for stream in (sys.stdout, sys.stderr):
+        if isinstance(stream, TextIOWrapper):
+            stream.reconfigure(encoding="utf-8")
     parser = create_parser()
     args = parser.parse_args(argv)
     try:
+        if args.command in {"get-plan", "get-plan-checks", "get-trace", "get-discussion"}:
+            print(json_dumps(_dispatch_query(args)))
+            return 0
         service = build_service(
             args.database,
             args.artifacts,
@@ -341,17 +390,40 @@ def main(argv: Sequence[str] | None = None) -> int:
             worker_timeout_seconds=args.worker_timeout_seconds,
             codex_model=args.codex_model,
             codex_reasoning_effort=args.codex_reasoning_effort,
+            endpoint_capabilities=responses_capabilities(args),
         )
-        output = _dispatch(service, args)
+        if args.command == "discuss-plan":
+            message = (
+                args.message
+                if args.message_file is None
+                else args.message_file.read_text(encoding="utf-8")
+            )
+            output = public_json_value(
+                service.discuss_plan(
+                    DiscussPlan(
+                        args.idempotency_key,
+                        normalize_id(args.goal_id),
+                        message,
+                        tuple(args.criterion),
+                        None
+                        if args.conversation_id is None
+                        else normalize_id(args.conversation_id),
+                    )
+                )
+            )
+        else:
+            output = _dispatch(service, args)
     except (
         ApplicationError,
         BuiltinPlannerError,
         CodexPlannerError,
         OrchestrationError,
+        QueryNotFoundError,
         RecoveryError,
         RunControlError,
         ValueError,
         OSError,
+        sqlite3.Error,
     ) as error:
         print(
             json_dumps({"error": str(error), "error_type": type(error).__name__}), file=sys.stderr
@@ -359,6 +431,26 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 2
     print(json_dumps(output))
     return 0
+
+
+def _dispatch_query(args: argparse.Namespace) -> JsonValue:
+    database_path = Path(args.database)
+    if not database_path.is_file():
+        raise FileNotFoundError(f"database does not exist: {database_path}")
+    database = SQLiteDatabase(database_path)
+    queries = QueryService(
+        read_session_factory=database.read_session,
+        builtin_session_reader=SQLiteBuiltinSessionStore(database),
+    )
+    if args.command == "get-plan":
+        return public_json_value(queries.get_plan_graph(normalize_id(args.plan_revision_id)))
+    if args.command == "get-plan-checks":
+        return public_json_value(queries.list_check_specs(normalize_id(args.plan_revision_id)))
+    if args.command == "get-discussion":
+        return public_json_value(
+            queries.get_planning_conversation(normalize_id(args.conversation_id))
+        )
+    return public_json_value(queries.get_execution_trace(normalize_id(args.run_id)))
 
 
 def _dispatch(service: ExecutionService, args: argparse.Namespace) -> dict[str, JsonValue]:
@@ -455,6 +547,24 @@ def _dispatch(service: ExecutionService, args: argparse.Namespace) -> dict[str, 
             "status": run.status.value,
         }
     raise RuntimeError(f"unsupported CLI command: {command}")
+
+
+def add_responses_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--responses-background", action=argparse.BooleanOptionalAction, default=True
+    )
+    parser.add_argument(
+        "--responses-unique-items", action=argparse.BooleanOptionalAction, default=True
+    )
+    parser.add_argument("--responses-idempotent-create", action=argparse.BooleanOptionalAction)
+
+
+def responses_capabilities(args: argparse.Namespace) -> ResponsesEndpointCapabilities:
+    return ResponsesEndpointCapabilities(
+        supports_background=args.responses_background,
+        supports_unique_items=args.responses_unique_items,
+        supports_idempotent_create=args.responses_idempotent_create,
+    )
 
 
 def _parse_command_argv(value: str | None) -> tuple[str, ...] | None:

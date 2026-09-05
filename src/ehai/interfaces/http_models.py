@@ -53,14 +53,19 @@ class CreateGoalRequest(_StrictRequest):
 class ProposePlanRequest(_StrictRequest):
     idempotency_key: NonBlank
     goal_id: UuidInput
-    criteria: list[P1CompletionCriterion] = Field(min_length=1, max_length=1)
+    criteria: list[P1CompletionCriterion] = Field(min_length=1, max_length=3)
 
 
 class ReplanPlanRequest(_StrictRequest):
     idempotency_key: NonBlank
     base_plan_revision_id: UuidInput
-    criteria: list[P1CompletionCriterion] = Field(min_length=1, max_length=1)
+    criteria: list[P1CompletionCriterion] = Field(min_length=1, max_length=3)
     source_run_id: UuidInput | None = None
+
+
+class DiscussPlanRequest(ProposePlanRequest):
+    message: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=8000)]
+    conversation_id: UuidInput | None = None
 
 
 class ApprovePlanRequest(_StrictRequest):

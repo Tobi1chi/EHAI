@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from hashlib import sha256
 
 from ehai import ID, JsonValue, json_dumps, normalize_id
+from ehai.application.sanitization import redact_sensitive_text
 
 
 @dataclass(frozen=True, slots=True)
@@ -71,6 +72,43 @@ class ProposePlan:
         return _fingerprint(
             type(self).__name__,
             {"criteria": list(self.criteria), "goal_id": self.goal_id},
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class DiscussPlan:
+    idempotency_key: str
+    goal_id: ID
+    message: str
+    criteria: tuple[str, ...]
+    conversation_id: ID | None = None
+
+    def __post_init__(self) -> None:
+        owner = type(self).__name__
+        _require_idempotency_key(self.idempotency_key, owner)
+        object.__setattr__(self, "goal_id", normalize_id(self.goal_id))
+        message = _non_empty_text(self.message, "message", owner)
+        if len(message) > 8_000:
+            raise ValueError("Planning message exceeds 8000 characters")
+        object.__setattr__(self, "message", redact_sensitive_text(message))
+        object.__setattr__(
+            self,
+            "criteria",
+            tuple(_non_empty_text(item, "criterion", owner) for item in self.criteria),
+        )
+        if self.conversation_id is not None:
+            object.__setattr__(self, "conversation_id", normalize_id(self.conversation_id))
+
+    @property
+    def fingerprint(self) -> str:
+        return _fingerprint(
+            type(self).__name__,
+            {
+                "goal_id": self.goal_id,
+                "message": self.message,
+                "criteria": list(self.criteria),
+                "conversation_id": self.conversation_id,
+            },
         )
 
 

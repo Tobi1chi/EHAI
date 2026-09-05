@@ -375,6 +375,7 @@ class PlanRevision:
     status: PlanRevisionStatus = PlanRevisionStatus.DRAFT
     approved_at: datetime | None = None
     supersedes_plan_revision_id: ID | None = None
+    design_document: str | None = None
     _state_token: InitVar[object | None] = None
 
     def __post_init__(self, _state_token: object | None) -> None:
@@ -399,6 +400,11 @@ class PlanRevision:
             ),
         )
         owner = f"PlanRevision {self.plan_revision_id}"
+        if self.design_document is not None:
+            if not isinstance(self.design_document, str) or not self.design_document.strip():
+                raise PlanInvariantError(f"{owner} design document must not be blank")
+            if len(self.design_document) > 64_000:
+                raise PlanInvariantError(f"{owner} design document exceeds 64000 characters")
         object.__setattr__(self, "nodes", tuple(self.nodes))
         object.__setattr__(self, "edges", tuple(self.edges))
         object.__setattr__(self, "branches", tuple(self.branches))
@@ -448,6 +454,7 @@ class PlanRevision:
         version: int = 1,
         supersedes_plan_revision_id: ID | None = None,
         created_at: datetime | None = None,
+        design_document: str | None = None,
     ) -> Self:
         """Build and validate an unapproved PlanRevision."""
         if completion_contract.goal_id != goal_id:
@@ -465,6 +472,7 @@ class PlanRevision:
             branches=tuple(branches),
             created_at=created_at or utc_now(),
             supersedes_plan_revision_id=supersedes_plan_revision_id,
+            design_document=design_document,
         )
 
     @classmethod
@@ -483,6 +491,7 @@ class PlanRevision:
         status: PlanRevisionStatus,
         approved_at: datetime | None,
         supersedes_plan_revision_id: ID | None,
+        design_document: str | None = None,
     ) -> Self:
         """Restore a validated PlanRevision snapshot from trusted persistence data."""
         return cls(
@@ -498,6 +507,7 @@ class PlanRevision:
             status=status,
             approved_at=approved_at,
             supersedes_plan_revision_id=supersedes_plan_revision_id,
+            design_document=design_document,
             _state_token=_CONTROLLED_STATE,
         )
 
@@ -585,6 +595,7 @@ class PlanRevision:
         *,
         plan_revision_id: ID | None = None,
         created_at: datetime | None = None,
+        design_document: str | None = None,
     ) -> Self:
         """Create a new draft version instead of editing an approved graph."""
         if self.status is not PlanRevisionStatus.APPROVED:
@@ -601,6 +612,7 @@ class PlanRevision:
             version=self.version + 1,
             supersedes_plan_revision_id=self.plan_revision_id,
             created_at=created_at,
+            design_document=design_document,
         )
 
     def _validate_branches(

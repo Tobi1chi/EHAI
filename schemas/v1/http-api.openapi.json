@@ -5,6 +5,82 @@
     "version": "2"
   },
   "paths": {
+    "/api/v1/planning/discuss": {
+      "post": {
+        "summary": "Discuss Plan",
+        "operationId": "discuss_plan_api_v1_planning_discuss_post",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {"$ref": "#/components/schemas/DiscussPlanRequest"}
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Planning discussion",
+            "content": {
+              "application/json": {
+                "schema": {"$ref": "queries.schema.json#/$defs/PlanningConversationResponse"}
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ErrorResponse"}}}
+          },
+          "409": {
+            "description": "State conflict or failed planning turn",
+            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ErrorResponse"}}}
+          },
+          "422": {
+            "description": "Invalid request",
+            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ErrorResponse"}}}
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ErrorResponse"}}}
+          }
+        }
+      }
+    },
+    "/api/v1/planning/{conversation_id}": {
+      "get": {
+        "summary": "Get Planning Conversation",
+        "operationId": "get_planning_conversation_api_v1_planning__conversation_id__get",
+        "parameters": [
+          {
+            "name": "conversation_id",
+            "in": "path",
+            "required": true,
+            "schema": {"$ref": "common.schema.json#/$defs/IdInput"}
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Planning discussion",
+            "content": {
+              "application/json": {
+                "schema": {"$ref": "queries.schema.json#/$defs/PlanningConversationResponse"}
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ErrorResponse"}}}
+          },
+          "422": {
+            "description": "Invalid request",
+            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ErrorResponse"}}}
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ErrorResponse"}}}
+          }
+        }
+      }
+    },
     "/api/v1/projects": {
       "post": {
         "summary": "Create Project",
@@ -1853,6 +1929,7 @@
   },
   "components": {
     "schemas": {
+      "DiscussPlanRequest": {"$ref": "commands.schema.json#/$defs/DiscussPlanRequest"},
       "ApprovePlanRequest": {
         "properties": {
           "idempotency_key": {
@@ -2097,7 +2174,7 @@
               ]
             },
             "type": "array",
-            "maxItems": 1,
+            "maxItems": 3,
             "minItems": 1,
             "title": "Criteria"
           }
@@ -2145,7 +2222,7 @@
               ]
             },
             "type": "array",
-            "maxItems": 1,
+            "maxItems": 3,
             "minItems": 1,
             "title": "Criteria"
           }

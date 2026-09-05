@@ -13,6 +13,7 @@ from ehai.application.builtin_agent import (
     BuiltinSessionEvent,
     BuiltinSessionEventType,
 )
+from ehai.application.planning_dialogue import PlanningConversationView, planning_conversation
 from ehai.application.ports import ReadSession, StoredEvent
 from ehai.application.sanitization import sanitize_json_object
 from ehai.domain.artifacts import Artifact, ArtifactKind
@@ -144,6 +145,7 @@ class PlanGraphView:
     nodes: tuple[PlanNodeView, ...]
     edges: tuple[EdgeView, ...]
     branches: tuple[BranchView, ...]
+    design_document: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -370,6 +372,14 @@ class QueryService:
         with self._read_session_factory() as session:
             run = _required_run(session.states.get_run(normalized_id), normalized_id)
             return _run_view(run)
+
+    def get_planning_conversation(self, conversation_id: ID) -> PlanningConversationView:
+        normalized_id = normalize_id(conversation_id)
+        with self._read_session_factory() as session:
+            result = planning_conversation(session.events.list_events(), normalized_id)
+            if result is None:
+                raise QueryNotFoundError("PlanningConversation", normalized_id)
+            return result
 
     def list_worker_profiles(self) -> tuple[WorkerProfileView, ...]:
         """List configured WorkerProfiles without provider secrets."""
@@ -634,6 +644,7 @@ def _plan_graph_view(plan: PlanRevision) -> PlanGraphView:
         nodes=tuple(_plan_node_view(node) for node in plan.nodes),
         edges=tuple(_edge_view(edge) for edge in plan.edges),
         branches=tuple(_branch_view(branch) for branch in plan.branches),
+        design_document=plan.design_document,
     )
 
 

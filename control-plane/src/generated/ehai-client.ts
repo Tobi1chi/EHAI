@@ -15,7 +15,7 @@ export type ErrorResponse = {
 };
 };
 
-export type EventType = "ProjectCreated" | "GoalCreated" | "CompletionContractConfirmed" | "PlanRevisionProposed" | "PlanRevisionApproved" | "PlanNodeReadied" | "PlanNodeStarted" | "PlanNodeCandidateSubmitted" | "PlanNodeCompleted" | "PlanNodeFailed" | "PlanNodePruned" | "BranchSelected" | "BranchPruned" | "RunStarted" | "RunPaused" | "RunResumed" | "RunCompleted" | "RunFailed" | "RunCancelled" | "AttemptQueued" | "AttemptDispatched" | "AttemptBound" | "AttemptHeartbeatObserved" | "AttemptWaiting" | "AttemptDeadlineExtended" | "AttemptRetryScheduled" | "AttemptStarted" | "AttemptSucceeded" | "AttemptFailed" | "AttemptTimedOut" | "AttemptCancelled" | "AttemptInterrupted" | "DispatchWorkClaimed" | "EndpointHealthChanged" | "ProviderUsageRecorded" | "ArtifactCreated" | "CheckStarted" | "CheckPassed" | "CheckFailed" | "CheckInterrupted" | "GatePassed" | "GateFailed" | "CheckpointCreated" | "CheckpointRestored" | "WorkspacePreserved";
+export type EventType = "ProjectCreated" | "GoalCreated" | "CompletionContractConfirmed" | "PlanRevisionProposed" | "PlanRevisionApproved" | "PlanningTurnStarted" | "PlanningTurnCompleted" | "PlanningTurnFailed" | "PlanNodeReadied" | "PlanNodeStarted" | "PlanNodeCandidateSubmitted" | "PlanNodeCompleted" | "PlanNodeFailed" | "PlanNodePruned" | "BranchSelected" | "BranchPruned" | "RunStarted" | "RunPaused" | "RunResumed" | "RunCompleted" | "RunFailed" | "RunCancelled" | "AttemptQueued" | "AttemptDispatched" | "AttemptBound" | "AttemptHeartbeatObserved" | "AttemptWaiting" | "AttemptDeadlineExtended" | "AttemptRetryScheduled" | "AttemptStarted" | "AttemptSucceeded" | "AttemptFailed" | "AttemptTimedOut" | "AttemptCancelled" | "AttemptInterrupted" | "DispatchWorkClaimed" | "EndpointHealthChanged" | "ProviderUsageRecorded" | "ArtifactCreated" | "CheckStarted" | "CheckPassed" | "CheckFailed" | "CheckInterrupted" | "GatePassed" | "GateFailed" | "CheckpointCreated" | "CheckpointRestored" | "WorkspacePreserved";
 
 export type EventEnvelope = {
   readonly id: Id;
@@ -109,9 +109,31 @@ export type PlanGraph = {
   readonly status: PlanRevisionStatus;
   readonly approved_at: NullableUtcDateTime;
   readonly supersedes_plan_revision_id: NullableId;
+  readonly design_document?: string | null;
   readonly nodes: ReadonlyArray<PlanNode>;
   readonly edges: ReadonlyArray<Edge>;
   readonly branches: ReadonlyArray<Branch>;
+};
+
+export type PlanningTurn = {
+  readonly turn_id: Id;
+  readonly message: string;
+  readonly status: "running" | "completed" | "failed";
+  readonly reply: string | null;
+  readonly plan_revision_id: NullableId;
+  readonly agent_session_ref_id: NullableId;
+  readonly error: string | null;
+};
+
+export type PlanningConversation = {
+  readonly conversation_id: Id;
+  readonly goal_id: Id;
+  readonly workspace: string | null;
+  readonly turns: ReadonlyArray<PlanningTurn>;
+};
+
+export type PlanningConversationResponse = {
+  readonly data: PlanningConversation;
 };
 
 export type Attempt = {
@@ -424,6 +446,14 @@ export type ReplanPlanRequest = {
   readonly criteria: ReadonlyArray<P1CompletionCriterion>;
 };
 
+export type DiscussPlanRequest = {
+  readonly idempotency_key: IdempotencyKey;
+  readonly goal_id: IdInput;
+  readonly message: string;
+  readonly criteria: ReadonlyArray<P1CompletionCriterion>;
+  readonly conversation_id?: IdInput | null;
+};
+
 export type ApprovePlanRequest = {
   readonly idempotency_key: IdempotencyKey;
   readonly plan_revision_id: IdInput;
@@ -514,6 +544,14 @@ export class EhaiApiClient {
 
   replanPlan(request: ReplanPlanRequest): Promise<PlanGraphResponse> {
     return this.request("/plans/replan", "POST", request);
+  }
+
+  discussPlan(request: DiscussPlanRequest): Promise<PlanningConversationResponse> {
+    return this.request("/planning/discuss", "POST", request);
+  }
+
+  getPlanningConversation(conversationId: string): Promise<PlanningConversationResponse> {
+    return this.request(`/planning/${encodeURIComponent(conversationId)}`, "GET");
   }
 
   approvePlan(request: ApprovePlanRequest): Promise<PlanGraphResponse> {
