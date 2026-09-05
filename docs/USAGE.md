@@ -102,8 +102,9 @@ HTTP 使用相同能力：
 ### 多项完成条件
 
 `propose-plan`、`replan-plan`、`discuss-plan` 的 `--criterion` 可以重复，最多组合当前三种不同检查。
-`command:exit-zero` 必须同时配置宿主允许的 `--command-check-argv`，`semantic:required-terms` 必须
-配置 `--semantic-required-term`。Planner 能查看这些配置，但不能擅自创建命令权限或减少已传入的条件。
+`command:exit-zero` 的 argv 可由宿主通过 `--command-check-argv` 显式提供，或由 Built-in Planner
+通过 `set_final_gate` 提议后随方案审查批准；持久化前必须有实际 argv。`semantic:required-terms` 必须
+配置 `--semantic-required-term`。Planner 不能覆盖显式宿主 argv 或减少已传入的条件。
 条件变化随新契约版本再次批准；按节点区分验收和最终交付的更丰富检查安排仍待 R2 实现。
 
 ### Responses Endpoint capability
@@ -372,11 +373,14 @@ durable Session Event 重放 function call/result；`store=true`、streaming 和
 
 代表性 Built-in 真实 CLI 编码已通过：并行任务、双代码分支、选中成果整合和一个最终行为 Gate。
 固定 Gate 失败后修复、Ctrl+C 后同一 Run 立即恢复且已完成上游不重跑，已通过真实模型受控试用。
-任意关窗/强杀、写入途中恢复、长时间运行和 Codex App Server 实际编码仍需验证，不当成完整 P2 验收。
+Codex App Server 已通过真实 CLI 并行编码和 Ctrl+C 后立即恢复，保留已完成任务与中断代码。
+任意关窗/强杀、文件写操作中途恢复和长时间运行仍需验证，不当成完整 P2 验收。
 R2 使用 Git 仓库和 EHAI 拥有的隔离 worktree，不直接改写用户当前分支。运行基线固定为仓库的 Git HEAD；
 开始前先提交希望纳入任务的源码，未提交的源文件修改不会自动纳入基线。
 
 Planner 可通过 `set_final_gate` 提出 `command:exit-zero` 的具体 argv，随方案和契约批准。
+编码讨论必须显式选择 `--criterion command:exit-zero`；只传 `artifact:non-empty` 不会因设计文档描述了
+行为检查而自动升级验收类型。批准前以 `get-plan-checks` 中的实际 CheckSpec 为准。
 Builtin 新方案只有一个最终节点绑定行为检查；中间节点交接不运行虚构 Gate。
 `get-plan-checks` 必须在批准前审查，尤其是 Planner 提议的命令。显式宿主 argv 与提议冲突时拒绝，
 不在批准后改写检查。
@@ -425,8 +429,9 @@ uv run ehai --database .ehai/state.sqlite3 --artifacts .ehai/artifacts `
 - 进展输出到 stderr，结果 JSON 输出到 stdout。使用 Ctrl+C 停止并等待进程退出，宿主收敛 Worker、
   保存进度并暂停，释放自己的调度租约；重开后可立即继续同一 Run，无需等待旧租约到期。
   已完成的上游任务不重跑，未完成的最终节点可创建后续 Attempt，沿用保留代码和原 Gate。
-  已验证边界为最终 Worker 审查及最终 Gate 命令执行期间中断；直接关窗、硬杀进程和未提交写入途中
-  的恢复未验证，未知外部操作仍需核对。暂停持久化失败会报错，不能视作成功暂停。
+  Built-in 已验证最终审查/Gate 中断，Server 已验证编码 Worker 中断及已写代码快照保留。
+  直接关窗、硬杀进程和文件写操作进行到一半时的恢复未验证，未知外部操作仍需核对。
+  暂停持久化失败会报错，不能视作成功暂停。
 - 整体 Built-in 会话不设总时长、总 Step、总工具调用或总输出字节上限；模型输入保留初始任务与最近
   完整步骤窗口，持久事件不裁剪。单次调用、工具输出和授权边界仍受控。
 - 完成的 worktree 保留；宿主捕获实际代码的 Git 提交与 `solution.patch`。`get-result` 返回成果位置、
@@ -445,6 +450,20 @@ App Server Connector 只使用一个 Endpoint 对应一个 `codex app-server --l
 
 该 Connector 不使用 WebSocket、远程 listener、Review、Skills、Apps 或 Auth 登录接口，也不修改用户
 全局 Codex 配置。
+
+Thread 启动和恢复时，通过 `config/read` 读取目标 cwd 的配置，并对本 Thread 禁用继承的 MCP、
+插件、hooks 和 web search，避免只有 workspace 授权的任务启动本机其他 Connector。恢复沿用原 Thread
+的 cwd，不覆盖为目标仓库基线目录。原生命令仍由 Codex sandbox/approval 管理，不宣称 Built-in 的
+`allowed_commands`、`available_shells` 就是 Codex 原生命令白名单。
+
+Windows 子 Server 使用独立进程组，由 EHAI 接收 Ctrl+C 后发送 `turn/interrupt` 并关闭自有 Server，
+不依靠广播中断碰巧结束子进程。旧故障记录在启动恢复中被收敛后，可能先返回 paused notice；
+核对后再次 `resume-session`，会复用同一个调度项，不插入重复 Run 调度记录。
+
+若独立 Codex 未登录，可在 `codex_server.executable` 中使用 `-c` 指定自定义 provider；
+凭证通过该 provider 的 `env_key` 对应环境变量提供，不写入执行配置、argv 或仓库。
+本轮真实试用使用 `gpt-5.5/high` Built-in Planner 和 `gpt-5.6-luna/high` Server Worker；
+这是规划与执行的角色分工，不是同一 Run 内两个不同模型的混合 Worker 路由。
 
 ## TypeScript API Client
 

@@ -144,3 +144,47 @@ R2 不把可自由执行的 Shell 黑名单宣传成操作系统级隔离。
 
 这覆盖有序 Ctrl+C、中间成果保留、立即续接和固定 Gate 重新验收，不证明任意关窗/强杀、
 未提交文件写入途中恢复、5–6 小时运行或 Codex App Server 实跑；R2/P2 总验收仍未完成。
+
+### Codex App Server 真实编码与生命周期（2026-09-05）
+
+本轮按用户指定组合使用 `gpt-5.5/high` Built-in Planner 和 `gpt-5.6-luna/high` Codex App Server Worker，
+capacity 2。不是使用 Codex CLI Worker 替代 Server，也不是两种 Worker 模型在同一 Run 内混合路由。
+本机独立 CLI 未登录，使用进程级 provider 配置和环境凭证调用用户授权测试端点，没有修改全局配置。
+
+- 正常 `discuss-plan` 调查临时仓库并提出代码、README、最终整合三个节点。调用方前两轮误传
+  `artifact:non-empty`，实际检查不足，未批准或执行；改为 `command:exit-zero` 后生成有效 v3。
+- 批准方案 `e31a1e20-409c-4921-998c-b4289cde10df`，只在最终节点绑定行为 Gate，
+  Check ID 为 `f5e84239-6d1b-4e43-a613-a234249c3374`。
+- Run `f80fe372-7157-4e9c-8543-b06789525ad1` 经正常 `execute-plan` 创建两个并行 Server Thread，
+  实际实现标准化姓名、英文/中文 greeting、keyword-only locale、错误行为及 README。
+
+真实执行与中断暴露并修复：
+
+1. Server 默认继承全局 MCP/插件并启动额外服务。现在启动/恢复 Thread 时读取对应 cwd 配置，
+   禁用继承的 MCP、插件、hooks 和 web search；不改全局配置，不扩大为完整 Connector 授权系统。
+2. 两个 Worker 中断时重复执行 Run.pause，第二个 Attempt 因 paused → paused 异常未收敛。
+   现在每个 Attempt 独立记录中断/节点失败，只有仍在 running 的 Run 产生暂停迁移。
+3. 启动恢复完成旧调度项后，再次恢复错误地新建调度项，触发 `dispatch_work.run_id` 唯一键冲突。
+   现在通过显式 requeue 复用原调度项身份；领域与 SQLite 迁移约束一致，无数据库 Schema 升级。
+4. 相邻恢复路径覆盖了原 Thread.cwd，修为保留其隔离 worktree。Windows Server 置于独立进程组，
+   由宿主处理 Ctrl+C 和协议取消，随后关闭其自有 Server。
+
+修复后重跑原入口：
+
+- README Attempt `9e9618b3-3359-4206-8bd4-a93824be5574` 已成功、代码 Worker 仍执行时发送实际 Ctrl+C。
+  Run paused、代码 Attempt interrupted、调度项 pending，自有 Server PID 退出且无遗留子进程。
+- UTC `11:55:15` 立即恢复，早于旧租约 `11:58:13` 到期；已完成 README Attempt 记录不变且未重跑。
+  中断 Worker 的代码 commit `dbf27017d2876889ac338f3f5ba9501d2ce9366b` 被保留并进入最终 Git 血缘。
+- 同一个 Run 最终 completed，共六个 Server Attempt/Thread（三个历史中断、三个成功），
+  仅一次最终 Gate，Check ID 和 argv 与批准时相同并通过。最终 commit
+  `8a31b9563b57ec3d2ba6ff976a2e44b85ca68f68` 同时包含代码与 README 上游成果。
+- 正常 `get-result` / `get-trace` 可在进程退出后重读结果；原示例仓库 HEAD
+  `a812c69732d596863c6de697fa7e5359cd246cae` 和工作区不变，最终差异仅三个目标文件。
+
+证据位于系统临时目录 `ehai-r2-server-962feecd89474e8ab34ee99301770dfe`，包括 `server-evidence.json`、
+三版讨论/检查、批准记录、暂停前后快照、最终查询/轨迹、数据库和保留 worktree。
+实际故障只使用仓库外临时诊断；没有添加常驻测试或写入凭证。Schema 查询和无模型 Thread 配置探查
+仅用于核对安装版本协议，不替代上述真实编码证据。
+
+这证明本轮 Server 编码、协作分工和有序停止/立即恢复，不证明强杀、任意关窗、文件写操作进行到
+一半时的原子恢复、桌面进程附接或 5–6 小时运行。唯一产品 E2E 及 R2/P2 总验收仍未完成。

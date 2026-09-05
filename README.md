@@ -56,8 +56,10 @@ R2 已新增前台 `execute-plan`、`resume-session` 和只读 `get-result`，�
 最终行为 Gate 和失败修复；支持配置 Built-in 或 Codex App Server Worker。代表性 Built-in 真实 CLI
 编码试用已通过：三槽并行、两个实际代码分支、选中成果整合和一个最终行为 Gate。
 已补充真实模型受控试用：固定 Gate 失败后自主修复，以及 Ctrl+C 暂停后同一 Run 立即恢复、
-不重跑已完成的上游任务。任意关窗/强杀、写入途中恢复、完整长运行及 Codex App Server 实际编码
-仍待验证，不据此宣布整个 R2/P2 完成。证据与边界见 [R2 实施记录](docs/R2_IMPLEMENTATION_PLAN.md)。
+不重跑已完成的上游任务。Codex App Server 也已完成真实 CLI 并行编码、Ctrl+C 和同一 Run 立即恢复，
+由 5.5 Planner 配合 5.6 Luna Server Worker 通过获批 Gate，并保留中断代码和已完成任务。
+任意关窗/强杀、文件写操作中途恢复及完整长运行仍待验证，不据此宣布整个 R2/P2 完成。
+证据与边界见 [R2 实施记录](docs/R2_IMPLEMENTATION_PLAN.md)。
 
 ## Development Status
 
