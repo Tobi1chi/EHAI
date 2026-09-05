@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import subprocess
 from collections.abc import AsyncIterator, Callable, Mapping, Sequence
 from contextlib import suppress
 from dataclasses import dataclass, field
@@ -149,6 +150,7 @@ class StdioAppServerTransport:
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0,
         )
         self._stderr_task = asyncio.create_task(self._drain_stderr())
 
@@ -379,6 +381,7 @@ class CodexAppServerConnector:
     async def start_thread(self, *, workspace: Path | None = None) -> JsonObject:
         """Create a new App Server Thread for a new Agent Session."""
         cwd = self._workspace if workspace is None else workspace
+        config = await self._workspace_config(cwd)
         result = await self._rpc(
             "thread/start",
             {
@@ -386,20 +389,25 @@ class CodexAppServerConnector:
                 "model": self._model,
                 "approvalPolicy": self._approval_policy,
                 "sandbox": self._sandbox,
+                "config": config,
             },
         )
         return _required_object(result.get("thread"), "thread/start result.thread")
 
     async def resume_thread(self, thread_id: str) -> JsonObject:
         """Resume an existing Thread and subscribe this connection to its events."""
+        thread = await self.read_thread(thread_id)
+        cwd = self._request_workspace(_required_text(thread.get("cwd"), "thread.cwd"))
+        config = await self._workspace_config(cwd)
         result = await self._rpc(
             "thread/resume",
             {
                 "threadId": _required_text(thread_id, "thread_id"),
-                "cwd": str(self._workspace),
+                "cwd": str(cwd),
                 "model": self._model,
                 "approvalPolicy": self._approval_policy,
                 "sandbox": self._sandbox,
+                "config": config,
             },
         )
         return _required_object(result.get("thread"), "thread/resume result.thread")
@@ -735,6 +743,15 @@ class CodexAppServerConnector:
                 reason=reason,
             )
         )
+
+    async def _workspace_config(self, workspace: Path) -> JsonObject:
+        result = await self._rpc("config/read", {"cwd": str(workspace), "includeLayers": False})
+        inherited = _required_object(result.get("config"), "config/read result.config")
+        overrides: JsonObject = {"features": {"hooks": False}, "web_search": "disabled"}
+        for section in ("mcp_servers", "plugins"):
+            entries = _required_object(inherited.get(section) or {}, f"config.{section}")
+            overrides[section] = {name: {"enabled": False} for name in entries}
+        return overrides
 
     def _sandbox_policy(self, workspace: Path | None = None) -> JsonObject:
         root = self._workspace if workspace is None else workspace
