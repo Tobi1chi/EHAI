@@ -6,6 +6,12 @@
 - 产品依据：[Product Scope](PRODUCT_SCOPE.md)；Roadmap 阶段：P2——做实可审查、可干预的编码闭环。
 - P1/P1.1 执行语义基线：提交 `a1a41b1`。
 
+2026-09-06 已确认 [Execution Model](EXECUTION_MODEL.md)：Worker 按预设经 Connector 实例化，
+规划为阶段决策树，分支/阶段 Gate 统一自动与人工判定，阶段 Review Agent 保留。
+在需求、接口、Gate 和授权不变时，Planner 可自主调整中间过程；阶段内共享 Session，
+跨阶段可新建，有 handoff 可接手，无 handoff 的脏状态回到相关已完成节点。默认尽可能并行。
+这些是本文件后续实现依据，不表示现有 PlanRevision、单最终 Gate 或新 Thread 恢复已经满足它们。
+
 本工作树已从 `2ef5611` 快进整合到 `codex/ehai-p2` 的 `e0907f2`，包含 I14 修复和 I15–I18 扩展，
 并保留本次产品文档重整。代码整合不代表正常产品接入与最终验收完成，也不表示其他工作树的 `main` 已更新。
 执行前必须重新检查实际分支、diff 和能力，不按旧“待实现”标签重写已有代码。
@@ -22,16 +28,17 @@ P2 使用既有多 Worker 内核做实用户路径：CLI 提交目标 → Planne
 | 顺序 | 要暴露的用户能力 | 已有实现与当前差距 | 实施边界 |
 | --- | --- | --- | --- |
 | R1 契约和规划链路 | 查看方案与检查条件，调查仓库、多轮讨论、修订和批准版本 | 已接入讨论/查询、只读 Workspace 工具、版本化设计和多项检查；代表性真实 CLI 讨论、修订与审批隔离已通过 | 讨论可以先澄清而不生成图；新草稿重建批准关系，运行中 Goal 暂不修订；不把规划侧试用等同于最终编码 E2E |
-| R2 获批方案到代码 | 指定 workspace 执行获批任务，调度 Worker，整合并交付选中代码 | Built-in 已验证并行/分支编码、固定 Gate 失败修复和立即恢复；Codex App Server 已真实并行编码、Ctrl+C 后立即恢复并通过原 Gate，已完成上游不重跑；任意关窗/强杀、文件写操作中途恢复和长运行仍待验证 | 先 Built-in 再 Codex App Server；不复制 Agent Loop 或静默扩大批准范围 |
-| R3 失败与人工介入 | 授权内重试/剪枝，阻塞时查看问题、回复、继续或修订 | 有 pause/resume 和 Worker request；全部分支失败仍终止，Replan 限终态来源，缺完整任务级人工回路 | 定义阻塞信息、在途任务收敛、状态迁移和回复语义，不只把 failed 改名 |
+| R2 获批方案到代码 | 按预设实例化 Worker，尽可能并行执行阶段决策树，审查并交付代码 | Built-in/Server 真实编码与有序恢复已验证；阶段/分支 Gate、Review、过程调整、阶段 Session 与 handoff 回退仍需对齐；长运行仍未验证 | 保持需求、接口、Gate 和授权；复用既有运行框架，不以旧单最终 Gate 限制新设计 |
+| R3 失败与人工介入 | gap 便签、人工 Gate、阻塞时回复、继续或修订 | 有 pause/resume 和 Worker request；全部分支失败仍终止，Replan 限终态来源，缺统一人工判定与任务级人工回路 | 与 R2 共用 Gate/恢复语义，不另造仅用于人工的第二套完成标准 |
 | R4 P2 总验收与接口收口 | CLI/API 可完整操作同一后端能力，查看运行与交付证据，为 P3 提供接口 | HTTP Query 已有，CLI 已补 `get-trace`；缺统一交互链路、完整配置和宿主使用流程 | 能力入口先随 R1–R3 开放，再与用户确定唯一产品 E2E；不由测试代办装配、审批或关键步骤 |
 
 R4 的入口在前面各项开发时同步接通，不等最后才开始集成。每项说明输入输出、调用方、权限/状态所有者、
 失败处理和用户证据。先实际使用暴露的能力，不预写单测；真实失败时才用仓库外临时测试定位。
 R 编号是当前重整工作项，I 编号保留历史实现定位；不要同时把两套清单当成互相独立的必做项目。
 
-R2 按用户确认的 [实施方案](R2_IMPLEMENTATION_PLAN.md) 推进：详细任务、并行代码衔接、最终成果
-Gate 与自主修复、前台长会话及恢复，先 Built-in 再 Codex App Server；不额外交付桌面协作 UI。
+R2 按用户确认的 [实施方案](R2_IMPLEMENTATION_PLAN.md) 与 [执行模型](EXECUTION_MODEL.md) 推进：
+Worker 实例、阶段决策树与 Gate、阶段 Review、尽可能并行、可追踪过程调整和 handoff 恢复。
+Built-in 与 Codex App Server 的已有接入继续复用；不额外交付桌面协作 UI。
 
 当前入口实现索引：[`cli.py`](../src/ehai/interfaces/cli.py)、[`api.py`](../src/ehai/interfaces/api.py)；
 状态与审批：[`service.py`](../src/ehai/application/service.py)；
@@ -62,11 +69,14 @@ R1 本轮已接入讨论与设计持久化、草稿修订、公共查询/API 和
 ## 需要对齐的现有差距
 
 - Built-in Planner 已接入讨论和只读调查；输入理解、设计和图的一致性仍需真实使用判断。
-- 公共 builder 支持组合检查；Builtin 新提议把最终行为 Gate 集中到唯一最终节点，需真实编码试用检验效果。
+- 公共 builder 当前把行为 Gate 集中到唯一最终节点；这是现有约束，需迁移为阶段/分支 Gate 与统一人工判定。
+- 当前 criterion 可与设计及 Planner 提议脱节；必须保证实际契约一致，不把调用方参数知识作为产品前提。
+- WorkerProfile/Endpoint 不等于完整 Worker 实例模型；角色与框架、模型、Session 的映射还需细化。
+- 过程自主调整、阶段 Review、阶段 Session 和有无 handoff 的差异恢复规则尚未实现，不以历史试用替代。
 - Endpoint capability、Shell/Git 和 Worker 配置已有前台入口；Web/MCP/Skill 和可视化未在 R2 扩大接入。
 - Mailbox 发送落库不等于接收、消费及恢复闭环，协作验收必须检查接收方行为。
 - 旧代码将全部分支失败收敛为 failed、Replan 限制终态来源；新的挂起求助语义需明确状态和 API 迁移。
-- 用户可在平台外请 Agent 审查并带回意见；不先实现完整外部评审框架或通用顶层 Agent 才能开始编码闭环。
+- 用户可在平台外请 Agent 审查并带回意见；阶段 Reviewer 属于当前目标，不以完整外部评审平台或顶层 Agent 为前置。
 
 ## 当前产品退出条件
 
@@ -74,10 +84,15 @@ R1 本轮已接入讨论与设计持久化、草稿修订、公共查询/API 和
 workspace 执行，产生通过需求相关检查的代码，并可查看交付与执行证据。
 自主分支处理、挂起求助与继续属于产品能力；其如何进入唯一 E2E，待正常入口开放后与用户确定，
 不因此新建多套测试。预算或未知副作用不能被无限重试绕过。
+验收还需覆盖已确认的阶段/分支 Gate、人工判定、阶段 Review、批准底线内调整与 handoff/回退语义；
+具体如何进入唯一 E2E 待能力开放后确认。当前这里只更新目标，不添加运行接口或测试场景。
 不得在目标里预写固定节点、获胜方案和产物答案来替代规划，不得 monkeypatch 生产装配或直接构造
 遗漏模块获得产品 PASS。真实模型 Smoke 与用户路径 E2E 分开报告，代码存在不等于已验收。
 
 ## 已有执行地基与历史范围
+
+以下结构及后续 I 编号、旧 P2.1 记录描述既有实现与历史增量。SessionPolicy、每次 Attempt 的绑定、
+单最终 Gate 或旧恢复限制不能覆盖 2026-09-06 执行模型；迁移应保留其有效不变量和原始证据。
 
 - `StartRun` 持久化并排队后快速返回，调用方通过 Query/SSE 观察后台进展。
 - 多个 ready PlanNode 可以在 capacity 与 Workspace 隔离允许时并发执行。

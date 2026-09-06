@@ -15,6 +15,10 @@ Foundation 分支新增共享 Runtime 和 Mailbox，不代表这些交互已经�
 
 ## 主要职责
 
+本页表格描述当前代码。2026-09-06 的 [Execution Model](../../../docs/EXECUTION_MODEL.md) 要求阶段/分支
+Gate、阶段 Review、批准底线内自主调整、阶段 Session 及 handoff 回退；这些不能由下列单最终 Gate
+与现有 resume 的类名推定为已经实现。
+
 | 区域 | 文件 | 职责 |
 | --- | --- | --- |
 | Service | [`service.py`](service.py)、[`commands.py`](commands.py)、[`queries.py`](queries.py) | 处理幂等 Command、事务边界和只读查询。 |

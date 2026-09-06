@@ -11,6 +11,9 @@ Query/SSE 观察进展。
 现有命令已接入规划讨论、草稿修订、批准及查询；仍不能据此宣称需求相关最终验收以及
 “执行阻塞 → 用户回复 → 继续”的完整产品流程已完成。真实模型交互与最终 E2E 另行验证。
 本页不为尚未实现的交互编造命令；下列演示中固定计划或产物的成功只证明其对应协议。
+2026-09-06 的 [Execution Model](EXECUTION_MODEL.md) 已确认 Worker 预设实例化、阶段/分支 Gate、
+人工 Gate、阶段 Review、过程自主调整和阶段 Session。下文单最终 Gate、固定版本执行及脏快照续跑
+是当前实现边界，不是最新产品目标；本次未为这些目标新增 CLI 参数或状态。
 旧测试脚本已退役，先通过正常入口暴露能力，再与用户确定唯一产品 E2E；失败定位文件仅放仓库外。
 
 Foundation 扩展分支中的工具 Provider、共享 Role、Mailbox 和 Visualizer 需要与正常入口逐项核对。
@@ -381,7 +384,8 @@ R2 使用 Git 仓库和 EHAI 拥有的隔离 worktree，不直接改写用户当
 Planner 可通过 `set_final_gate` 提出 `command:exit-zero` 的具体 argv，随方案和契约批准。
 编码讨论必须显式选择 `--criterion command:exit-zero`；只传 `artifact:non-empty` 不会因设计文档描述了
 行为检查而自动升级验收类型。批准前以 `get-plan-checks` 中的实际 CheckSpec 为准。
-Builtin 新方案只有一个最终节点绑定行为检查；中间节点交接不运行虚构 Gate。
+当前 Builtin 实现只有一个最终节点绑定行为检查；中间节点交接不运行虚构 Gate。
+这与目标中的阶段/分支 Gate、阶段 Reviewer 和人工判断尚有差距，不能把当前限制写回产品规划。
 `get-plan-checks` 必须在批准前审查，尤其是 Planner 提议的命令。显式宿主 argv 与提议冲突时拒绝，
 不在批准后改写检查。
 
@@ -425,6 +429,8 @@ uv run ehai --database .ehai/state.sqlite3 --artifacts .ehai/artifacts `
 ```
 
 - `execute-plan` 只接受已批准的当前版本，`--authorize` 确认首次执行配置；相同 Run 不能更换配置。
+- 以上版本限制描述当前 CLI；目标允许 Planner 在需求、接口、Gate 和授权不变时自主调整实现过程，
+  但相应版本关联、便签与动态执行入口尚未接入，不能直接修改数据库模拟。
 - `resume-session` 使用持久配置，不隐式扩大工具权限；一个前台宿主独占其数据库内的活动 Run。
 - 进展输出到 stderr，结果 JSON 输出到 stdout。使用 Ctrl+C 停止并等待进程退出，宿主收敛 Worker、
   保存进度并暂停，释放自己的调度租约；重开后可立即继续同一 Run，无需等待旧租约到期。
@@ -438,6 +444,11 @@ uv run ehai --database .ehai/state.sqlite3 --artifacts .ehai/artifacts `
   基线/候选 commit、diff Artifact 和最终 Attempt 的检查结果。失败历史保留，不误算为最终 Gate 仍失败。
 - 最终 Gate 在整合后的真实 worktree 执行。失败时返回原始检查证据，在同一获批方案下修代码并重新检查；
   `report_blocked` 用于说明阻塞原因、证据和所需条件，不伪造成功。完整人工问答回路属于 R3。
+
+当前 `resume-session` 保留 Run，未完成任务可新建 Attempt/Thread，并可能继承中断时捕获的脏代码；
+它尚未实现新目标的“阶段内共享 Session”“有 handoff 接手、无 handoff 回到相关已完成节点”。
+历史 Server 试用中保留过缺失文件的中断快照，再由新 Worker 修复；不能将这一过程称为已确认的 handoff。
+本页保留实际行为说明，不承诺目前已经自动执行新的安全回退策略。
 
 ### Codex App Server 的接入边界
 

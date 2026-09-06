@@ -8,6 +8,8 @@ EHAI uses Python for Execution Plane and TypeScript for Control Plane. Put imple
 
 Read `docs/PRODUCT_SCOPE.md` before product or architecture work, then `docs/ROADMAP.md` and the current rebaseline section of `docs/P2_IMPLEMENTATION_PLAN.md`. EHAI is the planning/execution core of a general Agent platform; coding is the first end-to-end use case, not its permanent boundary. The top-level Agent is distinct from Planner. Historical increments and passing tests do not override current scope or prove product delivery. Define each module's user outcome, inputs/outputs, ownership, failure behavior, and normal-entry acceptance before restructuring code. Distinguish target design from implemented interfaces; do not invent commands or status values in usage documentation.
 
+The 2026-09-06 execution model in `docs/EXECUTION_MODEL.md` governs Worker instantiation, phased decision trees, automatic/human Gates, approved-boundary plan adjustments, phase Sessions, handoff recovery, and parallelism. Read it alongside product scope. Keep implementation limitations and historical trial results distinct from these agreed targets.
+
 ## Build, Test, and Development Commands
 
 Use `uv`; never use bare `pip`.

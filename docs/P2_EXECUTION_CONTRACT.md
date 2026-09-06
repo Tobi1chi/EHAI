@@ -5,19 +5,27 @@
 本文固定执行核心的不变量，并区分原型行为和重整后的目标语义。产品定义以
 [Product Scope](PRODUCT_SCOPE.md) 为准，工作顺序见
 [P2 Implementation Plan](P2_IMPLEMENTATION_PLAN.md) 的当前重整章节。
+2026-09-06 的 [Execution Model](EXECUTION_MODEL.md) 是 Worker、阶段决策树、Gate、Session 与恢复的
+目标语义；本文下述具体 Port、枚举和单最终 Gate 行为是当前代码，不用它们限制目标，也不虚构已完成迁移。
 R1 已增加规划讨论接口、讨论事件及版本化设计；执行挂起求助和完整需求验收仍需要后续状态迁移。
 普通 `ehai` 保留 P1 同步兼容，P2 后台模式使用持久 DispatchWork。
-当前 R2 已接入任务图、最终行为 Gate 和代码工作区；代表性 Built-in 真实编码链路已通过，
-完整会话生命周期、长运行与 Server 实际调用仍需验证，不能据此宣布整个 R2 或 P2 已通过。
+当前 R2 已接入任务图、最终行为 Gate 和代码工作区；Built-in/Server 的代表性编码与有序停止恢复已验证。
+阶段/人工 Gate、阶段 Review、共享 Session、按 handoff 回退和过程自主调整仍待实现；
+长运行等未验证，不能据此宣布整个 R2 或 P2 已通过。
 
 ## 平台调用边界
 
 CLI、顶层通用 Agent、未来 UI 和 Routines 使用同一公开应用语义。Planner 是调查、讨论、提出与修订
 方案的专门能力，不等于顶层通用 Agent。只读规划授权与指定 workspace 的执行授权分开。
-可读设计、执行图、验收和权限对应同一获批版本；执行不得静默改变范围或降低完成条件。
-外部审查意见是规划输入，不构成批准。Worker 保留方案边界内的局部实现自由。
+可读设计、执行图和实际 Gate 必须一致，批准固定需求、接口、Gate 与授权。
+Planner 可自主调整中间过程，包括拆分、依赖、并行与路线，保存批准基线和调整版本；
+改变批准底线才重新批准。外部审查意见是规划输入，不构成批准。
 
-## 执行映射与状态所有权
+Worker 是按预设经 Connector 创建、管理的具体 Agent 实例；职责、模型和运行框架独立。
+计划目标为带阶段/分支 Gate 的决策树，阶段 Review Agent 提供测试审查和建议，
+Gate 统一承载自动与人工判定。具体类和状态映射必须在实现时确定，不能把 WorkerProfile 当作活跃 Worker。
+
+## 执行映射与状态所有权（当前实现）
 
 映射固定为：一个 `PlanNode` 可以产生多次 `Attempt`；每个 `Attempt` 必须且只能绑定一个
 `builtin_turn` 或 `external_execution`。Turn/Execution 是 Provider 执行句柄，不拥有
@@ -34,7 +42,7 @@ Worker 正常返回或提交候选只能使 Attempt 得到候选结果。带 req
 产生 `CheckResult` 并由 Gate 完成；无 required Check 且仍有后续边的中间节点可由宿主接收任务交接，但不满足
 Goal。Scheduler 和 Connector 不得判断最终完成。
 
-## Agent 执行 Connector Port 与 SessionPolicy
+## Agent 执行 Connector Port 与 SessionPolicy（当前协议）
 
 所有 P2 Agent 执行 Connector 必须实现异步 `start`、`events`、`inspect`、`cancel`、`recover` Port：
 
@@ -48,6 +56,9 @@ Goal。Scheduler 和 Connector 不得判断最终完成。
 未知 requirement 可以保留，但在 Worker 未显式声明时必须 fail closed。具体 WorkerProfile、Endpoint、
 SessionRef 和 ExecutionRef 结构由领域对象与公开 Schema 定义。未来服务与事件 Connector 不强制采用
 此 Worker 协议；Routine 通过应用入口发起任务，不能绕过同一批准、执行和恢复规则。
+
+以上是当前执行句柄协议，不是阶段会话的完整实现。目标为阶段内共享 Session、跨阶段可新建；
+有效 handoff 可以交给新 Session，经新的显式执行记录接手，不把新执行伪装成 `recover` 找回的旧句柄。
 
 ## StartRun 行为
 
@@ -75,11 +86,14 @@ Provider capability、Role Tool Profile、凭证引用与 workspace 必须经正
 - 全部分支阻塞、某步尝试耗尽或无法决定取舍时，应停止相关自动调度、保留状态和产物，挂起求助。
   不得要求模型伪造空 BranchSelection，也不一律以终态 failed 代替等待用户。
 - 挂起需记录阻塞任务、尝试和证据、具体问题及可选行动；用户回复后继续原方案或提出修订。
-- 修订关键设计、范围、验收或权限必须重新批准；旧批准不能被新方案复用。证据来源显式选择，
-  不猜测“最新 Run”，保留原计划、执行和产物 lineage。
+- 改变需求、接口、Gate 或授权必须重新批准；仅改变中间过程可以在批准基线下自主修订并留痕。
+  证据来源显式选择，不猜测“最新 Run”，保留原计划、执行和产物 lineage。
 - Checkpoint 保留已通过 Gate 的恢复事实；它不是整个文件系统或外部服务的任意回滚快照。
   恢复与继续执行分开，不能重复未知副作用或无条件重新运行已完成任务。
 - 用户明确放弃、取消或确定不可恢复时仍可终止；终止、暂停和等待人工决定应可区分。
+- 可实现性 gap 通过便签向用户说明；无法自动验收的条件交给人工 Gate，不用弱检查冒充。
+- 有宿主确认的 handoff 可由新 Session 接手；无 handoff 的脏状态回到相关最近完成节点，
+  不回退无关并行成果。禁止不可恢复操作，约束覆盖所有副作用工具，不只检查命令名称。
 
 ### 当前实现与待迁移限制
 
@@ -93,7 +107,13 @@ Replan 仅支持 failed/cancelled 来源，所有探索分支失败会收敛为 
 
 Planner 可提出需求、设计和验收建议，获批方案将其绑定到明确的版本。公共 builder/校验边界创建领域
 CheckSpec 和 CompletionContract，模型不能绕过它直接推进状态或在执行中改写条件。
-任务检查与最终交付检查按对应范围定义，不要求每个中间节点满足整个最终 solution 的条件。R2 的 Built-in
+目标按分支、阶段和最终成果定义 Gate；自动与人工判定统一，阶段 Reviewer 负责测试审查，不取代 Gate。
+没有验收职责的小任务只交接，不要求每个中间节点都满足最终 solution 的全部条件。
+过程自主调整须保持获批 Gate，不能新增、删除或绕过验收来制造成功。
+
+### 当前 R2 的单最终 Gate 实现
+
+以下描述待迁移的现状，不是禁止阶段/分支 Gate 的目标规则。R2 的 Built-in
 proposal 允许中间节点的 `required_check_ids` 为空；宿主在候选证据已持久化后调用 `accept_intermediate` 完成
 任务交接。该交接不创建假 Gate 或 Checkpoint，不满足 Goal，也不能让最终节点跳过 Gate。
 最终单一 integration/terminal 节点持有全部 required Check IDs；最终获批行为 Gate 在实际合并后的代码工作区上运行。
@@ -110,13 +130,17 @@ Planner 可以通过 `set_final_gate` 提出最终行为命令 argv。应用层�
 再冻结到 `CheckSpec.command_argv`；用户批准的 PlanRevision/CompletionContract 是执行时的真值，不再依赖
 一个只存在于宿主配置中的模板。显式 host argv 若与 Planner 提议冲突，必须 fail closed，不能静默改写批准内容。
 
-## R2 代码交接与工作区
+## R2 代码交接与工作区（当前实现与迁移）
 
 `CodeRuntimeConnector` 包装既有 `RuntimeConnector`，在启动 Attempt 前通过 `GitCodeWorkspace` 准备 EHAI-owned
 worktree：Run 首次固定 base commit，依赖节点和已选分支的代码提交作为上游合并；缺失上游快照或冲突时不能
 伪造候选。候选返回时由宿主从实际 worktree 捕获 `GitCodeResult`，并附加受保护的代码快照与 diff；模型不能
 冒充这些 host-owned code artifacts。完成、停止或恢复时保留可核对的 worktree/metadata，供最终 Gate 和交付查询
 使用。
+
+当前停止时可捕获未提交的部分代码，后续 Attempt 可能继承该快照；快照可能含缺失文件，
+它不等于有效 handoff 或通过 Gate 的成果。目标应区分已确认交接和仅供调查的脏状态：
+前者可接手，后者默认回到相关已完成节点。不能以历史恢复最终通过掩盖这一待迁移差距。
 
 最终 Gate 检查的是最终 integration 节点准备好的实际合并工作区，而不是模型文字报告或单独的候选 Artifact。
 Planner 的图预算与 Worker 的模型执行预算相互独立：Planner 使用有限的图操作/校验和 `ExplorationBudget`；
@@ -196,8 +220,8 @@ timeout 是连接/无进展检测，不是短时总任务寿命：
 
 以下为复用约束；Foundation 分支有相关实现，角色与工具在正常入口中的可用性仍需分别验收。
 
-Built-in Agent Runtime 是 EHAI 内部所有模型驱动 Role 的唯一 Agent 地基。Planner、Worker、Evaluator、
-Merge、Visualizer、Reviewer 和 Assistance 必须复用同一 ModelClient、Session/Event Store、Agent Loop、
+Built-in Agent Runtime 是选择 Built-in 框架的 Role 的统一 Agent 地基，不把职责限定为只能使用 Built-in。
+Planner、Worker、Evaluator、Merge、Visualizer、Reviewer 和 Assistance 选择 Built-in 时复用同一 ModelClient、Session/Event Store、Agent Loop、
 Tool Registry、取消、预算、恢复与 Trace；Role 差异只能通过 Prompt、Tool Profile、Context Builder、
 Finish Tool 和权限表达。任何模块不得为了特殊输出协议复制模型循环或另建 Session Store。
 
@@ -210,11 +234,12 @@ Workspace 写操作只能作用于分配的 Workspace/worktree。统一文本 di
 Shell 由 Endpoint 声明，Git 使用结构化 argv 并按只读、本地写、远端写和危险操作分类。能力存在不构成
 授权：远端写、commit/merge/rebase、破坏性 Git 和越界文件操作必须遵守显式策略与审批。Tool 成功不等于
 任务完成，角色仍须使用其 Finish Tool，Worker 结果仍须经过 Check/Gate。
+工具支持删除/移动不是不可恢复操作的授权；目标中的恢复保障必须覆盖这些路径，现有命令分类不能代替它。
 
 Session Mailbox 只传递持久消息与 correlation，不共享可写 Workspace、不替代 Artifact，也不推进
 PlanNode/Attempt/Run 状态。跨 Session 协作的产物必须通过 Artifact 引用；Orchestrator 仍是执行领域状态
 推进的唯一入口。Visualization Role 只能从已校验 PlanRevision 派生可视化 Artifact，不能修改计划真值。
 
 本阶段提前 MCP/Skill 的“运行时消费能力”，不提前 P5 的插件 SDK、市场、热安装、第三方 Agent Framework
-或跨主机分布式协调。未来顶层通用 Agent 也复用此地基，通过平台能力协助用户；它不是 Planner 别名，
+或跨主机分布式协调。未来顶层通用 Agent 选择 Built-in 时也复用此地基，通过平台能力协助用户；它不是 Planner 别名，
 不能因定义 Assistance Role 就宣称已经实现平台交互产品。

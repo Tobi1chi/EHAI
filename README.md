@@ -10,6 +10,8 @@ Agent、不同外部 Agent 框架、服务 Connector 和事件驱动 Routines；
 > 当前状态：已有 P1/P1.1 与 P2 执行内核及历史验收记录；P2 正按新的产品范围重整，尚未完成
 > 正常 CLI 下的完整交互与验收闭环。当前工作树已整合 Foundation 扩展代码，产品接入与验收仍待完成，P3 UI 尚未开始。
 > 产品定义以 [Product Scope](docs/PRODUCT_SCOPE.md) 为准，操作与限制见 [Usage](docs/USAGE.md)。
+> 2026-09-06 的 [执行模型共识](docs/EXECUTION_MODEL.md) 明确 Worker 实例化、阶段/分支 Gate、
+> 过程自主调整、阶段 Session 与 handoff 恢复；这是当前目标，不是已交付功能清单。
 
 ## Why EHAI
 
@@ -36,17 +38,22 @@ EHAI 将这些约束放入独立的 Execution Plane。目标是允许授权内�
 ```text
 CLI 目标 + 只读仓库调查 ↔ Planner 讨论与修订
           ↓
-详细方案 + PlanGraph + CompletionContract → 用户审查 / 外部 Agent 意见
-          ↓ 明确批准版本与执行边界
-Orchestrator → Scheduler / Dispatcher → Worker → 代码与 Artifact
+阶段决策树 + PlanGraph + CompletionContract → 用户审查 / 外部 Agent 意见
+          ↓ 批准需求、接口、Gate 和授权；中间过程可追踪地自主调整
+Orchestrator → Scheduler / Dispatcher → 按预设实例化的 Worker
+          ↓ 尽可能并行探索，各路径有独立分支 Gate
+阶段 Review Agent → 阶段 Gate（自动 / 人工判断）→ 下一阶段
           ↓
-需求相关 Check/Gate → 选中结果交付 + Checkpoint / ExecutionTrace
-          ↘ 无法自主继续：挂起求助 → 用户回复 / 修订再批准
+最终验收 → 选中结果交付 + Checkpoint / ExecutionTrace
+          ↘ 发现 gap：便签提示；无法继续时等待人判断
 ```
 
 `PlanGraph` 描述预期执行路径；`ExecutionTrace` 保存实际发生的 Attempt、事件、检查和结果。Worker
 只能提交候选结果；中间任务由宿主接收交接，最终 Run/Goal 必须通过获批 Gate 才能完成。此图描述目标流程；
 多轮规划与设计版本已接入 CLI/API，规划侧代表性真实 CLI 试用已通过；完整执行人工回路和需求验收尚未完成。
+Worker 是经 Connector 按预设创建的 Agent 实例，不是 Connector、模型名称、任务节点或 Session。
+阶段内共享 Session，跨阶段可新建；有效 handoff 可交给新 Session，未交接的脏状态则回到相关已完成节点。
+主规划模型偏好为 GPT-6 Astra，明确执行任务偏好为 GPT-5.6 Luna/max；不改写下文历史试用配置。
 
 当前 R1 入口：`discuss-plan` 接收目标和用户意见，`get-discussion` 查询持久讨论；
 `get-plan` 返回该版本的 `design_document` 和图，`get-plan-checks` 查看实际检查配置。

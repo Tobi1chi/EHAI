@@ -4,6 +4,8 @@
 Adapter 内。领域层和 Application 层不导入这些具体实现。
 
 本页是已有 Adapter 索引。平台目标见 [Product Scope](../../../docs/PRODUCT_SCOPE.md)；
+[Execution Model](../../../docs/EXECUTION_MODEL.md) 区分 Agent 框架、Connector、Worker 预设及活跃实例：
+Connector 提供框架接入与实例执行管理，不能与 Worker、模型或职责混称。
 Foundation 分支的工具 Provider/Role 需要正常入口装配与验收，不能以可注入构造器代替交付。
 Agent 执行 Connector 管理 Session 和执行协议，未来服务/事件 Connector 管理外部输入输出，不强行
 共用 Worker 协议。扩展应复用现有 Port，不提前搭建尚无调用方的插件或 Connector 抽象。

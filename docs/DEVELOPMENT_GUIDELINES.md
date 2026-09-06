@@ -3,6 +3,7 @@
 ## 产品依据与模块细化
 
 [Product Scope](PRODUCT_SCOPE.md) 是产品定位、职责和用户流程的基线；
+[Execution Model](EXECUTION_MODEL.md) 是 2026-09-06 确认的 Worker、阶段决策树、Gate 与恢复语义；
 [Roadmap](ROADMAP.md) 固定阶段，[P2 Implementation Plan](P2_IMPLEMENTATION_PLAN.md) 开头固定当前
 重整顺序。历史增量、ADR 和原型测试按其适用范围使用，不能覆盖新 scope。
 EHAI 是通用平台的规划执行核心，编码只是当前验证场景，不把长期平台缩成编码工具或把未来功能提前塞入 P2。
@@ -19,14 +20,20 @@ EHAI 是通用平台的规划执行核心，编码只是当前验证场景，不
 - `CompletionContract`：执行前确认的版本化完成标准。
 - `PlanRevision`：某一版本的执行计划；可读方案与计划图须对应同一版本，重新规划必须创建新版本。
 - `PlanNode`：可调度或可判断的计划单元，不是一次 Agent 调用。
+- `Worker`：按预设经 Agent 执行 Connector 创建、管理的 Agent 实例，不等于框架、模型、任务节点或 Session。
+- `Worker 预设`：实例的职责、模型、工具、权限与运行配置；同一职责可以使用不同 Agent 框架。
+- `Phase`：任务决策树内的执行阶段，以计划中的 Gate 界定，不是 Roadmap 的 P1–P5 阶段。
+- `Session`：会话与上下文；阶段内共享、跨阶段可新建，具体 Provider 映射仍需实现。
+- `Handoff`：经宿主确认并持久化的交接成果、上下文及剩余事项，不等于任意脏快照。
 - `Run`：对指定 PlanRevision 的一次执行。
 - `Attempt`：Worker 执行 PlanNode 的一次尝试。
 - `Event`：已经发生的不可变事实。
 - `Artifact`：不可变的产物或证据引用。
-- `Gate`：根据检查结果决定能否转换状态。
+- `Gate`：统一自动与人工判定，依据获批条件及证据决定分支/阶段能否推进。
 - `Checkpoint`：Gate 通过后创建的可恢复状态快照。
 
 `PlanGraph` 与 `ExecutionTrace` 必须分离：前者描述预期路径，后者描述实际发生的 Attempt、事件和结果。
+以上新增产品概念不表示已有同名类、API 或状态；不得只改字段名称就宣布目标已实现。
 
 P2 路由术语：`WorkerProfile` 表示可调度的 Agent 配置；`WorkerEndpoint` 表示一个实际运行的
 平台服务；`AgentSessionRef` 引用平台的长期上下文；`ExternalExecutionRef` 引用 Session 中与一个
@@ -37,18 +44,21 @@ Attempt 对应的一次 turn 或 job。平台原生 ID 通过这些引用保存�
 - 顶层通用 Agent 协助用户讨论、审查和使用平台；Planner 是专门规划能力，二者不能混为一谈。
 - Planner 调查仓库、澄清需求、提出设计及验收建议，再形成或修订 PlanRevision、探索分支和节点能力
   要求；不执行编码节点，不自行批准，也不选择运行时 Endpoint。
-- 可读方案与可执行图对应同一批准版本，不维护两套互不校验的计划事实。Worker 在获批边界内保留局部
-  实现自由；关键设计、范围、验收或权限变化需修订并重新批准。
+- 可读方案与可执行图保持一致；批准固定需求、接口、Gate 和授权。Planner 可自主调整中间过程，
+  包括跨节点拆分与依赖安排，须保存调整记录；改变批准底线才重新批准。
 - Orchestrator 计算就绪节点并推进领域状态，但不负责平台容量与 Session 分配。
 - Scheduler 管理可运行 Attempt 的队列、并发、重试、超时和资源预算；Dispatcher 根据能力、容量、
   Project 隔离和 Session 策略选择 WorkerProfile 与 WorkerEndpoint。
-- Worker Connector 封装外部 Agent 平台的启动、事件、状态查询、取消和恢复协议，不决定
-  PlanNode 或 Run 是否完成。
+- Agent 执行 Connector 接入内部或外部框架并管理实例执行，不是 Worker 本身，不决定需求或 Gate。
 - 服务/事件 Connector 不强制采用 Worker 协议；未来 Routines 根据事件与授权复用核心，外部内容不是授权。
 - Worker 只提交候选结果、Artifact 和事件，不得直接标记节点或 Goal 完成。
 - Checker 产生带证据的 CheckResult；Gate 根据策略作出状态转换决定。
+- 阶段 Reviewer 进行测试审查并提供修改建议，不取代 Gate 或必需的人判断，不擅自增加验收要求。
 - 没有通过必需 Gate，PlanNode 不得进入 `completed`。
 - 已确认的 CompletionContract 不得被静默修改。
+- 默认尽可能并行，Planner 必须细化依赖和隔离边界；共享阶段上下文不等于共享可写工作区。
+- 有有效 handoff 可交给新 Session；无 handoff 的脏状态回到相关已完成节点，不丢其他有效并行成果。
+- 禁止不可恢复操作，覆盖命令、patch、删除与覆盖等路径，不只禁用特定命令名。
 - 被剪枝的 Branch 必须保留历史轨迹。
 - Checkpoint 必须引用确定的 PlanRevision、Run 和 Event Offset。
 - 自动重试/剪枝受批准条件、预算和副作用安全约束；无法决定、无可行路线或尝试耗尽时挂起求助，保存
@@ -112,10 +122,10 @@ CLI、顶层 Agent、UI 和 Routines 都通过公开应用能力操作核心，�
 
 ## Built-in Agent 能力复用规范
 
-- EHAI 内部凡是需要模型推理、Tool 调用与 Session 的功能，必须优先复用通用 Built-in Agent Runtime；
+- 角色与框架解耦；选择 Built-in 承载模型推理、Tool 调用与 Session 时，必须复用通用 Built-in Agent Runtime；
   不得为 Planner、Worker、Evaluator、Merge、Visualizer、Reviewer 或 Assistance 复制 Agent Loop、
   ModelClient、Session Store、取消、预算、恢复或 Trace。
-- 顶层通用 Agent 遵守相同复用规则；其交付阶段需单独确认，不因基础 Role 配置存在而默认已交付。
+- 顶层通用 Agent 遵守相同框架接入与复用规则；其交付阶段需单独确认，不因基础 Role 配置存在而默认已交付。
 - Role 特有行为只通过 Prompt、Tool Profile、Context Builder、Finish Tool 与权限表达。Tool Registry
   提供能力目录，实际 Session ToolSet 必须由 Role、Endpoint 与用户策略显式授权并在创建时冻结。
 - Workspace、Shell、Git、Web、MCP、Skill 与 Session Message 使用统一 ToolDefinition/ToolExecutor 和

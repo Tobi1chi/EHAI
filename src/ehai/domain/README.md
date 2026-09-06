@@ -5,6 +5,8 @@ HTTP 框架、OpenAI/Codex SDK 或具体 Worker 实现。Application 层可以�
 伪造状态转换。
 
 以下说明现有领域对象；目标语义见 [Product Scope](../../../docs/PRODUCT_SCOPE.md)。
+Worker 实例、阶段决策树、自动/人工 Gate 和恢复目标见 [Execution Model](../../../docs/EXECUTION_MODEL.md)。
+下列 PlanRevision、WorkerProfile、Attempt 和状态枚举为当前实现，不是新目标的完整领域映射。
 R1 已将可读设计绑定到 PlanRevision，保存、批准与恢复保留同一版本内容。
 “挂起等待人工”与失败终态、任务检查与最终验收的对应关系仍需迁移细化。
 不要从产品词语推断已有同名状态枚举，也不要因现有原型枚举有限而缩减产品 scope。

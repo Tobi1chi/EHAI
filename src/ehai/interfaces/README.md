@@ -10,6 +10,10 @@ Routines 都使用同一公开应用语义。R1 已接入多轮规划讨论、�
 
 ## 文件职责
 
+目标中的阶段决策树、统一人工/自动 Gate、过程调整便签和 handoff 恢复见
+[Execution Model](../../../docs/EXECUTION_MODEL.md)。本页列出的现有 CLI/API 尚未完整承载这些语义，
+不能仅修改展示文案就宣称实现，具体命令仍以 [Usage](../../../docs/USAGE.md) 为准。
+
 | 文件 | 职责 |
 | --- | --- |
 | [`cli.py`](cli.py) | `ehai` 命令解析、Adapter 选择和同步本地组合；输出机器可读 JSON。 |
