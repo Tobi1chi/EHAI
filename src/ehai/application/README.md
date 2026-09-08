@@ -16,13 +16,13 @@ Foundation 分支新增共享 Runtime 和 Mailbox，不代表这些交互已经�
 ## 主要职责
 
 本页表格描述当前代码。2026-09-06 的 [Execution Model](../../../docs/EXECUTION_MODEL.md) 要求阶段/分支
-Gate、阶段 Review、批准底线内自主调整、阶段 Session 及 handoff 回退；这些不能由下列单最终 Gate
+Gate、阶段 Review、批准底线内自主调整、阶段 Session 及 handoff 回退；这些不能由下列自动节点 Gate
 与现有 resume 的类名推定为已经实现。
 
 | 区域 | 文件 | 职责 |
 | --- | --- | --- |
 | Service | [`service.py`](service.py)、[`commands.py`](commands.py)、[`queries.py`](queries.py) | 处理幂等 Command、事务边界和只读查询。 |
-| Planner | [`planner.py`](planner.py) | 定义 `Planner` Port、provider-neutral Plan 模板、图预算、最终行为 Gate 和确定性 Planner。 |
+| Planner | [`planner.py`](planner.py) | 定义 `Planner` Port、provider-neutral Plan/NodeGate 模板、图预算、最终契约与局部行为 Gate。 |
 | Planning Discussion | [`planning_dialogue.py`](planning_dialogue.py)、[`service.py`](service.py) | 从现有 Event Log 查询持久讨论；串行接收消息、调用 Planner、保存澄清或新版本，失败不盲目重复模型调用。 |
 | Orchestrator | [`orchestrator.py`](orchestrator.py)、[`evaluation.py`](evaluation.py)、[`checks.py`](checks.py) | 推进节点/Attempt，接收无 Check 的中间候选交接，评估分支，运行最终 Check/Gate 并创建 Checkpoint。 |
 | Scheduler | [`scheduler.py`](scheduler.py) | 按能力、Endpoint 状态、capacity 和 Workspace 隔离分配可运行 Attempt；驱动并发 Runtime。 |

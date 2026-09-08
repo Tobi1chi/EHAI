@@ -9,6 +9,10 @@
 执行阻塞的挂起与回复仍需后续迁移；CLI、顶层 Agent、UI 和未来 Routines 复用同一应用语义，
 不能在各自 Client 中弥补执行状态规则。
 
+2026-09-06 的多节点自动 Gate 沿用现有字段：PlanNode.required_check_ids 表示本节点的必需检查，
+CompletionContract.required_check_ids 表示最终成果条件；CheckSpec 查询也可包含仅被中间节点引用的
+局部检查。没有新增公开枚举、Phase 对象或人工 Gate route，不改变旧计划的检查配置。
+
 ## 文件
 
 | 文件 | 内容 |

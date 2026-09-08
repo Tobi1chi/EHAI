@@ -287,6 +287,27 @@ class BranchTemplate:
 
 
 @dataclass(frozen=True, slots=True)
+class NodeGateTemplate:
+    """A local behavioral gate bound to one intermediate work or merge node."""
+
+    node_key: str
+    name: str
+    command_argv: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self, "node_key", _template_key(self.node_key, "NodeGateTemplate node_key")
+        )
+        if not isinstance(self.name, str) or not self.name.strip():
+            raise ValueError("NodeGateTemplate requires a non-blank name")
+        argv = _normalize_argv(self.command_argv, "NodeGateTemplate command_argv")
+        if not argv or len(argv) > 128 or any(len(argument) > 4096 for argument in argv):
+            raise ValueError("NodeGateTemplate requires 1-128 arguments of at most 4096 characters")
+        object.__setattr__(self, "name", self.name.strip())
+        object.__setattr__(self, "command_argv", argv)
+
+
+@dataclass(frozen=True, slots=True)
 class PlanTemplate:
     """Provider-neutral proposal content assembled into EHAI domain objects."""
 
@@ -300,6 +321,7 @@ class PlanTemplate:
     design_document: str | None = None
     final_node_key: str | None = None
     final_gate_argv: tuple[str, ...] = ()
+    node_gates: tuple[NodeGateTemplate, ...] = ()
 
     def __post_init__(self) -> None:
         nodes = tuple(self.nodes)
@@ -343,8 +365,24 @@ class PlanTemplate:
                 )
             if any(node.require_completion_checks for node in nodes if node.key != final_node_key):
                 raise ValueError(
-                    "PlanTemplate final-node mode cannot require checks on intermediate nodes"
+                    "Intermediate nodes cannot require final completion checks; use node_gates"
                 )
+        node_gates = tuple(self.node_gates)
+        if any(not isinstance(gate, NodeGateTemplate) for gate in node_gates):
+            raise TypeError("PlanTemplate node_gates must contain NodeGateTemplate values")
+        if node_gates and final_node_key is None:
+            raise ValueError("PlanTemplate node_gates require an explicit final_node_key")
+        gate_nodes = tuple(gate.node_key for gate in node_gates)
+        if len(set(gate_nodes)) != len(gate_nodes):
+            raise ValueError("PlanTemplate contains multiple gates for the same node")
+        nodes_by_key = {node.key: node for node in nodes}
+        for gate in node_gates:
+            owner = nodes_by_key.get(gate.node_key)
+            if owner is None or owner.kind not in {PlanNodeKind.WORK, PlanNodeKind.MERGE}:
+                raise ValueError(f"Gate {gate.name!r} requires an existing work or merge node")
+            if gate.node_key == final_node_key:
+                raise ValueError("Use final_gate_argv for the final node, not node_gates")
+        object.__setattr__(self, "node_gates", node_gates)
         final_gate_argv = _normalize_argv(
             self.final_gate_argv,
             "PlanTemplate final_gate_argv",
@@ -411,8 +449,14 @@ class PlanProposal:
         if len(set(check_ids)) != len(check_ids):
             raise ValueError(f"{owner} contains duplicate CheckSpec IDs")
         required_ids = {check.check_id for check in self.check_specs if check.required}
-        if required_ids != set(self.contract.required_check_ids):
-            raise ValueError(f"{owner} required CheckSpecs do not match its contract")
+        referenced_ids = {
+            check_id for node in self.plan_revision.nodes for check_id in node.required_check_ids
+        }
+        if (
+            not set(self.contract.required_check_ids).issubset(required_ids)
+            or referenced_ids != required_ids
+        ):
+            raise ValueError(f"{owner} required CheckSpecs must cover its nodes and final contract")
         if (self.budget is None) != (self.usage is None):
             raise ValueError(f"{owner} budget and usage must be provided together")
         if self.budget is not None and self.usage is not None:
@@ -513,15 +557,17 @@ class ConfiguredCheckPlanner:
         configured: list[CheckSpec] = []
         for spec in proposal.check_specs:
             if spec.kind is CheckKind.COMMAND:
+                final_check = spec.check_id in proposal.contract.required_check_ids
                 if (
-                    self.command_argv
+                    final_check
+                    and self.command_argv
                     and spec.command_argv
                     and spec.command_argv != self.command_argv
                 ):
                     raise ValueError(
                         "Planner command Check conflicts with explicit host command argv"
                     )
-                if self.command_argv:
+                if final_check and self.command_argv:
                     spec = replace(spec, command_argv=self.command_argv)
                 elif not spec.command_argv:
                     raise ValueError("Command Check requires configured argv before persistence")
@@ -785,6 +831,8 @@ def build_plan_proposal(
     if not isinstance(template, PlanTemplate):
         raise TypeError("template must be a PlanTemplate")
     normalized_criteria = require_p1_criteria(criteria, "PlanProposalBuilder")
+    if template.final_gate_argv and COMMAND_EXIT_ZERO_CRITERION not in normalized_criteria:
+        normalized_criteria = (*normalized_criteria, COMMAND_EXIT_ZERO_CRITERION)
     proposed_at = clock()
     check_specs = tuple(
         CheckSpec(
@@ -800,6 +848,17 @@ def build_plan_proposal(
         for criterion in normalized_criteria
     )
     required_check_ids = tuple(check.check_id for check in check_specs)
+    local_checks = {
+        gate.node_key: CheckSpec(
+            name=gate.name,
+            kind=CheckKind.COMMAND,
+            description=f"Node gate: {gate.name}",
+            required=True,
+            check_id=id_factory(),
+            command_argv=gate.command_argv,
+        )
+        for gate in template.node_gates
+    }
     contract = CompletionContract.draft(
         goal_id=goal.goal_id,
         criteria=normalized_criteria,
@@ -823,7 +882,7 @@ def build_plan_proposal(
                     (template.final_node_key is not None and node.key == template.final_node_key)
                     or (template.final_node_key is None and node.require_completion_checks)
                 )
-                else ()
+                else ((local_checks[node.key].check_id,) if node.key in local_checks else ())
             ),
         )
         for node in template.nodes
@@ -863,7 +922,7 @@ def build_plan_proposal(
     return PlanProposal(
         contract=contract,
         plan_revision=revision,
-        check_specs=check_specs,
+        check_specs=(*check_specs, *local_checks.values()),
         budget=template.budget,
         usage=template.usage,
         planner_diagnostics=template.planner_diagnostics,

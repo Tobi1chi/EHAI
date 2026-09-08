@@ -1045,13 +1045,10 @@ class SQLiteCurrentStateRepository:
             raise PersistenceConflictError(
                 f"PlanRevision {plan.plan_revision_id} CompletionContract is not persisted"
             )
-        if check_spec.required and (
-            check_spec.check_id not in referenced_ids
-            or check_spec.check_id not in contract.required_check_ids
-        ):
+        if check_spec.required and check_spec.check_id not in referenced_ids:
             raise PersistenceConflictError(
                 f"required CheckSpec {check_spec.check_id} is not referenced by PlanRevision "
-                f"{plan.plan_revision_id} and its CompletionContract"
+                f"{plan.plan_revision_id}"
             )
         row = self._connection.execute(
             "SELECT COALESCE(MAX(sort_index), -1) + 1 FROM check_specs WHERE plan_revision_id = ?",

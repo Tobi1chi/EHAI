@@ -13,6 +13,7 @@ from ehai.application.planner import (
     EdgeTemplate,
     ExplorationBudget,
     ExplorationUsage,
+    NodeGateTemplate,
     PlanNodeTemplate,
     PlanTemplate,
 )
@@ -34,6 +35,7 @@ _MUTATION_TOOLS = (
     "add_plan_edge",
     "remove_plan_edge",
     "set_plan_branch",
+    "set_node_gate",
     "set_final_gate",
 )
 
@@ -94,6 +96,13 @@ class _DraftBranch:
     merge: str
 
 
+@dataclass(slots=True)
+class _DraftNodeGate:
+    node_key: str
+    name: str
+    command_argv: tuple[str, ...]
+
+
 class PlanGraphToolRuntime:
     """Execute model Tool Calls against one in-memory draft PlanGraph.
 
@@ -117,6 +126,7 @@ class PlanGraphToolRuntime:
         self._nodes: dict[str, _DraftNode] = {}
         self._edges: dict[tuple[str, str, EdgeType, str | None], _DraftEdge] = {}
         self._branches: dict[str, _DraftBranch] = {}
+        self._node_gates: dict[str, _DraftNodeGate] = {}
         self._operations_used = 0
         self._validation_failures = 0
         self._finished_template: PlanTemplate | None = None
@@ -246,6 +256,7 @@ class PlanGraphToolRuntime:
                 )
             )
         del self._nodes[key]
+        self._node_gates.pop(key, None)
         self._edges = {
             edge_key: edge
             for edge_key, edge in self._edges.items()
@@ -400,39 +411,42 @@ class PlanGraphToolRuntime:
         self._branches[branch_key] = _DraftBranch(branch_key, label, fork, node_keys, merge)
 
     def _tool_set_final_gate(self, arguments: Mapping[str, JsonValue]) -> None:
-        value = arguments.get("argv")
-        if not isinstance(value, list) or not value:
+        self._final_gate_argv = _required_gate_argv(arguments, "final_gate.argv")
+
+    def _tool_set_node_gate(self, arguments: Mapping[str, JsonValue]) -> None:
+        node_key = _required_key(arguments, "node_key", "node_gates")
+        location = f"node_gates.{node_key}"
+        node = self._nodes.get(node_key)
+        if node is None:
             raise _ToolRejection(
                 PlanIssue(
-                    "INVALID_ARGUMENT",
-                    "final_gate.argv",
-                    "argv must be a non-empty array of command arguments",
+                    "UNKNOWN_NODE",
+                    location,
+                    f"Node {node_key!r} does not exist",
+                    (node_key,),
                 )
             )
-        if any(not isinstance(argument, str) for argument in value):
+        if node.kind not in {PlanNodeKind.WORK, PlanNodeKind.MERGE}:
             raise _ToolRejection(
                 PlanIssue(
-                    "INVALID_ARGUMENT",
-                    "final_gate.argv",
-                    "argv must contain only strings",
+                    "NODE_GATE_INVALID_KIND",
+                    location,
+                    "Automatic node Gates may only be attached to work or merge nodes",
+                    (node_key,),
                 )
             )
-        argv = tuple(argument for argument in value if isinstance(argument, str))
-        if any(not argument or "\x00" in argument for argument in argv):
-            raise _ToolRejection(
-                PlanIssue(
-                    "INVALID_ARGUMENT",
-                    "final_gate.argv",
-                    "argv must contain non-empty strings without null bytes",
-                )
-            )
-        self._final_gate_argv = argv
+        self._node_gates[node_key] = _DraftNodeGate(
+            node_key=node_key,
+            name=_required_text(arguments, "name", location),
+            command_argv=_required_gate_argv(arguments, f"{location}.argv"),
+        )
 
     def _inspect(self) -> dict[str, JsonValue]:
         return {
             "nodes": [_node_document(node) for node in self._nodes.values()],
             "edges": [_edge_document(edge) for edge in self._edges.values()],
             "branches": [_branch_document(branch) for branch in self._branches.values()],
+            "node_gates": [_node_gate_document(gate) for gate in self._node_gates.values()],
             "final_gate_argv": list(self._final_gate_argv),
             "require_final_gate": self._require_final_gate,
             "operations_used": self._operations_used,
@@ -560,6 +574,36 @@ class PlanGraphToolRuntime:
                         f"nodes.{terminal_keys[0]}",
                         "The final integration node cannot be an exploration branch interior",
                         (terminal_keys[0],),
+                    )
+                )
+            final_gate = self._node_gates.get(terminal_keys[0])
+            if final_gate is not None:
+                issues.append(
+                    PlanIssue(
+                        "NODE_GATE_FINAL_CONFLICT",
+                        f"node_gates.{final_gate.node_key}",
+                        "The final node uses final_gate_argv; it cannot also have a node Gate",
+                        (final_gate.node_key,),
+                    )
+                )
+        for gate in self._node_gates.values():
+            node = self._nodes.get(gate.node_key)
+            if node is None:
+                issues.append(
+                    PlanIssue(
+                        "NODE_GATE_UNKNOWN_NODE",
+                        f"node_gates.{gate.node_key}",
+                        f"Node Gate references unknown node {gate.node_key!r}",
+                        (gate.node_key,),
+                    )
+                )
+            elif node.kind not in {PlanNodeKind.WORK, PlanNodeKind.MERGE}:
+                issues.append(
+                    PlanIssue(
+                        "NODE_GATE_INVALID_KIND",
+                        f"node_gates.{gate.node_key}",
+                        "Automatic node Gates may only be attached to work or merge nodes",
+                        (gate.node_key,),
                     )
                 )
         if self._require_final_gate and not self._final_gate_argv:
@@ -869,6 +913,14 @@ class PlanGraphToolRuntime:
             nodes=nodes,
             edges=edges,
             branches=branches,
+            node_gates=tuple(
+                NodeGateTemplate(
+                    node_key=gate.node_key,
+                    name=gate.name,
+                    command_argv=gate.command_argv,
+                )
+                for gate in self._node_gates.values()
+            ),
             budget=self._budget,
             usage=usage,
             planner_event_types=self._planner_event_types,
@@ -910,6 +962,14 @@ def _branch_document(branch: _DraftBranch) -> dict[str, JsonValue]:
     }
 
 
+def _node_gate_document(gate: _DraftNodeGate) -> dict[str, JsonValue]:
+    return {
+        "node_key": gate.node_key,
+        "name": gate.name,
+        "command_argv": list(gate.command_argv),
+    }
+
+
 def _required_key(
     arguments: Mapping[str, JsonValue],
     name: str,
@@ -947,6 +1007,44 @@ def _required_text(
             PlanIssue("INVALID_ARGUMENT", f"{location}.{name}", f"{name} must be non-blank text")
         )
     return value.strip()
+
+
+def _required_gate_argv(
+    arguments: Mapping[str, JsonValue],
+    location: str,
+) -> tuple[str, ...]:
+    value = arguments.get("argv")
+    if not isinstance(value, list) or not value:
+        raise _ToolRejection(
+            PlanIssue(
+                "INVALID_ARGUMENT",
+                location,
+                "argv must be a non-empty array of command arguments",
+            )
+        )
+    if len(value) > 128:
+        raise _ToolRejection(
+            PlanIssue(
+                "INVALID_ARGUMENT",
+                location,
+                "argv must contain at most 128 command arguments",
+            )
+        )
+    if any(not isinstance(argument, str) for argument in value):
+        raise _ToolRejection(
+            PlanIssue("INVALID_ARGUMENT", location, "argv must contain only strings")
+        )
+    argv = tuple(argument for argument in value if isinstance(argument, str))
+    if any(not argument or len(argument) > 4096 or "\x00" in argument for argument in argv):
+        raise _ToolRejection(
+            PlanIssue(
+                "INVALID_ARGUMENT",
+                location,
+                "argv arguments must be non-empty, at most 4096 characters, and contain no "
+                "null bytes",
+            )
+        )
+    return argv
 
 
 def _optional_text(
@@ -1027,7 +1125,7 @@ _LABEL_PROPERTY: dict[str, JsonValue] = {"type": "string", "minLength": 1, "maxL
 _INSTRUCTION_PROPERTY: dict[str, JsonValue] = {"type": "string", "minLength": 1, "maxLength": 4000}
 _NODE_KIND_PROPERTY: dict[str, JsonValue] = {"type": "string", "enum": list(_NODE_KINDS)}
 _EDGE_TYPE_PROPERTY: dict[str, JsonValue] = {"type": "string", "enum": list(_EDGE_TYPES)}
-_FINAL_GATE_ARG_PROPERTY: dict[str, JsonValue] = {
+_GATE_ARG_PROPERTY: dict[str, JsonValue] = {
     "type": "string",
     "minLength": 1,
     "maxLength": 4096,
@@ -1047,6 +1145,7 @@ _TOOL_ORDER = (
     "add_plan_edge",
     "remove_plan_edge",
     "set_plan_branch",
+    "set_node_gate",
     "set_final_gate",
     "inspect_plan",
     "finish_plan",
@@ -1155,8 +1254,27 @@ _TOOL_DEFINITIONS: dict[str, ToolDefinition] = {
                     "type": "array",
                     "minItems": 1,
                     "maxItems": 128,
-                    "items": _FINAL_GATE_ARG_PROPERTY,
+                    "items": _GATE_ARG_PROPERTY,
                 }
+            },
+        },
+    ),
+    "set_node_gate": ToolDefinition(
+        "set_node_gate",
+        "Set or replace one automatic behavioral Gate on an existing non-final work or merge node.",
+        {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["node_key", "name", "argv"],
+            "properties": {
+                "node_key": _KEY_PROPERTY,
+                "name": _LABEL_PROPERTY,
+                "argv": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 128,
+                    "items": _GATE_ARG_PROPERTY,
+                },
             },
         },
     ),

@@ -252,8 +252,6 @@ class WorkerRequest:
             raise ValueError(f"{owner} required CheckSpecs must not contain duplicate IDs")
         if set(check_ids) != set(plan_node.required_check_ids):
             raise ValueError(f"{owner} required CheckSpecs do not match its PlanNode")
-        if not set(check_ids).issubset(completion_contract.required_check_ids):
-            raise ValueError(f"{owner} required CheckSpecs do not match its CompletionContract")
         if any(not check.required for check in checks):
             raise ValueError(f"{owner} required CheckSpecs cannot be optional")
         foreign_artifacts = tuple(

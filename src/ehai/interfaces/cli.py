@@ -399,7 +399,11 @@ def create_parser() -> argparse.ArgumentParser:
     discuss.add_argument("--idempotency-key", required=True)
     discuss.add_argument("--goal-id", required=True)
     discuss.add_argument("--conversation-id")
-    discuss.add_argument("--criterion", action="append", required=True)
+    discuss.add_argument(
+        "--criterion",
+        action="append",
+        help="completion criterion; defaults to command:exit-zero for coding discussions",
+    )
     message = discuss.add_mutually_exclusive_group(required=True)
     message.add_argument("--message")
     message.add_argument("--message-file", type=Path)
@@ -457,7 +461,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                         args.idempotency_key,
                         normalize_id(args.goal_id),
                         message,
-                        tuple(args.criterion),
+                        tuple(args.criterion or (COMMAND_EXIT_ZERO_CRITERION,)),
                         None
                         if args.conversation_id is None
                         else normalize_id(args.conversation_id),
