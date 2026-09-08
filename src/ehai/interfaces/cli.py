@@ -706,6 +706,12 @@ def add_responses_arguments(parser: argparse.ArgumentParser) -> None:
         "--responses-unique-items", action=argparse.BooleanOptionalAction, default=True
     )
     parser.add_argument("--responses-idempotent-create", action=argparse.BooleanOptionalAction)
+    parser.add_argument(
+        "--responses-previous-response-id", action=argparse.BooleanOptionalAction, default=True
+    )
+    parser.add_argument(
+        "--responses-response-retrieval", action=argparse.BooleanOptionalAction, default=True
+    )
 
 
 def responses_capabilities(args: argparse.Namespace) -> ResponsesEndpointCapabilities:
@@ -713,6 +719,8 @@ def responses_capabilities(args: argparse.Namespace) -> ResponsesEndpointCapabil
         supports_background=args.responses_background,
         supports_unique_items=args.responses_unique_items,
         supports_idempotent_create=args.responses_idempotent_create,
+        supports_previous_response_id=args.responses_previous_response_id,
+        supports_response_retrieval=args.responses_response_retrieval,
     )
 
 

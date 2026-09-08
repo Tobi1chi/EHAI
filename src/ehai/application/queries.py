@@ -55,6 +55,7 @@ _TRACE_SESSION_EVENT_TYPES = frozenset(
         BuiltinSessionEventType.MESSAGE_RECEIVED,
         BuiltinSessionEventType.STEP_STARTED,
         BuiltinSessionEventType.MODEL_MESSAGE,
+        BuiltinSessionEventType.MODEL_TRANSPORT,
         BuiltinSessionEventType.TOOL_CALLED,
         BuiltinSessionEventType.TOOL_RESULT,
         BuiltinSessionEventType.TOOL_ERROR,

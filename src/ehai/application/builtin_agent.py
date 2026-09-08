@@ -149,6 +149,9 @@ class ModelRequest:
     input_messages: tuple[ModelMessage, ...] = ()
     previous_response_id: str | None = None
     tool_choice: Literal["auto", "required"] = "auto"
+    on_transport_event: Callable[[Mapping[str, JsonValue]], None] | None = field(
+        default=None, repr=False, compare=False
+    )
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "messages", tuple(self.messages))
@@ -356,6 +359,7 @@ class BuiltinSessionEventType(StrEnum):
     MESSAGE_RECEIVED = "message/received"
     STEP_STARTED = "step/start"
     MODEL_MESSAGE = "model/message"
+    MODEL_TRANSPORT = "model/transport"
     TOOL_CALLED = "tool/call"
     TOOL_RESULT = "tool/result"
     TOOL_ERROR = "tool/error"
@@ -723,6 +727,12 @@ class BuiltinAgentLoop:
                 persisted_sequence = self._persist(session, persisted_sequence)
             step_start = len(session.events)
             session.append(attempt_id, BuiltinSessionEventType.STEP_STARTED, {})
+
+            def record_transport(payload: Mapping[str, JsonValue]) -> None:
+                nonlocal persisted_sequence
+                session.append(attempt_id, BuiltinSessionEventType.MODEL_TRANSPORT, payload)
+                persisted_sequence = self._persist(session, persisted_sequence)
+
             request = ModelRequest(
                 session.model_messages(max_history_steps=self.budget.max_history_steps),
                 self.tool_set.definitions,
@@ -733,6 +743,7 @@ class BuiltinAgentLoop:
                     max_history_steps=self.budget.max_history_steps,
                 ),
                 tool_choice=self.tool_choice,
+                on_transport_event=record_transport,
             )
             response = await self.model_client.complete(request)
             step_count += 1
@@ -929,8 +940,17 @@ def _validate_next_event(
     events: tuple[BuiltinSessionEvent, ...],
     event: BuiltinSessionEvent,
 ) -> None:
-    attempt_events = tuple(item for item in events if item.attempt_id == event.attempt_id)
+    attempt_events = tuple(
+        item
+        for item in events
+        if item.attempt_id == event.attempt_id
+        and item.type is not BuiltinSessionEventType.MODEL_TRANSPORT
+    )
     previous = None if not attempt_events else attempt_events[-1].type
+    if event.type is BuiltinSessionEventType.MODEL_TRANSPORT:
+        if previous is not BuiltinSessionEventType.STEP_STARTED:
+            raise BuiltinSessionStateError("model/transport requires an active model Step")
+        return
     if event.type is BuiltinSessionEventType.TURN_STARTED:
         if attempt_events:
             raise BuiltinSessionStateError("Attempt Turn can start only once")

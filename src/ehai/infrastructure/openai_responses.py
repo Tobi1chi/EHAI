@@ -3,10 +3,14 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import AsyncIterator, Mapping
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
+from time import monotonic
 from typing import Literal, cast
 from uuid import uuid4
 
+from httpx import TransportError
 from openai import (
     APIConnectionError,
     APIStatusError,
@@ -46,7 +50,7 @@ class OpenAIResponsesProtocolError(BuiltinAgentError):
 
 
 class OpenAIResponsesUnknownOutcomeError(OpenAIResponsesProtocolError):
-    """A create may have succeeded, but no recoverable Response ID was received."""
+    """Provider execution has an unknown outcome that cannot be safely recovered."""
 
 
 class _BackgroundUnsupported(Exception):
@@ -60,6 +64,8 @@ class ResponsesEndpointCapabilities:
     supports_background: bool = True
     supports_idempotent_create: bool | None = None
     supports_unique_items: bool = True
+    supports_previous_response_id: bool = True
+    supports_response_retrieval: bool = True
 
     def __post_init__(self) -> None:
         if not isinstance(self.supports_background, bool):
@@ -70,6 +76,9 @@ class ResponsesEndpointCapabilities:
             raise ValueError("supports_idempotent_create must be a boolean")
         if not isinstance(self.supports_unique_items, bool):
             raise ValueError("supports_unique_items must be a boolean")
+        for name in ("supports_previous_response_id", "supports_response_retrieval"):
+            if not isinstance(getattr(self, name), bool):
+                raise ValueError(f"{name} must be a boolean")
 
 
 class OpenAIResponsesModelClient(ModelClient):
@@ -77,9 +86,8 @@ class OpenAIResponsesModelClient(ModelClient):
 
     ``timeout_seconds`` is a connection / stream-idle timeout, not a total task
     lifetime. Provider executions remain valid while they are queued or in
-    progress, interrupted streams are recovered by retrieving the same Response
-    (never by creating a duplicate one), and only explicit terminal statuses or
-    exhausted recovery budgets end the execution.
+    progress. Where supported, interrupted streams recover the same Response;
+    otherwise an unknown outcome requires external intervention, not a new POST.
     """
 
     def __init__(
@@ -131,6 +139,12 @@ class OpenAIResponsesModelClient(ModelClient):
         capabilities = endpoint_capabilities or ResponsesEndpointCapabilities()
         if not isinstance(capabilities, ResponsesEndpointCapabilities):
             raise TypeError("endpoint_capabilities must be ResponsesEndpointCapabilities")
+        if (
+            background
+            and capabilities.supports_background
+            and not capabilities.supports_response_retrieval
+        ):
+            raise ValueError("background execution requires Response retrieval")
         if client is not None and retry_owner is None:
             raise ValueError("injected OpenAI clients must declare retry_owner")
         resolved_retry_owner = retry_owner or "ehai"
@@ -166,14 +180,28 @@ class OpenAIResponsesModelClient(ModelClient):
         if self._closed:
             raise RuntimeError("OpenAIResponsesModelClient is closed")
         logical_request_id = f"ehai-{uuid4()}"
-        if self.background and self.endpoint_capabilities.supports_background:
-            try:
-                return await self._complete_background(request, logical_request_id)
-            except _BackgroundUnsupported:
-                # The background create was rejected before any Response existed,
-                # so the streaming fallback cannot duplicate a Response.
-                pass
-        return await self._complete_streaming(request, logical_request_id)
+        started = monotonic()
+        try:
+            if self.background and self.endpoint_capabilities.supports_background:
+                try:
+                    return await self._complete_background(request, logical_request_id)
+                except _BackgroundUnsupported:
+                    self._observe(
+                        request, logical_request_id, "fallback", reason="background_rejected"
+                    )
+            return await self._complete_streaming(request, logical_request_id)
+        except OpenAIResponsesUnknownOutcomeError:
+            self._observe(
+                request, logical_request_id, "unknown_outcome", reason="external_decision_required"
+            )
+            raise
+        finally:
+            self._observe(
+                request,
+                logical_request_id,
+                "logical_end",
+                elapsed_ms=round((monotonic() - started) * 1000),
+            )
 
     async def _complete_background(
         self,
@@ -197,7 +225,9 @@ class OpenAIResponsesModelClient(ModelClient):
                     ) from error
                 await asyncio.sleep(self.retry_delay_seconds)
                 continue
-            return await self._await_terminal_response(response.id)
+            return await self._await_terminal_response(
+                response.id, request=request, logical_request_id=logical_request_id
+            )
 
     async def _complete_streaming(
         self,
@@ -219,6 +249,7 @@ class OpenAIResponsesModelClient(ModelClient):
                     raise OpenAIResponsesProtocolError(
                         f"Responses request failed after {self.max_http_retries} HTTP retries"
                     ) from error
+                self._observe(request, logical_request_id, "retry", reason="create_http_error")
                 await asyncio.sleep(self.retry_delay_seconds)
                 continue
             text_parts: list[str] = []
@@ -228,6 +259,22 @@ class OpenAIResponsesModelClient(ModelClient):
                     response_id = _event_response_id(event)
                     if response_id is not None:
                         seen_response_id = response_id
+                    if event.type in {
+                        "response.created",
+                        "response.completed",
+                        "response.failed",
+                        "response.incomplete",
+                    }:
+                        self._observe(
+                            request,
+                            logical_request_id,
+                            "stream",
+                            http_request_id=stream.response.request.headers.get(
+                                "X-Client-Request-Id"
+                            ),
+                            response_id=seen_response_id,
+                            state=event.type,
+                        )
                     if event.type == "response.output_text.delta":
                         text_parts.append(event.delta)
                     elif event.type == "response.output_item.done":
@@ -250,10 +297,35 @@ class OpenAIResponsesModelClient(ModelClient):
                             f"Responses stream ended with {event.type}"
                         )
             except Exception as error:
+                self._observe(
+                    request,
+                    logical_request_id,
+                    "stream_error",
+                    http_request_id=stream.response.request.headers.get("X-Client-Request-Id"),
+                    response_id=seen_response_id,
+                    error_type=type(error).__name__,
+                )
                 if not _is_retriable(error):
                     raise
             finally:
                 await stream.close()
+            if seen_response_id is not None and not (
+                self.endpoint_capabilities.supports_response_retrieval
+            ):
+                return await self._await_terminal_response(
+                    seen_response_id, request=request, logical_request_id=logical_request_id
+                )
+            if seen_response_id is None and not self.supports_idempotent_create:
+                self._observe(
+                    request,
+                    logical_request_id,
+                    "unknown_outcome",
+                    reason="stream_lost_without_response_id",
+                )
+                raise OpenAIResponsesUnknownOutcomeError(
+                    "Response stream ended without a recoverable ID; EHAI did not create "
+                    "a replacement Response because idempotent create is not guaranteed"
+                )
             reconnects += 1
             if reconnects > self.max_stream_reconnects:
                 raise OpenAIResponsesProtocolError(
@@ -264,7 +336,10 @@ class OpenAIResponsesModelClient(ModelClient):
                 return await self._await_terminal_response(
                     seen_response_id,
                     reconnects_used=reconnects,
+                    request=request,
+                    logical_request_id=logical_request_id,
                 )
+            self._observe(request, logical_request_id, "retry", reason="stream_lost_without_id")
             await asyncio.sleep(self.retry_delay_seconds)
             continue
 
@@ -273,19 +348,41 @@ class OpenAIResponsesModelClient(ModelClient):
         response_id: str,
         *,
         reconnects_used: int = 0,
+        request: ModelRequest,
+        logical_request_id: str,
     ) -> ModelResponse:
         """Recover or poll the same stored Response until an explicit terminal status.
 
         queued/in_progress keep waiting; connection failures consume the remaining
         stream reconnect budget instead of failing the provider execution.
         """
+        if not self.endpoint_capabilities.supports_response_retrieval:
+            self._observe(
+                request,
+                logical_request_id,
+                "unknown_outcome",
+                response_id=response_id,
+                reason="response_retrieval_disabled",
+            )
+            raise OpenAIResponsesUnknownOutcomeError(
+                f"Response {response_id} outcome is unknown and this endpoint cannot retrieve "
+                "Responses; EHAI did not retry the creation and requires an external decision"
+            )
         reconnects = reconnects_used
         while True:
             try:
-                response = await self._client.responses.retrieve(
-                    response_id,
-                    timeout=self.timeout_seconds,
-                )
+                async with self._http_trace(
+                    request, logical_request_id, "retrieve", response_id=response_id
+                ) as http_request_id:
+                    raw = await self._client.responses.with_raw_response.retrieve(
+                        response_id,
+                        timeout=self.timeout_seconds,
+                        extra_headers={"X-Client-Request-Id": http_request_id},
+                    )
+                    self._http_received(
+                        request, logical_request_id, http_request_id, raw.status_code, raw.headers
+                    )
+                    response = raw.parse()
             except Exception as error:
                 if not _is_retriable(error):
                     raise
@@ -298,6 +395,14 @@ class OpenAIResponsesModelClient(ModelClient):
                 await asyncio.sleep(self.retry_delay_seconds)
                 continue
             status = response.status
+            self._observe(
+                request,
+                logical_request_id,
+                "response_state",
+                http_request_id=http_request_id,
+                response_id=response.id,
+                state=status,
+            )
             if status in _ACTIVE_RESPONSE_STATUSES:
                 await asyncio.sleep(self.poll_interval_seconds)
                 continue
@@ -315,12 +420,27 @@ class OpenAIResponsesModelClient(ModelClient):
         try:
             return await self._create_stream(
                 request,
-                input_messages=request.input_messages,
-                previous_response_id=request.previous_response_id,
+                input_messages=(
+                    request.input_messages
+                    if self.endpoint_capabilities.supports_previous_response_id
+                    else request.messages
+                ),
+                previous_response_id=(
+                    request.previous_response_id
+                    if self.endpoint_capabilities.supports_previous_response_id
+                    else None
+                ),
                 logical_request_id=logical_request_id,
             )
         except BadRequestError as error:
-            if request.previous_response_id is not None and _rejects_continuation(error):
+            if (
+                self.endpoint_capabilities.supports_previous_response_id
+                and request.previous_response_id is not None
+                and _rejects_continuation(error)
+            ):
+                self._observe(
+                    request, logical_request_id, "fallback", reason="continuation_rejected"
+                )
                 return await self._create_stream(
                     request,
                     input_messages=request.messages,
@@ -337,14 +457,29 @@ class OpenAIResponsesModelClient(ModelClient):
         try:
             return await self._create_background(
                 request,
-                input_messages=request.input_messages,
-                previous_response_id=request.previous_response_id,
+                input_messages=(
+                    request.input_messages
+                    if self.endpoint_capabilities.supports_previous_response_id
+                    else request.messages
+                ),
+                previous_response_id=(
+                    request.previous_response_id
+                    if self.endpoint_capabilities.supports_previous_response_id
+                    else None
+                ),
                 logical_request_id=logical_request_id,
             )
         except BadRequestError as error:
             if _rejects_background(error):
                 raise _BackgroundUnsupported from error
-            if request.previous_response_id is not None and _rejects_continuation(error):
+            if (
+                self.endpoint_capabilities.supports_previous_response_id
+                and request.previous_response_id is not None
+                and _rejects_continuation(error)
+            ):
+                self._observe(
+                    request, logical_request_id, "fallback", reason="continuation_rejected"
+                )
                 return await self._create_background(
                     request,
                     input_messages=request.messages,
@@ -361,26 +496,38 @@ class OpenAIResponsesModelClient(ModelClient):
         previous_response_id: str | None,
         logical_request_id: str,
     ) -> AsyncStream[ResponseStreamEvent]:
-        return await self._client.responses.create(
-            model=self.profile.model,
-            instructions=_instructions(request.messages),
-            input=_response_input(input_messages),
-            tools=_function_tools(
-                request,
-                supports_unique_items=self.endpoint_capabilities.supports_unique_items,
-            ),
-            previous_response_id=(omit if previous_response_id is None else previous_response_id),
-            parallel_tool_calls=False,
-            tool_choice=request.tool_choice,
-            store=True,
-            stream=True,
-            max_output_tokens=self.max_output_tokens,
-            reasoning=(
-                omit if self.reasoning_effort is None else {"effort": self.reasoning_effort}
-            ),
-            timeout=self.timeout_seconds,
-            extra_headers={"Idempotency-Key": logical_request_id},
-        )
+        async with self._http_trace(
+            request, logical_request_id, "create", previous_response_id=previous_response_id
+        ) as http_request_id:
+            raw = await self._client.responses.with_raw_response.create(
+                model=self.profile.model,
+                instructions=_instructions(request.messages),
+                input=_response_input(input_messages),
+                tools=_function_tools(
+                    request,
+                    supports_unique_items=self.endpoint_capabilities.supports_unique_items,
+                ),
+                previous_response_id=(
+                    omit if previous_response_id is None else previous_response_id
+                ),
+                parallel_tool_calls=False,
+                tool_choice=request.tool_choice,
+                store=True,
+                stream=True,
+                max_output_tokens=self.max_output_tokens,
+                reasoning=(
+                    omit if self.reasoning_effort is None else {"effort": self.reasoning_effort}
+                ),
+                timeout=self.timeout_seconds,
+                extra_headers={
+                    "Idempotency-Key": logical_request_id,
+                    "X-Client-Request-Id": http_request_id,
+                },
+            )
+            self._http_received(
+                request, logical_request_id, http_request_id, raw.status_code, raw.headers
+            )
+            return raw.parse()
 
     async def _create_background(
         self,
@@ -390,25 +537,115 @@ class OpenAIResponsesModelClient(ModelClient):
         previous_response_id: str | None,
         logical_request_id: str,
     ) -> Response:
-        return await self._client.responses.create(
-            model=self.profile.model,
-            instructions=_instructions(request.messages),
-            input=_response_input(input_messages),
-            tools=_function_tools(
+        async with self._http_trace(
+            request,
+            logical_request_id,
+            "create_background",
+            previous_response_id=previous_response_id,
+        ) as http_request_id:
+            raw = await self._client.responses.with_raw_response.create(
+                model=self.profile.model,
+                instructions=_instructions(request.messages),
+                input=_response_input(input_messages),
+                tools=_function_tools(
+                    request,
+                    supports_unique_items=self.endpoint_capabilities.supports_unique_items,
+                ),
+                previous_response_id=(
+                    omit if previous_response_id is None else previous_response_id
+                ),
+                parallel_tool_calls=False,
+                tool_choice=request.tool_choice,
+                store=True,
+                background=True,
+                max_output_tokens=self.max_output_tokens,
+                reasoning=(
+                    omit if self.reasoning_effort is None else {"effort": self.reasoning_effort}
+                ),
+                timeout=self.timeout_seconds,
+                extra_headers={
+                    "Idempotency-Key": logical_request_id,
+                    "X-Client-Request-Id": http_request_id,
+                },
+            )
+            self._http_received(
+                request, logical_request_id, http_request_id, raw.status_code, raw.headers
+            )
+            return raw.parse()
+
+    def _observe(
+        self, request: ModelRequest, logical_request_id: str, phase: str, **fields: JsonValue
+    ) -> None:
+        if request.on_transport_event is None:
+            return
+        payload: dict[str, JsonValue] = {
+            "logical_request_id": logical_request_id,
+            "phase": phase,
+            "model": self.profile.model,
+            "retry_owner": self.retry_owner,
+            **fields,
+        }
+        secret = self._client.api_key
+        for name, value in payload.items():
+            if isinstance(value, str):
+                payload[name] = (
+                    value.replace(secret, "[REDACTED]")[:512]
+                    if isinstance(secret, str) and secret
+                    else value[:512]
+                )
+        request.on_transport_event(payload)
+
+    @asynccontextmanager
+    async def _http_trace(
+        self, request: ModelRequest, logical_request_id: str, operation: str, **fields: JsonValue
+    ) -> AsyncIterator[str]:
+        http_request_id = f"ehai-http-{uuid4()}"
+        started = monotonic()
+        self._observe(
+            request,
+            logical_request_id,
+            "request",
+            http_request_id=http_request_id,
+            operation=operation,
+            **fields,
+        )
+        try:
+            yield http_request_id
+        except BaseException as error:
+            self._observe(
                 request,
-                supports_unique_items=self.endpoint_capabilities.supports_unique_items,
-            ),
-            previous_response_id=(omit if previous_response_id is None else previous_response_id),
-            parallel_tool_calls=False,
-            tool_choice=request.tool_choice,
-            store=True,
-            background=True,
-            max_output_tokens=self.max_output_tokens,
-            reasoning=(
-                omit if self.reasoning_effort is None else {"effort": self.reasoning_effort}
-            ),
-            timeout=self.timeout_seconds,
-            extra_headers={"Idempotency-Key": logical_request_id},
+                logical_request_id,
+                "error",
+                http_request_id=http_request_id,
+                error_type=type(error).__name__,
+                http_status=error.status_code if isinstance(error, APIStatusError) else None,
+                provider_request_id=error.request_id if isinstance(error, APIStatusError) else None,
+            )
+            raise
+        finally:
+            self._observe(
+                request,
+                logical_request_id,
+                "http_end",
+                http_request_id=http_request_id,
+                elapsed_ms=round((monotonic() - started) * 1000),
+            )
+
+    def _http_received(
+        self,
+        request: ModelRequest,
+        logical_request_id: str,
+        http_request_id: str,
+        status: int,
+        headers: Mapping[str, str],
+    ) -> None:
+        self._observe(
+            request,
+            logical_request_id,
+            "response",
+            http_request_id=http_request_id,
+            http_status=status,
+            provider_request_id=headers.get("x-request-id"),
         )
 
     def _require_safe_create_retry(self, error: BaseException) -> None:
@@ -487,7 +724,7 @@ def _event_response_id(event: ResponseStreamEvent) -> str | None:
 
 
 def _is_retriable(error: BaseException) -> bool:
-    if isinstance(error, APIConnectionError):
+    if isinstance(error, (APIConnectionError, TransportError)):
         return True
     return isinstance(error, APIStatusError) and error.status_code >= 500
 

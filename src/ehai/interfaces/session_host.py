@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 from ehai import ID, JsonValue, json_dumps, json_loads, new_id, normalize_id, utc_now
+from ehai.application.builtin_agent import BuiltinSessionEventType
 from ehai.application.commands import PauseRun, ResumeRun, StartRun
 from ehai.application.queries import QueryService
 from ehai.application.scheduler import ConcurrentRuntime
@@ -224,6 +225,12 @@ class ExecutionConfig:
                 "supports_background": self.endpoint_capabilities.supports_background,
                 "supports_unique_items": self.endpoint_capabilities.supports_unique_items,
                 "supports_idempotent_create": self.endpoint_capabilities.supports_idempotent_create,
+                "supports_previous_response_id": (
+                    self.endpoint_capabilities.supports_previous_response_id
+                ),
+                "supports_response_retrieval": (
+                    self.endpoint_capabilities.supports_response_retrieval
+                ),
             },
             "command_timeout_seconds": self.command_timeout_seconds,
             "codex_server": {
@@ -257,7 +264,7 @@ def authorize_run(database: SQLiteDatabase, run_id: ID, config: ExecutionConfig)
         events = uow.events.list_events()
         stored = _stored_config(events, normalized_id)
         expected = config.to_document()
-        if stored is not None and stored != expected:
+        if stored is not None and ExecutionConfig.from_document(stored).to_document() != expected:
             raise SessionHostError(f"Run {normalized_id} already has another execution config")
         if stored is not None and not _authorized(events, normalized_id):
             raise SessionHostError(f"Run {normalized_id} has no explicit authorization")
@@ -366,12 +373,16 @@ class ForegroundSessionHost:
         runtime_task: asyncio.Task[tuple[Run, ...]] | None = None
         self._composition.runtime_control.mark_runtime_starting()
         try:
-            await runtime.recover_startup()
-            current = self._read_run(normalized_id)
-            if current.status in _TERMINAL_RUN_STATUSES:
-                return await self._document(normalized_id)
-            self._composition.runtime_control.mark_runtime_healthy()
-            runtime_task = asyncio.create_task(runtime.run_until_idle())
+
+            async def execute_runtime() -> tuple[Run, ...]:
+                await runtime.recover_startup()
+                current = self._read_run(normalized_id)
+                if current.status in _TERMINAL_RUN_STATUSES:
+                    return (current,)
+                self._composition.runtime_control.mark_runtime_healthy()
+                return await runtime.run_until_idle()
+
+            runtime_task = asyncio.create_task(execute_runtime())
             last_progress: str | None = None
             while True:
                 done, _ = await asyncio.wait({runtime_task}, timeout=self._poll_interval_seconds)
@@ -443,6 +454,27 @@ class ForegroundSessionHost:
             ),
             None,
         )
+        if (
+            attempt is not None
+            and attempt.agent_session_ref_id is not None
+            and attempt.execution_handle is not None
+            and attempt.execution_handle.builtin is not None
+        ):
+            builtin_session = SQLiteBuiltinSessionStore(self._composition.database).load(
+                attempt.agent_session_ref_id
+            )
+            if any(
+                event.attempt_id == attempt.attempt_id
+                and event.type is BuiltinSessionEventType.MODEL_TRANSPORT
+                and event.payload.get("phase") == "unknown_outcome"
+                for event in builtin_session.events
+            ):
+                return _SessionNotice(
+                    "provider_outcome_unknown",
+                    "Provider response outcome is unknown; inspect the transport trace and "
+                    "external state before explicitly resuming",
+                    attempt.attempt_id,
+                )
         return (
             None
             if attempt is None
@@ -729,7 +761,13 @@ def _argv_list(value: JsonValue, field_name: str) -> tuple[tuple[str, ...], ...]
 def _endpoint_capabilities(value: JsonValue) -> ResponsesEndpointCapabilities:
     if not isinstance(value, dict):
         raise ValueError("endpoint_capabilities must be an object")
-    allowed = {"supports_background", "supports_unique_items", "supports_idempotent_create"}
+    allowed = {
+        "supports_background",
+        "supports_unique_items",
+        "supports_idempotent_create",
+        "supports_previous_response_id",
+        "supports_response_retrieval",
+    }
     unknown = sorted(set(value) - allowed)
     if unknown:
         raise ValueError(f"endpoint_capabilities contains unknown fields: {unknown}")
@@ -747,6 +785,8 @@ def _endpoint_capabilities(value: JsonValue) -> ResponsesEndpointCapabilities:
         if parsed["supports_unique_items"] is None
         else parsed["supports_unique_items"],
         supports_idempotent_create=parsed["supports_idempotent_create"],
+        supports_previous_response_id=parsed["supports_previous_response_id"] is not False,
+        supports_response_retrieval=parsed["supports_response_retrieval"] is not False,
     )
 
 

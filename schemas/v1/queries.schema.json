@@ -461,7 +461,7 @@
     },
     "BuiltinSessionEventType": {
       "type": "string",
-      "enum": ["step/start", "model/message", "tool/call", "tool/result", "tool/error", "step/end"]
+      "enum": ["step/start", "model/message", "model/transport", "tool/call", "tool/result", "tool/error", "step/end"]
     },
     "BuiltinSessionEvent": {
       "type": "object",

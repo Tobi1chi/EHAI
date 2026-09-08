@@ -228,7 +228,7 @@ export type Checkpoint = {
   readonly created_at: UtcDateTime;
 };
 
-export type BuiltinSessionEventType = "step/start" | "model/message" | "tool/call" | "tool/result" | "tool/error" | "step/end";
+export type BuiltinSessionEventType = "step/start" | "model/message" | "model/transport" | "tool/call" | "tool/result" | "tool/error" | "step/end";
 
 export type BuiltinSessionEvent = {
   readonly agent_session_ref_id: Id;

@@ -47,6 +47,7 @@ from ehai.infrastructure.builtin_tools import BuiltinToolRuntime
 from ehai.infrastructure.mcp_tools import MCPToolProvider
 from ehai.infrastructure.openai_responses import (
     OpenAIResponsesModelClient,
+    OpenAIResponsesUnknownOutcomeError,
     ResponsesEndpointCapabilities,
 )
 from ehai.infrastructure.skill_loader import SkillToolProvider
@@ -159,6 +160,12 @@ class BuiltinAgentConnector:
         self._require_execution(execution)
         if execution.attempt_id in self._terminal_outcomes:
             failure, cursor = self._terminal_outcomes[execution.attempt_id]
+            if cursor == "waiting":
+                async for event in self._wait_unknown_outcome(
+                    execution.attempt_id, failure or "Unknown outcome"
+                ):
+                    yield event
+                return
             if failure is not None:
                 yield _failed_event(execution.attempt_id, failure, cursor=cursor)
                 return
@@ -185,6 +192,12 @@ class BuiltinAgentConnector:
                 cursor="cancelled",
             )
             return
+        except OpenAIResponsesUnknownOutcomeError as error:
+            async for event in self._wait_unknown_outcome(
+                execution.attempt_id, _failure_reason(error)
+            ):
+                yield event
+            return
         except Exception as error:
             yield _failed_event(execution.attempt_id, _failure_reason(error))
             return
@@ -194,11 +207,25 @@ class BuiltinAgentConnector:
     async def inspect(self, execution: ConnectorExecution) -> AttemptActivity:
         self._require_execution(execution)
         if execution.attempt_id in self._terminal_outcomes:
-            return AttemptActivity.STALLED
+            return (
+                AttemptActivity.WAITING
+                if self._terminal_outcomes[execution.attempt_id][1] == "waiting"
+                else AttemptActivity.STALLED
+            )
         task = self._tasks.get(execution.attempt_id)
         return (
             AttemptActivity.RUNNING if task is None or not task.done() else AttemptActivity.STALLED
         )
+
+    async def _wait_unknown_outcome(
+        self, attempt_id: ID, reason: str
+    ) -> AsyncIterator[WorkerEvent]:
+        cancellation = self._cancellations.setdefault(attempt_id, CancellationToken())
+        try:
+            yield _unknown_outcome_event(attempt_id, reason)
+            await cancellation.wait_cancelled()
+        finally:
+            self._cancellations.pop(attempt_id, None)
 
     async def cancel(self, execution: ConnectorExecution) -> None:
         self._require_execution(execution)
@@ -243,6 +270,19 @@ class BuiltinAgentConnector:
         self._workspaces[attempt_id] = (
             self._default_workspace if resolved is None else resolved.resolve(strict=True)
         )
+        builtin_session = self._session_store.load(reference.agent_session_ref_id)
+        if not builtin_session.is_turn_complete(attempt_id) and any(
+            event.attempt_id == attempt_id
+            and event.type is BuiltinSessionEventType.MODEL_TRANSPORT
+            and event.payload.get("phase") == "unknown_outcome"
+            for event in builtin_session.events
+        ):
+            self._terminal_outcomes[attempt_id] = (
+                "Provider response outcome remains unknown after recovery; "
+                "external decision required",
+                "waiting",
+            )
+            self._cancellations.setdefault(attempt_id, CancellationToken())
         return execution
 
     async def close(self) -> None:
@@ -360,6 +400,9 @@ class BuiltinAgentConnector:
                 "Built-in Agent execution was cancelled",
                 "cancelled",
             )
+        except OpenAIResponsesUnknownOutcomeError as error:
+            self._terminal_outcomes[attempt_id] = (_failure_reason(error), "waiting")
+            self._cancellations.setdefault(attempt_id, CancellationToken())
         except Exception as error:
             self._terminal_outcomes[attempt_id] = (_failure_reason(error), "failed")
         else:
@@ -407,6 +450,16 @@ def _candidate_event(attempt_id: ID, result: WorkerResult) -> WorkerEvent:
         WorkerEventType.CANDIDATE,
         "candidate",
         result=result,
+    )
+
+
+def _unknown_outcome_event(attempt_id: ID, reason: str) -> WorkerEvent:
+    return WorkerEvent(
+        f"builtin:{attempt_id}:unknown-outcome",
+        attempt_id,
+        WorkerEventType.WAITING,
+        "unknown-outcome",
+        reason=reason,
     )
 
 
