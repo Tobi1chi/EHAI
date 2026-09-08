@@ -417,7 +417,7 @@ class BuiltinToolRuntime:
                 raise RecoverableToolError(
                     "output_limit", "Workspace file exceeds the Tool input limit"
                 )
-            content = path.read_text(encoding="utf-8")
+            content = path.read_bytes().decode("utf-8")
         except RecoverableToolError:
             raise
         except (OSError, UnicodeDecodeError) as error:
@@ -435,7 +435,7 @@ class BuiltinToolRuntime:
                 "output_limit", "workspace_patch result exceeds the Tool output limit"
             )
         cancellation.raise_if_cancelled()
-        path.write_text(updated, encoding="utf-8")
+        path.write_bytes(updated.encode("utf-8"))
         return {"path": path.relative_to(self.workspace).as_posix(), "changed": True}
 
     async def _workspace_write(
@@ -455,7 +455,7 @@ class BuiltinToolRuntime:
             )
         if len(content.encode("utf-8")) > _MAX_TOOL_OUTPUT_BYTES:
             raise RecoverableToolError("output_limit", "Workspace content exceeds the Tool limit")
-        path.write_text(content, encoding="utf-8")
+        path.write_bytes(content.encode("utf-8"))
         return {"path": path.relative_to(self.workspace).as_posix(), "changed": True}
 
     async def _workspace_apply_patch(
