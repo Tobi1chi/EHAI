@@ -63,8 +63,118 @@ R2 不把可自由执行的 Shell 黑名单宣传成操作系统级隔离。
 
 ## 验证与提交
 
+### 2026-09-06 首个增量：多节点自动 Gate（代表性实跑通过）
+
+输入为正常 Planner 讨论中的阶段/路径验收需求；Planner 用 `set_node_gate(node_key, name, argv)`
+给中间工作或整合节点设置自己的自动行为 Gate，用 `set_final_gate` 设置最终成果条件。
+输出沿用 PlanGraph 的 `required_check_ids` 和不可变 CheckSpec，不先创建没有运行语义的 Phase/Worker 空壳。
+局部 Gate 只验收所属节点；最终 CompletionContract 不要求被剪枝的替代路线也通过。
+Orchestrator 继续负责检查、状态、Checkpoint 和推进，后继必须等待所需节点 Gate；调用方不得绕过批准。
+验收从正常 `discuss-plan`、查询、批准和 `execute-plan` 进入，检查实际中间/分支 Gate 及最终 Gate 的轨迹。
+
+本增量同时避免 Planner 的最终命令被原型 criterion 静默丢弃，并为编码讨论提供行为验收默认值。
+实际试用后，代码恢复也已改为只选成功提交的候选快照；未交接的中断尝试回到有效上游，不继承脏快照。
+人工 Gate、阶段 Reviewer、显式 Phase/共享 Session、Worker 实例与过程自主调整仍是后续增量，
+不能将本次自动 Gate 接通描述成整份执行模型已经交付。
+
+当前证据（2026-09-06）：
+
+- Astra/high 经正常 CLI 生成七节点、四 Gate 的草稿；审查后去除 mock 和过细 README 条件，
+  批准版本 `355f2a31-5da2-4ccb-b65b-e257f20d2910`，对应一个上游 Gate、两条路线各自 Gate 和最终 Gate。
+- Run `104427ed-4c75-4943-ada6-19dd9f6f7d88` 首次执行暴露 WorkerRequest 仍把局部 Check 限制为
+  最终 contract 子集，已修为按本节点精确匹配。恢复又暴露对无准备记录中断尝试的错误捕获，
+  已改为依据成功提交的交接选择代码。两个缺陷均由真实入口发现，仓库外最小诊断修复后共三项通过。
+- 用户随后明确认可测试端点，使用同一 Run、获批 PlanRevision 和原四条 CheckSpec，
+  通过正常 `resume-session` 恢复；Built-in `gpt-5.6-luna/max`、capacity 3，
+  没有扩大 Worker 的工具权限。Run 于 2026-09-06 10:06:03 UTC 完成，七个节点均有成功 Attempt。
+  共十一条 Attempt 包含修复前的失败、中断和取消记录，不将其抹去或统计为首次成功。
+- 四个自动 Gate 均实际执行且 exit code 为零，执行 argv 与获批版本逐项一致。
+  上游 names Gate 通过后才启动 fork；两条编码路线实际重叠约 46.81 秒，各自 Gate 完成后才进入 evaluator。
+  最终 Gate 仅在整合成果上执行一次；此前成功的 README Attempt 未重跑，成果被保留。
+- evaluator 选择 conditional 路线并剪枝 mapping 路线。最终 commit
+  `0e98203b7efd5da095cc45c792dc6d30e26a5533` 的祖先包含选中路线、不包含被剪枝路线，
+  `greetings.py` 与选中候选一致；相对运行基线只交付 `names.py`、`greetings.py`、`README.md`。
+  临时原仓库 HEAD 仍为 `216130e5f4856b1b8fb265a3f5753a7c98ed4691`，工作区干净；
+  执行进程退出后，正常 `get-result` / `get-trace` 仍可重读成果及证据。
+- 仍存在审查证据交付缺口：evaluator 当前拿到候选 Artifact 和分支可用状态，
+  未拿到逐条局部 Gate 的完整输出；本次另从宿主持久化轨迹核实四 Gate。
+  这不是阶段 Review Agent 已接通，也不代表人工 Gate、阶段共享 Session 或完整产品 E2E 已验收。
+- 证据位于系统临时目录 `ehai-node-gates-4311a309e53747ebb4978e3a12bb30a7`：
+  `trace-final.json`、`result-final.json` 和 `verified-evidence.json` 保存轨迹、交付及核对摘要。
+  仓库外三项临时诊断、Ruff 检查/格式和 mypy 均通过；没有新增常驻测试。
+
 每个提交保持代码、公开契约和使用文档一致，使用 Conventional Commits，不推送或合并到 `main`。
 静态检查与本仓库开发提交规则继续适用，不自动成为产品编码任务的验收要求。
+
+### 2026-09-06 端点协议专项验证
+
+针对代理后台出现错误但模型逻辑调用最终成功的现象，逐项验证用户授权的 aws-sub2 端点。
+十九次 HTTP 请求确认当前模型、流式工具交互与本地上下文重放可用，同时发现服务端续接、
+background、uniqueItems、查询、非流式形态和幂等去重的限制或差异。
+详见 [Responses 能力实测](spikes/aws-sub2-responses-capabilities.md)，其中保留请求 ID、
+诊断脚本输出读取修正及当前配置/待实现适配的边界。
+本次仅追加文档，临时协议诊断不入库；不把模型返回成功或 Run 完成等同于每个 HTTP 请求健康。
+
+### 2026-09-08 Sub2API HTTP 适配与最小链路复测
+
+用户确认端点经 Sub2API 反代后，按实际 HTTP 能力配置新增续接与查询开关，不写死域名。
+禁用续接时直接重放本地上下文；不能查询或保证幂等创建时，未知结果不自动重新 POST。
+Built-in Worker 等待并由前台暂停、通知；正常 CLI/API 可查询持久化的 `model/transport` 事件。
+两个新能力默认保留历史行为，已有 Run 的授权配置不静默替换。
+
+真实 Luna/max 三轮工具交互通过：三次 POST 全部 200 与 completed，没有兼容性 400 或额外回退；
+十八条传输事件重载后可与线上请求对账，工具参数和完整历史重放一致。
+证据、参数与测试边界见 [端点适配记录](spikes/aws-sub2-responses-capabilities.md)。
+本次没有重跑完整编码任务，也没有新增常驻测试；不据此宣布 R2/P2 整体完成。
+
+### 2026-09-08 七节点 CLI 端到端复跑（通过）
+
+从干净临时仓库开始，经过正常 `create-project` / `create-goal`、
+Astra/high `discuss-plan`、查询与审查、`approve-plan`、Luna/max `execute-plan`，
+最后在执行进程退出后通过 `get-result` / `get-trace` 重读结果。
+用户明确授权把临时示例代码及上下文发送到指定 Sub2API 端点；没有发送 EHAI 产品源码。
+审批后的执行首次曾被外发权限检查阻止启动，用户确认后才运行；不将这段等待算成模型失败或运行时长。
+
+- PlanRevision：`2a928b14-9af4-490f-8a80-3c9a2239fd8e`；
+  Run：`18b94c25-e9ae-4c45-9a01-afa83779fc84`；
+  Goal：`8e1908b7-9950-4d7c-b47c-1f3744ce285d`。
+- 执行窗口为 2026-09-08 02:25:19–02:32:42 UTC（北京时间 10:25:19–10:32:42）。
+  Run 为 completed，Goal 为 satisfied；七个 Attempt 均 succeeded，四个 Gate 均 passed。
+- 四条 command argv 与 2026-09-06 已审查版本逐字符一致；执行前后 CheckSpec、
+  节点指令、依赖、检查绑定与 edges 一致，没有通过降低验收或改计划制造成功。
+- names Gate 完成后才进入 fork；条件与映射路线实际并行重叠约 38.91 秒，
+  各自 Gate 完成后才进入 evaluator。最终选择条件路线，剪枝映射路线。
+- 最终 commit 为 `e33e965a1801b06522b5371e2b34c0292432411c`，
+  Git 祖先包含选中候选而不包含被剪枝候选；最终 greetings.py 与选中候选一致，
+  相对基线只变更 `names.py`、`greetings.py`、`README.md`。
+  独立源码核对确认 normalize_name 调用关系、keyword-only locale、英中输出与 ValueError，
+  不只依赖模型报告。原示例仓库 HEAD 仍为 `216130e5f4856b1b8fb265a3f5753a7c98ed4691`，
+  工作区干净，结束后没有匹配本轮的遗留执行进程。
+- 完整持久 Session 记录中，Planner 为 32 次逻辑调用 / 32 次 HTTP，Worker 合计为 42 / 42。
+  总计 74 个 HTTP 200、74 个 response.completed、444 条 model/transport 事件；
+  error、非 200、fallback、retry、unknown_outcome 均为零。Worker 的公开 trace 未截断；
+  统计同时读取了 Planner Session，不能只把 Worker trace 当成整个端到端调用量。
+
+**过程并非所有操作都一次成功。** Worker 出现三次可恢复工具错误：
+两次 `workspace_list` 把 `/` 当工作区路径而被边界检查拒绝，
+一次映射路线 `workspace_patch` 的 expected 文本未精确匹配。
+Planner 另有两次工具返回 accepted=false：`finish_plan` 提示缺少两条分支的 merge edge，
+随后一次 `add_plan_edge` 给非 conditional edge 附加了 condition。
+Agent 根据反馈自行纠正；这些是工具/规划层反馈，不是 HTTP 错误或 Gate 失败。
+最终 greetings.py 与 README.md 还有多余空行，行为 Gate 不检查排版；
+本轮未手工美化模型成果，也没有添加 linter Gate 把它混入本次验收。
+
+证据位于 `%TEMP%\ehai-sub2-e2e-090ee935313a4002835ab84bbd2c90be`：
+`discussion.json`、`approval.json`、`plan.json` / `plan-final.json`、
+`checks.json` / `checks-final.json`、`execution-result.json`、
+`result-final.json`、`trace-final.json`、`verified-evidence.json` 以及 `state.sqlite3`。
+Luna/max 子 Agent 执行只读审计并核对最终代码；临时审计脚本修正了角色关键词误匹配，
+以及“Gate 必须位于 Attempt 时间窗内”的错误假设。实际顺序是宿主接收候选后运行 Gate，
+仍核对同一 Attempt、节点、原命令和实际结果，没有修改生产状态或验收标准。
+
+这证明该七节点场景在当前 Sub2API 配置下端到端成功且记录的请求链路无异常；
+不等于任意编码目标、主动断流/关窗恢复、人工 Gate、阶段共享 Session 或整个 P2 已验收。
+没有新增常驻测试或为此次通过修改生产源码；本记录不改写此前试用中的失败历史。
 
 能力接通后通过正常 CLI、真实 Worker 和临时目标仓库试用。只在观察到实际失败时，
 在仓库外建立必要的临时定位测试，修复后重跑原路径。真实凭证不进入配置文件、Git 或产物。

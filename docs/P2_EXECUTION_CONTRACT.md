@@ -6,7 +6,7 @@
 [Product Scope](PRODUCT_SCOPE.md) 为准，工作顺序见
 [P2 Implementation Plan](P2_IMPLEMENTATION_PLAN.md) 的当前重整章节。
 2026-09-06 的 [Execution Model](EXECUTION_MODEL.md) 是 Worker、阶段决策树、Gate、Session 与恢复的
-目标语义；本文下述具体 Port、枚举和单最终 Gate 行为是当前代码，不用它们限制目标，也不虚构已完成迁移。
+目标语义；本文下述具体 Port、枚举和已接入的自动节点 Gate 是当前代码，不用它们限制目标，也不虚构已完成迁移。
 R1 已增加规划讨论接口、讨论事件及版本化设计；执行挂起求助和完整需求验收仍需要后续状态迁移。
 普通 `ehai` 保留 P1 同步兼容，P2 后台模式使用持久 DispatchWork。
 当前 R2 已接入任务图、最终行为 Gate 和代码工作区；Built-in/Server 的代表性编码与有序停止恢复已验证。
@@ -111,12 +111,16 @@ CheckSpec 和 CompletionContract，模型不能绕过它直接推进状态或在
 没有验收职责的小任务只交接，不要求每个中间节点都满足最终 solution 的全部条件。
 过程自主调整须保持获批 Gate，不能新增、删除或绕过验收来制造成功。
 
-### 当前 R2 的单最终 Gate 实现
+### 当前 R2 的自动节点 Gate 实现
 
-以下描述待迁移的现状，不是禁止阶段/分支 Gate 的目标规则。R2 的 Built-in
+R2 的 Built-in
 proposal 允许中间节点的 `required_check_ids` 为空；宿主在候选证据已持久化后调用 `accept_intermediate` 完成
 任务交接。该交接不创建假 Gate 或 Checkpoint，不满足 Goal，也不能让最终节点跳过 Gate。
-最终单一 integration/terminal 节点持有全部 required Check IDs；最终获批行为 Gate 在实际合并后的代码工作区上运行。
+最终单一 integration/terminal 节点持有 CompletionContract 的 required Check IDs；中间 `work` / `merge`
+节点可有自己的 required Check IDs。它们的不可变 CheckSpec 同属获批 PlanRevision，但不加入最终
+CompletionContract，避免要求被剪枝的替代路线也通过。required Check 必须被计划节点引用，
+契约的最终 IDs 必须包含在真实 required Checks 中；不允许创建未被执行图使用的“必需”检查。
+各 Gate 在对应节点的实际代码工作区上运行，后继按节点完成状态推进；没有独立的 Phase 状态对象。
 探索节点必须等待 fork 交接完成后再调度。中间候选落库与接收之间若发生中断，恢复可继续接收已持久化的
 成功 Attempt，不重复调用 Worker，也不生成假检查。SQLite 仅允许有成功候选证据的无检查中间节点直接完成交接。
 评估器的候选在 Built-in 提交工具中使用宿主同一规则预校验；遗漏比较证据时返回可修正的工具错误，
@@ -129,6 +133,9 @@ Artifact 非空、命令成功或指定词匹配只能证明具体检查项；�
 Planner 可以通过 `set_final_gate` 提出最终行为命令 argv。应用层将其写入 `PlanTemplate.final_gate_argv`，
 再冻结到 `CheckSpec.command_argv`；用户批准的 PlanRevision/CompletionContract 是执行时的真值，不再依赖
 一个只存在于宿主配置中的模板。显式 host argv 若与 Planner 提议冲突，必须 fail closed，不能静默改写批准内容。
+`set_node_gate` 通过 `PlanTemplate.node_gates` 将独立命令绑定到中间节点；显式 host argv 只作用于最终
+检查，不覆盖局部 Gate。已有原型 criterion 未选择 command 时，真实 final_gate_argv 会在草稿中追加
+command 条件并保留原条件，不再被静默丢弃。CLI 编码讨论默认 command；HTTP 既有 criteria 字段不变。
 
 ## R2 代码交接与工作区（当前实现与迁移）
 
@@ -138,14 +145,36 @@ worktree：Run 首次固定 base commit，依赖节点和已选分支的代码�
 冒充这些 host-owned code artifacts。完成、停止或恢复时保留可核对的 worktree/metadata，供最终 Gate 和交付查询
 使用。
 
-当前停止时可捕获未提交的部分代码，后续 Attempt 可能继承该快照；快照可能含缺失文件，
-它不等于有效 handoff 或通过 Gate 的成果。目标应区分已确认交接和仅供调查的脏状态：
-前者可接手，后者默认回到相关已完成节点。不能以历史恢复最终通过掩盖这一待迁移差距。
+当前停止时可捕获未提交的部分代码，快照可能含缺失文件，只作为调查材料。
+`CodeRuntimeConnector` 准备续跑时仅复用同节点 succeeded Attempt 的宿主代码快照；没有成功提交的
+交接证据则使用已完成的有效上游或 Run 基线，不能因曾分配 worktree 就捕获/继承未交接状态。
+已提交交接的快照缺失时拒绝继续。此处 succeeded 表示宿主接受候选，不表示其 Gate 已通过；
+失败 Gate 的已提交候选仍可用于按原 Gate 修复。独立 handoff 文档模型与阶段 Session 尚未接入。
+
+## Responses 端点适配与请求证据（2026-09-08）
+
+Built-in Planner/Worker 使用同一 ModelClient 端口。端点能力包括续接与查询开关：
+禁用 `supports_previous_response_id` 时重放本地保留的消息及工具结果；
+禁用 `supports_response_retrieval` 时不调用 retrieve。它们描述 HTTP 传输能力，不改变业务 Session。
+使用哪个 Sub2API 部署或域名本身不构成能力保证；当前测试配置见
+[端点实测及适配](spikes/aws-sub2-responses-capabilities.md)。
+
+每轮模型调用可产生多条 `model/transport` Session Event，关联逻辑请求与 HTTP 请求，
+并记录状态、服务端 request ID、终态与失败/回退。这些事件只作证据，不作为模型消息重放，
+不改变既有 Turn/Step 状态迁移。正常内置 SDK 的自动重试关闭，HTTP 失败恢复由 Adapter 明确处理。
+查询接口有截断标识，不能把截断后的事件列表当成完整请求统计。
+
+无法恢复且结果未知时，不提交候选或自动重新创建响应：Built-in Connector 发出 WAITING，
+前台暂停 Run 并返回 `provider_outcome_unknown` notice，供人核实后显式决定继续。
+这复用现有等待/暂停状态，不是已交付通用人工 Gate 或跨方案恢复。
+旧执行配置缺省两个新字段时保持历史行为，已有授权不被静默扩大或替换。
 
 最终 Gate 检查的是最终 integration 节点准备好的实际合并工作区，而不是模型文字报告或单独的候选 Artifact。
 Planner 的图预算与 Worker 的模型执行预算相互独立：Planner 使用有限的图操作/校验和 `ExplorationBudget`；
 默认 Built-in Worker 使用 `LONG_RUNNING_AGENT_BUDGET`，其模型步数、Tool 次数、wall-clock 和输出上限可不设，
-但仍受取消、heartbeat、显式 deadline、Provider 终态和恢复策略约束。当前真实试跑仍未完成，以上不是验收记录。
+但仍受取消、heartbeat、显式 deadline、Provider 终态和恢复策略约束。
+代表性真实试用及其边界见 [R2 Implementation Plan](R2_IMPLEMENTATION_PLAN.md)；
+本节是实现契约，不是长时间连续运行或完整产品 E2E 的验收记录。
 
 R1 的 `discuss-plan` / `POST /planning/discuss` 在执行前接收讨论。用户消息和模型回复通过现有 Event Log
 关联为一个逻辑 conversation；每轮引用共享 Runtime 的执行 Session，不创建 Worker Attempt 或 Run。
@@ -177,7 +206,7 @@ P2 的数据库迁移必须从当前 P1 schema version 2 单向前进，并在 P
 
 Built-in Planner 不再通过一次性 `submit_plan` 固定双分支模板。模型在本次 Planner 调用的普通内存图
 中直接调用图操作 Tool 构造 PlanGraph：`add_plan_node`、`update_plan_node`、`remove_plan_node`、
-`add_plan_edge`、`remove_plan_edge`、`set_plan_branch`、`set_final_gate`、`inspect_plan`、`finish_plan`。Tool 操作不经过
+`add_plan_edge`、`remove_plan_edge`、`set_plan_branch`、`set_node_gate`、`set_final_gate`、`inspect_plan`、`finish_plan`。Tool 操作不经过
 HTTP 回调、不立即写数据库，也不存在 Plan IR/Operation/Patch 第二套图表达。只有 `finish_plan` 完整
 校验通过后，应用层才通过现有 `build_plan_proposal()` 分配 UUID 并创建 CheckSpec、CompletionContract
 和 draft PlanRevision；模型使用稳定本地 key，永远不生成 UUID。依赖只有一个模型侧真值：模型通过

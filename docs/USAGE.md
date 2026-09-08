@@ -12,8 +12,8 @@ Query/SSE 观察进展。
 “执行阻塞 → 用户回复 → 继续”的完整产品流程已完成。真实模型交互与最终 E2E 另行验证。
 本页不为尚未实现的交互编造命令；下列演示中固定计划或产物的成功只证明其对应协议。
 2026-09-06 的 [Execution Model](EXECUTION_MODEL.md) 已确认 Worker 预设实例化、阶段/分支 Gate、
-人工 Gate、阶段 Review、过程自主调整和阶段 Session。下文单最终 Gate、固定版本执行及脏快照续跑
-是当前实现边界，不是最新产品目标；本次未为这些目标新增 CLI 参数或状态。
+人工 Gate、阶段 Review、过程自主调整和阶段 Session。当前已开放中间工作/整合节点的自动 Gate；
+固定版本执行仍是实现边界，人工 Gate、共享阶段 Session 等未因此自动实现。
 旧测试脚本已退役，先通过正常入口暴露能力，再与用户确定唯一产品 E2E；失败定位文件仅放仓库外。
 
 Foundation 扩展分支中的工具 Provider、共享 Role、Mailbox 和 Visualizer 需要与正常入口逐项核对。
@@ -66,7 +66,7 @@ $Planning = @(
     '--artifacts', '.ehai/artifacts',
     '--worker-workspace', (Get-Location).Path,
     '--planner', 'builtin',
-    '--builtin-planner-model', 'gpt-5.6-luna',
+    '--builtin-planner-model', 'gpt-6-astra',
     '--builtin-planner-reasoning-effort', 'high'
 )
 $Discussion = uv run ehai @Planning discuss-plan --idempotency-key planning-1 `
@@ -105,6 +105,7 @@ HTTP 使用相同能力：
 ### 多项完成条件
 
 `propose-plan`、`replan-plan`、`discuss-plan` 的 `--criterion` 可以重复，最多组合当前三种不同检查。
+编码讨论 `discuss-plan` 可以省略该参数，默认 `command:exit-zero`；另外两个兼容入口仍要求显式条件。
 `command:exit-zero` 的 argv 可由宿主通过 `--command-check-argv` 显式提供，或由 Built-in Planner
 通过 `set_final_gate` 提议后随方案审查批准；持久化前必须有实际 argv。`semantic:required-terms` 必须
 配置 `--semantic-required-term`。Planner 不能覆盖显式宿主 argv 或减少已传入的条件。
@@ -359,9 +360,32 @@ Built-in Agent 只从 `OPENAI_API_KEY` 读取凭证；数据库保存的是引�
 `env:OPENAI_API_KEY`，不会保存 key。模型、推理强度与调用权限由正常入口配置，不通过旧 Smoke 环境
 变量代替产品设置，也不在查询方案时隐式调用模型。
 
-请求优先使用持久化的 `previous_response_id`。兼容端点若明确拒绝该字段，Adapter 会省略该句柄并从
-durable Session Event 重放 function call/result；`store=true`、streaming 和严格 Tool Schema 保持
-不变。
+默认请求优先使用持久化的 `previous_response_id`。兼容端点若明确拒绝该字段，Adapter 会省略该句柄并从
+durable Session Event 重放 function call/result；也可显式禁用续接，从第一轮就发送本地保留的完整上下文，
+不再每轮先失败再回退。`store=true`、streaming 和严格 Tool Schema 保持不变。
+
+用户测试中转端点的逐项结果见
+[aws-sub2 Responses 能力实测](spikes/aws-sub2-responses-capabilities.md)。
+用户确认该端点经 Sub2API 反代；其当前 HTTP 账号/路由拒绝续接，Response 查询、幂等创建和非流式
+响应也不能按完整兼容能力使用。不要据此硬编码所有 Sub2API 部署的行为。
+
+2026-09-08 起，规划 CLI 和 `ehai-api` 启动参数均支持
+`--no-responses-previous-response-id` 与 `--no-responses-response-retrieval`；
+该测试端点同时使用 `--no-responses-background`、`--no-responses-unique-items`、
+`--no-responses-idempotent-create`。这些是 `discuss-plan` 子命令之前的全局参数。
+`execute-plan` / `resume-session` 则使用下文获授权、随 Run 持久化的执行配置。
+
+禁用查询后，丢失终态的响应不能通过 retrieve 恢复；未保证幂等创建时也不重新 POST。
+Built-in Worker 会进入等待，前台暂停并返回 `provider_outcome_unknown` notice，
+用户查看证据和外部状态后再决定是否显式恢复；不自动把未知结果当成可重试失败。
+这不改变需求、Gate 或已有 Session 历史，也不是跨阶段共享 Session 的实现。
+
+`get-trace` 的 `session_events` 已包含 `model/transport`：关联逻辑请求 ID、每次 HTTP ID、
+操作、状态码、服务端 request ID、流式终态、回退/错误和耗时。
+正常内置客户端禁用 SDK 隐藏重试；若自行注入由 SDK 管理重试的客户端，记录的 SDK 调用
+不保证覆盖其内部每次 HTTP，事件中的 `retry_owner` 会区分该情况。
+传输事件不作为模型上下文重放，不保存凭证、请求/响应正文或完整错误正文。
+查询仍有事件数/载荷上限；`session_events_truncated=true` 时不是完整轨迹，完整事件保留在本地库。
 
 不要把 `OPENAI_API_KEY` 写入命令历史、配置文件、Event、Artifact 或数据库。
 
@@ -382,10 +406,22 @@ R2 使用 Git 仓库和 EHAI 拥有的隔离 worktree，不直接改写用户当
 开始前先提交希望纳入任务的源码，未提交的源文件修改不会自动纳入基线。
 
 Planner 可通过 `set_final_gate` 提出 `command:exit-zero` 的具体 argv，随方案和契约批准。
-编码讨论必须显式选择 `--criterion command:exit-zero`；只传 `artifact:non-empty` 不会因设计文档描述了
-行为检查而自动升级验收类型。批准前以 `get-plan-checks` 中的实际 CheckSpec 为准。
-当前 Builtin 实现只有一个最终节点绑定行为检查；中间节点交接不运行虚构 Gate。
-这与目标中的阶段/分支 Gate、阶段 Reviewer 和人工判断尚有差距，不能把当前限制写回产品规划。
+编码讨论省略 `--criterion` 时默认使用行为检查。如果显式传入 `artifact:non-empty` 等旧条件，
+Planner 实际调用 `set_final_gate` 提出命令后，构建器保留旧条件并追加 `command:exit-zero`，不丢弃命令。
+只在设计文档里描述检查仍不等于配置 Gate；批准前以实际 CheckSpec 为准。
+
+Planner 可调用 `set_node_gate(node_key, name, argv)`，为已存在的中间 `work` / `merge` 节点设置
+独立自动 Gate。它可用于上游阶段边界或某条探索路线，只检查该节点应交付的内容，不提前要求后续成果。
+一个节点最多配置一个这样的 Gate，重复设置替换草稿配置；删除节点同步移除配置。
+最终节点使用 `set_final_gate`，不能再叠加同节点局部 Gate；`fork` / `evaluator` 不接受局部命令 Gate。
+
+`get-plan` 中的 `required_check_ids` 显示节点绑定，`get-plan-checks` 返回最终及局部检查。
+CompletionContract 的 required IDs 只表示最终成果条件；局部 Check 仍是所属节点的必需 Gate，
+不要求被剪枝的替代路线也满足最终条件。显式 `--command-check-argv` 只约束最终 Command Check，
+不覆盖局部 Gate。所有命令均需随方案审查批准，Worker 仍不自动获得执行宿主命令的权限。
+
+后继任务等待依赖节点通过自己的 Gate；无检查的中间交接不生成假 Gate。
+这是多节点自动 Gate 基础，不是完整 Phase 模型、阶段 Reviewer 或人工 Gate 接口。
 `get-plan-checks` 必须在批准前审查，尤其是 Planner 提议的命令。显式宿主 argv 与提议冲突时拒绝，
 不在批准后改写检查。
 
@@ -405,7 +441,9 @@ Planner 可通过 `set_final_gate` 提出 `command:exit-zero` 的具体 argv，�
   "endpoint_capabilities": {
     "supports_background": true,
     "supports_unique_items": true,
-    "supports_idempotent_create": null
+    "supports_idempotent_create": null,
+    "supports_previous_response_id": true,
+    "supports_response_retrieval": true
   },
   "command_timeout_seconds": 30
 }
@@ -414,6 +452,11 @@ Planner 可通过 `set_final_gate` 提出 `command:exit-zero` 的具体 argv，�
 模型名按端点实际支持填写；可以与 Planner 的模型不同。兼容端点不支持 background 或 uniqueItems 时，
 将相应配置改为 `false`。凭证仍由进程环境提供，不放入 JSON；当前模型 base URL 仍取自
 `OPENAI_BASE_URL`，恢复前应使用同一提供方。
+2026-09-06 实测的 aws-sub2 / Sub2API HTTP 账号路由应将上述五个 capability 字段均设为 `false`；
+该建议不适用于所有兼容端点，具体证据与当前续接/查询适配的边界见
+[端点专项记录](spikes/aws-sub2-responses-capabilities.md)。
+旧配置省略两个新字段时保持 true 的历史行为；已有获授权 Run 的配置不会被静默替换。
+禁用查询却启用实际 background 执行的配置会在模型请求前被拒绝。
 `allowed_commands` 是允许的精确 argv 数组；`available_shells` 显式开放 Shell，Git 操作需对应
 `git.read` / `git.local_write` / `git.remote_write` / `git.dangerous` 权限。
 不需要命令时保持空数组。Shell 授权不是操作系统沙箱；全局删除黑名单及可撤销删除尚未实现。
@@ -445,10 +488,11 @@ uv run ehai --database .ehai/state.sqlite3 --artifacts .ehai/artifacts `
 - 最终 Gate 在整合后的真实 worktree 执行。失败时返回原始检查证据，在同一获批方案下修代码并重新检查；
   `report_blocked` 用于说明阻塞原因、证据和所需条件，不伪造成功。完整人工问答回路属于 R3。
 
-当前 `resume-session` 保留 Run，未完成任务可新建 Attempt/Thread，并可能继承中断时捕获的脏代码；
-它尚未实现新目标的“阶段内共享 Session”“有 handoff 接手、无 handoff 回到相关已完成节点”。
-历史 Server 试用中保留过缺失文件的中断快照，再由新 Worker 修复；不能将这一过程称为已确认的 handoff。
-本页保留实际行为说明，不承诺目前已经自动执行新的安全回退策略。
+当前 `resume-session` 保留 Run，未完成任务仍可新建 Attempt/Thread。代码准备仅复用同节点已成功提交
+Attempt 的宿主代码快照；没有该交接证据时使用已完成的有效上游或 Run 基线，不再从中断、取消、
+超时尝试的脏快照自动续跑。已提交交接缺少代码快照时拒绝继续，不静默丢掉交接。
+中断快照仍可作为调查材料保留。历史 Server 试用曾接续缺失文件的脏快照；那不是当前选择续跑基线的规则。
+这只是基于已提交候选的恢复基础，尚未实现独立 handoff 文档模型、阶段 Session 共享或外部副作用通用回滚。
 
 ### Codex App Server 的接入边界
 
