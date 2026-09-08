@@ -150,10 +150,10 @@ Worker 执行明确任务，不重新承担宽泛目标的全局设计，也不�
 | 当前实现或历史结论 | 当前目标与待对齐点 |
 | --- | --- |
 | WorkerProfile/Endpoint 和执行句柄已有 | 补齐框架、Connector、预设与 Worker 实例的清晰映射，不把角色绑定到唯一框架 |
-| Built-in proposal 只有最终节点绑定行为 Gate | 阶段/分支 Gate、统一人工与自动判断、阶段 Reviewer 均需后续接入 |
+| Built-in proposal 已允许中间工作/整合节点绑定自动 Gate，并保留最终 Gate | 已开放自动边界基础；显式 Phase、统一人工判断和阶段 Reviewer 仍需接入 |
 | 执行绑定批准的 PlanRevision | 保持批准底线，支持可追踪的过程自主调整；不等于任意覆盖已批准图 |
-| 原型 criterion 可令实际检查与可读设计脱节 | 构建与审查必须保证一致性，不能仅依靠调用方记住参数 |
-| 试用恢复新建 Attempt/Thread，并继承中断快照 | 阶段 Session 共享及 handoff/无 handoff 两种恢复规则尚未交付 |
+| 编码讨论已默认行为检查，Planner 的最终命令会追加为真实条件而不被旧 criterion 丢弃 | 仍需审查语义与需求一致性，不能仅因已生成命令就宣称验收充分 |
+| 续跑仍新建 Attempt/Thread，现仅复用成功提交的代码快照；未交接的中断状态回到有效上游 | 已接入代码交接选择基础，阶段 Session 共享及独立 handoff 模型仍未交付 |
 | Server 原始工具轨迹需到 Provider 日志补读 | 高层状态与原始操作证据要能关联，不能仅凭最终 PASS 评价过程可靠性 |
 | 已通过代表性编码与恢复试用 | 不等于阶段决策树、人工 Gate、Review 与新恢复规则已经通过产品验收 |
 

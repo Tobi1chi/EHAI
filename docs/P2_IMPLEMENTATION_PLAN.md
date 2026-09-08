@@ -69,10 +69,10 @@ R1 本轮已接入讨论与设计持久化、草稿修订、公共查询/API 和
 ## 需要对齐的现有差距
 
 - Built-in Planner 已接入讨论和只读调查；输入理解、设计和图的一致性仍需真实使用判断。
-- 公共 builder 当前把行为 Gate 集中到唯一最终节点；这是现有约束，需迁移为阶段/分支 Gate 与统一人工判定。
-- 当前 criterion 可与设计及 Planner 提议脱节；必须保证实际契约一致，不把调用方参数知识作为产品前提。
+- 公共 builder 已支持中间 `work` / `merge` 的独立自动 Gate，最终契约与局部条件分开；人工 Gate 和显式 Phase 仍待接入。
+- 编码讨论默认 command，Planner 的实际最终命令不会被旧 criterion 丢弃；需求与检查充分性的审查仍不能省略。
 - WorkerProfile/Endpoint 不等于完整 Worker 实例模型；角色与框架、模型、Session 的映射还需细化。
-- 过程自主调整、阶段 Review、阶段 Session 和有无 handoff 的差异恢复规则尚未实现，不以历史试用替代。
+- 恢复已区分成功提交的代码快照与未交接的中断状态；独立 handoff 模型、阶段 Session、阶段 Review 和过程自主调整仍待实现。
 - Endpoint capability、Shell/Git 和 Worker 配置已有前台入口；Web/MCP/Skill 和可视化未在 R2 扩大接入。
 - Mailbox 发送落库不等于接收、消费及恢复闭环，协作验收必须检查接收方行为。
 - 旧代码将全部分支失败收敛为 failed、Replan 限制终态来源；新的挂起求助语义需明确状态和 API 迁移。

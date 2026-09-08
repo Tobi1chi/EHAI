@@ -120,19 +120,15 @@ class CodeRuntimeConnector:
             for attempt in attempts
             if attempt.plan_node_id == request.plan_node_id
             and attempt.attempt_id != request.attempt_id
+            and attempt.status is AttemptStatus.SUCCEEDED
         ]
         for attempt in reversed(previous):
             result = self._snapshot(attempt)
-            if result is None and attempt.status in {
-                AttemptStatus.INTERRUPTED,
-                AttemptStatus.CANCELLED,
-                AttemptStatus.TIMED_OUT,
-            }:
-                allocation = self.workspace_manager.allocation_for_attempt(attempt.attempt_id)
-                if allocation is not None:
-                    result = self._capture(attempt)
-            if result is not None:
-                return (result.commit,)
+            if result is None:
+                raise ValueError(
+                    f"Submitted code handoff for Attempt {attempt.attempt_id} is missing"
+                )
+            return (result.commit,)
         sources = set(request.plan_node.required_dependency_ids)
         sources.update(
             edge.source_node_id
