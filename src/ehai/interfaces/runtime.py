@@ -145,7 +145,7 @@ def create_local_app(
     )
     if not p2_runtime:
         execution_service.recover_startup()
-        app = create_app(execution_service, query_service)
+        app = create_app(execution_service, query_service, artifact_root=str(artifact_root))
         app.state.database = query_database
         app.state.artifact_root = artifact_root.resolve()
         app.state.execution_service = execution_service
@@ -384,7 +384,9 @@ def create_local_app(
         base_connector=base_connector,
         workspace_manager=workspace_manager,
     )
-    app = create_app(execution_service, query_service, runtime_control)
+    app = create_app(
+        execution_service, query_service, runtime_control, artifact_root=str(artifact_root)
+    )
     app.state.database = query_database
     app.state.artifact_root = artifact_root.resolve()
     app.state.execution_service = execution_service

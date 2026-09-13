@@ -23,6 +23,18 @@ CompletionContract.required_check_ids 表示最终成果条件；CheckSpec 查�
 | [`events.schema.json`](v1/events.schema.json) | 公开 Event envelope、Event type 与分页结果。 |
 | [`http-api.openapi.json`](v1/http-api.openapi.json) | `/api/v1` HTTP route、operation ID、请求体、响应和 SSE 入口。 |
 
+## 代码交付查询
+
+`GET /api/v1/runs/{run_id}/result` 的 operation ID 为 `getRunResult`，响应引用
+`queries.schema.json#/$defs/RunResultResponse`。生成 Client 方法为
+`getRunResult(runId: string): Promise<RunResultResponse>`，保留标准 data envelope、默认 fetch
+和 EhaiApiError。CLI 使用同一投影，但不包 data envelope。
+
+RunResultDocument 定义 run/result/trace_ids；RunResult 定义可空代码交付字段和
+RunResultCheckResult。检查只关联实际交付 Attempt；无相应检查时 check_result 为 null。
+没有交付时才使用历史检查 fallback。迁移修正了旧 CLI 可能串用其他 Attempt 检查的行为，
+调用方应处理 null 及未知 passed；本次没有增加领域状态或改变数据库版本。
+
 ## 生成与验证
 
 [`control-plane/scripts/generate-client.mjs`](../control-plane/scripts/generate-client.mjs) 读取四份 JSON Schema

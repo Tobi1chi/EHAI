@@ -199,6 +199,43 @@ export type CheckRun = {
   readonly failure_reason: NullableString;
 };
 
+export type RunResult = {
+  readonly workspace: NullableString;
+  readonly base_commit: NullableString;
+  readonly commit: NullableString;
+  readonly diff_path: NullableString;
+  readonly attempt_id: NullableId;
+  readonly run_id: Id;
+  readonly diff_artifact_ids: IdList;
+  readonly check_result: RunResultCheckResult | null;
+  readonly configured_workspace: NullableString;
+  readonly artifact_root: string;
+};
+
+export type RunResultCheckResult = {
+  readonly passed: boolean | null;
+  readonly check_run_ids: IdList;
+  readonly checks: ReadonlyArray<CheckRun>;
+};
+
+export type RunResultResponse = {
+  readonly data: RunResultDocument;
+};
+
+export type RunResultDocument = {
+  readonly run: Run;
+  readonly result: RunResult;
+  readonly trace_ids: RunResultTraceIds;
+};
+
+export type RunResultTraceIds = {
+  readonly attempt_ids: IdList;
+  readonly artifact_ids: IdList;
+  readonly check_run_ids: IdList;
+  readonly checkpoint_ids: IdList;
+  readonly event_ids: IdList;
+};
+
 export type GateDecision = {
   readonly gate_id: Id;
   readonly run_id: Id;
@@ -576,6 +613,10 @@ export class EhaiApiClient {
 
   getRun(runId: string): Promise<RunResponse> {
     return this.request(`/runs/${encodeURIComponent(runId)}`, "GET");
+  }
+
+  getRunResult(runId: string): Promise<RunResultResponse> {
+    return this.request(`/runs/${encodeURIComponent(runId)}/result`, "GET");
   }
 
   getPlanGraph(planRevisionId: string): Promise<PlanGraphResponse> {

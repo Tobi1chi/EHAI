@@ -15,6 +15,7 @@ from ehai import ID, JsonValue, json_dumps, json_loads, new_id, normalize_id, ut
 from ehai.application.builtin_agent import BuiltinSessionEventType
 from ehai.application.commands import PauseRun, ResumeRun, StartRun
 from ehai.application.queries import QueryService
+from ehai.application.run_results import ConflictingExecutionConfigError
 from ehai.application.scheduler import ConcurrentRuntime
 from ehai.application.service import ExecutionService
 from ehai.domain.events import Event, EventType
@@ -565,94 +566,14 @@ def _result_document(
         read_session_factory=database.read_session,
         builtin_session_reader=SQLiteBuiltinSessionStore(database),
     )
-    trace = queries.get_execution_trace(run_id)
-    public_trace = public_json_value(trace)
-    if not isinstance(public_trace, dict):
-        raise SessionHostError("execution trace did not produce a JSON object")
-    code_delivery: dict[str, JsonValue] = {
-        "workspace": None,
-        "base_commit": None,
-        "commit": None,
-        "diff_path": None,
-        "attempt_id": None,
-        "run_id": run_id,
-        "diff_artifact_ids": [],
-        "check_result": None,
-        "configured_workspace": None,
-    }
-    config = _stored_config(trace.events, run_id)
-    if config is not None and isinstance(config.get("workspace"), str):
-        code_delivery["configured_workspace"] = config["workspace"]
-    for stored in trace.events:
-        payload = stored.event.payload
-        delivery = payload.get("code_delivery")
-        if isinstance(delivery, Mapping):
-            for key in ("workspace", "base_commit", "commit", "diff_path", "attempt_id", "run_id"):
-                value = delivery.get(key)
-                if isinstance(value, str):
-                    code_delivery[key] = value
-            diff_ids = delivery.get("diff_artifact_ids")
-            if isinstance(diff_ids, list) and all(isinstance(item, str) for item in diff_ids):
-                code_delivery["diff_artifact_ids"] = cast(JsonValue, diff_ids)
-    public_attempts = public_trace.get("attempts")
-    public_checks = public_trace.get("check_runs")
-    if isinstance(public_checks, list):
-        checks_by_attempt: dict[str, list[JsonValue]] = {}
-        for item in public_checks:
-            if not isinstance(item, dict):
-                continue
-            attempt_id = item.get("attempt_id")
-            if isinstance(attempt_id, str):
-                checks_by_attempt.setdefault(attempt_id, []).append(item)
-        latest_attempt_id = _latest_attempt_with_checks(public_attempts, checks_by_attempt)
-        checks = (
-            checks_by_attempt.get(latest_attempt_id, []) if latest_attempt_id is not None else []
-        )
-        check_run_ids: list[JsonValue] = []
-        for check in checks:
-            if not isinstance(check, dict):
-                continue
-            check_run_id = check.get("check_run_id")
-            if isinstance(check_run_id, str):
-                check_run_ids.append(check_run_id)
-        code_delivery["check_result"] = cast(
-            JsonValue,
-            {
-                "passed": _checks_passed(checks),
-                "check_run_ids": check_run_ids,
-                "checks": checks,
-            },
-        )
-    trace_ids: dict[str, JsonValue] = {
-        "attempt_ids": _ids(public_attempts, "attempt_id"),
-        "artifact_ids": _ids(public_trace.get("artifacts"), "artifact_id"),
-        "check_run_ids": _ids(public_checks, "check_run_id"),
-        "checkpoint_ids": _ids(public_trace.get("checkpoints"), "checkpoint_id"),
-        "event_ids": cast(JsonValue, [stored.event.id for stored in trace.events]),
-    }
-    return {
-        "run": public_trace.get("run"),
-        "result": {
-            **code_delivery,
-            "artifact_root": str(Path(artifact_root).resolve()),
-        },
-        "trace_ids": trace_ids,
-    }
-
-
-def _latest_attempt_with_checks(
-    attempts: JsonValue | None,
-    checks_by_attempt: Mapping[str, Sequence[JsonValue]],
-) -> str | None:
-    if not isinstance(attempts, list):
-        return None
-    for attempt in reversed(attempts):
-        if not isinstance(attempt, dict):
-            continue
-        attempt_id = attempt.get("attempt_id")
-        if isinstance(attempt_id, str) and attempt_id in checks_by_attempt:
-            return attempt_id
-    return None
+    try:
+        result_view = queries.get_run_result(run_id, artifact_root=str(artifact_root))
+    except ConflictingExecutionConfigError as error:
+        raise SessionHostError(str(error)) from error
+    document = public_json_value(result_view)
+    if not isinstance(document, dict):
+        raise SessionHostError("Run result query did not produce a JSON object")
+    return document
 
 
 def _stored_config(events: Sequence[object], run_id: ID) -> dict[str, JsonValue] | None:
@@ -688,28 +609,6 @@ def _authorized(events: Sequence[object], run_id: ID) -> bool:
         if isinstance(authorization, dict) and authorization.get("explicit") is True:
             return True
     return False
-
-
-def _checks_passed(checks: Sequence[JsonValue]) -> bool | None:
-    if not checks:
-        return None
-    outcomes: list[bool] = []
-    for check in checks:
-        if not isinstance(check, dict):
-            continue
-        result = check.get("result")
-        passed = result.get("passed") if isinstance(result, dict) else None
-        if isinstance(passed, bool):
-            outcomes.append(passed)
-    return all(outcomes) if outcomes else None
-
-
-def _ids(value: JsonValue | None, key: str) -> list[JsonValue]:
-    if not isinstance(value, list):
-        return []
-    return [
-        item[key] for item in value if isinstance(item, dict) and isinstance(item.get(key), str)
-    ]
 
 
 def _worker_kind(value: object) -> str:

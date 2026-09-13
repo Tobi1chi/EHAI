@@ -54,6 +54,37 @@ uv run ehai --database .ehai/state.sqlite3 --artifacts .ehai/artifacts `
 `design_document` 保存该版本的可读方案，旧版本可能为 null。多项检查仍使用现有检查器，
 不是任意需求到执行检查的自动转换；执行阻塞的人工回路仍待实现。
 
+## 查询代码交付结果
+
+`get-result`、HTTP `GET /api/v1/runs/{run_id}/result` 和生成 Client 的
+`getRunResult(runId)` 复用 `QueryService.get_run_result`。它在同一 ReadSession 中物化执行事实，
+不读取 Artifact 正文、不调用模型、不推进运行状态。
+
+```powershell
+uv run ehai --database .ehai/state.sqlite3 --artifacts .ehai/artifacts `
+    get-result --run-id $RunId
+```
+
+CLI 返回 `{run, result, trace_ids}`；HTTP/Client 返回 `{data: {run, result, trace_ids}}`。
+`result` 包含代码 workspace、base_commit、commit、diff_path、attempt_id、run_id、
+diff_artifact_ids、check_result、configured_workspace 和绝对 artifact_root。
+`trace_ids` 按持久轨迹顺序提供 Attempt、Artifact、CheckRun、Checkpoint、Event 的 ID。
+完整类型和可空性见 `schemas/v1/queries.schema.json` 的 `RunResultDocument`。
+
+迁移相对旧 main 修正了检查结果归属：有代码交付时只报告该交付 Attempt 的 CheckRuns，
+没有对应检查则 `check_result=null`，不再拿其他 Attempt 的检查背书。无代码交付时保留最近
+有检查 Attempt 的历史 fallback；无检查时 passed 为 null、checks/check_run_ids 为空数组。
+聚合判定为 false 优先，其次未知 null，全部明确通过才是 true；它不是新增的 Run/Gate 状态机。
+已有调用方必须处理 `check_result=null`，不能假设它始终是对象。
+
+合法但不存在的 Run：CLI 返回原 not-found 错误，HTTP 返回 404 和 `error.code=not_found`；
+非法 UUID 返回 HTTP 422。存储错误和冲突的 execution_config 不转换为“空结果”。普通本地 API
+和 P2 API 装配都传入 artifact_root；直接调用 `create_app` 的嵌入方需显式提供该参数才能使用新路由。
+
+本批保留 main 的 schema 11 和原 Run 字段，不导入试验分支 schema 12–16、人工 Gate、过程调整
+或第二轮 phase_summary。不能用该版本直接打开较新的自举试验库；不要手动降低数据库版本。
+迁移来源、验证和剩余项见 [成果迁移记录](MIGRATION_STATUS.md)。
+
 ## 与 Planner 讨论并修订方案
 
 讨论使用 Built-in Planner，先配置有权限的模型和正常凭证；只读调查范围由 `--worker-workspace` 指定。
