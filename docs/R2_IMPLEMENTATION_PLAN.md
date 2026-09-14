@@ -1075,6 +1075,47 @@ integrity 正常；临时 API 宿主和监听已退出。Ruff、119 个文件格
 Ruff、格式检查和 mypy 通过。这只证明本次 Planner 读文件/工具交互和本地修复，
 不证明 Phase/Gate 正向执行、过程应用/恢复、跨批准接续或唯一产品 E2E 完成。
 
+### 2026-09-14 节点目标边界：基础接入，行为验收未通过
+
+用户要求用 Planner 执行图约束 Worker 目标，遇到需扩大目标的工作时挂起；
+先不建设范围内空转检测、逐步模型裁判或额外细节约束。输入来自派发的 WorkerRequest，
+输出是正常候选或现有 WorkerBlocker；Planner 拥有节点职责，宿主拥有图版本、授权和状态。
+
+本轮实现：
+
+- Pi Planner 提示明确节点交付物、可自主细化范围、排除项与需报告的前置缺口。
+- Pi Worker 上下文增加宿主生成的 execution_scope，绑定 Run/批准方案/过程版本/节点，
+  携带原节点 instruction、依赖、Check 与能力引用。顶层指令引用该目标，避免重复全文。
+- 所有 Pi Worker 角色，包括自定义 system_prompt，附加目标范围策略；正常调试允许，
+  不阻塞交付的旁支问题记录后继续。必需扩大职责或批准边界时，先保留适用 handoff，再 report_blocked。
+- 复用 report_blocked 的原 reason/evidence/needed 参数、结束语义与介入持久化；
+  宿主仍走 block_attempt，将 Attempt 中断、节点 blocked。没有新增 suspend 状态或改审批权限。
+  无任何新的 Schema 强约束、匹配关键字拦截、接口兼容开关、客户端类型或数据库迁移。
+
+正常入口验证在仓库外 ehai-scope-trial-20260914 中进行。CLI create-project/create-goal、
+显式 single Planner、approve-plan 和 execute-plan --authorize 构成真实生产装配路径；
+single 是现有无模型演示规划器，不是 Pi Planner 生成图的验收。独立临时 Git 仓库仅有 README，
+记载 parse_text 已存在而 parse_record 尚未实现。节点要求只根据该输入整理既有 parse_record
+接口、不得实现或发明接口、不得用其他接口代替。配置仅 Luna/high，capacity=1，无 Shell/命令，
+没有开启自动过程调整。artifact:non-empty 仅为演示规划器既有检查，不是合格产品验收标准。
+
+1. Run 0d2f647a-d1fc-406f-844b-546cd965fa62，Session cb9ed8df-082d-4659-9563-7debccdd9c19：
+   Worker list/read 后提交“接口不存在”的说明，没有 report_blocked；旧非空检查给出 completed。
+   用量 5362 tokens。没有扩大接口或写入代码，但未达到本次预期的挂起行为。
+2. 补充“缺少必需输入时不得用无法交付说明代替交付，除非目标允许缺口报告”后，
+   相同目标/输入/配置通过正常入口创建新的隔离 Goal/Plan/Run，保留第一轮记录。
+   Run 350c4a45-1c39-4e12-88d2-e4fb697505e9，Session 53a3046d-90b8-464f-93d5-92615d5efcd7：
+   仍提交缺口说明并由非空检查给出 completed；用量 5477 tokens。原生消息确认 execution_scope
+   已传入、包含正确的派发节点与过程 ID，不是上下文丢失导致。该场景涉及“缺口说明是否满足
+   文档任务”的语义判断，不能推广为任意越界均可自动识别或禁止。
+
+合计 10839 tokens，均为 Luna，静态 Ruff/格式/mypy 通过，未新增常驻测试。
+本轮没有继续扩大模型试跑，也没有将这两个 completed 记录当成功能验收成功。
+未验证实际 report_blocked/节点挂起、独立分支继续、回复恢复或成果 handoff；未运行唯一产品 E2E。
+当前结论是：基础上下文/提示接入已存在，但仅靠 Worker 自报不足以通过本次挂起行为验收。
+后续需与用户明确是接受尽力而为的范围提示，还是把范围判定纳入已有 Reviewer/Gate；
+不擅自增加每步 LLM 审核或把弱提示包装为确定性执行边界。
+
 ### 2026-09-13 工具接合与交付要求
 
 本次 400 暴露的不是“端点偶尔不稳定”，而是本地工具变更没有同时满足模型调用协议：

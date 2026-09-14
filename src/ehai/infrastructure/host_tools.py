@@ -236,7 +236,11 @@ class HostToolRuntime:
         definitions.append(
             _definition(
                 "report_blocked",
-                "Stop with a concrete blocker, evidence, and what is needed to continue",
+                "Suspend this node when progress is blocked or requires exceeding its assigned "
+                "objective or approved boundaries. Give the reason, observed evidence and "
+                "retained progress, and the decision or plan adjustment needed. Call alone; "
+                "do not perform the out-of-scope action or submit a successful candidate. "
+                "Non-blocking incidental issues belong in the normal result instead.",
                 "reason",
                 "evidence",
                 "needed",

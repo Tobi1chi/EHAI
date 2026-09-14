@@ -152,6 +152,24 @@ API 可显式配置 `--attempt-deadline-seconds`，Goal Worker 尝试预算仍�
 结果，按宿主 handoff/有效上游成果规则处理，不盲目重发 prompt。阶段讨论是共享逻辑 Session，
 每个 Worker 有隔离的 Pi 原生执行会话，不强行共用物理历史。
 
+## 节点目标边界（基础接入，挂起判定尚未验收）
+
+Pi Worker 的 `context.execution_scope` 由宿主从当前派发节点生成，包含 Run、批准方案、
+过程版本、节点目标、依赖和必需 Check 引用。Worker 自定义提示词也会附加目标边界策略。
+Planner 提示要求在节点 instruction 中说明交付物、局部自主范围与需要反馈的缺口；
+这是提示约定，不新增必填 Schema 或强制每一步工具操作。
+
+发现必须超出节点目标或已批准边界时，Worker 应调用现有 `report_blocked(reason, evidence, needed)`。
+这会结束该次 Pi 执行；宿主中断 Attempt、将节点置为 `blocked` 并持久化介入请求。
+独立就绪任务仍按原调度规则执行；前台等待介入时可返回
+`intervention_waiting`，不保证 Run 必须显示 paused。使用 `get-run-interventions` 查询，
+`reply-intervention` 回复后再 `resume-session`；回复本身不批准扩大需求或修改 Gate。
+
+该版本只提供目标上下文、行为提示和已有挂起通路，没有额外的逐步模型裁判、
+语义越界检测器或重复失败次数规则。必要调查/调试不应被当作越界，无关小问题可记录后继续。
+当前两次 Luna 试跑没有触发预期 report_blocked，不能据此宣称自动范围挂起已可可靠使用；
+详见 R2 实施记录。已有 Reviewer/Gate 也不能由 artifact:non-empty 代替需求验收。
+
 ## API 宿主与查询
 
 ```powershell
