@@ -206,9 +206,10 @@ P2 的数据库迁移必须从当前 P1 schema version 2 单向前进，并在 P
 
 Built-in Planner 不再通过一次性 `submit_plan` 固定双分支模板。模型在本次 Planner 调用的普通内存图
 中直接调用图操作 Tool 构造 PlanGraph：`add_plan_node`、`update_plan_node`、`remove_plan_node`、
-`add_plan_edge`、`remove_plan_edge`、`set_plan_branch`、`set_node_gate`、`set_final_gate`、`inspect_plan`、`finish_plan`。Tool 操作不经过
+`add_plan_edge`、`remove_plan_edge`、`set_plan_branch`、`set_plan_phase`、`set_node_gate`、
+`set_final_gate`、`inspect_plan`、`finish_plan`。Tool 操作不经过
 HTTP 回调、不立即写数据库，也不存在 Plan IR/Operation/Patch 第二套图表达。只有 `finish_plan` 完整
-校验通过后，应用层才通过现有 `build_plan_proposal()` 分配 UUID 并创建 CheckSpec、CompletionContract
+校验通过后，应用层才通过现有 `build_plan_proposal()` 分配 UUID 并创建 Phase、CheckSpec、CompletionContract
 和 draft PlanRevision；模型使用稳定本地 key，永远不生成 UUID。依赖只有一个模型侧真值：模型通过
 `add_plan_edge` 声明 dependency，`finish_plan` 时确定性派生
 `PlanNodeTemplate.required_dependency_keys`。

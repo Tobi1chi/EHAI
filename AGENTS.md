@@ -33,6 +33,17 @@ Expose normal CLI/API capabilities first, then agree on one product end-to-end t
 
 If actual use or the E2E fails, create only the necessary diagnostic test in an external temporary directory and run it with `uv`. After fixing the issue, retry the original failing path. Do not commit temporary tests, copy them into another repository folder, or automatically promote them to regression tests. Do not create speculative tests, test matrices, or a parallel smoke suite. Static lint, formatting, type checks, and client generation/build remain applicable. No collected tests is not a passing product E2E.
 
+## Model Tool Changes and Runtime Evidence
+
+Treat a model-facing tool change as a change to the whole calling contract, not just its handler. Read the 2026-09-13 tool integration requirements in `docs/R2_IMPLEMENTATION_PLAN.md` when changing tool definitions, parameters, execution behavior, or result handling.
+
+- Trace the affected path: registered ToolSet and role permissions, provider-facing Schema, prompt/example arguments, handler validation, returned result, and any persistence or downstream consumer. Update affected layers together; do not broaden unrelated interfaces.
+- Validate against the configured provider's tool contract, not only general JSON Schema. For strict tools, check object closure and required/nullable fields, including nested objects. Define omission, `null`, empty collections, defaults, and update/preserve semantics explicitly; descriptions and handlers must agree.
+- Before claiming a changed tool works, use the normal CLI/API and production assembly in an isolated workspace within the user's current model-call authorization. Confirm provider acceptance, the actual tool arguments and execution, and the relevant persisted result or downstream effect. Acceptance of the ToolSet alone does not verify every handler; an HTTP 200 alone does not prove completion. If unverified, label the capability accordingly.
+- For actual call failures, inspect local configuration, serialized requests, Schema and response parsing first. Use a bounded minimal comparison when needed; classify provider, network and authentication causes from evidence. Do not fix unexplained errors by disabling strict validation, silently changing models, or replaying calls with unknown outcomes.
+- Follow Testing Guidelines: only failure-driven temporary diagnostics outside the repository, followed by retrying the original normal path. Do not add a permanent tool test suite or speculative verification matrix.
+- Record the observed failure, cause, fix and verification scope in the relevant implementation record without secrets. A tool integration trial is not the sole product E2E, and static checks cannot substitute for runtime evidence.
+
 ## Commit & Pull Request Guidelines
 
 Use Conventional Commits: `type(optional-scope): imperative summary`. Types are `feat`, `fix`, `docs`, `test`, `refactor`, `perf`, `build`, `ci`, `chore`, and `revert`. Keep summaries lowercase, period-free, and within 72 characters, for example `feat(api): add health endpoint`. Explain migration in the body and incompatible changes in a `BREAKING CHANGE:` footer. Keep one logical change per commit.
