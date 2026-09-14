@@ -6,7 +6,11 @@ export default function ehaiTools(pi) {
   const spec = JSON.parse(readFileSync(process.env.EHAI_PI_TOOL_SPEC, "utf8"));
   const pending = new Map();
   let finished = false;
-  const emit = (event) => process.stdout.write(`${JSON.stringify(event)}\n`);
+  // RPC owns stdout. Its public notification channel does not enter model history.
+  const emit = (event, ctx) => {
+    if (ctx.mode !== "rpc") throw new Error("EHAI tools require Pi RPC mode");
+    ctx.ui.notify(`ehai.bridge.v1:${JSON.stringify(event)}`, "info");
+  };
   let inputHashes = [];
   pi.on("context", (event) => {
     inputHashes = event.messages.filter((message) => message.role === "user")
@@ -15,8 +19,8 @@ export default function ehaiTools(pi) {
         : message.content.filter((block) => block.type === "text").map((block) => block.text))
       .map((text) => createHash("sha256").update(text).digest("hex"));
   });
-  pi.on("before_provider_request", () => {
-    emit({ type: "ehai_context_prepared", nonce: spec.nonce, input_hashes: inputHashes });
+  pi.on("before_provider_request", (_event, ctx) => {
+    emit({ type: "ehai_context_prepared", nonce: spec.nonce, input_hashes: inputHashes }, ctx);
     inputHashes = [];
   });
   pi.registerCommand("ehai-tool-result", {
@@ -61,7 +65,7 @@ export default function ehaiTools(pi) {
             ? assistant.content.filter((block) => block.type === "toolCall").map((block) => block.id)
             : [];
           emit({ type: "ehai_tool_call", nonce: spec.nonce, call_id: callId, name: tool.name,
-            arguments: args, batch_call_ids: batch });
+            arguments: args, batch_call_ids: batch }, ctx);
         });
       },
     });

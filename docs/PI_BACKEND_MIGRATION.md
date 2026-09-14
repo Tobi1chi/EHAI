@@ -121,6 +121,33 @@ CLI 随后退出 1，正常 get-discussion 确认 turn `24abf835-a6fb-4e65-a0fb-
 本轮记录发现但未修改桥接：已验证 Schema 接受与模型生成工具参数，尚未验证宿主工具执行、
 finish 收敛或产品 E2E。下一步需要修复工具事件传输通道，再回到正常入口验证。
 
+### 2026-09-14 RPC 工具事件修复与 Luna 验证
+
+用户授权修复后，扩展改用 Pi 公开的 `ctx.ui.notify`，由原生 RPC 输出
+`extension_ui_request/notify`，消息内以 `ehai.bridge.v1:` 标识私有信封。
+Python 角色适配层解包并核对原有 nonce 与事件类型，再走原有工具执行/上下文确认逻辑；
+普通通知不作为业务事件。结果仍通过公开扩展命令 `/ehai-tool-result` 回传。
+不直接写 stdout、不解析 stderr、不修改 Pi 包，不新增服务或模型消息，也不改变工具 Schema、
+权限、业务校验、执行串行顺序与宿主确认 finish 后的停止规则。
+
+- 仓库外故障诊断 `ehai-pi-bridge-fix-20260914/test_bridge.py`：1 passed。真实 Pi RPC
+  加载生产桥接，主动触发上下文通知和工具执行，Python 回传结果并解除等待；消息数保持 0，
+  没有模型请求。普通 stdout 被重定向但不再影响业务通道。该诊断不进入常驻测试。
+- 回到原隔离讨论的正常 `discuss-plan`，当前工作树、Luna/high、重试关闭。
+  Session `0085caa3-8f42-42c8-9d23-dfafc7709652`；
+  turn `910f368a-2249-4b47-b552-75cceac45b47` 为 completed，reply 是询问 E2E 任务和验收条件，
+  error/plan_revision_id 为 null。CLI 退出 0，另一次正常 get-discussion 重读确认持久结果。
+- 宿主 trace 包含 ask_user 的 tool/call、accepted=true 的 tool/result、final 与 turn/end；
+  Pi 原生历史包含对应成功 toolResult，角色等待 agent_settled 后返回。
+  有用量的响应 input=3565、output=76、totalTokens=3641。finish 主动 abort 后原生历史还有一条
+  空 assistant，错误为 This operation was aborted、报告用量为 0；没有重试该终止记录。
+  Pi 成本仅为估算，不等于代理账单。
+- 测试工作区仍为空，无计划生成、无代码执行，核对没有本次 Pi 进程残留。
+  Ruff、格式、mypy（104 文件）、JavaScript 语法及 diff 检查通过。
+
+这次证明共享桥接的通知往返，以及 Planner ask_user 的完整执行、结果保存与 finish 收敛；
+不据此宣称其他写入工具、Worker/Reviewer、并发、压缩或唯一产品 E2E 已验收。
+
 ### 2026-09-14 角色入口收口
 
 正常 CLI 发现：仅提供 --planner-model 而省略 --planner，会忽略模型选择并用 single Planner

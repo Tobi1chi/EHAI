@@ -11,7 +11,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Protocol
 
-from ehai import ID, JsonValue, json_dumps
+from ehai import ID, JsonValue, json_dumps, json_loads
 from ehai.application.agent_contracts import (
     AgentCancelledError,
     CancellationToken,
@@ -33,6 +33,27 @@ from ehai.infrastructure.pi_rpc import PiRpcError, PiRpcProcess
 
 class PiExecutionUnknownError(PiRpcError):
     """A stopped invocation has unresolved model/tool outcome; never auto-resend it."""
+
+
+def _decode_bridge_event(event: dict[str, JsonValue], nonce: str) -> dict[str, JsonValue]:
+    """Unwrap only our private envelopes on Pi's public RPC notification channel."""
+    if event.get("type") != "extension_ui_request" or event.get("method") != "notify":
+        return event
+    message = event.get("message")
+    prefix = "ehai.bridge.v1:"
+    if not isinstance(message, str) or not message.startswith(prefix):
+        return event
+    try:
+        payload = json_loads(message[len(prefix) :])
+    except ValueError as error:
+        raise PiRpcError("Invalid EHAI bridge notification") from error
+    if (
+        not isinstance(payload, dict)
+        or payload.get("nonce") != nonce
+        or payload.get("type") not in ("ehai_context_prepared", "ehai_tool_call")
+    ):
+        raise PiRpcError("Unexpected EHAI bridge notification")
+    return payload
 
 
 class RoleExecution(Protocol):
@@ -235,7 +256,7 @@ class PiRoleRunner:
                                 await rpc.request("clear_queue")
                                 await rpc.request("abort")
                                 token.raise_if_cancelled()
-                            event = await event_wait
+                            event = _decode_bridge_event(await event_wait, nonce)
                         finally:
                             if not event_wait.done():
                                 event_wait.cancel()
