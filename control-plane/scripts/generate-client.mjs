@@ -43,6 +43,7 @@ const requiredOperations = [
   "getProcessReview",
   "getProcessDraftReviews",
   "getRunProcessDrafts",
+  "getRunResult",
   "list_worker_profiles_api_v1_workers_profiles_get",
   "list_worker_endpoints_api_v1_workers_endpoints_get",
   "get_attempt_runtime_api_v1_attempts__attempt_id__runtime_get",
@@ -266,6 +267,10 @@ export class EhaiApiClient {
       "POST",
       request,
     );
+  }
+
+  getRunResult(runId: string): Promise<RunResultResponse> {
+    return this.request(\`/runs/\${encodeURIComponent(runId)}/result\`, "GET");
   }
 
   getPlanGraph(planRevisionId: string): Promise<PlanGraphResponse> {

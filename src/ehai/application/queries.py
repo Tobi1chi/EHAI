@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
+from pathlib import Path
 from typing import Protocol
 
 from ehai import ID, JsonValue, normalize_id
@@ -18,6 +19,7 @@ from ehai.application.interventions import list_interventions
 from ehai.application.planning_dialogue import PlanningConversationView, planning_conversation
 from ehai.application.ports import ReadSession, StoredEvent
 from ehai.application.process_reviews import ProcessReviewView, process_review_history
+from ehai.application.run_results import RunResultView, project_run_result
 from ehai.application.sanitization import redact_sensitive_text, sanitize_json_object
 from ehai.domain.artifacts import Artifact, ArtifactKind
 from ehai.domain.checking import (
@@ -672,57 +674,26 @@ class QueryService:
             )
             return ProcessDraftReviewsView(draft_id=normalized_id, reviews=reviews)
 
+    def get_run_result(self, run_id: ID, *, artifact_root: str) -> RunResultView:
+        """Return the durable result projection from one consistent snapshot."""
+        normalized_id = normalize_id(run_id)
+        with self._read_session_factory() as session:
+            trace = _execution_trace(
+                session,
+                normalized_id,
+                builtin_session_reader=self._builtin_session_reader,
+            )
+            resolved_artifact_root = str(Path(artifact_root).resolve())
+            return project_run_result(trace, artifact_root=resolved_artifact_root)
+
     def get_execution_trace(self, run_id: ID) -> ExecutionTraceView:
         """Return immutable execution facts without copying PlanGraph structure."""
         normalized_id = normalize_id(run_id)
         with self._read_session_factory() as session:
-            run = _required_run(session.states.get_run(normalized_id), normalized_id)
-            stored_attempts = tuple(
-                sorted(
-                    session.states.list_attempts(normalized_id),
-                    key=lambda item: (item.sequence, item.attempt_id),
-                )
-            )
-            attempts = tuple(_attempt_view(attempt) for attempt in stored_attempts)
-            artifacts = tuple(
-                _artifact_view(artifact)
-                for artifact in sorted(
-                    session.states.list_artifacts_for_run(normalized_id),
-                    key=lambda item: (item.created_at, item.artifact_id),
-                )
-            )
-            check_runs = tuple(
-                _check_run_view(check_run)
-                for check_run in sorted(
-                    session.states.list_check_runs(normalized_id),
-                    key=lambda item: (item.created_at, item.check_run_id),
-                )
-            )
-            checkpoints = tuple(
-                _checkpoint_summary(checkpoint)
-                for checkpoint in sorted(
-                    session.states.list_checkpoints(normalized_id),
-                    key=lambda item: (item.event_offset, item.checkpoint_id),
-                )
-            )
-            events = tuple(
-                stored
-                for stored in sorted(session.events.list_events(), key=lambda item: item.offset)
-                if stored.event.run_id == normalized_id
-            )
-            session_events, session_events_truncated = _builtin_session_event_views(
-                stored_attempts,
-                self._builtin_session_reader,
-            )
-            return ExecutionTraceView(
-                run=_run_view(run, session),
-                attempts=attempts,
-                artifacts=artifacts,
-                check_runs=check_runs,
-                checkpoints=checkpoints,
-                events=events,
-                session_events=session_events,
-                session_events_truncated=session_events_truncated,
+            return _execution_trace(
+                session,
+                normalized_id,
+                builtin_session_reader=self._builtin_session_reader,
             )
 
     def list_check_specs(self, plan_revision_id: ID) -> tuple[CheckSpecView, ...]:
@@ -829,6 +800,63 @@ class QueryService:
                 latest_offset=session.events.latest_offset(),
                 has_more=len(candidates) > limit,
             )
+
+
+def _execution_trace(
+    session: ReadSession,
+    run_id: ID,
+    *,
+    builtin_session_reader: AgentTraceReader | None,
+) -> ExecutionTraceView:
+    """Materialize execution facts within the caller's ReadSession."""
+    run = _required_run(session.states.get_run(run_id), run_id)
+    stored_attempts = tuple(
+        sorted(
+            session.states.list_attempts(run_id),
+            key=lambda item: (item.sequence, item.attempt_id),
+        )
+    )
+    attempts = tuple(_attempt_view(attempt) for attempt in stored_attempts)
+    artifacts = tuple(
+        _artifact_view(artifact)
+        for artifact in sorted(
+            session.states.list_artifacts_for_run(run_id),
+            key=lambda item: (item.created_at, item.artifact_id),
+        )
+    )
+    check_runs = tuple(
+        _check_run_view(check_run)
+        for check_run in sorted(
+            session.states.list_check_runs(run_id),
+            key=lambda item: (item.created_at, item.check_run_id),
+        )
+    )
+    checkpoints = tuple(
+        _checkpoint_summary(checkpoint)
+        for checkpoint in sorted(
+            session.states.list_checkpoints(run_id),
+            key=lambda item: (item.event_offset, item.checkpoint_id),
+        )
+    )
+    events = tuple(
+        stored
+        for stored in sorted(session.events.list_events(), key=lambda item: item.offset)
+        if stored.event.run_id == run_id
+    )
+    session_events, session_events_truncated = _builtin_session_event_views(
+        stored_attempts,
+        builtin_session_reader,
+    )
+    return ExecutionTraceView(
+        run=_run_view(run, session),
+        attempts=attempts,
+        artifacts=artifacts,
+        check_runs=check_runs,
+        checkpoints=checkpoints,
+        events=events,
+        session_events=session_events,
+        session_events_truncated=session_events_truncated,
+    )
 
 
 def _required_run(run: Run | None, run_id: ID) -> Run:

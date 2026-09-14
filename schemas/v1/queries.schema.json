@@ -805,6 +805,147 @@
         }
       }
     },
+    "RunResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "workspace",
+        "base_commit",
+        "commit",
+        "diff_path",
+        "attempt_id",
+        "run_id",
+        "diff_artifact_ids",
+        "check_result",
+        "configured_workspace",
+        "artifact_root"
+      ],
+      "properties": {
+        "workspace": {
+          "$ref": "#/$defs/NullableString"
+        },
+        "base_commit": {
+          "$ref": "#/$defs/NullableString"
+        },
+        "commit": {
+          "$ref": "#/$defs/NullableString"
+        },
+        "diff_path": {
+          "$ref": "#/$defs/NullableString"
+        },
+        "attempt_id": {
+          "$ref": "#/$defs/NullableId"
+        },
+        "run_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "diff_artifact_ids": {
+          "$ref": "#/$defs/IdList"
+        },
+        "check_result": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/RunResultCheckResult"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "configured_workspace": {
+          "$ref": "#/$defs/NullableString"
+        },
+        "artifact_root": {
+          "type": "string"
+        }
+      }
+    },
+    "RunResultCheckResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "passed",
+        "check_run_ids",
+        "checks"
+      ],
+      "properties": {
+        "passed": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "check_run_ids": {
+          "$ref": "#/$defs/IdList"
+        },
+        "checks": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/CheckRun"
+          }
+        }
+      }
+    },
+    "RunResultResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "data"
+      ],
+      "properties": {
+        "data": {
+          "$ref": "#/$defs/RunResultDocument"
+        }
+      }
+    },
+    "RunResultDocument": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "run",
+        "result",
+        "trace_ids"
+      ],
+      "properties": {
+        "run": {
+          "$ref": "#/$defs/Run"
+        },
+        "result": {
+          "$ref": "#/$defs/RunResult"
+        },
+        "trace_ids": {
+          "$ref": "#/$defs/RunResultTraceIds"
+        }
+      }
+    },
+    "RunResultTraceIds": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "attempt_ids",
+        "artifact_ids",
+        "check_run_ids",
+        "checkpoint_ids",
+        "event_ids"
+      ],
+      "properties": {
+        "attempt_ids": {
+          "$ref": "#/$defs/IdList"
+        },
+        "artifact_ids": {
+          "$ref": "#/$defs/IdList"
+        },
+        "check_run_ids": {
+          "$ref": "#/$defs/IdList"
+        },
+        "checkpoint_ids": {
+          "$ref": "#/$defs/IdList"
+        },
+        "event_ids": {
+          "$ref": "#/$defs/IdList"
+        }
+      }
+    },
     "GateDecision": {
       "type": "object",
       "additionalProperties": false,

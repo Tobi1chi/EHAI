@@ -154,6 +154,7 @@ def create_app(
     *,
     process_adjustments: ProcessAdjustments | None = None,
     execution_config_validator: Callable[[ExecutionConfig], None] | None = None,
+    artifact_root: str | None = None,
 ) -> FastAPI:
     """Create the additive P2 HTTP surface around already-constructed services."""
     app = FastAPI(title="EHAI Execution Plane", version="2")
@@ -521,6 +522,19 @@ def create_app(
     )
     def get_run(run_id: UuidInput) -> DataResponse:
         return _response(query_service.get_run(_id(str(run_id))))
+
+    @router.get(
+        "/runs/{run_id}/result",
+        response_model=DataResponse,
+        responses=_read_responses("RunResultResponse", "Run result"),
+        operation_id="getRunResult",
+    )
+    def get_run_result(run_id: UuidInput) -> DataResponse:
+        if artifact_root is None:
+            raise RuntimeError("artifact root is not configured for this host")
+        return _response(
+            query_service.get_run_result(_id(str(run_id)), artifact_root=artifact_root)
+        )
 
     @router.get(
         "/workers/profiles",
