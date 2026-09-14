@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Mapping
+from functools import partial
 from time import monotonic
 from typing import Protocol
 
 from ehai import ID, JsonValue, normalize_id
-from ehai.application.builtin_agent import (
+from ehai.application.agent_contracts import (
     CancellationToken,
     ModelMessage,
     ModelRole,
@@ -91,8 +92,6 @@ class SessionMailbox:
             )
             if message.status.value == "pending"
         )
-        for message in messages:
-            self._repository.save(message.deliver())
         return tuple(
             ModelMessage(
                 ModelRole.USER,
@@ -101,9 +100,16 @@ class SessionMailbox:
                     f"source={message.source_session_id} correlation={message.correlation_id} "
                     f"message_id={message.message_id}: {message.content}"
                 ),
+                acknowledge=partial(self._acknowledge, target_session_id, message.message_id),
             )
             for message in messages
         )
+
+    def _acknowledge(self, target_session_id: ID, message_id: ID) -> None:
+        for message in self._repository.list_for_target(target_session_id, include_read=False):
+            if message.message_id == message_id and message.status.value == "pending":
+                self._repository.save(message.deliver())
+                return
 
     async def wait(
         self,

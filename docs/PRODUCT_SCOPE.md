@@ -16,6 +16,12 @@ Worker 实例化、阶段决策树、Gate、过程调整与恢复以本次确认
 
 ## 产品定位
 
+2026-09-14 用户确认收缩自研边界：EHAI 负责上层目标、规划管理、授权、调度和验收，
+具体 Agent Runtime、模型 API 调用与上下文管理交给现成后端。首选完整 Pi，经公开 RPC
+接入；Planner、Worker 和 Reviewer 均在迁移范围内。详见
+[ADR 0005](adr/0005-external-agent-backends.md)。下文 Built-in 共享 Runtime 的描述是迁移前
+实现背景，不再表示继续自研这层的目标；其他产品边界与验收要求保持不变。
+
 长期目标是一个通用 Agent 平台。EHAI 的目标、规划、审批、执行、检查、恢复和人工介入机制是其中的
 核心；编码任务是当前首先做实的纵向场景，不是平台的永久功能边界。
 
@@ -38,7 +44,7 @@ Worker 实例化、阶段决策树、Gate、过程调整与恢复以本次确认
 | 方案与审批管理 | 保存版本、需求、接口、Gate、授权和批准关系，并记录过程调整 | 保持批准底线；过程调整可自主进行，但必须可追踪并同步可读方案与执行图 |
 | Orchestrator | 按依赖和执行事实推进任务，处理候选、分支、检查与人工介入 | 拥有执行状态推进，不重新解释用户目标，不实现模型循环 |
 | Scheduler / Dispatcher | 根据就绪任务、能力、容量和隔离条件分配 Worker 与工作区 | 不决定需求、方案优劣或任务完成 |
-| Agent 执行 Connector | 接入 Built-in、Codex 等框架，提供创建、调用、观察、停止及恢复能力 | 不等于按预设创建的 Worker，也不决定需求或验收 |
+| Agent 执行 Connector | 接入 Pi、Codex 等框架，提供创建、调用、观察、停止及恢复能力 | 不等于按预设创建的 Worker，也不决定需求或验收 |
 | Worker | 按预设实例化的具体 Agent，承担规划、编码、审查等职责 | 职责、模型、框架彼此独立；不与任务节点或 Session 强制一一对应 |
 | 阶段 Review Agent | 在阶段进入 Gate 时测试、审查、整理证据与修改建议 | 不自行降低/增加条件，不替代必需的人工判定或宣布 Run 完成 |
 | Check / Gate / 交付 | 用统一 Gate 承载自动与人工判定，验收分支、阶段及最终成果 | 依据获批条件与证据判断；不能自动判定时交给人，不伪造通过 |
@@ -50,9 +56,9 @@ Worker 实例化、阶段决策树、Gate、过程调整与恢复以本次确认
 外部 Agent 完成；外部 Agent 给出意见不等于平台已获批准。当前首先支持用户携带外部审查意见回到
 Planner。阶段进入 Gate 时配置 Review Agent 是当前目标，但不要求为此先建设通用外部评审平台。
 
-职责不与框架绑定；选择 Built-in 的角色复用同一 Agent Runtime，以 Prompt、Tool Profile、Context Builder、
-Finish Tool 和权限区分。后台执行 Runtime 管理队列、租约和并发；Agent Runtime 管理 Session、模型步骤和工具，
-二者不是同一个循环。Codex 等外部框架保留其原生执行协议，通过 Agent 执行 Connector 接入。
+职责不与框架绑定；选择 Pi 的角色通过同一外部后端接入，以 Prompt、Tool Profile、Context Builder、
+Finish Tool 和权限区分。EHAI 后台执行 Runtime 管理队列、租约和并发；Pi 管理原生 Session、模型调用
+和压缩，二者不是同一个循环。Codex 等其他外部框架保留其原生执行协议，通过 Connector 接入。
 
 ## 当前编码主流程
 

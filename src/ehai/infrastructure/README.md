@@ -14,17 +14,17 @@ Agent 执行 Connector 管理 Session 和执行协议，未来服务/事件 Conn
 
 | 文件或目录 | 职责 |
 | --- | --- |
-| [`openai_responses.py`](openai_responses.py) | OpenAI Responses `ModelClient`，负责严格 Tool Schema、streaming、响应续接和兼容回放。 |
+| [`pi_rpc.py`](pi_rpc.py)、[`pi_runtime.py`](pi_runtime.py)、[`pi_config.py`](pi_config.py) | 完整 Pi 公共 RPC、角色调用与显式配置；不自研模型请求和压缩。接线完成，真实模型链路待验证。 |
 | [`codex_transport.py`](codex_transport.py) | Codex 子进程传输、超时、取消和有界输出的公共实现。 |
-| [`builtin_tools.py`](builtin_tools.py) | Workspace read/list/search/patch、受控 command 与 `submit_candidate` Tool Runtime。 |
-| [`builtin_sessions.py`](builtin_sessions.py) | Built-in Agent Session Event 的 SQLite 持久化与重放。 |
+| [`host_tools.py`](host_tools.py) | Workspace read/list/search/patch、受控 command 与 `submit_candidate` 宿主工具，不是 Agent Loop。 |
+| [`agent_traces.py`](agent_traces.py) | 宿主审计持久化及旧 Built-in 轨迹读取，不重建模型历史。 |
 | [`sqlite/`](sqlite/) | Schema migration、Unit of Work、Repository、Event Log 和状态 codec。 |
 | [`artifacts/`](artifacts/) | 文件系统 Artifact Store；按不可变 ID 保存并校验内容。 |
 | [`checks/`](checks/) | Artifact、command 和 semantic Check Adapter。 |
-| [`workers/`](workers/) | Fake、Built-in、Codex CLI、Codex App Server Connector 及 WorkerAdapter→Runtime Connector 桥。 |
+| [`workers/`](workers/) | Fake、Pi、Codex CLI、Codex App Server Connector 及 WorkerAdapter→Runtime Connector 桥。 |
 | [`workers/code.py`](workers/code.py) | `CodeRuntimeConnector`；在 Worker Connector 外包住实际代码 worktree 的准备、上游合并、快照和 diff 捕获。 |
 | [`code_workspaces.py`](code_workspaces.py) | `GitCodeWorkspace`；固定 Run base commit，在 EHAI-owned Git worktree 中合并上游代码并保存不可变代码结果。 |
-| [`planners/`](planners/) | Built-in Responses 与 Codex Planner Adapter；只返回 Application `PlanProposal`。 |
+| [`planners/`](planners/) | Pi 与 Codex Planner Adapter；只返回 Application `PlanProposal`。 |
 | [`workspaces.py`](workspaces.py) | Workspace Manager；分配 EHAI-owned Git worktree 或受控本地 Workspace，并管理 Lease 清理。 |
 
 ## Code Execution

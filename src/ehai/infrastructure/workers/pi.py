@@ -1,4 +1,4 @@
-"""Standalone Built-in Agent RuntimeConnector with no Codex dependency."""
+"""Standalone Pi Agent RuntimeConnector with no Codex dependency."""
 
 from __future__ import annotations
 
@@ -7,9 +7,18 @@ from collections.abc import AsyncIterator, Callable, Mapping
 from functools import partial
 from pathlib import Path
 
-from openai.types.shared import ReasoningEffort
-
 from ehai import ID, JsonValue, json_dumps, json_loads, new_id, normalize_id
+from ehai.application.agent_contracts import (
+    CancellationToken,
+    ModelMessage,
+    RecoverableToolError,
+)
+from ehai.application.agent_roles import AgentRole, AgentRoleConfig
+from ehai.application.agent_trace import (
+    AgentTrace,
+    AgentTraceEventType,
+    AgentTraceStore,
+)
 from ehai.application.async_runtime import (
     ConnectorExecution,
     ConnectorRecoveryRequest,
@@ -18,18 +27,6 @@ from ehai.application.async_runtime import (
     WorkerEvent,
     WorkerEventType,
 )
-from ehai.application.builtin_agent import (
-    DEFAULT_AGENT_BUDGET,
-    AgentBudget,
-    BuiltinSession,
-    BuiltinSessionEventType,
-    BuiltinSessionStore,
-    CancellationToken,
-    ModelClient,
-    ModelMessage,
-    RecoverableToolError,
-)
-from ehai.application.builtin_runtime import BuiltinAgentRuntime, BuiltinRole, BuiltinRoleConfig
 from ehai.application.evaluation import BranchSelectionProtocolError
 from ehai.application.execution_policy import RetrySafety
 from ehai.application.interventions import WorkerBlocker
@@ -44,27 +41,23 @@ from ehai.domain.artifacts import ArtifactKind
 from ehai.domain.planning import PlanNodeKind
 from ehai.domain.workers import (
     AttemptActivity,
-    BuiltinExecutionRef,
+    ExternalExecutionRef,
     WorkerCapability,
     WorkerKind,
     WorkerProfile,
 )
-from ehai.infrastructure.builtin_tools import BuiltinToolRuntime
+from ehai.infrastructure.host_tools import HostToolRuntime
 from ehai.infrastructure.mcp_tools import MCPToolProvider
-from ehai.infrastructure.openai_responses import (
-    OpenAIResponsesModelClient,
-    OpenAIResponsesUnknownOutcomeError,
-    ResponsesEndpointCapabilities,
-)
+from ehai.infrastructure.pi_config import PiBackendConfig
+from ehai.infrastructure.pi_runtime import PiExecutionUnknownError, PiRoleRunner
 from ehai.infrastructure.skill_loader import SkillToolProvider
 from ehai.infrastructure.web_tools import WebToolProvider
 
 UnitOfWorkFactory = Callable[[], UnitOfWork]
-ModelClientFactory = Callable[[WorkerProfile, WorkerRequest], ModelClient]
 WorkspaceResolver = Callable[[ID], Path | None]
 HandoffSubmitter = Callable[[ID, Mapping[str, JsonValue]], dict[str, JsonValue]]
 
-_DEFAULT_SYSTEM_PROMPT = """You are the EHAI Built-in Agent. Work only inside the assigned
+_DEFAULT_SYSTEM_PROMPT = """You are the EHAI Pi Agent. Work only inside the assigned
 Workspace and use only the provided tools. Complete the requested PlanNode, validate the
 result with an allowed command when appropriate, and finish only by calling submit_candidate.
 The host dispatches tasks, prepares upstream code and prunes branches; you do not spawn,
@@ -107,7 +100,7 @@ class _ReportedBlocker(RuntimeError):
         super().__init__(blocker.reason)
 
 
-class BuiltinAgentConnector:
+class PiAgentConnector:
     """Run isolated execution lanes with shared logical Phase Session discussion."""
 
     def __init__(
@@ -115,9 +108,10 @@ class BuiltinAgentConnector:
         *,
         uow_factory: UnitOfWorkFactory,
         orchestrator: Orchestrator,
-        session_store: BuiltinSessionStore,
+        session_store: AgentTraceStore,
         artifact_store: ArtifactStore,
         profile: WorkerProfile,
+        backend: PiBackendConfig,
         default_workspace: Path,
         allowed_commands: tuple[tuple[str, ...], ...] = (),
         available_shells: tuple[str, ...] = (),
@@ -126,17 +120,14 @@ class BuiltinAgentConnector:
         mcp_providers: tuple[MCPToolProvider, ...] = (),
         skill_provider: SkillToolProvider | None = None,
         mailbox: SessionMailbox | None = None,
-        reasoning_effort: ReasoningEffort = None,
-        model_client_factory: ModelClientFactory | None = None,
+        reasoning_effort: str | None = None,
         workspace_resolver: WorkspaceResolver | None = None,
-        budget: AgentBudget = DEFAULT_AGENT_BUDGET,
         system_prompt: str = _DEFAULT_SYSTEM_PROMPT,
         command_timeout_seconds: float = 120.0,
         id_factory: Callable[[], ID] = new_id,
-        endpoint_capabilities: ResponsesEndpointCapabilities | None = None,
     ) -> None:
-        if profile.kind is not WorkerKind.BUILTIN:
-            raise ValueError("BuiltinAgentConnector requires a Built-in WorkerProfile")
+        if profile.kind is not WorkerKind.PI:
+            raise ValueError("PiAgentConnector requires a Pi WorkerProfile")
         self._uow_factory = uow_factory
         self._orchestrator = orchestrator
         self._session_store = session_store
@@ -151,10 +142,7 @@ class BuiltinAgentConnector:
         self._skill_provider = skill_provider
         self._mailbox = mailbox
         self._reasoning_effort = reasoning_effort
-        self._endpoint_capabilities = endpoint_capabilities
-        self._model_client_factory = model_client_factory or self._create_model_client
         self._workspace_resolver = workspace_resolver
-        self._budget = budget
         self._system_prompt = system_prompt
         self._command_timeout_seconds = command_timeout_seconds
         self._id_factory = id_factory
@@ -165,7 +153,11 @@ class BuiltinAgentConnector:
         self._terminal_outcomes: dict[ID, tuple[str | None, str]] = {}
         self._blocked_outcomes: dict[ID, WorkerBlocker] = {}
         self._cancellations: dict[ID, CancellationToken] = {}
-        self._runtime = BuiltinAgentRuntime(session_store, budget=budget)
+        self._runtime = PiRoleRunner(
+            session_store,
+            backend=backend,
+            state_root=backend.agent_dir / "ehai-sessions",
+        )
         self._phase_sessions = PhaseSessions(uow_factory)
         self._handoff_submitter: HandoffSubmitter | None = None
 
@@ -220,7 +212,7 @@ class BuiltinAgentConnector:
         if task is None:
             task = asyncio.create_task(
                 self._run_execution(execution),
-                name=f"ehai-builtin-{execution.attempt_id}",
+                name=f"ehai-pi-{execution.attempt_id}",
             )
             self._tasks[execution.attempt_id] = task
             task.add_done_callback(partial(self._record_terminal_outcome, execution.attempt_id))
@@ -231,14 +223,14 @@ class BuiltinAgentConnector:
                 raise
             yield _failed_event(
                 execution.attempt_id,
-                "Built-in Agent execution was cancelled",
+                "Pi Agent execution was cancelled",
                 cursor="cancelled",
             )
             return
         except _ReportedBlocker as error:
             yield _blocked_event(execution.attempt_id, error.blocker)
             return
-        except OpenAIResponsesUnknownOutcomeError as error:
+        except PiExecutionUnknownError as error:
             yield _blocked_event(execution.attempt_id, _external_blocker(_failure_reason(error)))
             return
         except Exception as error:
@@ -309,8 +301,10 @@ class BuiltinAgentConnector:
             attempt = uow.states.get_attempt(attempt_id)
             if attempt is None or attempt.execution_handle is None:
                 return None
+            if attempt.worker_profile_id != self._profile.worker_profile_id:
+                return None
             handle = attempt.execution_handle
-            reference = handle.builtin
+            reference = handle.external
             if reference is None:
                 return None
             session = uow.states.get_agent_session_ref(reference.agent_session_ref_id)
@@ -318,7 +312,7 @@ class BuiltinAgentConnector:
             return None
         if (
             session.provider_session_id != request.provider_session_id
-            or str(reference.builtin_execution_id) != request.provider_execution_id
+            or str(reference.provider_execution_id) != request.provider_execution_id
         ):
             return None
         execution = ConnectorExecution(
@@ -334,22 +328,20 @@ class BuiltinAgentConnector:
         self._workspaces[attempt_id] = (
             self._default_workspace if resolved is None else resolved.resolve(strict=True)
         )
-        builtin_session = self._session_store.load(reference.agent_session_ref_id)
-        if not builtin_session.is_turn_complete(attempt_id) and any(
-            event.attempt_id == attempt_id
-            and event.type is BuiltinSessionEventType.MODEL_TRANSPORT
-            and event.payload.get("phase") == "unknown_outcome"
-            for event in builtin_session.events
+        trace = self._session_store.load(reference.agent_session_ref_id)
+        if not trace.is_turn_complete(attempt_id) and any(
+            event.attempt_id == attempt_id and event.type is AgentTraceEventType.BACKEND_ERROR
+            for event in trace.events
         ):
             self._blocked_outcomes[attempt_id] = _external_blocker(
                 "Provider response outcome remains unknown after recovery"
             )
         elif (
             self._handoff_submitter is not None
-            and not builtin_session.is_turn_complete(attempt_id)
+            and not trace.is_turn_complete(attempt_id)
             and not (attempt_id in self._tasks and not self._tasks[attempt_id].done())
         ):
-            if _has_nonlocal_tool_effects(builtin_session, attempt_id):
+            if _has_nonlocal_tool_effects(trace, attempt_id):
                 self._blocked_outcomes[attempt_id] = _external_blocker(
                     "Unfinished local execution used tools with effects outside the code "
                     "snapshot. Confirm those effects before replacing the execution; "
@@ -381,7 +373,7 @@ class BuiltinAgentConnector:
         if session.is_turn_complete(execution.attempt_id):
             return _candidate_result(session, execution.attempt_id)
         cancellation = CancellationToken()
-        context = _builtin_context(request)
+        context = _worker_context(request)
         phase_membership = self._phase_sessions.join(execution.attempt_id)
         phase_provider = None
         if phase_membership is not None:
@@ -402,7 +394,7 @@ class BuiltinAgentConnector:
             else SessionMailboxToolProvider(self._mailbox, session.agent_session_ref_id)
         )
         reviewer = request.plan_node.kind is PlanNodeKind.REVIEWER
-        tools = BuiltinToolRuntime(
+        tools = HostToolRuntime(
             artifact_store=self._artifact_store,
             workspace=workspace,
             allowed_commands=self._allowed_commands,
@@ -444,9 +436,12 @@ class BuiltinAgentConnector:
 
         try:
             await self._runtime.run(
-                config=_worker_role_config(request, tools),
+                config=_worker_role_config(request, tools, system_prompt=self._system_prompt),
                 registry=tools.registry,
-                model_client=self._model_client_factory(self._profile, request),
+                model=self._profile.model,
+                reasoning_effort=self._reasoning_effort,
+                workspace=workspace,
+                native_session_id=execution.provider_session_id,
                 session=session,
                 execution=reference,
                 instruction=request.plan_node.instruction,
@@ -462,14 +457,16 @@ class BuiltinAgentConnector:
     def _execution_context(
         self,
         execution: ConnectorExecution,
-    ) -> tuple[BuiltinExecutionRef, BuiltinSession]:
+    ) -> tuple[ExternalExecutionRef, AgentTrace]:
         with self._uow_factory() as uow:
             attempt = uow.states.get_attempt(execution.attempt_id)
             if attempt is None or attempt.execution_handle is None:
                 raise RuntimeError(f"Attempt {execution.attempt_id} has no execution binding")
-            reference = attempt.execution_handle.builtin
+            if attempt.worker_profile_id != self._profile.worker_profile_id:
+                raise RuntimeError("Pi execution belongs to another Worker profile")
+            reference = attempt.execution_handle.external
             if reference is None:
-                raise RuntimeError(f"Attempt {execution.attempt_id} is not a Built-in execution")
+                raise RuntimeError(f"Attempt {execution.attempt_id} is not a Pi execution")
         return reference, self._session_store.load(reference.agent_session_ref_id)
 
     def _validate_submission(
@@ -509,10 +506,10 @@ class BuiltinAgentConnector:
             task.result()
         except asyncio.CancelledError:
             self._terminal_outcomes[attempt_id] = (
-                "Built-in Agent execution was cancelled",
+                "Pi Agent execution was cancelled",
                 "cancelled",
             )
-        except OpenAIResponsesUnknownOutcomeError as error:
+        except PiExecutionUnknownError as error:
             self._blocked_outcomes[attempt_id] = _external_blocker(_failure_reason(error))
         except _ReportedBlocker as error:
             self._blocked_outcomes[attempt_id] = error.blocker
@@ -521,33 +518,21 @@ class BuiltinAgentConnector:
         else:
             self._terminal_outcomes[attempt_id] = (None, "completed")
 
-    def _create_model_client(
-        self,
-        profile: WorkerProfile,
-        request: WorkerRequest,
-    ) -> ModelClient:
-        del request
-        return OpenAIResponsesModelClient(
-            profile,
-            reasoning_effort=self._reasoning_effort,
-            endpoint_capabilities=self._endpoint_capabilities,
-        )
-
     def _workspace_path(self, value: str | None) -> Path:
         workspace = self._default_workspace if value is None else Path(value).resolve(strict=True)
         if not workspace.is_dir():
-            raise ValueError("Built-in Agent Workspace must be a directory")
+            raise ValueError("Pi Agent Workspace must be a directory")
         return workspace
 
     def _require_execution(self, execution: ConnectorExecution) -> None:
         existing = self._executions.get(execution.attempt_id)
         if existing != execution:
-            raise RuntimeError(f"Built-in execution {execution.attempt_id} is not registered")
+            raise RuntimeError(f"Pi execution {execution.attempt_id} is not registered")
 
 
 def _failed_event(attempt_id: ID, reason: str, *, cursor: str = "failed") -> WorkerEvent:
     return WorkerEvent(
-        f"builtin:{attempt_id}:{cursor}",
+        f"pi:{attempt_id}:{cursor}",
         attempt_id,
         WorkerEventType.FAILED,
         cursor,
@@ -558,7 +543,7 @@ def _failed_event(attempt_id: ID, reason: str, *, cursor: str = "failed") -> Wor
 
 def _candidate_event(attempt_id: ID, result: WorkerResult) -> WorkerEvent:
     return WorkerEvent(
-        f"builtin:{attempt_id}:candidate",
+        f"pi:{attempt_id}:candidate",
         attempt_id,
         WorkerEventType.CANDIDATE,
         "candidate",
@@ -568,7 +553,7 @@ def _candidate_event(attempt_id: ID, result: WorkerResult) -> WorkerEvent:
 
 def _unknown_outcome_event(attempt_id: ID, reason: str) -> WorkerEvent:
     return WorkerEvent(
-        f"builtin:{attempt_id}:unknown-outcome",
+        f"pi:{attempt_id}:unknown-outcome",
         attempt_id,
         WorkerEventType.WAITING,
         "unknown-outcome",
@@ -578,14 +563,14 @@ def _unknown_outcome_event(attempt_id: ID, reason: str) -> WorkerEvent:
 
 def _completed_event(attempt_id: ID) -> WorkerEvent:
     return WorkerEvent(
-        f"builtin:{attempt_id}:completed",
+        f"pi:{attempt_id}:completed",
         attempt_id,
         WorkerEventType.COMPLETED,
         "completed",
     )
 
 
-def _has_nonlocal_tool_effects(session: BuiltinSession, attempt_id: ID) -> bool:
+def _has_nonlocal_tool_effects(session: AgentTrace, attempt_id: ID) -> bool:
     local_tools = {
         "artifact_read",
         "workspace_list",
@@ -608,7 +593,7 @@ def _has_nonlocal_tool_effects(session: BuiltinSession, attempt_id: ID) -> bool:
     }
     return any(
         event.attempt_id == attempt_id
-        and event.type is BuiltinSessionEventType.TOOL_CALLED
+        and event.type is AgentTraceEventType.TOOL_CALLED
         and event.payload.get("name") not in local_tools
         for event in session.events
     )
@@ -626,7 +611,7 @@ def _external_blocker(evidence: str) -> WorkerBlocker:
 
 def _blocked_event(attempt_id: ID, blocker: WorkerBlocker) -> WorkerEvent:
     return WorkerEvent(
-        f"builtin:{attempt_id}:blocked",
+        f"pi:{attempt_id}:blocked",
         attempt_id,
         WorkerEventType.BLOCKED,
         "blocked",
@@ -634,12 +619,12 @@ def _blocked_event(attempt_id: ID, blocker: WorkerBlocker) -> WorkerEvent:
     )
 
 
-def _candidate_result(session: BuiltinSession, attempt_id: ID) -> WorkerResult:
+def _candidate_result(session: AgentTrace, attempt_id: ID) -> WorkerResult:
     if not session.is_turn_complete(attempt_id):
-        raise RuntimeError(f"Built-in Attempt {attempt_id} has no completed Turn")
+        raise RuntimeError(f"Pi Attempt {attempt_id} has no completed Turn")
     call_id: str | None = None
     for event in reversed(session.events):
-        if event.attempt_id != attempt_id or event.type is not BuiltinSessionEventType.TOOL_CALLED:
+        if event.attempt_id != attempt_id or event.type is not AgentTraceEventType.TOOL_CALLED:
             continue
         if event.payload.get("name") == "report_blocked":
             arguments = event.payload.get("arguments")
@@ -657,10 +642,10 @@ def _candidate_result(session: BuiltinSession, attempt_id: ID) -> WorkerResult:
             call_id = value if isinstance(value, str) else None
             break
     if call_id is None:
-        raise RuntimeError("Built-in Agent must finish with submit_candidate")
+        raise RuntimeError("Pi Agent must finish with submit_candidate")
     submitted: dict[str, JsonValue] | None = None
     for event in session.events:
-        if event.attempt_id != attempt_id or event.type is not BuiltinSessionEventType.TOOL_RESULT:
+        if event.attempt_id != attempt_id or event.type is not AgentTraceEventType.TOOL_RESULT:
             continue
         if event.payload.get("call_id") == call_id:
             value = event.payload.get("result")
@@ -680,12 +665,12 @@ def _candidate_result(session: BuiltinSession, attempt_id: ID) -> WorkerResult:
                 content.encode("utf-8"),
             ),
         ),
-        f"Built-in Agent submitted {name}",
+        f"Pi Agent submitted {name}",
         raw_output=raw_output,
     )
 
 
-def _builtin_context(request: WorkerRequest) -> dict[str, JsonValue]:
+def _worker_context(request: WorkerRequest) -> dict[str, JsonValue]:
     context = request.context
     context["input_artifacts"] = [artifact.to_prompt_dict() for artifact in request.artifact_inputs]
     context["confirmed_completion_contract"] = {
@@ -706,7 +691,7 @@ def _builtin_context(request: WorkerRequest) -> dict[str, JsonValue]:
         }
         for check in request.required_check_specs
     ]
-    role_protocol = _builtin_role_protocol(request.plan_node.kind)
+    role_protocol = _worker_role_protocol(request.plan_node.kind)
     if role_protocol is not None:
         context["role_protocol"] = role_protocol
     return context
@@ -714,13 +699,15 @@ def _builtin_context(request: WorkerRequest) -> dict[str, JsonValue]:
 
 def _worker_role_config(
     request: WorkerRequest,
-    tools: BuiltinToolRuntime,
-) -> BuiltinRoleConfig:
+    tools: HostToolRuntime,
+    *,
+    system_prompt: str,
+) -> AgentRoleConfig:
     role = {
-        PlanNodeKind.EVALUATOR: BuiltinRole.EVALUATOR,
-        PlanNodeKind.MERGE: BuiltinRole.MERGE,
-        PlanNodeKind.REVIEWER: BuiltinRole.REVIEWER,
-    }.get(request.plan_node.kind, BuiltinRole.WORKER)
+        PlanNodeKind.EVALUATOR: AgentRole.EVALUATOR,
+        PlanNodeKind.MERGE: AgentRole.MERGE,
+        PlanNodeKind.REVIEWER: AgentRole.REVIEWER,
+    }.get(request.plan_node.kind, AgentRole.WORKER)
     tool_names = tuple(definition.name for definition in tools.tool_set.definitions)
     permissions = {"workspace.read", "artifact.read"}
     if any(definition.writes_workspace for definition in tools.tool_set.definitions):
@@ -732,19 +719,18 @@ def _worker_role_config(
     permissions.update(tools.git_permissions)
     if all(name in tool_names for name in ("session_list", "session_send", "session_read")):
         permissions.add("session.message")
-    return BuiltinRoleConfig(
+    return AgentRoleConfig(
         role=role,
-        system_prompt=_DEFAULT_SYSTEM_PROMPT,
-        tool_profile=f"builtin-{role.value}-v1",
+        system_prompt=system_prompt,
+        tool_profile=f"pi-{role.value}-v1",
         tool_names=tool_names,
         finish_tool="submit_candidate",
         permissions=frozenset(permissions),
-        tool_choice="required",
         final_tool_requires_only=True,
     )
 
 
-def _builtin_role_protocol(kind: PlanNodeKind) -> dict[str, JsonValue] | None:
+def _worker_role_protocol(kind: PlanNodeKind) -> dict[str, JsonValue] | None:
     if kind is PlanNodeKind.EVALUATOR:
         return {
             "role": "evaluator",

@@ -13,6 +13,15 @@ Agent、不同外部 Agent 框架、服务 Connector 和事件驱动 Routines；
 > 2026-09-06 的 [执行模型共识](docs/EXECUTION_MODEL.md) 明确 Worker 实例化、阶段/分支 Gate、
 > 过程自主调整、阶段 Session 与 handoff 恢复；这是当前目标，不是已交付功能清单。
 
+2026-09-14 起按 [ADR 0005](docs/adr/0005-external-agent-backends.md) 迁移为上层编排框架：
+由完整 Pi 后端拥有具体 Agent Loop、模型调用和上下文管理。当前已接通无模型调用的
+`inspect-agent` 控制通道检查；Worker、Planner 和 Reviewer 已接线到 Pi，自研 Runtime 和
+Responses Adapter 已删除。真实模型、工具与产品 E2E 尚未验证，不把接线当成迁移验收。
+安装、用法与实跑范围见 [Pi 后端迁移记录](docs/PI_BACKEND_MIGRATION.md)。
+
+提供 Pi 配置后，Planner 默认选择 Pi；API 的 P2 宿主也默认选择 Pi Worker。
+规划模型可独立指定；缺少必要配置明确报错，不静默生成固定模板。显式无模型演示后端仍保留。
+
 ## Why EHAI
 
 现有 Agent 通常擅长执行单次指令，但复杂任务还需要明确的计划版本、探索边界、完成标准和恢复路径。
@@ -60,7 +69,7 @@ Worker 是经 Connector 按预设创建的 Agent 实例，不是 Connector、模
 用法、能力边界与兼容端点参数见 [Usage](docs/USAGE.md)。
 
 R2 已新增前台 `execute-plan`、`resume-session` 和只读 `get-result`，接入实际代码快照、并行成果衔接、
-最终行为 Gate 和失败修复；支持配置 Built-in 或 Codex App Server Worker。代表性 Built-in 真实 CLI
+最终行为 Gate 和失败修复；当前选择 Pi 或 Codex App Server Worker。以下为迁移前证据：Built-in 真实 CLI
 编码试用已通过：三槽并行、两个实际代码分支、选中成果整合和一个最终行为 Gate。
 已补充真实模型受控试用：固定 Gate 失败后自主修复，以及 Ctrl+C 暂停后同一 Run 立即恢复、
 不重跑已完成的上游任务。Codex App Server 也已完成真实 CLI 并行编码、Ctrl+C 和同一 Run 立即恢复，
@@ -78,26 +87,30 @@ R2 已新增前台 `execute-plan`、`resume-session` 和只读 `get-result`，�
 | 顶层通用 Agent | 职责已明确，交付增量待定 | 协助用户审查、查询、决策并调用平台，不替代 Planner |
 | P3–P5 | 已规划 | UI、Workflow/Routines、外部服务事件与开放 Agent 生态 |
 
-P2-I0–I9 已提供可恢复 Built-in Agent、OpenAI Responses ModelClient、受控并发 Scheduler、
+P2-I0–I9 曾提供可恢复 Built-in Agent、OpenAI Responses ModelClient（两者已退役）、受控并发 Scheduler、
 Codex App Server 多 Session Connector、EHAI-owned Git worktree、超时/租约/安全重试与 Event Replay。
 Git 分支写任务使用独立 worktree；非 Git 写任务串行，dirty EHAI worktree 会保留并产生 Event。
-真实 Responses Smoke 仍需调用方显式提供有目标模型权限的 `OPENAI_API_KEY`；默认测试不访问外部服务。
+历史 Responses Smoke 不作为当前 Pi 验收。真实 Pi 模型调用需要私有配置及授权的环境凭证。
 
 ## Quick Start
 
-需要 Python 3.12 和 [uv](https://docs.astral.sh/uv/)。Standalone Built-in Agent 只需要
-`OPENAI_API_KEY`（自定义兼容端点可设置 `OPENAI_BASE_URL`），不需要安装 Codex；Codex CLI/App
-Server Worker 才要求本机安装并登录 Codex。
+需要 Python 3.12、[uv](https://docs.astral.sh/uv/) 和 Node >=22.19.0。
+先按 [Pi 配置指南](docs/USAGE.md) 创建仓库外的 backend.json、settings.json 和 models.json。
+凭证仅通过 backend.json 的 environment_names 白名单传入，不写入配置文件；示例使用
+OPENAI_API_KEY，自定义端点由 Pi models.json 配置，不再由 EHAI 读取 OPENAI_BASE_URL。
+Codex CLI/App Server 后端仍需要单独安装并认证 Codex。
 
 ```powershell
 uv sync
+npm.cmd ci --prefix agent-backends/pi --ignore-scripts --no-audit --no-fund
 uv run ehai --help
 uv run ehai-api --help
 $env:OPENAI_API_KEY = Read-Host -MaskInput "OpenAI API key"
 uv run ehai-api --database .ehai/p2.sqlite3 --artifacts .ehai/p2-artifacts `
-    --worker builtin --worker-workspace (Get-Location).Path `
-    --builtin-model gpt-5.6-luna --builtin-reasoning-effort high `
-    --builtin-capacity 2 --p2-runtime
+    --worker pi --worker-workspace (Get-Location).Path `
+    --pi-config C:/private/ehai-pi/backend.json `
+    --agent-model "<exact-model-id>" --agent-reasoning-effort high `
+    --worker-capacity 2 --p2-runtime
 
 Set-Location control-plane
 npm.cmd ci

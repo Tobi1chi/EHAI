@@ -1,0 +1,7 @@
+{
+  "node": "C:/replace-with-node-installation/node.exe",
+  "cli": "C:/replace-with-ehai/agent-backends/pi/node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js",
+  "agent_dir": "C:/replace-with-private-config/ehai-pi",
+  "provider": "openai",
+  "environment_names": ["OPENAI_API_KEY"]
+}

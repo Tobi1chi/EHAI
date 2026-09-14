@@ -1,4 +1,4 @@
-"""Responses-backed Built-in Planner adapter without Worker execution state."""
+"""Pi-backed Planner harness without Worker execution state."""
 
 from __future__ import annotations
 
@@ -8,29 +8,25 @@ from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 
-from openai.types.shared import ReasoningEffort
-
 from ehai import ID, JsonValue, new_id, utc_now
-from ehai.application.builtin_agent import (
-    AgentBudget,
-    BuiltinSession,
-    BuiltinSessionStore,
+from ehai.application.agent_contracts import (
     CancellationToken,
-    ModelClient,
     RecoverableToolError,
     ToolCall,
     ToolDefinition,
     ToolHandler,
 )
-from ehai.application.builtin_runtime import (
-    BuiltinAgentRuntime,
-    BuiltinRole,
-    BuiltinRoleConfig,
-    BuiltinRoleExecution,
-    MemoryBuiltinSessionStore,
+from ehai.application.agent_roles import (
+    AgentRole,
+    AgentRoleConfig,
+    AgentRoleExecution,
+    MemoryAgentTraceStore,
     ToolRegistry,
 )
-from ehai.application.execution_contracts import OPENAI_CREDENTIAL_REF
+from ehai.application.agent_trace import (
+    AgentTrace,
+    AgentTraceStore,
+)
 from ehai.application.planner import (
     COMMAND_EXIT_ZERO_CRITERION,
     HUMAN_CRITERION_PREFIX,
@@ -60,11 +56,9 @@ from ehai.domain.process import (
     process_graph_definition,
 )
 from ehai.domain.workers import WorkerCapability, WorkerKind, WorkerProfile
-from ehai.infrastructure.builtin_tools import BuiltinToolRuntime
-from ehai.infrastructure.openai_responses import (
-    OpenAIResponsesModelClient,
-    ResponsesEndpointCapabilities,
-)
+from ehai.infrastructure.host_tools import HostToolRuntime
+from ehai.infrastructure.pi_config import PiBackendConfig
+from ehai.infrastructure.pi_runtime import PiRoleRunner
 from ehai.infrastructure.planners.codex_protocol import build_codex_planner_input
 from ehai.infrastructure.planners.plan_graph_tools import (
     MAX_VALIDATION_RETRIES,
@@ -72,8 +66,6 @@ from ehai.infrastructure.planners.plan_graph_tools import (
 )
 
 _DEFAULT_PLANNER_BUDGET = ExplorationBudget(max_attempts=24, max_width=3, max_depth=4)
-
-_PLANNER_AGENT_BUDGET = AgentBudget(256, 512, None, 8 * 1024 * 1024)
 
 
 def _requires_final_gate(criteria: tuple[str, ...]) -> bool:
@@ -85,7 +77,7 @@ def _requires_final_gate(criteria: tuple[str, ...]) -> bool:
 
 _PLANNER_SYSTEM_PROMPT = "\n".join(
     (
-        "You are the EHAI Built-in Planner. Propose a plan only.",
+        "You are the EHAI Pi Planner. Propose a plan only.",
         "Do not execute work, create Worker Attempts, create Sessions,",
         "or claim the Goal is complete.",
         "Construct the plan graph by calling the provided graph tools directly.",
@@ -102,7 +94,7 @@ _PLANNER_SYSTEM_PROMPT = "\n".join(
         "A non-new Session policy must match an explicitly supporting preset and",
         "does not by itself establish shared Phase Session behavior.",
         "Distinguish physical Agent Sessions from the host-owned logical Phase Session:",
-        "Built-in phase members share durable phase discussion and context while keeping their",
+        "Pi phase members share durable phase discussion and context while keeping their",
         "own physical Agent Sessions and isolated writable workspaces. A session_policy of new",
         "does not disable that logical phase continuity. Do not describe same-phase work as",
         "having no shared phase context, or promise concurrent use of one physical conversation.",
@@ -208,11 +200,8 @@ _DISCUSSION_SYSTEM_PROMPT = "\n".join(
 )
 
 
-class BuiltinPlannerError(RuntimeError):
-    """Raised when the Built-in Responses Planner cannot produce a valid proposal."""
-
-
-PlannerModelClientFactory = Callable[[WorkerProfile], ModelClient]
+class PiPlannerError(RuntimeError):
+    """Raised when the Pi Planner cannot produce a valid proposal."""
 
 
 _PROCESS_PLANNER_SYSTEM_PROMPT = "\n".join(
@@ -256,19 +245,17 @@ _PROCESS_PLANNER_SYSTEM_PROMPT = "\n".join(
 )
 
 
-class BuiltinPlannerAdapter:
-    """Propose a bounded PlanTemplate using the Built-in Responses ModelClient seam."""
+class PiPlannerAdapter:
+    """Role harness producing a validated PlanTemplate through native Pi."""
 
     def __init__(
         self,
         *,
         model: str,
-        reasoning_effort: ReasoningEffort = None,
+        backend: PiBackendConfig,
+        reasoning_effort: str | None = None,
         budget: ExplorationBudget | None = None,
-        model_client_factory: PlannerModelClientFactory | None = None,
-        endpoint_capabilities: ResponsesEndpointCapabilities | None = None,
-        agent_runtime: BuiltinAgentRuntime | None = None,
-        session_store: BuiltinSessionStore | None = None,
+        session_store: AgentTraceStore | None = None,
         workspace: Path | None = None,
         artifact_store: ArtifactStore | None = None,
         check_configuration: Mapping[str, JsonValue] | None = None,
@@ -276,29 +263,23 @@ class BuiltinPlannerAdapter:
         clock: Callable[[], datetime] = utc_now,
     ) -> None:
         if not isinstance(model, str) or not model.strip():
-            raise ValueError("BuiltinPlannerAdapter model must not be blank")
+            raise ValueError("PiPlannerAdapter model must not be blank")
         self._budget = budget or _DEFAULT_PLANNER_BUDGET
         if not isinstance(self._budget, ExplorationBudget):
             raise TypeError("budget must be an ExplorationBudget")
         self._profile = WorkerProfile(
-            "builtin-planner",
-            WorkerKind.BUILTIN,
+            "pi-planner",
+            WorkerKind.PI,
             model,
-            frozenset({WorkerCapability("planner.builtin")}),
-            credential_ref=OPENAI_CREDENTIAL_REF,
+            frozenset({WorkerCapability("planner.pi")}),
         )
         self._reasoning_effort = reasoning_effort
-        self._endpoint_capabilities = endpoint_capabilities or ResponsesEndpointCapabilities()
-        if not isinstance(self._endpoint_capabilities, ResponsesEndpointCapabilities):
-            raise TypeError("endpoint_capabilities must be ResponsesEndpointCapabilities")
-        self._model_client_factory = model_client_factory or self._create_model_client
-        if agent_runtime is not None and session_store is not None:
-            raise ValueError("agent_runtime and session_store are mutually exclusive")
-        self._agent_runtime = agent_runtime or BuiltinAgentRuntime(
-            session_store or MemoryBuiltinSessionStore(),
-            budget=_PLANNER_AGENT_BUDGET,
+        self._agent_runtime = PiRoleRunner(
+            session_store or MemoryAgentTraceStore(),
+            backend=backend,
+            state_root=backend.agent_dir / "ehai-sessions",
         )
-        self._last_session: BuiltinSession | None = None
+        self._last_session: AgentTrace | None = None
         if (workspace is None) != (artifact_store is None):
             raise ValueError("Planner workspace and artifact store must be configured together")
         self._workspace = None if workspace is None else workspace.resolve(strict=True)
@@ -310,11 +291,11 @@ class BuiltinPlannerAdapter:
         self._clock = clock
 
     @property
-    def last_session(self) -> BuiltinSession | None:
+    def last_session(self) -> AgentTrace | None:
         return self._last_session
 
     def propose(self, goal: Goal, criteria: tuple[str, ...]) -> PlanProposal:
-        """Ask Responses for a provider-specific plan and assemble a draft proposal."""
+        """Ask Pi to propose a plan and validate it through the host builders."""
         self._require_goal(goal, allow_completion_contract=False)
         return self._propose_template(goal, criteria)
 
@@ -339,7 +320,7 @@ class BuiltinPlannerAdapter:
         base: PlanRevision | None = None,
         context: ReplanContext | None = None,
     ) -> PlanProposal:
-        normalized_criteria = require_p1_criteria(criteria, "BuiltinPlannerAdapter")
+        normalized_criteria = require_p1_criteria(criteria, "PiPlannerAdapter")
         input_document = build_codex_planner_input(
             goal,
             normalized_criteria,
@@ -490,7 +471,9 @@ class BuiltinPlannerAdapter:
             }
             for check in checks
         ]
-        graph = PlanGraphToolRuntime.from_process(previous, current, self._budget)
+        graph = PlanGraphToolRuntime.from_process(
+            previous, current, self._budget, planner_event_types=("planner.pi.completed",)
+        )
         template, _, _ = await self._run_planner(
             document,
             discussion=False,
@@ -499,7 +482,7 @@ class BuiltinPlannerAdapter:
             session_ref_id=session_ref_id,
         )
         if template is None:
-            raise BuiltinPlannerError("Process proposal finished without a graph")
+            raise PiPlannerError("Process proposal finished without a graph")
         return build_process_proposal(
             previous, current, template, reason, id_factory=self._id_factory, clock=self._clock
         )
@@ -517,11 +500,12 @@ class BuiltinPlannerAdapter:
         from ehai.infrastructure.planners.process_review import run_process_boundary_review
 
         if self._artifact_store is None:
-            raise BuiltinPlannerError("Process review requires the retained Artifact store")
+            raise PiPlannerError("Process review requires the retained Artifact store")
         return await run_process_boundary_review(
             context,
             runtime=self._agent_runtime,
-            model_client=self._model_client_factory(self._profile),
+            model=self._profile.model,
+            reasoning_effort=self._reasoning_effort,
             session_ref_id=session_ref_id,
             artifact_store=self._artifact_store,
             workspace=self._workspace,
@@ -539,7 +523,7 @@ class BuiltinPlannerAdapter:
             require_final_gate=require_final_gate,
         )
         if template is None:
-            raise BuiltinPlannerError("Proposal finished without a plan")
+            raise PiPlannerError("Proposal finished without a plan")
         return template
 
     async def _run_planner(
@@ -553,7 +537,7 @@ class BuiltinPlannerAdapter:
     ) -> tuple[PlanTemplate | None, str, ID]:
         graph = process_graph or PlanGraphToolRuntime(
             self._budget,
-            planner_event_types=("planner.responses.completed",),
+            planner_event_types=("planner.pi.completed",),
             require_final_gate=require_final_gate,
         )
         design: dict[str, str] = {}
@@ -561,15 +545,15 @@ class BuiltinPlannerAdapter:
         workspace_tools = (
             None
             if self._workspace is None or self._artifact_store is None
-            else BuiltinToolRuntime(
+            else HostToolRuntime(
                 workspace=self._workspace,
                 artifact_store=self._artifact_store,
                 allow_workspace_write=False,
             )
         )
         registry, names = _planner_registry(graph, design, answer, workspace_tools, discussion)
-        config = BuiltinRoleConfig(
-            role=BuiltinRole.PLANNER,
+        config = AgentRoleConfig(
+            role=AgentRole.PLANNER,
             system_prompt=(
                 _PROCESS_PLANNER_SYSTEM_PROMPT
                 if process_graph is not None
@@ -590,7 +574,6 @@ class BuiltinPlannerAdapter:
                 {"plan.read", "plan.write"}
                 | ({"workspace.read"} if workspace_tools is not None else set())
             ),
-            tool_choice="required",
             final_tool_requires_only=False,
         )
         session = self._agent_runtime.create_session(session_ref_id)
@@ -599,9 +582,11 @@ class BuiltinPlannerAdapter:
             await self._agent_runtime.run(
                 config=config,
                 registry=registry,
-                model_client=self._model_client_factory(self._profile),
+                model=self._profile.model,
+                reasoning_effort=self._reasoning_effort,
                 session=session,
-                execution=BuiltinRoleExecution(session.agent_session_ref_id),
+                workspace=self._workspace or Path.cwd(),
+                execution=AgentRoleExecution(session.agent_session_ref_id),
                 instruction=(
                     "Discuss the user's request. Ask for clarification or respond to review using "
                     "ask_user when appropriate; otherwise prepare a detailed design and graph, "
@@ -623,8 +608,8 @@ class BuiltinPlannerAdapter:
         if "message" in answer:
             return None, answer["message"], session.agent_session_ref_id
         if not graph.finished:
-            raise BuiltinPlannerError(
-                "Built-in Planner response contained no ToolCalls; the plan must be built "
+            raise PiPlannerError(
+                "Pi Planner response contained no ToolCalls; the plan must be built "
                 "with the graph tools and submitted through finish_plan"
             )
         document = "\n\n".join(f"## {name}\n\n{text}" for name, text in design.items())
@@ -636,14 +621,6 @@ class BuiltinPlannerAdapter:
                 else "Process draft ready; boundary/evidence review is required before applying."
             ),
             session.agent_session_ref_id,
-        )
-
-    def _create_model_client(self, profile: WorkerProfile) -> ModelClient:
-        return OpenAIResponsesModelClient(
-            profile,
-            reasoning_effort=self._reasoning_effort,
-            background=True,
-            endpoint_capabilities=self._endpoint_capabilities,
         )
 
     @staticmethod
@@ -660,7 +637,7 @@ def _planner_registry(
     graph: PlanGraphToolRuntime,
     design: dict[str, str],
     answer: dict[str, str],
-    workspace_tools: BuiltinToolRuntime | None,
+    workspace_tools: HostToolRuntime | None,
     discussion: bool,
 ) -> tuple[ToolRegistry, tuple[str, ...]]:
     definitions: list[ToolDefinition] = []
@@ -687,8 +664,8 @@ def _planner_registry(
                 return {"accepted": False, "error": "Call set_plan_design before finish_plan"}
             result = graph.execute(tool_name, arguments)
             if graph.validation_budget_exhausted:
-                raise BuiltinPlannerError(
-                    "Built-in Planner validation budget exhausted: finish_plan failed "
+                raise PiPlannerError(
+                    "Pi Planner validation budget exhausted: finish_plan failed "
                     f"full validation {MAX_VALIDATION_RETRIES + 1} times"
                 )
             return result
@@ -762,7 +739,7 @@ def _planner_registry(
 
         handlers["ask_user"] = ask_user
     if workspace_tools is not None:
-        read_tools: BuiltinToolRuntime = workspace_tools
+        read_tools: HostToolRuntime = workspace_tools
         for definition in workspace_tools.tool_set.definitions:
             if definition.name not in {"workspace_list", "workspace_read", "workspace_search"}:
                 continue
@@ -773,7 +750,7 @@ def _planner_registry(
                 cancellation: CancellationToken,
                 *,
                 name: str = definition.name,
-                tools: BuiltinToolRuntime = read_tools,
+                tools: HostToolRuntime = read_tools,
             ) -> JsonValue:
                 return await tools.executor.execute(
                     ToolCall(str(new_id()), name, arguments), cancellation

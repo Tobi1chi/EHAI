@@ -2,6 +2,11 @@
 
 ## 地位与适用范围
 
+2026-09-14 补充：具体 Agent Runtime 采用外部完整 Pi 后端，EHAI 只拥有上层编排、授权、
+成果与验收；各角色通过预设和公开调用使用后端，不再自研模型循环。详见
+[ADR 0005](adr/0005-external-agent-backends.md)。此职责决定不改变本文的批准边界、Gate、
+有效 handoff 和安全恢复要求，也不表示旧运行已迁移。
+
 本文件记录 2026-09-06 用户确认的共识，与 [Product Scope](PRODUCT_SCOPE.md) 共同作为当前产品
 设计依据。有关 Worker、规划、Gate、Session、恢复和并行的旧表述与本文件冲突时，以本文件为准。
 这是目标设计，不表示现有代码、数据库、Schema 或 CLI 已实现这些语义。
@@ -13,7 +18,7 @@
 ## Worker 是按预设实例化的 Agent
 
 ```text
-Agent 框架：Built-in / Codex / 其他框架
+Agent 框架：Pi / Codex / 其他框架
                     ↓ 由 Agent 执行 Connector 接入
 Worker 预设：职责、模型、工具、权限、运行配置
                     ↓ 按预设创建并管理
@@ -24,15 +29,15 @@ Worker：具体运行的 Agent 实例
 
 | 概念 | 含义与职责 | 不等于 |
 | --- | --- | --- |
-| Agent 框架 | 承载 Agent 运行与工具循环的执行实现，如 Built-in、Codex | 模型或任务职责 |
+| Agent 框架 | 承载 Agent 运行与工具循环的执行实现，如 Pi、Codex | 模型或任务职责 |
 | Agent 执行 Connector | 接入框架，提供创建、调用、观察、停止和恢复执行的能力 | 被创建的 Worker 实例 |
 | Worker 预设 | 描述实例的职责、模型、工具与权限、上下文和运行配置 | 某次活跃执行 |
 | Worker | 按预设经 Connector 创建、管理的具体 Agent 实例 | Connector、模型名称、任务节点或 Session |
 | Planner / 编码者 / Reviewer | Agent 承担的职责，由不同 Worker 预设表达 | 只能使用某一个框架的固定类型 |
 | Session | Agent 执行中的会话与上下文管理机制 | Worker 定义或任务完成事实 |
 
-同一框架可以创建多个不同预设的 Worker；同一职责也可由不同框架承载。选择 Built-in 时复用已有
-Agent Runtime，选择外部框架时通过对应 Connector 接入，不为每个职责复制 Agent Loop。
+同一框架可以创建多个不同预设的 Worker；同一职责也可由不同框架承载。选择 Pi 或其他外部框架
+时通过对应 Connector 接入，不为每个职责复制 Agent Loop，不再保留自研模型 Runtime。
 现有 `WorkerProfile`、`WorkerEndpoint`、`Attempt`、Provider Thread/Turn 是可复用的实现基础，
 但不能只凭这些对象已经存在，就认为 Worker 实例模型已经完整实现。
 

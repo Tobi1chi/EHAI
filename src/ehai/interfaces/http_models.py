@@ -135,11 +135,20 @@ class GoalWorkerBudgetRequest(_StrictRequest):
     max_worker_attempts: Annotated[int, Field(strict=True, ge=1)]
 
 
+class PiBackendConfigRequest(_StrictRequest):
+    node: ExecutionText
+    cli: ExecutionText
+    agent_dir: ExecutionText
+    provider: ExecutionText
+    environment_names: list[ExecutionText]
+    configuration_hash: ExecutionText | None = None
+
+
 class ExecutionConfigRequest(_StrictRequest):
     """Explicit confirmation of the host's credential-free execution settings."""
 
     config_version: Annotated[int, Field(strict=True, ge=1, le=1)]
-    worker_kind: Literal["builtin", "codex-server"]
+    worker_kind: Literal["pi", "codex-server"]
     model: ExecutionText
     reasoning_effort: ExecutionText | None
     capacity: Annotated[int, Field(strict=True, ge=1)]
@@ -160,6 +169,7 @@ class ExecutionConfigRequest(_StrictRequest):
     codex_server: ExecutionCodexServerRequest | None = None
     process_adjustment: ProcessAdjustmentPolicyRequest | None = None
     goal_worker_budget: GoalWorkerBudgetRequest | None = None
+    pi: PiBackendConfigRequest | None = None
 
 
 class StartRunRequest(_StrictRequest):

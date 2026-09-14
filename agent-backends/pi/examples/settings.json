@@ -1,0 +1,7 @@
+{
+  "retry": {
+    "enabled": false,
+    "provider": {"maxRetries": 0}
+  },
+  "compaction": {"enabled": true}
+}

@@ -1,4 +1,4 @@
-"""SQLite append-only storage for Built-in Agent Session events."""
+"""Host audit storage retaining legacy table names for historical reads."""
 
 from __future__ import annotations
 
@@ -16,35 +16,36 @@ from ehai import (
     parse_utc_datetime,
     utc_now,
 )
-from ehai.application.builtin_agent import (
-    BuiltinSession,
-    BuiltinSessionEvent,
-    BuiltinSessionEventType,
-    BuiltinSessionStateError,
+from ehai.application.agent_trace import (
+    AgentTrace,
+    AgentTraceEvent,
+    AgentTraceEventType,
+    AgentTraceStateError,
 )
 from ehai.infrastructure.sqlite.database import SQLiteDatabase
 
 
-class SQLiteBuiltinSessionStore:
-    """Persist contiguous BuiltinSessionEvent batches in SQLite transactions."""
+class SQLiteAgentTraceStore:
+    """Persist contiguous AgentTraceEvent batches in SQLite transactions."""
 
     def __init__(self, database: SQLiteDatabase) -> None:
         self._database = database
 
-    def create(self, agent_session_ref_id: ID | None = None) -> BuiltinSession:
+    def create(self, agent_session_ref_id: ID | None = None) -> AgentTrace:
         session_id = normalize_id(agent_session_ref_id or new_id())
         connection = self._database.connect()
         try:
             connection.execute(
-                "INSERT INTO builtin_role_sessions(agent_session_ref_id, created_at) VALUES (?, ?)",
+                "INSERT INTO builtin_role_sessions(agent_session_ref_id, created_at) VALUES (?, ?) "
+                "ON CONFLICT(agent_session_ref_id) DO NOTHING",
                 (session_id, format_utc_datetime(utc_now())),
             )
             connection.commit()
         finally:
             connection.close()
-        return BuiltinSession(session_id)
+        return self.load(session_id)
 
-    def load(self, agent_session_ref_id: ID) -> BuiltinSession:
+    def load(self, agent_session_ref_id: ID) -> AgentTrace:
         session_id = normalize_id(agent_session_ref_id)
         connection = self._database.connect()
         try:
@@ -55,7 +56,7 @@ class SQLiteBuiltinSessionStore:
                 f"SELECT event_json FROM {table} WHERE agent_session_ref_id = ? ORDER BY sequence",
                 (session_id,),
             ).fetchall()
-            return BuiltinSession(
+            return AgentTrace(
                 session_id,
                 tuple(_decode_event(_row_text(row, 0)) for row in rows),
             )
@@ -66,7 +67,7 @@ class SQLiteBuiltinSessionStore:
         self,
         agent_session_ref_id: ID,
         expected_sequence: int,
-        events: tuple[BuiltinSessionEvent, ...],
+        events: tuple[AgentTraceEvent, ...],
     ) -> None:
         session_id = normalize_id(agent_session_ref_id)
         if type(expected_sequence) is not int or expected_sequence < 0:
@@ -87,7 +88,7 @@ class SQLiteBuiltinSessionStore:
                 ).fetchone()[0]
             )
             if current != expected_sequence:
-                raise BuiltinSessionStateError(
+                raise AgentTraceStateError(
                     f"Session {session_id} expected sequence {expected_sequence}, found {current}"
                 )
             for offset, event in enumerate(events, start=1):
@@ -95,7 +96,7 @@ class SQLiteBuiltinSessionStore:
                     event.agent_session_ref_id != session_id
                     or event.sequence != expected_sequence + offset
                 ):
-                    raise BuiltinSessionStateError("SessionEvent append batch is not contiguous")
+                    raise AgentTraceStateError("SessionEvent append batch is not contiguous")
                 execution_column = (
                     "attempt_id" if table == "builtin_session_events" else "execution_id"
                 )
@@ -144,7 +145,7 @@ def _event_table(connection: sqlite3.Connection, session_id: ID) -> str | None:
     return None
 
 
-def _encode_event(event: BuiltinSessionEvent) -> str:
+def _encode_event(event: AgentTraceEvent) -> str:
     return json_dumps(
         {
             "agent_session_ref_id": event.agent_session_ref_id,
@@ -157,18 +158,18 @@ def _encode_event(event: BuiltinSessionEvent) -> str:
     )
 
 
-def _decode_event(document: str) -> BuiltinSessionEvent:
+def _decode_event(document: str) -> AgentTraceEvent:
     value = json_loads(document)
     if not isinstance(value, dict):
-        raise BuiltinSessionStateError("stored SessionEvent is not an object")
+        raise AgentTraceStateError("stored SessionEvent is not an object")
     payload = value.get("payload")
     if not isinstance(payload, Mapping):
-        raise BuiltinSessionStateError("stored SessionEvent payload is not an object")
-    return BuiltinSessionEvent(
+        raise AgentTraceStateError("stored SessionEvent payload is not an object")
+    return AgentTraceEvent(
         agent_session_ref_id=ID(_string(value, "agent_session_ref_id")),
         attempt_id=ID(_string(value, "attempt_id")),
         sequence=_integer(value, "sequence"),
-        event_type=BuiltinSessionEventType(_string(value, "type")),
+        event_type=AgentTraceEventType(_string(value, "type")),
         occurred_at=parse_utc_datetime(_string(value, "occurred_at")),
         payload=payload,
     )
@@ -177,14 +178,14 @@ def _decode_event(document: str) -> BuiltinSessionEvent:
 def _string(document: Mapping[str, JsonValue], key: str) -> str:
     value = document.get(key)
     if not isinstance(value, str):
-        raise BuiltinSessionStateError(f"stored SessionEvent {key} must be text")
+        raise AgentTraceStateError(f"stored SessionEvent {key} must be text")
     return value
 
 
 def _integer(document: Mapping[str, JsonValue], key: str) -> int:
     value = document.get(key)
     if not isinstance(value, int) or isinstance(value, bool):
-        raise BuiltinSessionStateError(f"stored SessionEvent {key} must be an integer")
+        raise AgentTraceStateError(f"stored SessionEvent {key} must be an integer")
     return value
 
 

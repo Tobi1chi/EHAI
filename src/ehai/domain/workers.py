@@ -17,6 +17,7 @@ class WorkerKind(StrEnum):
     """Worker implementations supported during P2."""
 
     BUILTIN = "builtin"
+    PI = "pi"
     CODEX_CLI = "codex_cli"
     CODEX_APP_SERVER = "codex_app_server"
 

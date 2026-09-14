@@ -8,7 +8,7 @@ from itertools import pairwise
 from typing import cast
 
 from ehai import ID, JsonValue, normalize_id
-from ehai.application.builtin_agent import ToolDefinition
+from ehai.application.agent_contracts import ToolDefinition
 from ehai.application.planner import (
     BranchTemplate,
     EdgeTemplate,

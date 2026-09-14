@@ -16,7 +16,7 @@ from time import monotonic
 from typing import Protocol, cast
 
 from ehai import JsonValue, json_dumps, json_loads
-from ehai.application.builtin_agent import (
+from ehai.application.agent_contracts import (
     CancellationToken,
     RecoverableToolError,
     ToolDefinition,

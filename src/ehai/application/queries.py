@@ -8,10 +8,10 @@ from datetime import datetime
 from typing import Protocol
 
 from ehai import ID, JsonValue, normalize_id
-from ehai.application.builtin_agent import (
-    BuiltinSession,
-    BuiltinSessionEvent,
-    BuiltinSessionEventType,
+from ehai.application.agent_trace import (
+    AgentTrace,
+    AgentTraceEvent,
+    AgentTraceEventType,
 )
 from ehai.application.goal_budgets import goal_worker_attempts_used, goal_worker_budget
 from ehai.application.interventions import list_interventions
@@ -61,22 +61,24 @@ _MAX_TRACE_SESSION_EVENTS = 512
 _MAX_TRACE_SESSION_PAYLOAD_BYTES = 8 * 1024
 _TRACE_SESSION_EVENT_TYPES = frozenset(
     {
-        BuiltinSessionEventType.MESSAGE_RECEIVED,
-        BuiltinSessionEventType.STEP_STARTED,
-        BuiltinSessionEventType.MODEL_MESSAGE,
-        BuiltinSessionEventType.MODEL_TRANSPORT,
-        BuiltinSessionEventType.TOOL_CALLED,
-        BuiltinSessionEventType.TOOL_RESULT,
-        BuiltinSessionEventType.TOOL_ERROR,
-        BuiltinSessionEventType.STEP_ENDED,
+        AgentTraceEventType.MESSAGE_RECEIVED,
+        AgentTraceEventType.STEP_STARTED,
+        AgentTraceEventType.MODEL_MESSAGE,
+        AgentTraceEventType.MODEL_TRANSPORT,
+        AgentTraceEventType.TOOL_CALLED,
+        AgentTraceEventType.TOOL_RESULT,
+        AgentTraceEventType.TOOL_ERROR,
+        AgentTraceEventType.STEP_ENDED,
+        AgentTraceEventType.BACKEND_EVENT,
+        AgentTraceEventType.BACKEND_ERROR,
     }
 )
 
 
-class BuiltinSessionReader(Protocol):
+class AgentTraceReader(Protocol):
     """Read the durable event stream for one Built-in Agent session."""
 
-    def load(self, agent_session_ref_id: ID) -> BuiltinSession: ...
+    def load(self, agent_session_ref_id: ID) -> AgentTrace: ...
 
 
 class QueryNotFoundError(LookupError):
@@ -398,18 +400,18 @@ class ExecutionTraceView:
     check_runs: tuple[CheckRunView, ...]
     checkpoints: tuple[CheckpointSummary, ...]
     events: tuple[StoredEvent, ...]
-    session_events: tuple[BuiltinSessionEventView, ...]
+    session_events: tuple[AgentTraceEventView, ...]
     session_events_truncated: bool
 
 
 @dataclass(frozen=True, slots=True)
-class BuiltinSessionEventView:
+class AgentTraceEventView:
     """One sanitized and bounded Built-in Agent Step or Tool fact."""
 
     agent_session_ref_id: ID
     attempt_id: ID
     sequence: int
-    type: BuiltinSessionEventType
+    type: AgentTraceEventType
     occurred_at: datetime
     payload: dict[str, JsonValue]
     payload_truncated: bool
@@ -481,7 +483,7 @@ class QueryService:
         self,
         *,
         read_session_factory: ReadSessionFactory,
-        builtin_session_reader: BuiltinSessionReader | None = None,
+        builtin_session_reader: AgentTraceReader | None = None,
     ) -> None:
         self._read_session_factory = read_session_factory
         self._builtin_session_reader = builtin_session_reader
@@ -1027,8 +1029,8 @@ def _check_spec_view(check_spec: CheckSpec) -> CheckSpecView:
 
 def _builtin_session_event_views(
     attempts: tuple[Attempt, ...],
-    reader: BuiltinSessionReader | None,
-) -> tuple[tuple[BuiltinSessionEventView, ...], bool]:
+    reader: AgentTraceReader | None,
+) -> tuple[tuple[AgentTraceEventView, ...], bool]:
     if reader is None:
         return (), False
     attempt_order = {attempt.attempt_id: attempt.sequence for attempt in attempts}
@@ -1039,7 +1041,7 @@ def _builtin_session_event_views(
             if attempt.agent_session_ref_id is not None
         )
     )
-    events: list[BuiltinSessionEvent] = []
+    events: list[AgentTraceEvent] = []
     for session_id in session_ids:
         session = reader.load(session_id)
         events.extend(
@@ -1057,14 +1059,14 @@ def _builtin_session_event_views(
         ),
     )
     truncated = len(ordered) > _MAX_TRACE_SESSION_EVENTS
-    views: list[BuiltinSessionEventView] = []
+    views: list[AgentTraceEventView] = []
     for event in ordered[:_MAX_TRACE_SESSION_EVENTS]:
         payload, payload_truncated = sanitize_json_object(
             event.payload,
             max_bytes=_MAX_TRACE_SESSION_PAYLOAD_BYTES,
         )
         views.append(
-            BuiltinSessionEventView(
+            AgentTraceEventView(
                 agent_session_ref_id=event.agent_session_ref_id,
                 attempt_id=event.attempt_id,
                 sequence=event.sequence,

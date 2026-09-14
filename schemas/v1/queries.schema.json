@@ -874,7 +874,7 @@
     },
     "BuiltinSessionEventType": {
       "type": "string",
-      "enum": ["step/start", "model/message", "model/transport", "tool/call", "tool/result", "tool/error", "step/end"]
+      "enum": ["message/received", "step/start", "model/message", "model/transport", "tool/call", "tool/result", "tool/error", "step/end", "backend/event", "backend/error"]
     },
     "BuiltinSessionEvent": {
       "type": "object",
@@ -971,7 +971,7 @@
       "properties": {
         "worker_profile_id": {"$ref": "common.schema.json#/$defs/Id"},
         "name": {"type": "string", "minLength": 1},
-        "kind": {"enum": ["builtin", "codex_cli", "codex_app_server"]},
+        "kind": {"enum": ["builtin", "pi", "codex_cli", "codex_app_server"]},
         "model": {"type": "string", "minLength": 1},
         "capabilities": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
         "session_policy": {"enum": ["new", "reuse", "fork"]},
@@ -989,7 +989,7 @@
       "properties": {
         "worker_endpoint_id": {"$ref": "common.schema.json#/$defs/Id"},
         "name": {"type": "string", "minLength": 1},
-        "worker_kind": {"enum": ["builtin", "codex_cli", "codex_app_server"]},
+        "worker_kind": {"enum": ["builtin", "pi", "codex_cli", "codex_app_server"]},
         "endpoint_type": {"enum": ["in_process", "command", "address"]},
         "capacity": {"type": "integer", "minimum": 1},
         "status": {"enum": ["enabled", "draining", "disabled"]}

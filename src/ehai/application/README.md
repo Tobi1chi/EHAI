@@ -27,7 +27,7 @@ Gate、阶段 Review、批准底线内自主调整、阶段 Session 及 handoff 
 | Orchestrator | [`orchestrator.py`](orchestrator.py)、[`evaluation.py`](evaluation.py)、[`checks.py`](checks.py) | 推进节点/Attempt，接收无 Check 的中间候选交接，评估分支，运行最终 Check/Gate 并创建 Checkpoint。 |
 | Scheduler | [`scheduler.py`](scheduler.py) | 按能力、Endpoint 状态、capacity 和 Workspace 隔离分配可运行 Attempt；驱动并发 Runtime。 |
 | Runtime | [`async_runtime.py`](async_runtime.py)、[`runtime_control.py`](runtime_control.py) | 定义 Connector 执行协议、后台 DispatchWork 循环、活动状态和 Worker Request 控制。 |
-| Built-in Agent | [`builtin_agent.py`](builtin_agent.py) | 提供持久 Session、模型步骤、固定 Tool 调用、预算、取消与事件重放。 |
+| Agent Harness | [`agent_roles.py`](agent_roles.py)、[`agent_contracts.py`](agent_contracts.py)、[`agent_trace.py`](agent_trace.py) | 角色提示、授权工具契约与审计；模型循环和原生历史由外部 Pi 拥有。 |
 | Run Control | [`run_control.py`](run_control.py) | 协调 pause、resume、cancel 与运行中 Attempt 的收敛。 |
 | Recovery | [`checkpointing.py`](checkpointing.py) | 从 Checkpoint 和持久状态恢复，并拒绝不一致的恢复输入。 |
 | Contracts/Ports | [`workers.py`](workers.py)、[`execution_contracts.py`](execution_contracts.py)、[`ports.py`](ports.py) | 定义 Worker 请求/结果、Connector 契约、Unit of Work、Repository、Event Log 和 Artifact Store Port。 |

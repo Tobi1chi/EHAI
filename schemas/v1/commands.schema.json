@@ -5,23 +5,39 @@
   "$defs": {
     "JsonScalar": {
       "anyOf": [
-        {"type": "boolean"},
-        {"type": "integer"},
-        {"type": "number"},
-        {"type": "string"},
-        {"type": "null"}
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "integer"
+        },
+        {
+          "type": "number"
+        },
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
       ]
     },
     "JsonValue": {
       "anyOf": [
-        {"$ref": "#/$defs/JsonScalar"},
+        {
+          "$ref": "#/$defs/JsonScalar"
+        },
         {
           "type": "array",
-          "items": {"$ref": "#/$defs/JsonValue"}
+          "items": {
+            "$ref": "#/$defs/JsonValue"
+          }
         },
         {
           "type": "object",
-          "additionalProperties": {"$ref": "#/$defs/JsonValue"}
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          }
         }
       ]
     },
@@ -46,11 +62,22 @@
     "Project": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["project_id", "name", "created_at"],
+      "required": [
+        "project_id",
+        "name",
+        "created_at"
+      ],
       "properties": {
-        "project_id": {"$ref": "common.schema.json#/$defs/Id"},
-        "name": {"type": "string", "minLength": 1},
-        "created_at": {"$ref": "common.schema.json#/$defs/UtcDateTime"}
+        "project_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "created_at": {
+          "$ref": "common.schema.json#/$defs/UtcDateTime"
+        }
       }
     },
     "CompletionContract": {
@@ -67,31 +94,52 @@
         "supersedes_completion_contract_id"
       ],
       "properties": {
-        "completion_contract_id": {"$ref": "common.schema.json#/$defs/Id"},
-        "goal_id": {"$ref": "common.schema.json#/$defs/Id"},
-        "version": {"type": "integer", "minimum": 1},
+        "completion_contract_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "goal_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "version": {
+          "type": "integer",
+          "minimum": 1
+        },
         "criteria": {
           "type": "array",
           "minItems": 1,
           "maxItems": 3,
-          "items": {"$ref": "#/$defs/P1CompletionCriterion"}
+          "items": {
+            "$ref": "#/$defs/P1CompletionCriterion"
+          }
         },
         "required_check_ids": {
           "type": "array",
           "minItems": 1,
-          "items": {"$ref": "common.schema.json#/$defs/Id"}
+          "items": {
+            "$ref": "common.schema.json#/$defs/Id"
+          }
         },
-        "created_at": {"$ref": "common.schema.json#/$defs/UtcDateTime"},
+        "created_at": {
+          "$ref": "common.schema.json#/$defs/UtcDateTime"
+        },
         "confirmed_at": {
           "oneOf": [
-            {"$ref": "common.schema.json#/$defs/UtcDateTime"},
-            {"type": "null"}
+            {
+              "$ref": "common.schema.json#/$defs/UtcDateTime"
+            },
+            {
+              "type": "null"
+            }
           ]
         },
         "supersedes_completion_contract_id": {
           "oneOf": [
-            {"$ref": "common.schema.json#/$defs/Id"},
-            {"type": "null"}
+            {
+              "$ref": "common.schema.json#/$defs/Id"
+            },
+            {
+              "type": "null"
+            }
           ]
         }
       }
@@ -110,27 +158,54 @@
         "satisfied_at"
       ],
       "properties": {
-        "goal_id": {"$ref": "common.schema.json#/$defs/Id"},
-        "project_id": {"$ref": "common.schema.json#/$defs/Id"},
-        "objective": {"type": "string", "minLength": 1},
-        "created_at": {"$ref": "common.schema.json#/$defs/UtcDateTime"},
+        "goal_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "project_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "objective": {
+          "type": "string",
+          "minLength": 1
+        },
+        "created_at": {
+          "$ref": "common.schema.json#/$defs/UtcDateTime"
+        },
         "completion_contract": {
           "oneOf": [
-            {"$ref": "#/$defs/CompletionContract"},
-            {"type": "null"}
+            {
+              "$ref": "#/$defs/CompletionContract"
+            },
+            {
+              "type": "null"
+            }
           ]
         },
-        "status": {"type": "string", "enum": ["open", "satisfied"]},
+        "status": {
+          "type": "string",
+          "enum": [
+            "open",
+            "satisfied"
+          ]
+        },
         "final_gate_id": {
           "oneOf": [
-            {"$ref": "common.schema.json#/$defs/Id"},
-            {"type": "null"}
+            {
+              "$ref": "common.schema.json#/$defs/Id"
+            },
+            {
+              "type": "null"
+            }
           ]
         },
         "satisfied_at": {
           "oneOf": [
-            {"$ref": "common.schema.json#/$defs/UtcDateTime"},
-            {"type": "null"}
+            {
+              "$ref": "common.schema.json#/$defs/UtcDateTime"
+            },
+            {
+              "type": "null"
+            }
           ]
         }
       }
@@ -138,105 +213,206 @@
     "CreateProjectRequest": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["idempotency_key", "name"],
+      "required": [
+        "idempotency_key",
+        "name"
+      ],
       "properties": {
-        "idempotency_key": {"$ref": "common.schema.json#/$defs/IdempotencyKey"},
-        "name": {"type": "string", "minLength": 1, "pattern": "\\S"}
+        "idempotency_key": {
+          "$ref": "common.schema.json#/$defs/IdempotencyKey"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        }
       }
     },
     "CreateGoalRequest": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["idempotency_key", "project_id", "objective"],
+      "required": [
+        "idempotency_key",
+        "project_id",
+        "objective"
+      ],
       "properties": {
-        "idempotency_key": {"$ref": "common.schema.json#/$defs/IdempotencyKey"},
-        "project_id": {"$ref": "common.schema.json#/$defs/IdInput"},
-        "objective": {"type": "string", "minLength": 1, "pattern": "\\S"}
+        "idempotency_key": {
+          "$ref": "common.schema.json#/$defs/IdempotencyKey"
+        },
+        "project_id": {
+          "$ref": "common.schema.json#/$defs/IdInput"
+        },
+        "objective": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        }
       }
     },
     "ProposePlanRequest": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["idempotency_key", "goal_id", "criteria"],
+      "required": [
+        "idempotency_key",
+        "goal_id",
+        "criteria"
+      ],
       "properties": {
-        "idempotency_key": {"$ref": "common.schema.json#/$defs/IdempotencyKey"},
-        "goal_id": {"$ref": "common.schema.json#/$defs/IdInput"},
+        "idempotency_key": {
+          "$ref": "common.schema.json#/$defs/IdempotencyKey"
+        },
+        "goal_id": {
+          "$ref": "common.schema.json#/$defs/IdInput"
+        },
         "criteria": {
           "type": "array",
           "minItems": 1,
           "maxItems": 3,
-          "items": {"$ref": "#/$defs/P1CompletionCriterion"}
+          "items": {
+            "$ref": "#/$defs/P1CompletionCriterion"
+          }
         }
       }
     },
     "ReplanPlanRequest": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["idempotency_key", "base_plan_revision_id", "criteria"],
+      "required": [
+        "idempotency_key",
+        "base_plan_revision_id",
+        "criteria"
+      ],
       "properties": {
-        "idempotency_key": {"$ref": "common.schema.json#/$defs/IdempotencyKey"},
-        "base_plan_revision_id": {"$ref": "common.schema.json#/$defs/IdInput"},
+        "idempotency_key": {
+          "$ref": "common.schema.json#/$defs/IdempotencyKey"
+        },
+        "base_plan_revision_id": {
+          "$ref": "common.schema.json#/$defs/IdInput"
+        },
         "source_run_id": {
           "oneOf": [
-            {"$ref": "common.schema.json#/$defs/IdInput"},
-            {"type": "null"}
+            {
+              "$ref": "common.schema.json#/$defs/IdInput"
+            },
+            {
+              "type": "null"
+            }
           ]
         },
         "criteria": {
           "type": "array",
           "minItems": 1,
           "maxItems": 3,
-          "items": {"$ref": "#/$defs/P1CompletionCriterion"}
+          "items": {
+            "$ref": "#/$defs/P1CompletionCriterion"
+          }
         }
       }
     },
     "ProposeProcessRequest": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["idempotency_key", "run_id", "reason"],
+      "required": [
+        "idempotency_key",
+        "run_id",
+        "reason"
+      ],
       "properties": {
-        "idempotency_key": {"$ref": "common.schema.json#/$defs/IdempotencyKey"},
-        "run_id": {"$ref": "common.schema.json#/$defs/IdInput"},
-        "reason": {"type": "string", "minLength": 1, "maxLength": 16000, "pattern": "\\S"}
+        "idempotency_key": {
+          "$ref": "common.schema.json#/$defs/IdempotencyKey"
+        },
+        "run_id": {
+          "$ref": "common.schema.json#/$defs/IdInput"
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 16000,
+          "pattern": "\\S"
+        }
       }
     },
     "ReviewProcessRequest": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["idempotency_key", "draft_id"],
+      "required": [
+        "idempotency_key",
+        "draft_id"
+      ],
       "properties": {
-        "idempotency_key": {"$ref": "common.schema.json#/$defs/IdempotencyKey"},
-        "draft_id": {"$ref": "common.schema.json#/$defs/IdInput"}
+        "idempotency_key": {
+          "$ref": "common.schema.json#/$defs/IdempotencyKey"
+        },
+        "draft_id": {
+          "$ref": "common.schema.json#/$defs/IdInput"
+        }
       }
     },
     "ApplyProcessRequest": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["idempotency_key", "review_id"],
+      "required": [
+        "idempotency_key",
+        "review_id"
+      ],
       "properties": {
-        "idempotency_key": {"$ref": "common.schema.json#/$defs/IdempotencyKey"},
-        "review_id": {"$ref": "common.schema.json#/$defs/IdInput"}
+        "idempotency_key": {
+          "$ref": "common.schema.json#/$defs/IdempotencyKey"
+        },
+        "review_id": {
+          "$ref": "common.schema.json#/$defs/IdInput"
+        }
       }
     },
     "DiscussPlanRequest": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["idempotency_key", "goal_id", "message"],
+      "required": [
+        "idempotency_key",
+        "goal_id",
+        "message"
+      ],
       "properties": {
-        "idempotency_key": {"$ref": "common.schema.json#/$defs/IdempotencyKey"},
-        "goal_id": {"$ref": "common.schema.json#/$defs/IdInput"},
-        "message": {"type": "string", "minLength": 1, "maxLength": 8000, "pattern": "\\S"},
+        "idempotency_key": {
+          "$ref": "common.schema.json#/$defs/IdempotencyKey"
+        },
+        "goal_id": {
+          "$ref": "common.schema.json#/$defs/IdInput"
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 8000,
+          "pattern": "\\S"
+        },
         "criteria": {
           "type": "array",
           "maxItems": 3,
           "default": [],
-          "items": {"$ref": "#/$defs/P1CompletionCriterion"}
+          "items": {
+            "$ref": "#/$defs/P1CompletionCriterion"
+          }
         },
         "conversation_id": {
-          "oneOf": [{"$ref": "common.schema.json#/$defs/IdInput"}, {"type": "null"}]
+          "oneOf": [
+            {
+              "$ref": "common.schema.json#/$defs/IdInput"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "source_run_id": {
-          "oneOf": [{"$ref": "common.schema.json#/$defs/IdInput"}, {"type": "null"}]
+          "oneOf": [
+            {
+              "$ref": "common.schema.json#/$defs/IdInput"
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       }
     },
@@ -249,9 +425,15 @@
         "completion_contract_id"
       ],
       "properties": {
-        "idempotency_key": {"$ref": "common.schema.json#/$defs/IdempotencyKey"},
-        "plan_revision_id": {"$ref": "common.schema.json#/$defs/IdInput"},
-        "completion_contract_id": {"$ref": "common.schema.json#/$defs/IdInput"}
+        "idempotency_key": {
+          "$ref": "common.schema.json#/$defs/IdempotencyKey"
+        },
+        "plan_revision_id": {
+          "$ref": "common.schema.json#/$defs/IdInput"
+        },
+        "completion_contract_id": {
+          "$ref": "common.schema.json#/$defs/IdInput"
+        }
       }
     },
     "ExecutionCodexServerRequest": {
@@ -303,7 +485,9 @@
           "type": "integer"
         }
       },
-      "required": ["max_worker_attempts"],
+      "required": [
+        "max_worker_attempts"
+      ],
       "title": "GoalWorkerBudgetRequest",
       "type": "object"
     },
@@ -319,7 +503,7 @@
         },
         "worker_kind": {
           "enum": [
-            "builtin",
+            "pi",
             "codex-server"
           ],
           "title": "Worker Kind",
@@ -413,14 +597,32 @@
           ],
           "default": null
         },
-        "goal_worker_budget": {
-          "anyOf": [{"$ref": "#/$defs/GoalWorkerBudgetRequest"}, {"type": "null"}],
-          "default": null
-        },
         "process_adjustment": {
           "anyOf": [
             {
               "$ref": "#/$defs/ProcessAdjustmentPolicyRequest"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "goal_worker_budget": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/GoalWorkerBudgetRequest"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "pi": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PiBackendConfigRequest"
             },
             {
               "type": "null"
@@ -525,12 +727,26 @@
     "StartRunRequest": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["idempotency_key", "plan_revision_id"],
+      "required": [
+        "idempotency_key",
+        "plan_revision_id"
+      ],
       "properties": {
-        "idempotency_key": {"$ref": "common.schema.json#/$defs/IdempotencyKey"},
-        "plan_revision_id": {"$ref": "common.schema.json#/$defs/IdInput"},
+        "idempotency_key": {
+          "$ref": "common.schema.json#/$defs/IdempotencyKey"
+        },
+        "plan_revision_id": {
+          "$ref": "common.schema.json#/$defs/IdInput"
+        },
         "execution_config": {
-          "anyOf": [{"$ref": "#/$defs/ExecutionConfigRequest"}, {"type": "null"}],
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ExecutionConfigRequest"
+            },
+            {
+              "type": "null"
+            }
+          ],
           "default": null
         }
       }
@@ -546,16 +762,30 @@
         "comment"
       ],
       "properties": {
-        "idempotency_key": {"$ref": "common.schema.json#/$defs/IdempotencyKey"},
+        "idempotency_key": {
+          "$ref": "common.schema.json#/$defs/IdempotencyKey"
+        },
         "request_token": {
           "type": "string",
           "minLength": 64,
           "maxLength": 64,
           "pattern": "^[0-9A-Fa-f]{64}$"
         },
-        "passed": {"type": "boolean"},
-        "actor": {"type": "string", "minLength": 1, "maxLength": 8000, "pattern": "\\S"},
-        "comment": {"type": "string", "minLength": 1, "maxLength": 8000, "pattern": "\\S"}
+        "passed": {
+          "type": "boolean"
+        },
+        "actor": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 8000,
+          "pattern": "\\S"
+        },
+        "comment": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 8000,
+          "pattern": "\\S"
+        }
       }
     },
     "ReplyInterventionRequest": {
@@ -568,38 +798,68 @@
         "message"
       ],
       "properties": {
-        "idempotency_key": {"$ref": "common.schema.json#/$defs/IdempotencyKey"},
+        "idempotency_key": {
+          "$ref": "common.schema.json#/$defs/IdempotencyKey"
+        },
         "request_token": {
           "type": "string",
           "minLength": 64,
           "maxLength": 64,
           "pattern": "^[0-9A-Fa-f]{64}$"
         },
-        "actor": {"type": "string", "minLength": 1, "maxLength": 8000, "pattern": "\\S"},
-        "message": {"type": "string", "minLength": 1, "maxLength": 8000, "pattern": "\\S"}
+        "actor": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 8000,
+          "pattern": "\\S"
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 8000,
+          "pattern": "\\S"
+        }
       }
     },
     "RunActionRequest": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["idempotency_key"],
+      "required": [
+        "idempotency_key"
+      ],
       "properties": {
-        "idempotency_key": {"$ref": "common.schema.json#/$defs/IdempotencyKey"}
+        "idempotency_key": {
+          "$ref": "common.schema.json#/$defs/IdempotencyKey"
+        }
       }
     },
-    "PauseRunRequest": {"$ref": "#/$defs/RunActionRequest"},
-    "ResumeRunRequest": {"$ref": "#/$defs/RunActionRequest"},
+    "PauseRunRequest": {
+      "$ref": "#/$defs/RunActionRequest"
+    },
+    "ResumeRunRequest": {
+      "$ref": "#/$defs/RunActionRequest"
+    },
     "CancelRunRequest": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["idempotency_key"],
+      "required": [
+        "idempotency_key"
+      ],
       "properties": {
-        "idempotency_key": {"$ref": "common.schema.json#/$defs/IdempotencyKey"},
+        "idempotency_key": {
+          "$ref": "common.schema.json#/$defs/IdempotencyKey"
+        },
         "reason": {
           "default": null,
           "anyOf": [
-            {"type": "string", "minLength": 1, "pattern": "\\S"},
-            {"type": "null"}
+            {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "\\S"
+            },
+            {
+              "type": "null"
+            }
           ]
         }
       }
@@ -607,45 +867,79 @@
     "ExtendAttemptDeadlineRequest": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["idempotency_key", "deadline_at"],
+      "required": [
+        "idempotency_key",
+        "deadline_at"
+      ],
       "properties": {
-        "idempotency_key": {"$ref": "common.schema.json#/$defs/IdempotencyKey"},
-        "deadline_at": {"$ref": "common.schema.json#/$defs/UtcDateTime"}
+        "idempotency_key": {
+          "$ref": "common.schema.json#/$defs/IdempotencyKey"
+        },
+        "deadline_at": {
+          "$ref": "common.schema.json#/$defs/UtcDateTime"
+        }
       }
     },
     "ResolveWorkerRequestRequest": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["idempotency_key", "resolution"],
+      "required": [
+        "idempotency_key",
+        "resolution"
+      ],
       "properties": {
-        "idempotency_key": {"$ref": "common.schema.json#/$defs/IdempotencyKey"},
+        "idempotency_key": {
+          "$ref": "common.schema.json#/$defs/IdempotencyKey"
+        },
         "resolution": {
           "type": "object",
-          "additionalProperties": {"$ref": "#/$defs/JsonValue"}
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          }
         }
       }
     },
-    "DeclineWorkerRequestRequest": {"$ref": "#/$defs/RunActionRequest"},
-    "CancelAttemptRequest": {"$ref": "#/$defs/RunActionRequest"},
+    "DeclineWorkerRequestRequest": {
+      "$ref": "#/$defs/RunActionRequest"
+    },
+    "CancelAttemptRequest": {
+      "$ref": "#/$defs/RunActionRequest"
+    },
     "DataResponse": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["data"],
+      "required": [
+        "data"
+      ],
       "properties": {
-        "data": {"$ref": "#/$defs/JsonValue"}
+        "data": {
+          "$ref": "#/$defs/JsonValue"
+        }
       }
     },
     "ProjectResponse": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["data"],
-      "properties": {"data": {"$ref": "#/$defs/Project"}}
+      "required": [
+        "data"
+      ],
+      "properties": {
+        "data": {
+          "$ref": "#/$defs/Project"
+        }
+      }
     },
     "GoalResponse": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["data"],
-      "properties": {"data": {"$ref": "#/$defs/Goal"}}
+      "required": [
+        "data"
+      ],
+      "properties": {
+        "data": {
+          "$ref": "#/$defs/Goal"
+        }
+      }
     },
     "PlanGraphResponse": {
       "$ref": "queries.schema.json#/$defs/PlanGraphResponse"
@@ -656,15 +950,29 @@
     "ProcessDraftAcceptedResponse": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["data"],
+      "required": [
+        "data"
+      ],
       "properties": {
         "data": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["draft_id", "status"],
+          "required": [
+            "draft_id",
+            "status"
+          ],
           "properties": {
-            "draft_id": {"$ref": "common.schema.json#/$defs/Id"},
-            "status": {"type": "string", "enum": ["planning", "ready", "failed"]}
+            "draft_id": {
+              "$ref": "common.schema.json#/$defs/Id"
+            },
+            "status": {
+              "type": "string",
+              "enum": [
+                "planning",
+                "ready",
+                "failed"
+              ]
+            }
           }
         }
       }
@@ -672,19 +980,95 @@
     "ProcessReviewAcceptedResponse": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["data"],
+      "required": [
+        "data"
+      ],
       "properties": {
         "data": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["review_id", "status", "preserves_boundary"],
+          "required": [
+            "review_id",
+            "status",
+            "preserves_boundary"
+          ],
           "properties": {
-            "review_id": {"$ref": "common.schema.json#/$defs/Id"},
-            "status": {"$ref": "queries.schema.json#/$defs/ProcessReviewStatus"},
-            "preserves_boundary": {"type": ["boolean", "null"]}
+            "review_id": {
+              "$ref": "common.schema.json#/$defs/Id"
+            },
+            "status": {
+              "$ref": "queries.schema.json#/$defs/ProcessReviewStatus"
+            },
+            "preserves_boundary": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            }
           }
         }
       }
+    },
+    "PiBackendConfigRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "node": {
+          "minLength": 1,
+          "pattern": "^[^\\x00]*[^\\s\\x00][^\\x00]*$",
+          "title": "Node",
+          "type": "string"
+        },
+        "cli": {
+          "minLength": 1,
+          "pattern": "^[^\\x00]*[^\\s\\x00][^\\x00]*$",
+          "title": "Cli",
+          "type": "string"
+        },
+        "agent_dir": {
+          "minLength": 1,
+          "pattern": "^[^\\x00]*[^\\s\\x00][^\\x00]*$",
+          "title": "Agent Dir",
+          "type": "string"
+        },
+        "provider": {
+          "minLength": 1,
+          "pattern": "^[^\\x00]*[^\\s\\x00][^\\x00]*$",
+          "title": "Provider",
+          "type": "string"
+        },
+        "environment_names": {
+          "items": {
+            "minLength": 1,
+            "pattern": "^[^\\x00]*[^\\s\\x00][^\\x00]*$",
+            "type": "string"
+          },
+          "title": "Environment Names",
+          "type": "array"
+        },
+        "configuration_hash": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "pattern": "^[^\\x00]*[^\\s\\x00][^\\x00]*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Configuration Hash"
+        }
+      },
+      "required": [
+        "node",
+        "cli",
+        "agent_dir",
+        "provider",
+        "environment_names"
+      ],
+      "title": "PiBackendConfigRequest",
+      "type": "object"
     }
   }
 }

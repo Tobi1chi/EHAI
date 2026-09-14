@@ -1,4 +1,4 @@
-"""Run an independent Built-in Reviewer over a generated process draft.
+"""Run an independent Pi Reviewer over a generated process draft.
 
 The Reviewer can inspect the original approval, the proposed process, retained
 result metadata, and explicitly supplied read-only evidence.  It produces a
@@ -14,18 +14,16 @@ from hashlib import sha256
 from pathlib import Path
 
 from ehai import ID, JsonValue, format_utc_datetime, new_id, normalize_id
-from ehai.application.builtin_agent import (
+from ehai.application.agent_contracts import (
     CancellationToken,
-    ModelClient,
     RecoverableToolError,
     ToolCall,
     ToolDefinition,
 )
-from ehai.application.builtin_runtime import (
-    BuiltinAgentRuntime,
-    BuiltinRole,
-    BuiltinRoleConfig,
-    BuiltinRoleExecution,
+from ehai.application.agent_roles import (
+    AgentRole,
+    AgentRoleConfig,
+    AgentRoleExecution,
     ToolRegistry,
 )
 from ehai.application.ports import ArtifactStore
@@ -40,7 +38,8 @@ from ehai.domain.artifacts import Artifact
 from ehai.domain.checking import CheckRun
 from ehai.domain.process import ProcessRevision
 from ehai.infrastructure.artifacts import ArtifactIntegrityError
-from ehai.infrastructure.builtin_tools import BuiltinToolRuntime
+from ehai.infrastructure.host_tools import HostToolRuntime
+from ehai.infrastructure.pi_runtime import PiRoleRunner
 from ehai.infrastructure.planners.codex_protocol import _base_plan_document
 
 _WORKSPACE_TOOL_NAMES = frozenset({"workspace_list", "workspace_read", "workspace_search"})
@@ -107,8 +106,9 @@ _REVIEWER_SYSTEM_PROMPT = "\n".join(
 async def run_process_boundary_review(
     context: ProcessReviewContext,
     *,
-    runtime: BuiltinAgentRuntime,
-    model_client: ModelClient,
+    runtime: PiRoleRunner,
+    model: str,
+    reasoning_effort: str | None,
     session_ref_id: ID,
     artifact_store: ArtifactStore,
     workspace: Path | None = None,
@@ -134,9 +134,9 @@ async def run_process_boundary_review(
     accepted_report: ProcessBoundaryReport | None = None
     invalid_finish_attempts = 0
 
-    workspace_tools: BuiltinToolRuntime | None = None
+    workspace_tools: HostToolRuntime | None = None
     if workspace is not None:
-        workspace_tools = BuiltinToolRuntime(
+        workspace_tools = HostToolRuntime(
             workspace=workspace,
             artifact_store=artifact_store,
             allow_workspace_write=False,
@@ -276,7 +276,7 @@ async def run_process_boundary_review(
                 cancellation: CancellationToken,
                 *,
                 tool_name: str = definition.name,
-                tools: BuiltinToolRuntime = workspace_runtime,
+                tools: HostToolRuntime = workspace_runtime,
             ) -> JsonValue:
                 return await tools.executor.execute(
                     ToolCall(str(new_id()), tool_name, arguments), cancellation
@@ -295,8 +295,8 @@ async def run_process_boundary_review(
     )
     handlers["finish_process_review"] = finish_process_review
 
-    config = BuiltinRoleConfig(
-        role=BuiltinRole.REVIEWER,
+    config = AgentRoleConfig(
+        role=AgentRole.REVIEWER,
         system_prompt=_REVIEWER_SYSTEM_PROMPT,
         tool_profile="process-review-v1",
         tool_names=tuple(item.name for item in definitions),
@@ -305,7 +305,6 @@ async def run_process_boundary_review(
             {"process.review", "artifact.read"}
             | ({"workspace.read"} if workspace_tools is not None else set())
         ),
-        tool_choice="required",
         final_tool_requires_only=True,
     )
     registry = ToolRegistry(tuple(definitions), handlers)
@@ -313,9 +312,11 @@ async def run_process_boundary_review(
         await runtime.run(
             config=config,
             registry=registry,
-            model_client=model_client,
+            model=model,
+            reasoning_effort=reasoning_effort,
+            workspace=workspace or Path.cwd(),
             session=session,
-            execution=BuiltinRoleExecution(session.agent_session_ref_id),
+            execution=AgentRoleExecution(session.agent_session_ref_id),
             instruction=(
                 "Independently review this retained process draft against the original approval. "
                 "Read the supplied original material and any needed retained evidence, then "

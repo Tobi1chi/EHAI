@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from ehai import JsonValue
-from ehai.application.builtin_agent import (
+from ehai.application.agent_contracts import (
     CancellationToken,
     RecoverableToolError,
     ToolDefinition,

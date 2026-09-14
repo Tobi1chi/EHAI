@@ -5,15 +5,17 @@ from __future__ import annotations
 from collections.abc import Mapping
 
 from ehai import ID, JsonValue, json_dumps, json_loads
-from ehai.application.builtin_agent import (
-    BuiltinSession,
-    BuiltinSessionEventType,
+from ehai.application.agent_contracts import (
     CancellationToken,
     ModelMessage,
     ModelRole,
     RecoverableToolError,
     ToolDefinition,
     ToolHandler,
+)
+from ehai.application.agent_trace import (
+    AgentTrace,
+    AgentTraceEventType,
 )
 from ehai.application.phase_sessions import PhaseSessions
 
@@ -25,7 +27,7 @@ class PhaseSessionToolProvider:
         self,
         sessions: PhaseSessions,
         attempt_id: ID,
-        session: BuiltinSession,
+        session: AgentTrace,
         phase_session_id: str,
     ) -> None:
         self._sessions = sessions
@@ -71,7 +73,7 @@ class PhaseSessionToolProvider:
         for event in self._session.events:
             if (
                 event.attempt_id != self._attempt_id
-                or event.type is not BuiltinSessionEventType.MESSAGE_RECEIVED
+                or event.type is not AgentTraceEventType.MESSAGE_RECEIVED
             ):
                 continue
             content = event.payload.get("content")

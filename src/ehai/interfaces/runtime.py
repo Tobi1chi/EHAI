@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import inspect
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 from contextlib import suppress
 from dataclasses import dataclass, replace
 from datetime import timedelta
@@ -15,17 +15,11 @@ from uuid import NAMESPACE_URL, uuid5
 
 import uvicorn
 from fastapi import FastAPI
-from openai.types.shared import ReasoningEffort
 
 from ehai import ID, JsonValue, json_dumps, json_loads
 from ehai.application.async_runtime import RuntimeConnector, SingleSlotRuntime
-from ehai.application.builtin_agent import (
-    LONG_RUNNING_AGENT_BUDGET,
-    AgentBudget,
-    ModelClient,
-)
-from ehai.application.execution_contracts import OPENAI_CREDENTIAL_REF
 from ehai.application.execution_policy import ExecutionPolicy
+from ehai.application.legacy_config import ResponsesEndpointCapabilities
 from ehai.application.ports import StateConflictError
 from ehai.application.process_adjustments import ProcessAdjustments
 from ehai.application.queries import QueryService
@@ -38,7 +32,6 @@ from ehai.application.scheduler import (
 )
 from ehai.application.service import ExecutionService
 from ehai.application.session_mailbox import SessionMailbox
-from ehai.application.workers import WorkerRequest
 from ehai.domain.execution import RunStatus
 from ehai.domain.workers import (
     WorkerCapability,
@@ -47,20 +40,21 @@ from ehai.domain.workers import (
     WorkerKind,
     WorkerProfile,
 )
+from ehai.infrastructure.agent_traces import SQLiteAgentTraceStore
 from ehai.infrastructure.artifacts import FilesystemArtifactStore
-from ehai.infrastructure.builtin_sessions import SQLiteBuiltinSessionStore
-from ehai.infrastructure.openai_responses import ResponsesEndpointCapabilities
+from ehai.infrastructure.pi_config import PiBackendConfig
 from ehai.infrastructure.session_mailbox import SQLiteSessionMailboxRepository
 from ehai.infrastructure.sqlite import SQLiteDatabase
 from ehai.infrastructure.workers import (
-    BuiltinAgentConnector,
     CodexAppServerConnector,
+    PiAgentConnector,
     WorkerAdapterConnector,
 )
 from ehai.infrastructure.workers.code import CodeRuntimeConnector
 from ehai.infrastructure.workspaces import WorkspaceManager
+from ehai.interfaces.agent_backends import resolve_planner_kind
 from ehai.interfaces.api import create_app
-from ehai.interfaces.cli import add_responses_arguments, build_service, responses_capabilities
+from ehai.interfaces.cli import build_service
 from ehai.interfaces.session_host import ExecutionConfig
 
 _MAX_RUNTIME_RESTARTS = 2
@@ -91,12 +85,12 @@ def create_local_app(
     database_path: Path,
     artifact_root: Path,
     *,
-    worker_kind: str = "fake",
+    worker_kind: str | None = None,
     worker_workspace: Path | None = None,
-    planner_kind: str = "single",
+    planner_kind: str | None = None,
     planner_timeout_seconds: float = 120.0,
-    builtin_planner_model: str | None = None,
-    builtin_planner_reasoning_effort: str | None = None,
+    planner_model: str | None = None,
+    planner_reasoning_effort: str | None = None,
     command_check_argv: Sequence[str] | None = None,
     semantic_required_terms: Sequence[str] = (),
     command_check_timeout_seconds: float = 30.0,
@@ -104,39 +98,48 @@ def create_local_app(
     attempt_deadline_seconds: float | None = None,
     codex_model: str | None = None,
     codex_reasoning_effort: str | None = None,
-    builtin_model: str | None = None,
-    builtin_reasoning_effort: str | None = None,
-    builtin_agent_budget: AgentBudget | None = None,
-    builtin_allowed_commands: Sequence[Sequence[str]] = (),
+    agent_model: str | None = None,
+    agent_reasoning_effort: str | None = None,
+    agent_allowed_commands: Sequence[Sequence[str]] = (),
     available_shells: Sequence[str] = (),
     git_permissions: Sequence[str] = (),
-    builtin_capacity: int = 1,
-    builtin_model_client_factory: Callable[[WorkerProfile, WorkerRequest], ModelClient]
-    | None = None,
+    worker_capacity: int = 1,
     codex_server_executable: str | Sequence[str] = "codex",
     codex_server_approval_policy: str = "on-request",
     codex_server_sandbox: str = "workspace-write",
     p2_runtime: bool = False,
     runtime_autostart: bool = True,
     endpoint_capabilities: ResponsesEndpointCapabilities | None = None,
+    pi_backend: PiBackendConfig | None = None,
 ) -> FastAPI:
     """Construct one Command service and, optionally, its local P2 Runtime."""
+    worker_kind = worker_kind or (
+        "pi" if agent_model is not None or (pi_backend is not None and p2_runtime) else "fake"
+    )
+    planner_kind = resolve_planner_kind(
+        planner_kind, pi_configured=pi_backend is not None, model=planner_model
+    )
+    if worker_kind == "builtin" or planner_kind == "builtin":
+        raise ValueError("Built-in execution is retired; old authorizations cannot be used for Pi")
+    if (worker_kind == "pi" or planner_kind == "pi") and pi_backend is None:
+        raise ValueError("Pi execution requires an explicit --pi-config")
     host_execution_config = None
     configured_kind = _canonical_runtime_worker_kind(worker_kind)
-    if p2_runtime and configured_kind in {"builtin", "codex-server"}:
+    if p2_runtime and configured_kind in {"pi", "codex-server"}:
         host_execution_config = ExecutionConfig(
             worker_kind=configured_kind,
-            model=(builtin_model if configured_kind == "builtin" else codex_model) or "",
+            model=(agent_model if configured_kind == "pi" else codex_model) or "",
             reasoning_effort=(
-                builtin_reasoning_effort if configured_kind == "builtin" else codex_reasoning_effort
+                agent_reasoning_effort if configured_kind == "pi" else codex_reasoning_effort
             ),
-            capacity=builtin_capacity,
-            allowed_commands=_normalize_allowed_command_argv(builtin_allowed_commands),
+            capacity=worker_capacity,
+            allowed_commands=_normalize_allowed_command_argv(agent_allowed_commands),
             available_shells=tuple(available_shells),
             git_permissions=frozenset(git_permissions),
             workspace=worker_workspace or Path.cwd(),
             endpoint_capabilities=endpoint_capabilities or ResponsesEndpointCapabilities(),
             command_timeout_seconds=command_check_timeout_seconds,
+            pi_backend=pi_backend,
             codex_server_executable=(
                 (codex_server_executable,)
                 if isinstance(codex_server_executable, str)
@@ -148,13 +151,13 @@ def create_local_app(
         # Use the same canonical values for execution and later authorization.
         worker_kind = host_execution_config.worker_kind
         worker_workspace = host_execution_config.workspace
-        if worker_kind == "builtin":
-            builtin_model = host_execution_config.model
-            builtin_reasoning_effort = host_execution_config.reasoning_effort
+        if worker_kind == "pi":
+            agent_model = host_execution_config.model
+            agent_reasoning_effort = host_execution_config.reasoning_effort
         else:
             codex_model = host_execution_config.model
             codex_reasoning_effort = host_execution_config.reasoning_effort
-        builtin_allowed_commands = host_execution_config.allowed_commands
+        agent_allowed_commands = host_execution_config.allowed_commands
         available_shells = host_execution_config.available_shells
         git_permissions = tuple(sorted(host_execution_config.git_permissions))
         endpoint_capabilities = host_execution_config.endpoint_capabilities
@@ -162,23 +165,19 @@ def create_local_app(
         codex_server_executable = host_execution_config.codex_server_executable
         codex_server_approval_policy = host_execution_config.codex_server_approval_policy
         codex_server_sandbox = host_execution_config.codex_server_sandbox
-    if builtin_planner_model is not None:
-        builtin_planner_model = builtin_planner_model.strip()
-    if builtin_planner_reasoning_effort is not None:
-        builtin_planner_reasoning_effort = builtin_planner_reasoning_effort.strip()
+    if planner_model is not None:
+        planner_model = planner_model.strip()
+    if planner_reasoning_effort is not None:
+        planner_reasoning_effort = planner_reasoning_effort.strip()
     resolved_planner_model = (
-        builtin_planner_model
-        if builtin_planner_model is not None
-        else (builtin_model if planner_kind == "builtin" else None)
+        planner_model
+        if planner_model is not None
+        else (agent_model if planner_kind == "pi" else None)
     )
     resolved_planner_effort = (
-        builtin_planner_reasoning_effort
-        if builtin_planner_reasoning_effort is not None
-        else (
-            builtin_reasoning_effort
-            if planner_kind == "builtin" and builtin_planner_model is None
-            else None
-        )
+        planner_reasoning_effort
+        if planner_reasoning_effort is not None
+        else (agent_reasoning_effort if planner_kind == "pi" and planner_model is None else None)
     )
     execution_service = build_service(
         database_path,
@@ -187,8 +186,8 @@ def create_local_app(
         worker_workspace=worker_workspace,
         planner_kind=planner_kind,
         planner_timeout_seconds=planner_timeout_seconds,
-        builtin_planner_model=resolved_planner_model,
-        builtin_planner_reasoning_effort=resolved_planner_effort,
+        planner_model=resolved_planner_model,
+        planner_reasoning_effort=resolved_planner_effort,
         command_check_argv=command_check_argv,
         semantic_required_terms=semantic_required_terms,
         command_check_timeout_seconds=command_check_timeout_seconds,
@@ -197,9 +196,10 @@ def create_local_app(
         codex_reasoning_effort=codex_reasoning_effort,
         background_start=p2_runtime,
         endpoint_capabilities=endpoint_capabilities,
+        pi_backend=pi_backend,
     )
     query_database = SQLiteDatabase(database_path)
-    builtin_sessions = SQLiteBuiltinSessionStore(query_database)
+    builtin_sessions = SQLiteAgentTraceStore(query_database)
     session_mailbox = SessionMailbox(SQLiteSessionMailboxRepository(query_database))
     query_service = QueryService(
         read_session_factory=query_database.read_session,
@@ -216,12 +216,12 @@ def create_local_app(
 
     connector: RuntimeConnector
     worker_kind = _canonical_runtime_worker_kind(worker_kind)
-    if worker_kind == "builtin":
-        if builtin_model is None or not builtin_model.strip():
-            raise ValueError("--builtin-model is required for the Built-in Worker")
-        worker_kind_value = WorkerKind.BUILTIN
+    if worker_kind == "pi":
+        if agent_model is None or not agent_model.strip():
+            raise ValueError("--agent-model is required for the Pi Worker")
+        worker_kind_value = WorkerKind.PI
         capabilities = {
-            WorkerCapability("worker.builtin"),
+            WorkerCapability("worker.pi"),
             WorkerCapability("workspace.read"),
             WorkerCapability("workspace.write"),
             WorkerCapability("session.message"),
@@ -230,16 +230,15 @@ def create_local_app(
             capabilities.add(WorkerCapability("shell.execute"))
         capabilities.update(WorkerCapability(permission) for permission in git_permissions)
         profile = WorkerProfile(
-            "local-builtin",
-            WorkerKind.BUILTIN,
-            builtin_model,
+            "local-pi",
+            WorkerKind.PI,
+            agent_model,
             frozenset(capabilities),
-            credential_ref=OPENAI_CREDENTIAL_REF,
             worker_profile_id=_stable_runtime_id(
                 "profile",
                 {
-                    "kind": WorkerKind.BUILTIN.value,
-                    "model": builtin_model,
+                    "kind": WorkerKind.PI.value,
+                    "model": agent_model,
                     "capabilities": cast(
                         JsonValue,
                         sorted(str(item) for item in capabilities),
@@ -299,16 +298,12 @@ def create_local_app(
         )
     if worker_kind == "codex-server":
         worker_kind_value = WorkerKind.CODEX_APP_SERVER
-    endpoint_capacity = builtin_capacity if worker_kind in {"builtin", "codex-server"} else 1
+    endpoint_capacity = worker_capacity if worker_kind in {"pi", "codex-server"} else 1
     workspace = (worker_workspace or Path.cwd()).resolve(strict=True)
     endpoint = WorkerEndpoint(
         f"local-{worker_kind}",
         worker_kind_value,
-        (
-            WorkerEndpointType.IN_PROCESS
-            if worker_kind in {"fake", "builtin"}
-            else WorkerEndpointType.COMMAND
-        ),
+        (WorkerEndpointType.IN_PROCESS if worker_kind == "fake" else WorkerEndpointType.COMMAND),
         worker_kind,
         endpoint_capacity,
         worker_endpoint_id=_stable_runtime_id(
@@ -317,7 +312,7 @@ def create_local_app(
                 "kind": worker_kind_value.value,
                 "type": (
                     WorkerEndpointType.IN_PROCESS.value
-                    if worker_kind in {"fake", "builtin"}
+                    if worker_kind == "fake"
                     else WorkerEndpointType.COMMAND.value
                 ),
                 "ref": worker_kind,
@@ -328,7 +323,7 @@ def create_local_app(
     )
     workspace_manager: WorkspaceManager | None = None
     base_connector: RuntimeConnector
-    if worker_kind == "builtin":
+    if worker_kind == "pi":
         artifact_store = FilesystemArtifactStore(artifact_root)
         workspace_manager = WorkspaceManager(
             database=query_database,
@@ -342,25 +337,22 @@ def create_local_app(
             allocation = workspace_manager.allocation_for_attempt(attempt_id)
             return None if allocation is None else Path(allocation.reference.path)
 
-        connector = BuiltinAgentConnector(
+        assert pi_backend is not None
+        connector = PiAgentConnector(
+            backend=pi_backend,
             uow_factory=query_database.unit_of_work,
             orchestrator=execution_service.orchestrator,
             session_store=builtin_sessions,
             artifact_store=artifact_store,
             profile=profile,
             default_workspace=workspace,
-            allowed_commands=_normalize_allowed_command_argv(builtin_allowed_commands),
+            allowed_commands=_normalize_allowed_command_argv(agent_allowed_commands),
             command_timeout_seconds=command_check_timeout_seconds,
             available_shells=tuple(available_shells),
             git_permissions=frozenset(git_permissions),
-            reasoning_effort=cast(ReasoningEffort, builtin_reasoning_effort),
-            model_client_factory=builtin_model_client_factory,
+            reasoning_effort=agent_reasoning_effort,
             workspace_resolver=workspace_resolver,
-            budget=(
-                LONG_RUNNING_AGENT_BUDGET if builtin_agent_budget is None else builtin_agent_budget
-            ),
             mailbox=session_mailbox,
-            endpoint_capabilities=endpoint_capabilities,
         )
         base_connector = connector
     elif worker_kind == "codex-server":
@@ -397,7 +389,7 @@ def create_local_app(
             connector.prepare_adoption_verification,
             connector.adoption_inputs_are_applicable,
         )
-    if worker_kind in {"builtin", "codex-server"}:
+    if worker_kind in {"pi", "codex-server"}:
         capacity = CapacityPolicy(
             endpoint_capacity,
             endpoint_capacity,
@@ -447,7 +439,7 @@ def create_local_app(
             planner_model=resolved_planner_model,
             planner_reasoning_effort=resolved_planner_effort,
         )
-        if planner_kind == "builtin" and resolved_planner_model is not None
+        if planner_kind == "pi" and resolved_planner_model is not None
         else None
     )
 
@@ -622,25 +614,27 @@ async def _close_runtime_connectors(composition: LocalRuntimeComposition) -> Non
 def create_parser() -> argparse.ArgumentParser:
     """Create the local API server command line."""
     parser = argparse.ArgumentParser(prog="ehai-api", description="EHAI P1 HTTP API")
-    add_responses_arguments(parser)
+    parser.add_argument("--pi-config", type=Path)
     parser.add_argument("--database", type=Path, default=Path(".ehai/state.sqlite3"))
     parser.add_argument("--artifacts", type=Path, default=Path(".ehai/artifacts"))
     parser.add_argument(
         "--worker",
-        choices=("fake", "builtin", "codex", "codex-server"),
-        default="fake",
+        choices=("fake", "pi", "codex", "codex-server"),
+        default=None,
+        help="Worker backend (Pi with --agent-model or --pi-config --p2-runtime)",
     )
     parser.add_argument("--worker-workspace", type=Path)
     parser.add_argument(
         "--planner",
-        choices=("single", "exploration", "codex", "builtin"),
-        default="single",
+        choices=("single", "exploration", "codex", "pi"),
+        default=None,
+        help="Planner backend (Pi when --pi-config/--planner-model is supplied)",
     )
     parser.add_argument("--planner-timeout-seconds", type=float, default=120.0)
-    parser.add_argument("--builtin-planner-model")
+    parser.add_argument("--planner-model")
     parser.add_argument(
-        "--builtin-planner-reasoning-effort",
-        choices=("none", "minimal", "low", "medium", "high", "xhigh", "max"),
+        "--planner-reasoning-effort",
+        choices=("off", "minimal", "low", "medium", "high", "xhigh", "max"),
     )
     parser.add_argument("--worker-timeout-seconds", type=float, default=300.0)
     parser.add_argument("--command-check-timeout-seconds", type=float, default=30.0)
@@ -669,60 +663,36 @@ def create_parser() -> argparse.ArgumentParser:
         choices=("read-only", "workspace-write", "danger-full-access"),
         default="workspace-write",
     )
-    parser.add_argument("--builtin-model")
+    parser.add_argument("--agent-model")
     parser.add_argument(
-        "--builtin-reasoning-effort",
-        choices=("none", "minimal", "low", "medium", "high", "xhigh", "max"),
+        "--agent-reasoning-effort",
+        choices=("off", "minimal", "low", "medium", "high", "xhigh", "max"),
     )
     parser.add_argument(
-        "--builtin-allowed-command",
+        "--agent-allowed-command",
         action="append",
         default=[],
         metavar="JSON_ARGV",
-        help="exact trusted argv JSON array exposed through the Built-in command Tool",
+        help="exact trusted argv JSON array exposed through the Pi command Tool",
     )
     parser.add_argument(
-        "--builtin-available-shell",
+        "--agent-available-shell",
         action="append",
         default=[],
-        help="trusted shell executable exposed through the Built-in shell Tool",
+        help="trusted shell executable exposed through the Pi shell Tool",
     )
     parser.add_argument(
-        "--builtin-git-permission",
+        "--agent-git-permission",
         action="append",
         choices=("git.read", "git.local_write", "git.remote_write", "git.dangerous"),
         default=[],
-        help="Git permission exposed through the Built-in git Tool",
+        help="Git permission exposed through the Pi git Tool",
     )
     parser.add_argument(
-        "--builtin-capacity",
+        "--worker-capacity",
         type=int,
         default=1,
-        help="maximum concurrent Built-in Agent Sessions",
-    )
-    parser.add_argument(
-        "--builtin-agent-max-steps",
-        type=int,
-        default=None,
-        help="maximum model steps in one Built-in Agent Attempt",
-    )
-    parser.add_argument(
-        "--builtin-agent-max-tool-calls",
-        type=int,
-        default=None,
-        help="maximum Tool calls in one Built-in Agent Attempt",
-    )
-    parser.add_argument(
-        "--builtin-agent-wall-clock-seconds",
-        type=float,
-        default=None,
-        help="Built-in Agent loop deadline inside the Runtime Attempt deadline",
-    )
-    parser.add_argument(
-        "--builtin-agent-max-output-bytes",
-        type=int,
-        default=None,
-        help="maximum accumulated model and Tool output per Built-in Agent Attempt",
+        help="maximum concurrent Pi Agent Sessions",
     )
     parser.add_argument(
         "--command-check-argv",
@@ -749,19 +719,18 @@ def main(argv: Sequence[str] | None = None) -> int:
         worker_workspace=args.worker_workspace,
         planner_kind=args.planner,
         planner_timeout_seconds=args.planner_timeout_seconds,
-        builtin_planner_model=args.builtin_planner_model,
-        builtin_planner_reasoning_effort=args.builtin_planner_reasoning_effort,
+        planner_model=args.planner_model,
+        planner_reasoning_effort=args.planner_reasoning_effort,
         worker_timeout_seconds=args.worker_timeout_seconds,
         attempt_deadline_seconds=args.attempt_deadline_seconds,
         codex_model=args.codex_model,
         codex_reasoning_effort=args.codex_reasoning_effort,
-        builtin_model=args.builtin_model,
-        builtin_reasoning_effort=args.builtin_reasoning_effort,
-        builtin_agent_budget=_runtime_agent_budget(args),
-        builtin_allowed_commands=_parse_allowed_command_argv(args.builtin_allowed_command),
-        available_shells=tuple(args.builtin_available_shell),
-        git_permissions=tuple(args.builtin_git_permission),
-        builtin_capacity=args.builtin_capacity,
+        agent_model=args.agent_model,
+        agent_reasoning_effort=args.agent_reasoning_effort,
+        agent_allowed_commands=_parse_allowed_command_argv(args.agent_allowed_command),
+        available_shells=tuple(args.agent_available_shell),
+        git_permissions=tuple(args.agent_git_permission),
+        worker_capacity=args.worker_capacity,
         codex_server_executable=(
             "codex" if args.codex_server_executable is None else tuple(args.codex_server_executable)
         ),
@@ -771,22 +740,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         command_check_argv=_parse_command_argv(args.command_check_argv),
         command_check_timeout_seconds=args.command_check_timeout_seconds,
         semantic_required_terms=tuple(args.semantic_required_term),
-        endpoint_capabilities=responses_capabilities(args),
+        pi_backend=None if args.pi_config is None else PiBackendConfig.from_path(args.pi_config),
     )
     uvicorn.run(app, host=args.host, port=args.port)
     return 0
-
-
-def _runtime_agent_budget(args: argparse.Namespace) -> AgentBudget | None:
-    values = (
-        args.builtin_agent_max_steps,
-        args.builtin_agent_max_tool_calls,
-        args.builtin_agent_wall_clock_seconds,
-        args.builtin_agent_max_output_bytes,
-    )
-    if all(value is None for value in values):
-        return None
-    return AgentBudget(*values)
 
 
 def _parse_command_argv(value: str | None) -> tuple[str, ...] | None:
@@ -807,7 +764,7 @@ def _parse_allowed_command_argv(values: Sequence[str]) -> tuple[tuple[str, ...],
     for value in values:
         decoded = _parse_command_argv(value)
         if decoded is None:  # pragma: no cover - argparse always supplies text values
-            raise ValueError("--builtin-allowed-command requires an argv JSON array")
+            raise ValueError("--agent-allowed-command requires an argv JSON array")
         policies.append(decoded)
     return tuple(policies)
 
@@ -818,7 +775,7 @@ def _normalize_allowed_command_argv(
     policies: list[tuple[str, ...]] = []
     for argv in values:
         if isinstance(argv, str) or not argv or any(not isinstance(item, str) for item in argv):
-            raise ValueError("Built-in allowed commands must be non-empty argv sequences")
+            raise ValueError("Pi allowed commands must be non-empty argv sequences")
         policies.append(tuple(argv))
     return tuple(policies)
 

@@ -5,82 +5,6 @@
     "version": "2"
   },
   "paths": {
-    "/api/v1/planning/discuss": {
-      "post": {
-        "summary": "Discuss Plan",
-        "operationId": "discuss_plan_api_v1_planning_discuss_post",
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {"$ref": "#/components/schemas/DiscussPlanRequest"}
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Planning discussion",
-            "content": {
-              "application/json": {
-                "schema": {"$ref": "queries.schema.json#/$defs/PlanningConversationResponse"}
-              }
-            }
-          },
-          "404": {
-            "description": "Not Found",
-            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ErrorResponse"}}}
-          },
-          "409": {
-            "description": "State conflict or failed planning turn",
-            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ErrorResponse"}}}
-          },
-          "422": {
-            "description": "Invalid request",
-            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ErrorResponse"}}}
-          },
-          "500": {
-            "description": "Internal Server Error",
-            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ErrorResponse"}}}
-          }
-        }
-      }
-    },
-    "/api/v1/planning/{conversation_id}": {
-      "get": {
-        "summary": "Get Planning Conversation",
-        "operationId": "get_planning_conversation_api_v1_planning__conversation_id__get",
-        "parameters": [
-          {
-            "name": "conversation_id",
-            "in": "path",
-            "required": true,
-            "schema": {"$ref": "common.schema.json#/$defs/IdInput"}
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Planning discussion",
-            "content": {
-              "application/json": {
-                "schema": {"$ref": "queries.schema.json#/$defs/PlanningConversationResponse"}
-              }
-            }
-          },
-          "404": {
-            "description": "Not Found",
-            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ErrorResponse"}}}
-          },
-          "422": {
-            "description": "Invalid request",
-            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ErrorResponse"}}}
-          },
-          "500": {
-            "description": "Internal Server Error",
-            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ErrorResponse"}}}
-          }
-        }
-      }
-    },
     "/api/v1/projects": {
       "post": {
         "summary": "Create Project",
@@ -271,6 +195,134 @@
                 }
               }
             }
+          }
+        }
+      }
+    },
+    "/api/v1/planning/discuss": {
+      "post": {
+        "summary": "Discuss Plan",
+        "operationId": "discuss_plan_api_v1_planning_discuss_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DiscussPlanRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Planning discussion",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "queries.schema.json#/$defs/PlanningConversationResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Unprocessable Entity",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/planning/{conversation_id}": {
+      "get": {
+        "summary": "Get Planning Conversation",
+        "operationId": "get_planning_conversation_api_v1_planning__conversation_id__get",
+        "parameters": [
+          {
+            "name": "conversation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$",
+              "title": "Conversation Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Planning discussion",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "queries.schema.json#/$defs/PlanningConversationResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
           }
         }
       }
@@ -1203,17 +1255,17 @@
         }
       }
     },
-    "/api/v1/runtime/health": {
+    "/api/v1/workers/profiles": {
       "get": {
-        "summary": "Get Runtime Health",
-        "operationId": "get_runtime_health_api_v1_runtime_health_get",
+        "summary": "List Worker Profiles",
+        "operationId": "list_worker_profiles_api_v1_workers_profiles_get",
         "responses": {
           "200": {
-            "description": "Runtime scheduler health",
+            "description": "Worker Profiles",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "queries.schema.json#/$defs/RuntimeHealthResponse"
+                  "$ref": "queries.schema.json#/$defs/WorkerProfileListResponse"
                 }
               }
             }
@@ -1251,17 +1303,17 @@
         }
       }
     },
-    "/api/v1/workers/profiles": {
+    "/api/v1/runtime/health": {
       "get": {
-        "summary": "List Worker Profiles",
-        "operationId": "list_worker_profiles_api_v1_workers_profiles_get",
+        "summary": "Get Runtime Health",
+        "operationId": "get_runtime_health_api_v1_runtime_health_get",
         "responses": {
           "200": {
-            "description": "Worker Profiles",
+            "description": "Runtime scheduler health",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "queries.schema.json#/$defs/WorkerProfileListResponse"
+                  "$ref": "queries.schema.json#/$defs/RuntimeHealthResponse"
                 }
               }
             }
@@ -1819,7 +1871,7 @@
     },
     "/api/v1/runs/{run_id}/plan": {
       "get": {
-        "summary": "Get Run Execution Plan",
+        "summary": "Get Run Plan",
         "operationId": "getRunPlan",
         "parameters": [
           {
@@ -2297,40 +2349,6 @@
         }
       }
     },
-    "/api/v1/runs/{run_id}/adoptions": {
-      "get": {
-        "summary": "List Result Adoptions",
-        "operationId": "list_result_adoptions_api_v1_runs__run_id__adoptions_get",
-        "parameters": [{
-          "name": "run_id", "in": "path", "required": true,
-          "schema": {
-            "type": "string",
-            "pattern": "^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$",
-            "title": "Run Id"
-          }
-        }],
-        "responses": {
-          "200": {
-            "description": "Run result adoptions",
-            "content": {"application/json": {"schema": {
-              "$ref": "queries.schema.json#/$defs/ResultAdoptionListResponse"
-            }}}
-          },
-          "404": {
-            "description": "Not Found",
-            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ErrorResponse"}}}
-          },
-          "422": {
-            "description": "Unprocessable Entity",
-            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ErrorResponse"}}}
-          },
-          "500": {
-            "description": "Internal Server Error",
-            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ErrorResponse"}}}
-          }
-        }
-      }
-    },
     "/api/v1/runs/{run_id}/checks": {
       "get": {
         "summary": "List Checks",
@@ -2354,6 +2372,66 @@
               "application/json": {
                 "schema": {
                   "$ref": "queries.schema.json#/$defs/CheckRunListResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/api/v1/runs/{run_id}/adoptions": {
+      "get": {
+        "summary": "List Result Adoptions",
+        "operationId": "list_result_adoptions_api_v1_runs__run_id__adoptions_get",
+        "parameters": [
+          {
+            "name": "run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$",
+              "title": "Run Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Run result adoptions",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "queries.schema.json#/$defs/ResultAdoptionListResponse"
                 }
               }
             }
@@ -2745,27 +2823,8 @@
       }
     }
   },
-    "components": {
+  "components": {
     "schemas": {
-      "DiscussPlanRequest": {"$ref": "commands.schema.json#/$defs/DiscussPlanRequest"},
-      "ReviewProcessRequest": {
-        "properties": {
-          "idempotency_key": {
-            "type": "string",
-            "minLength": 1,
-            "title": "Idempotency Key"
-          },
-          "draft_id": {
-            "type": "string",
-            "pattern": "^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$",
-            "title": "Draft Id"
-          }
-        },
-        "additionalProperties": false,
-        "type": "object",
-        "required": ["idempotency_key", "draft_id"],
-        "title": "ReviewProcessRequest"
-      },
       "ApplyProcessRequest": {
         "properties": {
           "idempotency_key": {
@@ -2781,7 +2840,10 @@
         },
         "additionalProperties": false,
         "type": "object",
-        "required": ["idempotency_key", "review_id"],
+        "required": [
+          "idempotency_key",
+          "review_id"
+        ],
         "title": "ApplyProcessRequest"
       },
       "ApprovePlanRequest": {
@@ -2837,85 +2899,6 @@
           "idempotency_key"
         ],
         "title": "CancelRunRequest"
-      },
-      "DecideHumanCheckRequest": {
-        "properties": {
-          "idempotency_key": {
-            "type": "string",
-            "minLength": 1,
-            "title": "Idempotency Key"
-          },
-          "request_token": {
-            "type": "string",
-            "maxLength": 64,
-            "minLength": 64,
-            "pattern": "^[0-9a-fA-F]{64}$",
-            "title": "Request Token"
-          },
-          "passed": {
-            "type": "boolean",
-            "title": "Passed"
-          },
-          "actor": {
-            "type": "string",
-            "maxLength": 8000,
-            "minLength": 1,
-            "title": "Actor"
-          },
-          "comment": {
-            "type": "string",
-            "maxLength": 8000,
-            "minLength": 1,
-            "title": "Comment"
-          }
-        },
-        "additionalProperties": false,
-        "type": "object",
-        "required": [
-          "idempotency_key",
-          "request_token",
-          "passed",
-          "actor",
-          "comment"
-        ],
-        "title": "DecideHumanCheckRequest"
-      },
-      "ReplyInterventionRequest": {
-        "properties": {
-          "idempotency_key": {
-            "type": "string",
-            "minLength": 1,
-            "title": "Idempotency Key"
-          },
-          "request_token": {
-            "type": "string",
-            "maxLength": 64,
-            "minLength": 64,
-            "pattern": "^[0-9a-fA-F]{64}$",
-            "title": "Request Token"
-          },
-          "actor": {
-            "type": "string",
-            "maxLength": 8000,
-            "minLength": 1,
-            "title": "Actor"
-          },
-          "message": {
-            "type": "string",
-            "maxLength": 8000,
-            "minLength": 1,
-            "title": "Message"
-          }
-        },
-        "additionalProperties": false,
-        "type": "object",
-        "required": [
-          "idempotency_key",
-          "request_token",
-          "actor",
-          "message"
-        ],
-        "title": "ReplyInterventionRequest"
       },
       "CreateGoalRequest": {
         "properties": {
@@ -2977,6 +2960,123 @@
         ],
         "title": "DataResponse"
       },
+      "DecideHumanCheckRequest": {
+        "properties": {
+          "idempotency_key": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Idempotency Key"
+          },
+          "request_token": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 64,
+            "pattern": "^[0-9a-fA-F]{64}$",
+            "title": "Request Token"
+          },
+          "passed": {
+            "type": "boolean",
+            "title": "Passed"
+          },
+          "actor": {
+            "type": "string",
+            "maxLength": 8000,
+            "minLength": 1,
+            "title": "Actor"
+          },
+          "comment": {
+            "type": "string",
+            "maxLength": 8000,
+            "minLength": 1,
+            "title": "Comment"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "idempotency_key",
+          "request_token",
+          "passed",
+          "actor",
+          "comment"
+        ],
+        "title": "DecideHumanCheckRequest"
+      },
+      "DiscussPlanRequest": {
+        "properties": {
+          "idempotency_key": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Idempotency Key"
+          },
+          "goal_id": {
+            "type": "string",
+            "pattern": "^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$",
+            "title": "Goal Id"
+          },
+          "criteria": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "enum": [
+                    "artifact:non-empty",
+                    "command:exit-zero",
+                    "semantic:required-terms"
+                  ]
+                },
+                {
+                  "type": "string",
+                  "maxLength": 8000,
+                  "minLength": 7,
+                  "pattern": "^human:\\s*\\S.*$"
+                }
+              ]
+            },
+            "type": "array",
+            "maxItems": 3,
+            "title": "Criteria"
+          },
+          "message": {
+            "type": "string",
+            "maxLength": 8000,
+            "minLength": 1,
+            "title": "Message"
+          },
+          "conversation_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Conversation Id"
+          },
+          "source_run_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Run Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "idempotency_key",
+          "goal_id",
+          "message"
+        ],
+        "title": "DiscussPlanRequest"
+      },
       "ErrorDetail": {
         "properties": {
           "code": {
@@ -3007,6 +3107,239 @@
         ],
         "title": "ErrorResponse"
       },
+      "ExecutionCodexServerRequest": {
+        "properties": {
+          "executable": {
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "^[^\\x00]*[^\\s\\x00][^\\x00]*$"
+            },
+            "type": "array",
+            "minItems": 1,
+            "title": "Executable"
+          },
+          "approval_policy": {
+            "type": "string",
+            "enum": [
+              "untrusted",
+              "on-request",
+              "never"
+            ],
+            "title": "Approval Policy"
+          },
+          "sandbox": {
+            "type": "string",
+            "enum": [
+              "read-only",
+              "workspace-write",
+              "danger-full-access"
+            ],
+            "title": "Sandbox"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "executable",
+          "approval_policy",
+          "sandbox"
+        ],
+        "title": "ExecutionCodexServerRequest"
+      },
+      "ExecutionConfigRequest": {
+        "properties": {
+          "config_version": {
+            "type": "integer",
+            "maximum": 1.0,
+            "minimum": 1.0,
+            "title": "Config Version"
+          },
+          "worker_kind": {
+            "type": "string",
+            "enum": [
+              "pi",
+              "codex-server"
+            ],
+            "title": "Worker Kind"
+          },
+          "model": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^[^\\x00]*[^\\s\\x00][^\\x00]*$",
+            "title": "Model"
+          },
+          "reasoning_effort": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^[^\\x00]*[^\\s\\x00][^\\x00]*$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reasoning Effort"
+          },
+          "capacity": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Capacity"
+          },
+          "workspace": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^[^\\x00]*[^\\s\\x00][^\\x00]*$",
+            "title": "Workspace"
+          },
+          "allowed_commands": {
+            "items": {
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^[^\\x00]*[^\\s\\x00][^\\x00]*$"
+              },
+              "type": "array",
+              "minItems": 1
+            },
+            "type": "array",
+            "uniqueItems": true,
+            "title": "Allowed Commands",
+            "description": "Distinct argv arrays; duplicates are checked after text normalization."
+          },
+          "available_shells": {
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "^[^\\x00]*[^\\s\\x00][^\\x00]*$"
+            },
+            "type": "array",
+            "uniqueItems": true,
+            "title": "Available Shells",
+            "description": "Distinct shell names; duplicates are checked after text normalization."
+          },
+          "git_permissions": {
+            "items": {
+              "type": "string",
+              "enum": [
+                "git.read",
+                "git.local_write",
+                "git.remote_write",
+                "git.dangerous"
+              ]
+            },
+            "type": "array",
+            "title": "Git Permissions"
+          },
+          "endpoint_capabilities": {
+            "$ref": "#/components/schemas/ExecutionEndpointCapabilitiesRequest"
+          },
+          "command_timeout_seconds": {
+            "type": "number",
+            "exclusiveMinimum": 0.0,
+            "title": "Command Timeout Seconds"
+          },
+          "codex_server": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ExecutionCodexServerRequest"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "process_adjustment": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ProcessAdjustmentPolicyRequest"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "goal_worker_budget": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/GoalWorkerBudgetRequest"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "pi": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PiBackendConfigRequest"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "config_version",
+          "worker_kind",
+          "model",
+          "reasoning_effort",
+          "capacity",
+          "workspace",
+          "allowed_commands",
+          "available_shells",
+          "git_permissions",
+          "endpoint_capabilities",
+          "command_timeout_seconds"
+        ],
+        "title": "ExecutionConfigRequest",
+        "description": "Explicit confirmation of the host's credential-free execution settings."
+      },
+      "ExecutionEndpointCapabilitiesRequest": {
+        "properties": {
+          "supports_background": {
+            "type": "boolean",
+            "title": "Supports Background"
+          },
+          "supports_unique_items": {
+            "type": "boolean",
+            "title": "Supports Unique Items"
+          },
+          "supports_idempotent_create": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Supports Idempotent Create"
+          },
+          "supports_previous_response_id": {
+            "type": "boolean",
+            "title": "Supports Previous Response Id"
+          },
+          "supports_response_retrieval": {
+            "type": "boolean",
+            "title": "Supports Response Retrieval"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "supports_background",
+          "supports_unique_items",
+          "supports_idempotent_create",
+          "supports_previous_response_id",
+          "supports_response_retrieval"
+        ],
+        "title": "ExecutionEndpointCapabilitiesRequest"
+      },
       "ExtendAttemptDeadlineRequest": {
         "properties": {
           "idempotency_key": {
@@ -3027,6 +3360,21 @@
           "deadline_at"
         ],
         "title": "ExtendAttemptDeadlineRequest"
+      },
+      "GoalWorkerBudgetRequest": {
+        "properties": {
+          "max_worker_attempts": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Max Worker Attempts"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "max_worker_attempts"
+        ],
+        "title": "GoalWorkerBudgetRequest"
       },
       "JsonScalar": {
         "anyOf": [
@@ -3084,6 +3432,102 @@
             "type": "object"
           }
         ]
+      },
+      "PiBackendConfigRequest": {
+        "properties": {
+          "node": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^[^\\x00]*[^\\s\\x00][^\\x00]*$",
+            "title": "Node"
+          },
+          "cli": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^[^\\x00]*[^\\s\\x00][^\\x00]*$",
+            "title": "Cli"
+          },
+          "agent_dir": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^[^\\x00]*[^\\s\\x00][^\\x00]*$",
+            "title": "Agent Dir"
+          },
+          "provider": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^[^\\x00]*[^\\s\\x00][^\\x00]*$",
+            "title": "Provider"
+          },
+          "environment_names": {
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "^[^\\x00]*[^\\s\\x00][^\\x00]*$"
+            },
+            "type": "array",
+            "title": "Environment Names"
+          },
+          "configuration_hash": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^[^\\x00]*[^\\s\\x00][^\\x00]*$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Configuration Hash"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "node",
+          "cli",
+          "agent_dir",
+          "provider",
+          "environment_names"
+        ],
+        "title": "PiBackendConfigRequest"
+      },
+      "ProcessAdjustmentPolicyRequest": {
+        "properties": {
+          "max_per_goal": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Max Per Goal"
+          },
+          "model": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^[^\\x00]*[^\\s\\x00][^\\x00]*$",
+            "title": "Model"
+          },
+          "reasoning_effort": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^[^\\x00]*[^\\s\\x00][^\\x00]*$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reasoning Effort"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "max_per_goal",
+          "model",
+          "reasoning_effort"
+        ],
+        "title": "ProcessAdjustmentPolicyRequest"
       },
       "ProposePlanRequest": {
         "properties": {
@@ -3171,18 +3615,6 @@
             "pattern": "^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$",
             "title": "Base Plan Revision Id"
           },
-          "source_run_id": {
-            "anyOf": [
-              {
-                "type": "string",
-                "pattern": "^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Source Run Id"
-          },
           "criteria": {
             "items": {
               "anyOf": [
@@ -3206,6 +3638,18 @@
             "maxItems": 3,
             "minItems": 1,
             "title": "Criteria"
+          },
+          "source_run_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Run Id"
           }
         },
         "additionalProperties": false,
@@ -3216,6 +3660,43 @@
           "criteria"
         ],
         "title": "ReplanPlanRequest"
+      },
+      "ReplyInterventionRequest": {
+        "properties": {
+          "idempotency_key": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Idempotency Key"
+          },
+          "request_token": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 64,
+            "pattern": "^[0-9a-fA-F]{64}$",
+            "title": "Request Token"
+          },
+          "actor": {
+            "type": "string",
+            "maxLength": 8000,
+            "minLength": 1,
+            "title": "Actor"
+          },
+          "message": {
+            "type": "string",
+            "maxLength": 8000,
+            "minLength": 1,
+            "title": "Message"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "idempotency_key",
+          "request_token",
+          "actor",
+          "message"
+        ],
+        "title": "ReplyInterventionRequest"
       },
       "ResolveWorkerRequestRequest": {
         "properties": {
@@ -3240,6 +3721,27 @@
         ],
         "title": "ResolveWorkerRequestRequest"
       },
+      "ReviewProcessRequest": {
+        "properties": {
+          "idempotency_key": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Idempotency Key"
+          },
+          "draft_id": {
+            "type": "string",
+            "pattern": "^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$",
+            "title": "Draft Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "idempotency_key",
+          "draft_id"
+        ],
+        "title": "ReviewProcessRequest"
+      },
       "RunActionRequest": {
         "properties": {
           "idempotency_key": {
@@ -3255,286 +3757,17 @@
         ],
         "title": "RunActionRequest"
       },
-      "ExecutionCodexServerRequest": {
-        "additionalProperties": false,
-        "properties": {
-          "executable": {
-            "items": {
-              "minLength": 1,
-              "pattern": "^[^\\x00]*[^\\s\\x00][^\\x00]*$",
-              "type": "string"
-            },
-            "minItems": 1,
-            "title": "Executable",
-            "type": "array"
-          },
-          "approval_policy": {
-            "enum": [
-              "untrusted",
-              "on-request",
-              "never"
-            ],
-            "title": "Approval Policy",
-            "type": "string"
-          },
-          "sandbox": {
-            "enum": [
-              "read-only",
-              "workspace-write",
-              "danger-full-access"
-            ],
-            "title": "Sandbox",
-            "type": "string"
-          }
-        },
-        "required": [
-          "executable",
-          "approval_policy",
-          "sandbox"
-        ],
-        "title": "ExecutionCodexServerRequest",
-        "type": "object"
-      },
-      "GoalWorkerBudgetRequest": {
-        "additionalProperties": false,
-        "properties": {
-          "max_worker_attempts": {
-            "minimum": 1,
-            "title": "Max Worker Attempts",
-            "type": "integer"
-          }
-        },
-        "required": ["max_worker_attempts"],
-        "title": "GoalWorkerBudgetRequest",
-        "type": "object"
-      },
-      "ExecutionConfigRequest": {
-        "additionalProperties": false,
-        "description": "Explicit confirmation of the host's credential-free execution settings.",
-        "properties": {
-          "config_version": {
-            "maximum": 1,
-            "minimum": 1,
-            "title": "Config Version",
-            "type": "integer"
-          },
-          "worker_kind": {
-            "enum": [
-              "builtin",
-              "codex-server"
-            ],
-            "title": "Worker Kind",
-            "type": "string"
-          },
-          "model": {
-            "minLength": 1,
-            "pattern": "^[^\\x00]*[^\\s\\x00][^\\x00]*$",
-            "title": "Model",
-            "type": "string"
-          },
-          "reasoning_effort": {
-            "anyOf": [
-              {
-                "minLength": 1,
-                "pattern": "^[^\\x00]*[^\\s\\x00][^\\x00]*$",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Reasoning Effort"
-          },
-          "capacity": {
-            "minimum": 1,
-            "title": "Capacity",
-            "type": "integer"
-          },
-          "workspace": {
-            "minLength": 1,
-            "pattern": "^[^\\x00]*[^\\s\\x00][^\\x00]*$",
-            "title": "Workspace",
-            "type": "string"
-          },
-          "allowed_commands": {
-            "description": "Distinct argv arrays; duplicates are checked after text normalization.",
-            "items": {
-              "items": {
-                "minLength": 1,
-                "pattern": "^[^\\x00]*[^\\s\\x00][^\\x00]*$",
-                "type": "string"
-              },
-              "minItems": 1,
-              "type": "array"
-            },
-            "title": "Allowed Commands",
-            "type": "array",
-            "uniqueItems": true
-          },
-          "available_shells": {
-            "description": "Distinct shell names; duplicates are checked after text normalization.",
-            "items": {
-              "minLength": 1,
-              "pattern": "^[^\\x00]*[^\\s\\x00][^\\x00]*$",
-              "type": "string"
-            },
-            "title": "Available Shells",
-            "type": "array",
-            "uniqueItems": true
-          },
-          "git_permissions": {
-            "items": {
-              "enum": [
-                "git.read",
-                "git.local_write",
-                "git.remote_write",
-                "git.dangerous"
-              ],
-              "type": "string"
-            },
-            "title": "Git Permissions",
-            "type": "array"
-          },
-          "endpoint_capabilities": {
-            "$ref": "#/components/schemas/ExecutionEndpointCapabilitiesRequest"
-          },
-          "command_timeout_seconds": {
-            "exclusiveMinimum": 0,
-            "title": "Command Timeout Seconds",
-            "type": "number"
-          },
-          "codex_server": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/ExecutionCodexServerRequest"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null
-          },
-          "goal_worker_budget": {
-            "anyOf": [{"$ref": "#/components/schemas/GoalWorkerBudgetRequest"}, {"type": "null"}],
-            "default": null
-          },
-          "process_adjustment": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/ProcessAdjustmentPolicyRequest"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null
-          }
-        },
-        "required": [
-          "config_version",
-          "worker_kind",
-          "model",
-          "reasoning_effort",
-          "capacity",
-          "workspace",
-          "allowed_commands",
-          "available_shells",
-          "git_permissions",
-          "endpoint_capabilities",
-          "command_timeout_seconds"
-        ],
-        "title": "ExecutionConfigRequest",
-        "type": "object"
-      },
-      "ExecutionEndpointCapabilitiesRequest": {
-        "additionalProperties": false,
-        "properties": {
-          "supports_background": {
-            "title": "Supports Background",
-            "type": "boolean"
-          },
-          "supports_unique_items": {
-            "title": "Supports Unique Items",
-            "type": "boolean"
-          },
-          "supports_idempotent_create": {
-            "anyOf": [
-              {
-                "type": "boolean"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Supports Idempotent Create"
-          },
-          "supports_previous_response_id": {
-            "title": "Supports Previous Response Id",
-            "type": "boolean"
-          },
-          "supports_response_retrieval": {
-            "title": "Supports Response Retrieval",
-            "type": "boolean"
-          }
-        },
-        "required": [
-          "supports_background",
-          "supports_unique_items",
-          "supports_idempotent_create",
-          "supports_previous_response_id",
-          "supports_response_retrieval"
-        ],
-        "title": "ExecutionEndpointCapabilitiesRequest",
-        "type": "object"
-      },
-      "ProcessAdjustmentPolicyRequest": {
-        "additionalProperties": false,
-        "properties": {
-          "max_per_goal": {
-            "minimum": 1,
-            "title": "Max Per Goal",
-            "type": "integer"
-          },
-          "model": {
-            "minLength": 1,
-            "pattern": "^[^\\x00]*[^\\s\\x00][^\\x00]*$",
-            "title": "Model",
-            "type": "string"
-          },
-          "reasoning_effort": {
-            "anyOf": [
-              {
-                "minLength": 1,
-                "pattern": "^[^\\x00]*[^\\s\\x00][^\\x00]*$",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Reasoning Effort"
-          }
-        },
-        "required": [
-          "max_per_goal",
-          "model",
-          "reasoning_effort"
-        ],
-        "title": "ProcessAdjustmentPolicyRequest",
-        "type": "object"
-      },
       "StartRunRequest": {
-        "additionalProperties": false,
         "properties": {
           "idempotency_key": {
+            "type": "string",
             "minLength": 1,
-            "title": "Idempotency Key",
-            "type": "string"
+            "title": "Idempotency Key"
           },
           "plan_revision_id": {
+            "type": "string",
             "pattern": "^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$",
-            "title": "Plan Revision Id",
-            "type": "string"
+            "title": "Plan Revision Id"
           },
           "execution_config": {
             "anyOf": [
@@ -3544,16 +3777,16 @@
               {
                 "type": "null"
               }
-            ],
-            "default": null
+            ]
           }
         },
+        "additionalProperties": false,
+        "type": "object",
         "required": [
           "idempotency_key",
           "plan_revision_id"
         ],
-        "title": "StartRunRequest",
-        "type": "object"
+        "title": "StartRunRequest"
       }
     }
   }

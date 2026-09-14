@@ -390,7 +390,7 @@ export type Checkpoint = {
   readonly created_at: UtcDateTime;
 };
 
-export type BuiltinSessionEventType = "step/start" | "model/message" | "model/transport" | "tool/call" | "tool/result" | "tool/error" | "step/end";
+export type BuiltinSessionEventType = "message/received" | "step/start" | "model/message" | "model/transport" | "tool/call" | "tool/result" | "tool/error" | "step/end" | "backend/event" | "backend/error";
 
 export type BuiltinSessionEvent = {
   readonly agent_session_ref_id: Id;
@@ -424,7 +424,7 @@ export type EventPage = {
 export type WorkerProfile = {
   readonly worker_profile_id: Id;
   readonly name: string;
-  readonly kind: "builtin" | "codex_cli" | "codex_app_server";
+  readonly kind: "builtin" | "pi" | "codex_cli" | "codex_app_server";
   readonly model: string;
   readonly capabilities: ReadonlyArray<string>;
   readonly session_policy: "new" | "reuse" | "fork";
@@ -435,7 +435,7 @@ export type WorkerProfile = {
 export type WorkerEndpoint = {
   readonly worker_endpoint_id: Id;
   readonly name: string;
-  readonly worker_kind: "builtin" | "codex_cli" | "codex_app_server";
+  readonly worker_kind: "builtin" | "pi" | "codex_cli" | "codex_app_server";
   readonly endpoint_type: "in_process" | "command" | "address";
   readonly capacity: number;
   readonly status: "enabled" | "draining" | "disabled";
@@ -742,7 +742,7 @@ export type GoalWorkerBudgetRequest = {
 
 export type ExecutionConfigRequest = {
   readonly config_version: number;
-  readonly worker_kind: "builtin" | "codex-server";
+  readonly worker_kind: "pi" | "codex-server";
   readonly model: string;
   readonly reasoning_effort: string | null;
   readonly capacity: number;
@@ -753,8 +753,9 @@ export type ExecutionConfigRequest = {
   readonly endpoint_capabilities: ExecutionEndpointCapabilitiesRequest;
   readonly command_timeout_seconds: number;
   readonly codex_server?: ExecutionCodexServerRequest | null;
-  readonly goal_worker_budget?: GoalWorkerBudgetRequest | null;
   readonly process_adjustment?: ProcessAdjustmentPolicyRequest | null;
+  readonly goal_worker_budget?: GoalWorkerBudgetRequest | null;
+  readonly pi?: PiBackendConfigRequest | null;
 };
 
 export type ExecutionEndpointCapabilitiesRequest = {
@@ -844,6 +845,15 @@ export type ProcessReviewAcceptedResponse = {
   readonly status: ProcessReviewStatus;
   readonly preserves_boundary: boolean | null;
 };
+};
+
+export type PiBackendConfigRequest = {
+  readonly node: string;
+  readonly cli: string;
+  readonly agent_dir: string;
+  readonly provider: string;
+  readonly environment_names: ReadonlyArray<string>;
+  readonly configuration_hash?: string | null;
 };
 
 export class EhaiApiError extends Error {

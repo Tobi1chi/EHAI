@@ -9,10 +9,8 @@ import sys
 from collections.abc import Sequence
 from io import TextIOWrapper
 from pathlib import Path
-from typing import cast
 
 from fastapi import FastAPI
-from openai.types.shared import ReasoningEffort
 
 from ehai import JsonValue, json_dumps, json_loads, normalize_id
 from ehai.application.checkpointing import RecoveryError, RecoveryService
@@ -34,6 +32,7 @@ from ehai.application.commands import (
     ReviewProcess,
     StartRun,
 )
+from ehai.application.legacy_config import ResponsesEndpointCapabilities
 from ehai.application.orchestrator import OrchestrationError, Orchestrator
 from ehai.application.planner import (
     COMMAND_EXIT_ZERO_CRITERION,
@@ -56,20 +55,21 @@ from ehai.application.workers import WorkerAdapter
 from ehai.domain.checking import CheckKind
 from ehai.domain.goal import Goal
 from ehai.domain.planning import PlanRevision
+from ehai.infrastructure.agent_traces import SQLiteAgentTraceStore
 from ehai.infrastructure.artifacts import FilesystemArtifactStore
-from ehai.infrastructure.builtin_sessions import SQLiteBuiltinSessionStore
 from ehai.infrastructure.checks import (
     ArtifactCheckAdapter,
     ArtifactCheckRule,
     CommandCheckAdapter,
     SemanticCheckAdapter,
 )
-from ehai.infrastructure.openai_responses import ResponsesEndpointCapabilities
+from ehai.infrastructure.pi_config import PiBackendConfig
+from ehai.infrastructure.pi_rpc import PiRpcError
 from ehai.infrastructure.planners import (
-    BuiltinPlannerAdapter,
-    BuiltinPlannerError,
     CodexPlannerAdapter,
     CodexPlannerError,
+    PiPlannerAdapter,
+    PiPlannerError,
 )
 from ehai.infrastructure.sqlite import SQLiteDatabase
 from ehai.infrastructure.workers import CodexWorkerAdapter, FakeWorker
@@ -125,10 +125,10 @@ def build_service(
     *,
     worker_kind: str = "fake",
     worker_workspace: Path | None = None,
-    planner_kind: str = "single",
+    planner_kind: str | None = None,
     planner_timeout_seconds: float = 120.0,
-    builtin_planner_model: str | None = None,
-    builtin_planner_reasoning_effort: str | None = None,
+    planner_model: str | None = None,
+    planner_reasoning_effort: str | None = None,
     command_check_argv: Sequence[str] | None = None,
     semantic_required_terms: Sequence[str] = (),
     command_check_timeout_seconds: float = 30.0,
@@ -137,8 +137,21 @@ def build_service(
     codex_reasoning_effort: str | None = None,
     background_start: bool = False,
     endpoint_capabilities: ResponsesEndpointCapabilities | None = None,
+    pi_backend: PiBackendConfig | None = None,
 ) -> ExecutionService:
     """Build the local service from concrete infrastructure Adapters."""
+    from ehai.interfaces.agent_backends import resolve_planner_kind
+
+    planner_kind = resolve_planner_kind(
+        planner_kind, pi_configured=pi_backend is not None, model=planner_model
+    )
+    if worker_kind == "builtin" or planner_kind == "builtin":
+        raise ValueError("The self-written Built-in Runtime was removed; configure Pi explicitly")
+    if planner_kind == "pi":
+        if pi_backend is None:
+            raise ValueError("Pi Planner requires --pi-config")
+        if planner_model is None or not planner_model.strip():
+            raise ValueError("Pi Planner requires --planner-model")
     database_path.parent.mkdir(parents=True, exist_ok=True)
     database = SQLiteDatabase(database_path)
     artifact_store = FilesystemArtifactStore(artifact_root)
@@ -152,7 +165,7 @@ def build_service(
             model=codex_model,
             reasoning_effort=codex_reasoning_effort,
         )
-    elif worker_kind in {"builtin", "codex-server"}:
+    elif worker_kind in {"pi", "codex-server"}:
         if not background_start:
             raise ValueError("this Worker requires the P2 background Runtime")
         worker = None
@@ -168,16 +181,15 @@ def build_service(
             workspace=worker_workspace or Path.cwd(),
             timeout_seconds=planner_timeout_seconds,
         )
-    elif planner_kind == "builtin":
-        if builtin_planner_model is None or not builtin_planner_model.strip():
-            raise ValueError("Built-in Planner requires --builtin-planner-model")
-        planner = BuiltinPlannerAdapter(
-            model=builtin_planner_model,
-            reasoning_effort=cast(ReasoningEffort, builtin_planner_reasoning_effort),
-            session_store=SQLiteBuiltinSessionStore(database),
+    elif planner_kind == "pi":
+        assert pi_backend is not None and planner_model is not None
+        planner = PiPlannerAdapter(
+            backend=pi_backend,
+            model=planner_model,
+            reasoning_effort=planner_reasoning_effort,
+            session_store=SQLiteAgentTraceStore(database),
             workspace=worker_workspace or Path.cwd(),
             artifact_store=artifact_store,
-            endpoint_capabilities=endpoint_capabilities,
             check_configuration={
                 "command_argv": [] if command_check_argv is None else list(command_check_argv),
                 "semantic_required_terms": list(semantic_required_terms),
@@ -231,7 +243,7 @@ def build_service(
 def create_parser() -> argparse.ArgumentParser:
     """Create the stable argparse surface used by tests and the console script."""
     parser = argparse.ArgumentParser(prog="ehai", description="EHAI P1 Execution Plane")
-    add_responses_arguments(parser)
+    parser.add_argument("--pi-config", type=Path, help="explicit native Pi backend configuration")
     parser.add_argument("--database", type=Path, required=True, help="SQLite database path")
     parser.add_argument(
         "--artifacts",
@@ -241,7 +253,7 @@ def create_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--worker",
-        choices=("fake", "codex", "codex-server", "builtin"),
+        choices=("fake", "codex", "codex-server", "pi"),
         default="fake",
         help="Worker Adapter (default: fake)",
     )
@@ -252,9 +264,9 @@ def create_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--planner",
-        choices=("single", "exploration", "codex", "builtin"),
-        default="single",
-        help="Planner implementation (default: single)",
+        choices=("single", "exploration", "codex", "pi"),
+        default=None,
+        help="Planner implementation (Pi when --pi-config/--planner-model is supplied)",
     )
     parser.add_argument(
         "--planner-timeout-seconds",
@@ -262,11 +274,11 @@ def create_parser() -> argparse.ArgumentParser:
         default=120.0,
         help="Codex Planner wall-clock timeout (default: 120)",
     )
-    parser.add_argument("--builtin-planner-model", help="OpenAI model for Built-in Planner")
+    parser.add_argument("--planner-model", help="exact native Pi model ID for the Planner")
     parser.add_argument(
-        "--builtin-planner-reasoning-effort",
-        choices=("none", "minimal", "low", "medium", "high", "xhigh", "max"),
-        help="OpenAI reasoning effort for Built-in Planner",
+        "--planner-reasoning-effort",
+        choices=("off", "minimal", "low", "medium", "high", "xhigh", "max"),
+        help="OpenAI reasoning effort for Pi Planner",
     )
     parser.add_argument(
         "--worker-timeout-seconds",
@@ -514,6 +526,14 @@ def create_parser() -> argparse.ArgumentParser:
 
     conversation = commands.add_parser("get-discussion", help="read durable planning discussion")
     conversation.add_argument("--conversation-id", required=True)
+
+    inspect_agent = commands.add_parser(
+        "inspect-agent", help="inspect the isolated Pi RPC backend without model calls"
+    )
+    inspect_agent.add_argument("--node", default="node", help="native Node executable")
+    inspect_agent.add_argument(
+        "--pi-cli", type=Path, required=True, help="installed Pi dist/bundle/cli.js"
+    )
     return parser
 
 
@@ -525,6 +545,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = create_parser()
     args = parser.parse_args(argv)
     try:
+        if args.command == "inspect-agent":
+            from ehai.interfaces.agent_backends import inspect_pi_backend
+
+            print(json_dumps(asyncio.run(inspect_pi_backend(node=args.node, cli=args.pi_cli))))
+            return 0
         if args.command in {
             "get-plan",
             "get-plan-checks",
@@ -552,15 +577,17 @@ def main(argv: Sequence[str] | None = None) -> int:
             worker_workspace=args.worker_workspace,
             planner_kind=args.planner,
             planner_timeout_seconds=args.planner_timeout_seconds,
-            builtin_planner_model=args.builtin_planner_model,
-            builtin_planner_reasoning_effort=args.builtin_planner_reasoning_effort,
+            planner_model=args.planner_model,
+            planner_reasoning_effort=args.planner_reasoning_effort,
             command_check_argv=_parse_command_argv(args.command_check_argv),
             semantic_required_terms=tuple(args.semantic_required_term),
             command_check_timeout_seconds=args.command_check_timeout_seconds,
             worker_timeout_seconds=args.worker_timeout_seconds,
             codex_model=args.codex_model,
             codex_reasoning_effort=args.codex_reasoning_effort,
-            endpoint_capabilities=responses_capabilities(args),
+            pi_backend=None
+            if args.pi_config is None
+            else PiBackendConfig.from_path(args.pi_config),
         )
         if args.command == "discuss-plan":
             message = (
@@ -589,13 +616,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     except (
         ApplicationError,
         StateConflictError,
-        BuiltinPlannerError,
+        PiPlannerError,
         CodexPlannerError,
         OrchestrationError,
         QueryNotFoundError,
         RecoveryError,
         RunControlError,
         SessionHostError,
+        PiRpcError,
         ValueError,
         OSError,
         sqlite3.Error,
@@ -660,7 +688,7 @@ def _build_foreground_app(
         return create_local_app(
             args.database,
             args.artifacts,
-            worker_kind="builtin",
+            worker_kind="fake",
             worker_workspace=Path.cwd(),
             planner_kind="single",
             p2_runtime=True,
@@ -671,24 +699,22 @@ def _build_foreground_app(
         args.artifacts,
         worker_kind=config.worker_kind,
         worker_workspace=config.workspace,
-        planner_kind="single" if config.process_adjustment is None else "builtin",
-        builtin_planner_model=(
+        planner_kind="single" if config.process_adjustment is None else "pi",
+        planner_model=(
             None if config.process_adjustment is None else config.process_adjustment.model
         ),
-        builtin_planner_reasoning_effort=(
+        planner_reasoning_effort=(
             None
             if config.process_adjustment is None
             else config.process_adjustment.reasoning_effort
         ),
         command_check_timeout_seconds=config.command_timeout_seconds,
-        builtin_model=config.model if config.worker_kind == "builtin" else None,
-        builtin_reasoning_effort=(
-            config.reasoning_effort if config.worker_kind == "builtin" else None
-        ),
-        builtin_allowed_commands=config.allowed_commands,
+        agent_model=config.model if config.worker_kind == "pi" else None,
+        agent_reasoning_effort=(config.reasoning_effort if config.worker_kind == "pi" else None),
+        agent_allowed_commands=config.allowed_commands,
         available_shells=config.available_shells,
         git_permissions=tuple(config.git_permissions),
-        builtin_capacity=config.capacity,
+        worker_capacity=config.capacity,
         codex_model=config.model if config.worker_kind == "codex-server" else None,
         codex_reasoning_effort=(
             config.reasoning_effort if config.worker_kind == "codex-server" else None
@@ -697,6 +723,7 @@ def _build_foreground_app(
         codex_server_approval_policy=config.codex_server_approval_policy,
         codex_server_sandbox=config.codex_server_sandbox,
         endpoint_capabilities=config.endpoint_capabilities,
+        pi_backend=config.pi_backend,
         p2_runtime=True,
         runtime_autostart=False,
     )
@@ -709,7 +736,7 @@ def _dispatch_query(args: argparse.Namespace) -> JsonValue:
     database = SQLiteDatabase(database_path)
     queries = QueryService(
         read_session_factory=database.read_session,
-        builtin_session_reader=SQLiteBuiltinSessionStore(database),
+        builtin_session_reader=SQLiteAgentTraceStore(database),
     )
     if args.command == "get-plan":
         return public_json_value(queries.get_plan_graph(normalize_id(args.plan_revision_id)))
@@ -901,32 +928,6 @@ def _dispatch(service: ExecutionService, args: argparse.Namespace) -> dict[str, 
             "status": run.status.value,
         }
     raise RuntimeError(f"unsupported CLI command: {command}")
-
-
-def add_responses_arguments(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument(
-        "--responses-background", action=argparse.BooleanOptionalAction, default=True
-    )
-    parser.add_argument(
-        "--responses-unique-items", action=argparse.BooleanOptionalAction, default=True
-    )
-    parser.add_argument("--responses-idempotent-create", action=argparse.BooleanOptionalAction)
-    parser.add_argument(
-        "--responses-previous-response-id", action=argparse.BooleanOptionalAction, default=True
-    )
-    parser.add_argument(
-        "--responses-response-retrieval", action=argparse.BooleanOptionalAction, default=True
-    )
-
-
-def responses_capabilities(args: argparse.Namespace) -> ResponsesEndpointCapabilities:
-    return ResponsesEndpointCapabilities(
-        supports_background=args.responses_background,
-        supports_unique_items=args.responses_unique_items,
-        supports_idempotent_create=args.responses_idempotent_create,
-        supports_previous_response_id=args.responses_previous_response_id,
-        supports_response_retrieval=args.responses_response_retrieval,
-    )
 
 
 def _parse_command_argv(value: str | None) -> tuple[str, ...] | None:

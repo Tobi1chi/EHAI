@@ -1,4 +1,4 @@
-"""Fixed, bounded Tool runtime for the P2 Built-in Agent."""
+"""Authorized host tool handlers; no Agent loop or model transport."""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import cast
 
 from ehai import ID, JsonValue, json_dumps, new_id, normalize_id
-from ehai.application.builtin_agent import (
+from ehai.application.agent_contracts import (
     CancellationToken,
     RecoverableToolError,
     ToolDefinition,
@@ -22,7 +22,7 @@ from ehai.application.builtin_agent import (
     ToolHandler,
     ToolSet,
 )
-from ehai.application.builtin_runtime import ToolRegistry
+from ehai.application.agent_roles import ToolRegistry
 from ehai.application.phase_session_tools import PhaseSessionToolProvider
 from ehai.application.ports import ArtifactStore
 from ehai.application.session_mailbox import SessionMailboxToolProvider
@@ -82,7 +82,7 @@ class _CommandOutputBudget:
         return chunk[:remaining]
 
 
-class BuiltinToolRuntime:
+class HostToolRuntime:
     """Own the seven fixed P2 Tools for one bounded Workspace."""
 
     def __init__(

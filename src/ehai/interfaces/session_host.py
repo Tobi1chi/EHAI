@@ -12,9 +12,10 @@ from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 from ehai import ID, JsonValue, json_dumps, json_loads, new_id, normalize_id, utc_now
-from ehai.application.builtin_agent import BuiltinSessionEventType
+from ehai.application.agent_trace import AgentTraceEventType
 from ehai.application.commands import PauseRun, ResumeRun, StartRun
 from ehai.application.goal_budgets import GoalWorkerBudget, validate_goal_worker_budget
+from ehai.application.legacy_config import ResponsesEndpointCapabilities
 from ehai.application.pause_causes import PauseCause
 from ehai.application.process_adjustments import ProcessAdjustmentPolicy
 from ehai.application.queries import QueryService
@@ -24,8 +25,8 @@ from ehai.domain.events import Event, EventType
 from ehai.domain.execution import AttemptStatus, Run, RunStatus
 from ehai.domain.runtime import DispatchWork, DispatchWorkStatus
 from ehai.domain.workers import AttemptActivity
-from ehai.infrastructure.builtin_sessions import SQLiteBuiltinSessionStore
-from ehai.infrastructure.openai_responses import ResponsesEndpointCapabilities
+from ehai.infrastructure.agent_traces import SQLiteAgentTraceStore
+from ehai.infrastructure.pi_config import PiBackendConfig
 from ehai.infrastructure.sqlite import SQLiteDatabase
 from ehai.interfaces.public_documents import public_json_value
 
@@ -36,7 +37,7 @@ if TYPE_CHECKING:
 
 _CONFIG_VERSION = 1
 _TERMINAL_RUN_STATUSES = {RunStatus.COMPLETED, RunStatus.FAILED, RunStatus.CANCELLED}
-_WORKER_KINDS = {"builtin", "codex-server"}
+_WORKER_KINDS = {"builtin", "pi", "codex-server"}
 _APPROVAL_POLICIES = {"untrusted", "on-request", "never"}
 _SANDBOX_MODES = {"read-only", "workspace-write", "danger-full-access"}
 _GIT_PERMISSIONS = {
@@ -88,6 +89,7 @@ class ExecutionConfig:
     codex_server_sandbox: str = "workspace-write"
     process_adjustment: ProcessAdjustmentPolicy | None = None
     goal_worker_budget: GoalWorkerBudget | None = None
+    pi_backend: PiBackendConfig | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "worker_kind", _worker_kind(self.worker_kind))
@@ -98,6 +100,8 @@ class ExecutionConfig:
                 "reasoning_effort",
                 _text(self.reasoning_effort, "reasoning_effort"),
             )
+        if self.worker_kind == "pi" and self.pi_backend is None:
+            raise ValueError("Pi execution config requires the pi backend object")
         if type(self.capacity) is not int or self.capacity < 1:
             raise ValueError("capacity must be a positive integer")
         commands = tuple(
@@ -178,6 +182,7 @@ class ExecutionConfig:
             "codex_server",
             "process_adjustment",
             "goal_worker_budget",
+            "pi",
         }
         unknown = sorted(set(document) - allowed)
         if unknown:
@@ -218,7 +223,11 @@ class ExecutionConfig:
         goal_budget = document.get("goal_worker_budget")
         if goal_budget is not None and not isinstance(goal_budget, dict):
             raise ValueError("goal_worker_budget must be an object or null")
+        pi_document = document.get("pi")
+        if pi_document is not None and not isinstance(pi_document, dict):
+            raise ValueError("pi must be a backend configuration object")
         return cls(
+            pi_backend=None if pi_document is None else PiBackendConfig.from_document(pi_document),
             worker_kind=worker_kind,
             model=model,
             reasoning_effort=reasoning,
@@ -282,6 +291,8 @@ class ExecutionConfig:
             document["process_adjustment"] = self.process_adjustment.to_document()
         if self.goal_worker_budget is not None:
             document["goal_worker_budget"] = self.goal_worker_budget.to_document()
+        if self.pi_backend is not None:
+            document["pi"] = self.pi_backend.to_document()
         return document
 
     @property
@@ -579,15 +590,26 @@ class ForegroundSessionHost:
             attempt is not None
             and attempt.agent_session_ref_id is not None
             and attempt.execution_handle is not None
-            and attempt.execution_handle.builtin is not None
+            and (
+                attempt.execution_handle.builtin is not None
+                or (
+                    self._composition.execution_config is not None
+                    and self._composition.execution_config.worker_kind == "pi"
+                )
+            )
         ):
-            builtin_session = SQLiteBuiltinSessionStore(self._composition.database).load(
+            builtin_session = SQLiteAgentTraceStore(self._composition.database).load(
                 attempt.agent_session_ref_id
             )
             if any(
                 event.attempt_id == attempt.attempt_id
-                and event.type is BuiltinSessionEventType.MODEL_TRANSPORT
-                and event.payload.get("phase") == "unknown_outcome"
+                and (
+                    event.type is AgentTraceEventType.BACKEND_ERROR
+                    or (
+                        event.type is AgentTraceEventType.MODEL_TRANSPORT
+                        and event.payload.get("phase") == "unknown_outcome"
+                    )
+                )
                 for event in builtin_session.events
             ):
                 return _SessionNotice(
@@ -696,7 +718,7 @@ def _result_document(
 ) -> dict[str, JsonValue]:
     queries = QueryService(
         read_session_factory=database.read_session,
-        builtin_session_reader=SQLiteBuiltinSessionStore(database),
+        builtin_session_reader=SQLiteAgentTraceStore(database),
     )
     trace = queries.get_execution_trace(run_id)
     public_trace = public_json_value(trace)
