@@ -15,7 +15,7 @@ export type ErrorResponse = {
 };
 };
 
-export type EventType = "ProjectCreated" | "GoalCreated" | "CompletionContractConfirmed" | "PlanRevisionProposed" | "PlanRevisionApproved" | "PlanningTurnStarted" | "PlanningTurnCompleted" | "PlanningTurnFailed" | "PlanNodeReadied" | "PlanNodeStarted" | "PlanNodeCandidateSubmitted" | "PlanNodeCompleted" | "PlanNodeFailed" | "PlanNodePruned" | "BranchSelected" | "BranchPruned" | "RunStarted" | "RunPaused" | "RunResumed" | "RunCompleted" | "RunFailed" | "RunCancelled" | "AttemptQueued" | "AttemptDispatched" | "AttemptBound" | "AttemptHeartbeatObserved" | "AttemptWaiting" | "AttemptDeadlineExtended" | "AttemptRetryScheduled" | "AttemptStarted" | "AttemptSucceeded" | "AttemptFailed" | "AttemptTimedOut" | "AttemptCancelled" | "AttemptInterrupted" | "DispatchWorkClaimed" | "EndpointHealthChanged" | "ProviderUsageRecorded" | "ArtifactCreated" | "CheckStarted" | "CheckPassed" | "CheckFailed" | "CheckInterrupted" | "GatePassed" | "GateFailed" | "CheckpointCreated" | "CheckpointRestored" | "WorkspacePreserved";
+export type EventType = "ProjectCreated" | "GoalCreated" | "CompletionContractConfirmed" | "PlanRevisionProposed" | "PlanRevisionApproved" | "PlanningTurnStarted" | "PlanningTurnCompleted" | "PlanningTurnFailed" | "ProcessDraftStarted" | "ProcessDraftCompleted" | "ProcessDraftFailed" | "ProcessReviewStarted" | "ProcessReviewCompleted" | "ProcessReviewFailed" | "ProcessRevisionApplied" | "ProcessAdjustmentStarted" | "ProcessAdjustmentFinished" | "ProcessAdjustmentSkipped" | "PlanNodeReadied" | "PlanNodeStarted" | "PlanNodeCandidateSubmitted" | "PlanNodeCompleted" | "PlanNodeFailed" | "PlanNodeReopened" | "PlanNodePruned" | "BranchSelected" | "BranchPruned" | "BranchSelectionInvalidated" | "RunStarted" | "RunPaused" | "RunResumed" | "RunCompleted" | "RunFailed" | "RunCancelled" | "AttemptQueued" | "AttemptDispatched" | "AttemptBound" | "AttemptHeartbeatObserved" | "AttemptWaiting" | "AttemptDeadlineExtended" | "AttemptRetryScheduled" | "AttemptStarted" | "AttemptSucceeded" | "AttemptFailed" | "AttemptTimedOut" | "AttemptCancelled" | "AttemptInterrupted" | "DispatchWorkClaimed" | "EndpointHealthChanged" | "ProviderUsageRecorded" | "ArtifactCreated" | "CheckStarted" | "CheckPassed" | "CheckFailed" | "CheckInterrupted" | "GatePassed" | "GateFailed" | "CheckpointCreated" | "CheckpointRestored" | "WorkspacePreserved" | "PhaseSessionOpened" | "PhaseSessionJoined" | "PhaseContextPublished" | "AttemptHandoffConfirmed" | "InterventionOpened" | "InterventionReplied";
 
 export type EventEnvelope = {
   readonly id: Id;
@@ -38,9 +38,9 @@ export type AttemptStatus = "pending" | "running" | "succeeded" | "failed" | "ti
 
 export type PlanRevisionStatus = "draft" | "approved";
 
-export type PlanNodeKind = "work" | "fork" | "evaluator" | "merge";
+export type PlanNodeKind = "work" | "fork" | "evaluator" | "merge" | "reviewer";
 
-export type PlanNodeStatus = "pending" | "ready" | "running" | "candidate" | "verifying" | "completed" | "failed" | "pruned";
+export type PlanNodeStatus = "pending" | "ready" | "running" | "candidate" | "verifying" | "blocked" | "completed" | "failed" | "pruned";
 
 export type EdgeType = "dependency" | "exploration" | "conditional" | "merge";
 
@@ -48,7 +48,7 @@ export type BranchStatus = "active" | "selected" | "pruned";
 
 export type ArtifactKind = "candidate" | "evidence" | "log" | "patch" | "worker_output" | "check_output";
 
-export type CheckKind = "command" | "artifact" | "semantic";
+export type CheckKind = "command" | "artifact" | "semantic" | "human";
 
 export type CheckRunStatus = "pending" | "running" | "completed" | "failed" | "timed_out" | "cancelled" | "interrupted";
 
@@ -60,11 +60,19 @@ export type NullableString = string | null;
 
 export type IdList = ReadonlyArray<Id>;
 
+export type GoalWorkerBudgetView = {
+  readonly max_worker_attempts: number;
+  readonly used: number;
+  readonly remaining: number;
+};
+
 export type Run = {
   readonly run_id: Id;
   readonly goal_id: Id;
   readonly plan_revision_id: Id;
   readonly status: RunStatus;
+  readonly predecessor_run_id?: NullableId;
+  readonly goal_worker_budget?: GoalWorkerBudgetView | null;
   readonly created_at: UtcDateTime;
   readonly started_at: NullableUtcDateTime;
   readonly ended_at: NullableUtcDateTime;
@@ -79,6 +87,8 @@ export type PlanNode = {
   readonly required_dependency_ids: IdList;
   readonly required_check_ids: IdList;
   readonly status: PlanNodeStatus;
+  readonly required_capabilities: ReadonlyArray<string>;
+  readonly session_policy: "new" | "reuse" | "fork";
 };
 
 export type Edge = {
@@ -99,8 +109,18 @@ export type Branch = {
   readonly status: BranchStatus;
 };
 
+export type PlanPhase = {
+  readonly phase_id: Id;
+  readonly title: string;
+  readonly node_ids: IdList;
+  readonly reviewer_node_id: Id;
+  readonly gate_node_id: Id;
+  readonly rework_node_ids: IdList;
+};
+
 export type PlanGraph = {
   readonly plan_revision_id: Id;
+  readonly process_revision_id: NullableId;
   readonly goal_id: Id;
   readonly version: number;
   readonly completion_contract_id: Id;
@@ -113,6 +133,105 @@ export type PlanGraph = {
   readonly nodes: ReadonlyArray<PlanNode>;
   readonly edges: ReadonlyArray<Edge>;
   readonly branches: ReadonlyArray<Branch>;
+  readonly phases: ReadonlyArray<PlanPhase>;
+};
+
+export type ProcessRevisionSource = "run_started" | "legacy_snapshot" | "planner_adjustment";
+
+export type ProcessRevision = {
+  readonly process_revision_id: Id;
+  readonly run_id: Id;
+  readonly version: number;
+  readonly parent_process_revision_id: NullableId;
+  readonly gate_owners: Readonly<Record<string, Id>>;
+  readonly source: ProcessRevisionSource;
+  readonly reason: string;
+  readonly created_at: UtcDateTime;
+  readonly graph: PlanGraph;
+};
+
+export type ProcessDraftStatus = "planning" | "ready" | "failed";
+
+export type ProcessDraft = {
+  readonly draft_id: Id;
+  readonly run_id: Id;
+  readonly parent_process_revision_id: Id;
+  readonly planner_session_ref_id: Id;
+  readonly status: ProcessDraftStatus;
+  readonly reason: string;
+  readonly created_at: UtcDateTime;
+  readonly completed_at: NullableUtcDateTime;
+  readonly error: NullableString;
+  readonly base_is_current: boolean;
+  readonly base_execution_plan: PlanGraph;
+  readonly candidate: ProcessRevision | null;
+};
+
+export type RunProcessDrafts = {
+  readonly run_id: Id;
+  readonly drafts: ReadonlyArray<ProcessDraft>;
+};
+
+export type ProcessBoundarySourceRef = {
+  readonly source_key: string;
+  readonly quote: string;
+};
+
+export type ProcessBoundaryAssessment = {
+  readonly aspect: "requirements" | "interfaces" | "permissions" | "gate_scope" | "result_reuse";
+  readonly judgment: "preserved" | "not_preserved" | "uncertain";
+  readonly explanation: string;
+  readonly source_refs: ReadonlyArray<ProcessBoundarySourceRef>;
+  readonly candidate_node_ids: ReadonlyArray<Id>;
+};
+
+export type ProcessBoundaryObligation = {
+  readonly key: string;
+  readonly description: string;
+  readonly source_refs: ReadonlyArray<ProcessBoundarySourceRef>;
+};
+
+export type ProcessBoundaryImplementation = {
+  readonly obligation_key: string;
+  readonly alternatives: ReadonlyArray<ReadonlyArray<Id>>;
+};
+
+export type ProcessBoundaryGateScope = {
+  readonly original_gate_id: Id;
+  readonly obligation_keys: ReadonlyArray<string>;
+};
+
+export type ProcessBoundaryObligationMapping = {
+  readonly obligations: ReadonlyArray<ProcessBoundaryObligation>;
+  readonly implementations: ReadonlyArray<ProcessBoundaryImplementation>;
+  readonly gate_scopes: ReadonlyArray<ProcessBoundaryGateScope>;
+};
+
+export type ProcessBoundaryReport = {
+  readonly summary: string;
+  readonly assessments: ReadonlyArray<ProcessBoundaryAssessment>;
+  readonly obligation_mapping: ProcessBoundaryObligationMapping | null;
+  readonly evidence_artifact_ids: IdList;
+};
+
+export type ProcessReviewStatus = "reviewing" | "completed" | "failed";
+
+export type ProcessReview = {
+  readonly review_id: Id;
+  readonly draft_id: Id;
+  readonly run_id: Id;
+  readonly reviewer_session_ref_id: Id;
+  readonly status: ProcessReviewStatus;
+  readonly created_at: UtcDateTime;
+  readonly completed_at: NullableUtcDateTime;
+  readonly preserves_boundary: boolean | null;
+  readonly report: ProcessBoundaryReport | null;
+  readonly error: NullableString;
+};
+
+export type ProcessDraftReviews = {
+  readonly draft_id: Id;
+  readonly reviews: ReadonlyArray<ProcessReview>;
 };
 
 export type PlanningTurn = {
@@ -129,6 +248,7 @@ export type PlanningConversation = {
   readonly conversation_id: Id;
   readonly goal_id: Id;
   readonly workspace: string | null;
+  readonly source_run_id?: Id | null;
   readonly turns: ReadonlyArray<PlanningTurn>;
 };
 
@@ -139,6 +259,7 @@ export type PlanningConversationResponse = {
 export type Attempt = {
   readonly attempt_id: Id;
   readonly run_id: Id;
+  readonly process_revision_id: NullableId;
   readonly plan_node_id: Id;
   readonly sequence: number;
   readonly status: AttemptStatus;
@@ -175,6 +296,7 @@ export type CheckSpec = {
 export type CheckResult = {
   readonly check_id: Id;
   readonly check_run_id: Id;
+  readonly adoption_id?: NullableId;
   readonly run_id: Id;
   readonly plan_node_id: Id;
   readonly attempt_id: Id;
@@ -185,9 +307,45 @@ export type CheckResult = {
   readonly failure_reason: NullableString;
 };
 
+export type HumanCheckEvidence = {
+  readonly artifact_id: Id;
+  readonly sha256: string;
+};
+
+export type ResultAdoption = {
+  readonly adoption_id: Id;
+  readonly target_run_id: Id;
+  readonly target_plan_revision_id: Id;
+  readonly target_plan_node_id: Id;
+  readonly source_run_id: Id;
+  readonly source_plan_revision_id: Id;
+  readonly source_process_revision_id: Id;
+  readonly source_plan_node_id: Id;
+  readonly source_attempt_id: Id;
+  readonly evidence: ReadonlyArray<HumanCheckEvidence>;
+  readonly reason: string;
+  readonly created_at: UtcDateTime;
+};
+
+export type HumanCheckRequest = {
+  readonly plan_revision_id: Id;
+  readonly completion_contract_id: Id;
+  readonly completion_contract_version: number;
+  readonly question: string;
+  readonly evidence: ReadonlyArray<HumanCheckEvidence>;
+  readonly request_token: string;
+};
+
+export type HumanCheckDecision = {
+  readonly actor: string;
+  readonly comment: string;
+  readonly decided_at: UtcDateTime;
+};
+
 export type CheckRun = {
   readonly check_run_id: Id;
   readonly run_id: Id;
+  readonly adoption_id?: NullableId;
   readonly plan_node_id: Id;
   readonly attempt_id: Id;
   readonly check_id: Id;
@@ -197,11 +355,14 @@ export type CheckRun = {
   readonly ended_at: NullableUtcDateTime;
   readonly result: CheckResult | null;
   readonly failure_reason: NullableString;
+  readonly human_request: HumanCheckRequest | null;
+  readonly human_decision: HumanCheckDecision | null;
 };
 
 export type GateDecision = {
   readonly gate_id: Id;
   readonly run_id: Id;
+  readonly adoption_id?: NullableId;
   readonly plan_node_id: Id;
   readonly attempt_id: Id;
   readonly passed: boolean;
@@ -220,6 +381,7 @@ export type BranchSelection = {
 export type Checkpoint = {
   readonly checkpoint_id: Id;
   readonly plan_revision_id: Id;
+  readonly process_revision_id: NullableId;
   readonly run_id: Id;
   readonly event_offset: number;
   readonly gate_decision: GateDecision;
@@ -314,6 +476,69 @@ export type WorkerRequest = {
   readonly status: "pending" | "resolved" | "declined";
 };
 
+export type InterventionBaseline = {
+  readonly run_id: Id;
+  readonly plan_revision_id: Id;
+  readonly plan_revision_version: number;
+  readonly plan_node_id: Id;
+  readonly phase_id: NullableId;
+  readonly branch_id: NullableId;
+  readonly agent_session_ref_id: Id;
+  readonly phase_session_id: NullableId;
+  readonly handoff_ids: IdList;
+  readonly artifact_ids: IdList;
+};
+
+export type InterventionReply = {
+  readonly offset: number;
+  readonly event_id: Id;
+  readonly occurred_at: UtcDateTime;
+  readonly intervention_id: Id;
+  readonly run_id: Id;
+  readonly plan_revision_id: Id;
+  readonly plan_node_id: Id;
+  readonly attempt_id: Id;
+  readonly request_token: string;
+  readonly actor: string;
+  readonly message: string;
+  readonly meaning: string;
+};
+
+export type Intervention = {
+  readonly offset: number;
+  readonly event_id: Id;
+  readonly occurred_at: UtcDateTime;
+  readonly intervention_id: Id;
+  readonly run_id: Id;
+  readonly plan_revision_id: Id;
+  readonly plan_revision_version: number;
+  readonly plan_node_id: Id;
+  readonly attempt_id: Id;
+  readonly phase_id: NullableId;
+  readonly branch_id: NullableId;
+  readonly agent_session_ref_id: Id;
+  readonly phase_session_id: NullableId;
+  readonly handoff_ids: IdList;
+  readonly artifact_ids: IdList;
+  readonly baseline: InterventionBaseline;
+  readonly reason: string;
+  readonly evidence: string;
+  readonly needed: string;
+  readonly kind: "worker_blocked" | "external_effects";
+  readonly request_token: string;
+  readonly status: "open" | "replied";
+  readonly reply: InterventionReply | null;
+  readonly key: string;
+  readonly completed: string;
+  readonly context: string;
+  readonly remaining: string;
+  readonly known_issues: string;
+};
+
+export type InterventionList = ReadonlyArray<Intervention>;
+
+export type ResultAdoptionList = ReadonlyArray<ResultAdoption>;
+
 export type WorkerProfileList = ReadonlyArray<WorkerProfile>;
 
 export type WorkerEndpointList = ReadonlyArray<WorkerEndpoint>;
@@ -334,6 +559,26 @@ export type RunResponse = {
 
 export type PlanGraphResponse = {
   readonly data: PlanGraph;
+};
+
+export type ProcessRevisionResponse = {
+  readonly data: ProcessRevision;
+};
+
+export type ProcessDraftResponse = {
+  readonly data: ProcessDraft;
+};
+
+export type RunProcessDraftsResponse = {
+  readonly data: RunProcessDrafts;
+};
+
+export type ProcessReviewResponse = {
+  readonly data: ProcessReview;
+};
+
+export type ProcessDraftReviewsResponse = {
+  readonly data: ProcessDraftReviews;
 };
 
 export type ExecutionTraceResponse = {
@@ -388,11 +633,19 @@ export type WorkerRequestResponse = {
   readonly data: WorkerRequest;
 };
 
+export type InterventionListResponse = {
+  readonly data: InterventionList;
+};
+
+export type ResultAdoptionListResponse = {
+  readonly data: ResultAdoptionList;
+};
+
 export type JsonScalar = boolean | number | number | string | null;
 
 export type JsonValue = JsonScalar | ReadonlyArray<JsonValue> | { readonly [key: string]: JsonValue };
 
-export type P1CompletionCriterion = "artifact:non-empty" | "command:exit-zero" | "semantic:required-terms";
+export type P1CompletionCriterion = "artifact:non-empty" | "command:exit-zero" | "semantic:required-terms" | string;
 
 export type Project = {
   readonly project_id: Id;
@@ -446,12 +699,29 @@ export type ReplanPlanRequest = {
   readonly criteria: ReadonlyArray<P1CompletionCriterion>;
 };
 
+export type ProposeProcessRequest = {
+  readonly idempotency_key: IdempotencyKey;
+  readonly run_id: IdInput;
+  readonly reason: string;
+};
+
+export type ReviewProcessRequest = {
+  readonly idempotency_key: IdempotencyKey;
+  readonly draft_id: IdInput;
+};
+
+export type ApplyProcessRequest = {
+  readonly idempotency_key: IdempotencyKey;
+  readonly review_id: IdInput;
+};
+
 export type DiscussPlanRequest = {
   readonly idempotency_key: IdempotencyKey;
   readonly goal_id: IdInput;
   readonly message: string;
-  readonly criteria: ReadonlyArray<P1CompletionCriterion>;
+  readonly criteria?: ReadonlyArray<P1CompletionCriterion>;
   readonly conversation_id?: IdInput | null;
+  readonly source_run_id?: IdInput | null;
 };
 
 export type ApprovePlanRequest = {
@@ -460,9 +730,66 @@ export type ApprovePlanRequest = {
   readonly completion_contract_id: IdInput;
 };
 
+export type ExecutionCodexServerRequest = {
+  readonly executable: ReadonlyArray<string>;
+  readonly approval_policy: "untrusted" | "on-request" | "never";
+  readonly sandbox: "read-only" | "workspace-write" | "danger-full-access";
+};
+
+export type GoalWorkerBudgetRequest = {
+  readonly max_worker_attempts: number;
+};
+
+export type ExecutionConfigRequest = {
+  readonly config_version: number;
+  readonly worker_kind: "builtin" | "codex-server";
+  readonly model: string;
+  readonly reasoning_effort: string | null;
+  readonly capacity: number;
+  readonly workspace: string;
+  readonly allowed_commands: ReadonlyArray<ReadonlyArray<string>>;
+  readonly available_shells: ReadonlyArray<string>;
+  readonly git_permissions: ReadonlyArray<"git.read" | "git.local_write" | "git.remote_write" | "git.dangerous">;
+  readonly endpoint_capabilities: ExecutionEndpointCapabilitiesRequest;
+  readonly command_timeout_seconds: number;
+  readonly codex_server?: ExecutionCodexServerRequest | null;
+  readonly goal_worker_budget?: GoalWorkerBudgetRequest | null;
+  readonly process_adjustment?: ProcessAdjustmentPolicyRequest | null;
+};
+
+export type ExecutionEndpointCapabilitiesRequest = {
+  readonly supports_background: boolean;
+  readonly supports_unique_items: boolean;
+  readonly supports_idempotent_create: boolean | null;
+  readonly supports_previous_response_id: boolean;
+  readonly supports_response_retrieval: boolean;
+};
+
+export type ProcessAdjustmentPolicyRequest = {
+  readonly max_per_goal: number;
+  readonly model: string;
+  readonly reasoning_effort: string | null;
+};
+
 export type StartRunRequest = {
   readonly idempotency_key: IdempotencyKey;
   readonly plan_revision_id: IdInput;
+  readonly execution_config?: ExecutionConfigRequest | null;
+};
+
+export type DecideHumanCheckRequest = {
+  readonly idempotency_key: IdempotencyKey;
+  readonly request_token: string;
+  readonly passed: boolean;
+  readonly actor: string;
+  readonly comment: string;
+};
+
+export type ReplyInterventionRequest = {
+  readonly idempotency_key: IdempotencyKey;
+  readonly request_token: string;
+  readonly actor: string;
+  readonly message: string;
 };
 
 export type RunActionRequest = {
@@ -502,6 +829,21 @@ export type ProjectResponse = {
 
 export type GoalResponse = {
   readonly data: Goal;
+};
+
+export type ProcessDraftAcceptedResponse = {
+  readonly data: {
+  readonly draft_id: Id;
+  readonly status: "planning" | "ready" | "failed";
+};
+};
+
+export type ProcessReviewAcceptedResponse = {
+  readonly data: {
+  readonly review_id: Id;
+  readonly status: ProcessReviewStatus;
+  readonly preserves_boundary: boolean | null;
+};
 };
 
 export class EhaiApiError extends Error {
@@ -562,6 +904,29 @@ export class EhaiApiClient {
     return this.request("/runs/start", "POST", request);
   }
 
+  proposeProcess(request: ProposeProcessRequest): Promise<ProcessDraftAcceptedResponse> {
+    return this.request("/commands/propose-process", "POST", request);
+  }
+
+  reviewProcess(request: ReviewProcessRequest): Promise<ProcessReviewAcceptedResponse> {
+    return this.request("/commands/review-process", "POST", request);
+  }
+
+  applyProcess(request: ApplyProcessRequest): Promise<ProcessRevisionResponse> {
+    return this.request("/commands/apply-process", "POST", request);
+  }
+
+  decideHumanCheck(
+    checkRunId: string,
+    request: DecideHumanCheckRequest,
+  ): Promise<RunResponse> {
+    return this.request(
+      `/check-runs/${encodeURIComponent(checkRunId)}/decision`,
+      "POST",
+      request,
+    );
+  }
+
   pauseRun(runId: string, request: PauseRunRequest): Promise<RunResponse> {
     return this.request(`/runs/${encodeURIComponent(runId)}/pause`, "POST", request);
   }
@@ -578,8 +943,54 @@ export class EhaiApiClient {
     return this.request(`/runs/${encodeURIComponent(runId)}`, "GET");
   }
 
+  getRunInterventions(runId: string): Promise<InterventionListResponse> {
+    return this.request(`/runs/${encodeURIComponent(runId)}/interventions`, "GET");
+  }
+
+  listResultAdoptions(runId: string): Promise<ResultAdoptionListResponse> {
+    return this.request(`/runs/${encodeURIComponent(runId)}/adoptions`, "GET");
+  }
+
+  replyIntervention(
+    interventionId: string,
+    request: ReplyInterventionRequest,
+  ): Promise<RunResponse> {
+    return this.request(
+      `/interventions/${encodeURIComponent(interventionId)}/reply`,
+      "POST",
+      request,
+    );
+  }
+
   getPlanGraph(planRevisionId: string): Promise<PlanGraphResponse> {
     return this.request(`/plans/${encodeURIComponent(planRevisionId)}`, "GET");
+  }
+
+  getRunPlan(runId: string): Promise<PlanGraphResponse> {
+    return this.request(`/runs/${encodeURIComponent(runId)}/plan`, "GET");
+  }
+
+  getProcessRevision(processRevisionId: string): Promise<ProcessRevisionResponse> {
+    return this.request(
+      `/process-revisions/${encodeURIComponent(processRevisionId)}`,
+      "GET",
+    );
+  }
+
+  getProcessDraft(draftId: string): Promise<ProcessDraftResponse> {
+    return this.request(`/process-drafts/${encodeURIComponent(draftId)}`, "GET");
+  }
+
+  getProcessReview(reviewId: string): Promise<ProcessReviewResponse> {
+    return this.request(`/process-reviews/${encodeURIComponent(reviewId)}`, "GET");
+  }
+
+  getProcessDraftReviews(draftId: string): Promise<ProcessDraftReviewsResponse> {
+    return this.request(`/process-drafts/${encodeURIComponent(draftId)}/reviews`, "GET");
+  }
+
+  getRunProcessDrafts(runId: string): Promise<RunProcessDraftsResponse> {
+    return this.request(`/runs/${encodeURIComponent(runId)}/process-drafts`, "GET");
   }
 
   getExecutionTrace(runId: string): Promise<ExecutionTraceResponse> {

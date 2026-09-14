@@ -30,7 +30,11 @@ from ehai.domain.workers import (
     WorkerEndpointStatus,
     WorkerProfile,
 )
-from ehai.domain.workspaces import WorkspaceLease, WorkspaceRef
+from ehai.domain.workspaces import WorkspaceLease, WorkspaceLeaseStatus, WorkspaceRef
+
+
+class RuntimeQuiescenceError(RuntimeError):
+    """Raised when a Runtime cannot prove that a failed iteration is quiesced."""
 
 
 class WorkspaceAllocationPort(Protocol):
@@ -139,6 +143,7 @@ class Dispatcher:
                 profile
                 for profile in self.profiles
                 if node.required_capabilities.issubset(profile.capabilities)
+                and node.session_policy is profile.session_policy
                 and usage.profiles.get(profile.worker_profile_id, 0)
                 < self.capacity.profile_capacity.get(
                     profile.worker_profile_id,
@@ -275,6 +280,11 @@ class ConcurrentRuntime:
                 await asyncio.gather(*active_tasks, return_exceptions=True)
                 if cancellation_error is None:
                     cancellation_error = error
+        if cancellation_error is not None:
+            raise RuntimeQuiescenceError(
+                f"Runtime could not quiesce Run {normalized_id}: "
+                f"{type(cancellation_error).__name__}"
+            ) from cancellation_error
         with self._uow_factory() as uow:
             unsettled = tuple(
                 attempt
@@ -286,11 +296,26 @@ class ConcurrentRuntime:
                 attempt.attempt_id,
                 "Runtime control quiesced an unsettled execution",
             )
-        if cancellation_error is not None:
-            raise RuntimeError(
-                f"Runtime could not quiesce Run {normalized_id}: "
-                f"{type(cancellation_error).__name__}"
-            ) from cancellation_error
+        with self._uow_factory() as uow:
+            run_attempts = uow.states.list_attempts(normalized_id)
+            remaining = tuple(
+                attempt for attempt in run_attempts if attempt.status is AttemptStatus.RUNNING
+            )
+            live_tasks = tuple(
+                attempt_id
+                for attempt_id, task in self._active_tasks.items()
+                if not task.done()
+                and (
+                    (attempt := uow.states.get_attempt(attempt_id)) is None
+                    or attempt.run_id == normalized_id
+                )
+            )
+        if remaining or live_tasks:
+            raise RuntimeQuiescenceError(
+                f"Runtime could not prove Run {normalized_id} is quiesced: "
+                f"running_attempts={tuple(item.attempt_id for item in remaining)}, "
+                f"live_tasks={live_tasks}"
+            )
 
     def release_run_dispatch(self, run_id: ID) -> None:
         """Release only this host's claim after the Run has quiesced and stopped."""
@@ -314,17 +339,47 @@ class ConcurrentRuntime:
                     )
             uow.commit()
 
+    def release_waiting_run(self, run_id: ID) -> None:
+        """Release an idle human-Gate claim without turning it into operator pause."""
+        normalized_id = normalize_id(run_id)
+        if not self._orchestrator.waiting_for_input(normalized_id, only_if_idle=True):
+            raise RuntimeError("Run has no idle user-input wait to release")
+        with self._uow_factory() as uow:
+            if any(
+                attempt.status in {AttemptStatus.RUNNING, AttemptStatus.PENDING}
+                for attempt in uow.states.list_attempts(normalized_id)
+            ):
+                raise RuntimeError("Cannot release human Gate wait with active Attempts")
+            for work in uow.states.list_dispatch_work(DispatchWorkStatus.CLAIMED):
+                if work.run_id == normalized_id and work.claim_owner == self._claim_owner:
+                    uow.states.put_dispatch_work(work.release(self._claim_owner))
+            uow.commit()
+
     def resume_run_scheduling(self, run_id: ID) -> None:
         self._controlled_runs.discard(normalize_id(run_id))
 
     async def run_until_idle(self) -> tuple[Run, ...]:
+        works: dict[ID, DispatchWork] = {}
+        tasks: dict[asyncio.Task[Run], _ActiveExecution] = {}
+        try:
+            return await self._run_until_idle(works, tasks)
+        except Exception as error:
+            await self._converge_scheduler_error(error, works, tasks)
+            raise
+
+    async def _run_until_idle(
+        self,
+        works: dict[ID, DispatchWork],
+        tasks: dict[asyncio.Task[Run], _ActiveExecution],
+    ) -> tuple[Run, ...]:
         """Run until every dispatchable Run is terminal or only blocked work remains."""
         await self._refresh_endpoint_health()
-        works = self._claim_all_work()
-        tasks: dict[asyncio.Task[Run], _ActiveExecution] = {}
+        works.update(self._claim_all_work())
         terminal: dict[ID, Run] = {}
         while works or tasks:
             works.update(self._claim_all_work())
+            for run_id in sorted(works):
+                self._orchestrator.advance_ready_adoptions(run_id)
             with self._uow_factory() as uow:
                 inactive = tuple(
                     (run_id, work, uow.states.get_run(run_id)) for run_id, work in works.items()
@@ -344,6 +399,33 @@ class ConcurrentRuntime:
             scheduled = self._schedule(works, tasks)
             if not tasks:
                 if not scheduled:
+                    for run_id, work in tuple(works.items()):
+                        with self._uow_factory() as uow:
+                            stopped = uow.states.get_run(run_id)
+                        if stopped is not None and (
+                            stopped.status
+                            in {RunStatus.CANCELLED, RunStatus.COMPLETED, RunStatus.FAILED}
+                            or (
+                                stopped.status is RunStatus.PAUSED
+                                and run_id not in self._controlled_runs
+                            )
+                        ):
+                            # Queue admission can pause on a Goal budget without
+                            # creating an execution task to settle this claim.
+                            self._helper_for_first_endpoint().finish_dispatch_work(work)
+                            works.pop(run_id, None)
+                            terminal[run_id] = stopped
+                            continue
+                        if self._orchestrator.waiting_for_input(run_id, only_if_idle=True):
+                            with self._uow_factory() as uow:
+                                live = any(
+                                    attempt.status in {AttemptStatus.PENDING, AttemptStatus.RUNNING}
+                                    for attempt in uow.states.list_attempts(run_id)
+                                )
+                            if live:
+                                continue
+                            self._helper_for_first_endpoint().finish_dispatch_work(work)
+                            works.pop(run_id, None)
                     break
                 continue
             done, _ = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
@@ -367,12 +449,24 @@ class ConcurrentRuntime:
         return tuple(terminal[key] for key in sorted(terminal))
 
     async def recover_startup(self) -> tuple[Run, ...]:
+        works: dict[ID, DispatchWork] = {}
+        tasks: dict[asyncio.Task[Run], _ActiveExecution] = {}
+        try:
+            return await self._recover_startup(works, tasks)
+        except Exception as error:
+            await self._converge_scheduler_error(error, works, tasks)
+            raise
+
+    async def _recover_startup(
+        self,
+        works: dict[ID, DispatchWork],
+        tasks: dict[asyncio.Task[Run], _ActiveExecution],
+    ) -> tuple[Run, ...]:
         """Recover every bound Attempt using its original Endpoint and Workspace."""
         await self._refresh_endpoint_health()
-        works = self._claim_all_work()
+        works.update(self._claim_all_work())
         for run_id in works:
             self._orchestrator.recover_candidate_results(run_id)
-        tasks: dict[asyncio.Task[Run], _ActiveExecution] = {}
         with self._uow_factory() as uow:
             for work in works.values():
                 run = uow.states.get_run(work.run_id)
@@ -440,6 +534,195 @@ class ConcurrentRuntime:
         if first_error is not None:
             raise first_error
         return tuple(terminal[key] for key in sorted(terminal))
+
+    async def _converge_scheduler_error(
+        self,
+        error: Exception,
+        works: Mapping[ID, DispatchWork],
+        tasks: Mapping[asyncio.Task[Run], _ActiveExecution],
+    ) -> None:
+        """Quiesce and pause Runs before exposing a scheduler iteration failure."""
+        run_ids = {normalize_id(run_id) for run_id in works}
+        run_ids.update(active.attempt.run_id for active in tasks.values())
+        try:
+            with self._uow_factory() as uow:
+                run_ids.update(
+                    attempt.run_id
+                    for attempt_id in self._active_tasks
+                    if (attempt := uow.states.get_attempt(attempt_id)) is not None
+                )
+                run_ids.update(
+                    work.run_id
+                    for work in uow.states.list_dispatch_work(DispatchWorkStatus.CLAIMED)
+                    if work.claim_owner == self._claim_owner
+                )
+        except Exception as discovery_error:
+            try:
+                fallback_errors = await self._cancel_known_tasks(tasks)
+            except asyncio.CancelledError:
+                raise
+            except Exception as fallback_error:
+                fallback_errors = (fallback_error,)
+            cause = discovery_error if not fallback_errors else fallback_errors[0]
+            raise RuntimeQuiescenceError(
+                "Runtime could not identify its claimed or active Runs after a scheduler error; "
+                "local task cancellation was also incomplete"
+                if fallback_errors
+                else "Runtime could not identify its claimed or active Runs after a scheduler error"
+            ) from cause
+        if not run_ids:
+            return
+
+        quiescence_errors: list[Exception] = []
+        for run_id in sorted(run_ids):
+            try:
+                await self.quiesce_run(run_id)
+            except asyncio.CancelledError:
+                raise
+            except Exception as quiescence_error:
+                quiescence_errors.append(quiescence_error)
+        if quiescence_errors:
+            try:
+                fallback_errors = await self._cancel_known_tasks(tasks)
+            except asyncio.CancelledError:
+                raise
+            except Exception as fallback_error:
+                fallback_errors = (fallback_error,)
+            details = ", ".join(str(error) for error in quiescence_errors)
+            if fallback_errors:
+                details += "; local task cancellation: " + ", ".join(
+                    str(error) for error in fallback_errors
+                )
+            raise RuntimeQuiescenceError(
+                "Runtime could not quiesce all Runs after a scheduler error: " + details
+            ) from (quiescence_errors[0] if not fallback_errors else fallback_errors[0])
+
+        try:
+            with self._uow_factory() as uow:
+                attempts_by_run = {run_id: uow.states.list_attempts(run_id) for run_id in run_ids}
+        except Exception as verification_error:
+            raise RuntimeQuiescenceError(
+                "Runtime could not verify persisted Attempts after quiescing scheduler work"
+            ) from verification_error
+        live_task_ids = tuple(
+            attempt_id for attempt_id, task in self._active_tasks.items() if not task.done()
+        )
+        running_attempt_ids = tuple(
+            attempt.attempt_id
+            for attempts in attempts_by_run.values()
+            for attempt in attempts
+            if attempt.status is AttemptStatus.RUNNING
+        )
+        if live_task_ids or running_attempt_ids:
+            raise RuntimeQuiescenceError(
+                "Runtime could not prove scheduler work is quiesced: "
+                f"live_tasks={live_task_ids}, running_attempts={running_attempt_ids}"
+            )
+
+        if self._workspace_manager is not None:
+            allocations: dict[ID, WorkspaceAllocationPort] = {
+                active.attempt.attempt_id: active.workspace
+                for active in tasks.values()
+                if active.attempt.run_id in run_ids and active.workspace is not None
+            }
+            try:
+                for attempts in attempts_by_run.values():
+                    for attempt in attempts:
+                        allocation = self._workspace_manager.allocation_for_attempt(
+                            attempt.attempt_id
+                        )
+                        if allocation is not None:
+                            allocations[attempt.attempt_id] = allocation
+            except Exception as allocation_error:
+                raise RuntimeQuiescenceError(
+                    "Runtime could not inspect quiesced Workspace allocations after a "
+                    "scheduler error"
+                ) from allocation_error
+            cleanup_errors: list[Exception] = []
+            for allocation in allocations.values():
+                if allocation.lease.status is not WorkspaceLeaseStatus.ACTIVE:
+                    continue
+                try:
+                    self._workspace_manager.cleanup(allocation)
+                except Exception as cleanup_error:
+                    cleanup_errors.append(cleanup_error)
+            if cleanup_errors:
+                raise RuntimeQuiescenceError(
+                    "Runtime could not clean all quiesced Workspaces after a scheduler error: "
+                    + ", ".join(str(error) for error in cleanup_errors)
+                ) from cleanup_errors[0]
+
+        reason = f"Runtime scheduler failed: {type(error).__name__}: {error}"
+        state_errors: list[Exception] = []
+        for run_id in sorted(run_ids):
+            try:
+                self._orchestrator.pause_after_runtime_error(run_id, reason)
+            except Exception as state_error:
+                state_errors.append(state_error)
+                continue
+            try:
+                self.release_run_dispatch(run_id)
+            except Exception as release_error:
+                state_errors.append(release_error)
+        if state_errors:
+            raise RuntimeQuiescenceError(
+                "Runtime quiesced Workers but could not persist paused Run state or release "
+                "dispatch: " + ", ".join(str(error) for error in state_errors)
+            ) from state_errors[0]
+
+        for attempt_id, task in tuple(self._active_tasks.items()):
+            if not task.done():
+                continue
+            if any(
+                attempt.attempt_id == attempt_id
+                for attempts in attempts_by_run.values()
+                for attempt in attempts
+            ):
+                self._active_tasks.pop(attempt_id, None)
+                self._active_helpers.pop(attempt_id, None)
+
+    async def _cancel_known_tasks(
+        self,
+        tasks: Mapping[asyncio.Task[Run], _ActiveExecution],
+    ) -> tuple[BaseException, ...]:
+        """Best-effort local cancellation when persisted Run discovery is unavailable."""
+        active = tuple(
+            (item.attempt.attempt_id, item.helper, task)
+            for task, item in tasks.items()
+            if not task.done()
+        )
+        if not active:
+            return ()
+        grace_seconds = self._policy.cancel_grace.total_seconds()
+        cancellation_results = await asyncio.gather(
+            *(
+                asyncio.wait_for(helper.request_cancel(attempt_id), timeout=grace_seconds)
+                for attempt_id, helper, _ in active
+            ),
+            return_exceptions=True,
+        )
+        errors = tuple(
+            result for result in cancellation_results if isinstance(result, BaseException)
+        )
+        active_tasks = tuple(task for _, _, task in active)
+        try:
+            await asyncio.wait_for(
+                asyncio.gather(*active_tasks, return_exceptions=True),
+                timeout=grace_seconds,
+            )
+        except TimeoutError as timeout_error:
+            for task in active_tasks:
+                if not task.done():
+                    task.cancel()
+            _, pending = await asyncio.wait(active_tasks, timeout=grace_seconds)
+            errors += (timeout_error,)
+            if pending:
+                errors += (
+                    RuntimeQuiescenceError(
+                        "local Worker tasks remained active after cancellation and Task.cancel()"
+                    ),
+                )
+        return errors
 
     async def _refresh_endpoint_health(self) -> None:
         for endpoint_id, connector in self._connectors.items():
@@ -536,7 +819,7 @@ class ConcurrentRuntime:
                 if run is None or run.status is not RunStatus.RUNNING:
                     continue
                 goal = uow.states.get_goal(run.goal_id)
-                plan = uow.states.get_plan_revision(run.plan_revision_id)
+                plan = uow.states.get_execution_plan(run.run_id)
                 if goal is None or plan is None:
                     raise RuntimeError(f"Run {run_id} context is missing")
                 pending = tuple(
@@ -714,7 +997,7 @@ def _active_may_write_workspace(
     run = uow.states.get_run(active.work.run_id)
     if run is None:
         return False
-    plan = uow.states.get_plan_revision(run.plan_revision_id)
+    plan = uow.states.get_execution_plan(run.run_id)
     if plan is None:
         return False
     node = next(

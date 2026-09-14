@@ -7,10 +7,12 @@ import subprocess
 import tempfile
 from collections.abc import Sequence
 from dataclasses import dataclass
+from hashlib import sha256
 from pathlib import Path
 from threading import Lock
 
 from ehai import JsonValue, json_dumps, json_loads, normalize_id
+from ehai.domain.adoptions import ResultAdoption
 
 
 class MetadataError(RuntimeError):
@@ -112,17 +114,27 @@ class GitCodeWorkspace:
         worktree: Path,
         base_commit: str,
         upstream_commits: Sequence[str] = (),
+        dependency_commits: Sequence[str] | None = None,
     ) -> WorktreePreparation:
         workspace = self._worktree(worktree)
         pin = self.pin_run_base(run_id=run_id, base_commit=base_commit)
         path = self._attempt_path(run_id, attempt_id)
         upstreams = [self._commit_id(workspace, commit) for commit in upstream_commits]
+        dependency_upstreams = [
+            self._commit_id(workspace, commit)
+            for commit in (upstream_commits if dependency_commits is None else dependency_commits)
+        ]
         if path.exists():
             document = self._read_attempt(run_id, attempt_id)
             if document.get("upstreams") != upstreams or document.get("workspace") != str(
                 workspace
             ):
                 raise MetadataError("Attempt workspace or predecessor commits changed")
+            if (
+                dependency_commits is not None
+                and document.get("dependency_upstreams") != dependency_upstreams
+            ):
+                raise MetadataError("Attempt dependency baseline changed")
             return self.resume_worktree(run_id=run_id, attempt_id=attempt_id)
         if self._text(workspace, ("status", "--porcelain")):
             raise MetadataError("New execution worktree must be clean before preparation")
@@ -131,6 +143,7 @@ class GitCodeWorkspace:
             "workspace": str(workspace),
             "base_commit": pin.base_commit,
             "upstreams": list(upstreams),
+            "dependency_upstreams": list(dependency_upstreams),
             "next_upstream": 0,
             "result": None,
         }
@@ -174,7 +187,11 @@ class GitCodeWorkspace:
             position += 1
             document["next_upstream"] = position
             self._write(path, document)
-        return WorktreePreparation(workspace, self._conflicts(workspace))
+        conflicts = self._conflicts(workspace)
+        if not conflicts and document.get("prepared_commit") is None:
+            document["prepared_commit"] = self._commit_id(workspace, "HEAD")
+            self._write(path, document)
+        return WorktreePreparation(workspace, conflicts)
 
     def load_attempt_snapshot(self, *, run_id: str, attempt_id: str) -> AttemptSnapshot:
         document = self._read_attempt(run_id, attempt_id)
@@ -194,6 +211,160 @@ class GitCodeWorkspace:
         )
         return AttemptSnapshot(workspace, result)
 
+    def load_attempt_dependency_commits(
+        self, *, run_id: str, attempt_id: str
+    ) -> tuple[str, ...] | None:
+        """Return recorded dependencies; legacy absence never authorizes snapshot reuse."""
+        document = self._read_attempt(run_id, attempt_id)
+        if "dependency_upstreams" not in document:
+            return None
+        return self._dependency_baseline(document, attempt_id=attempt_id)
+
+    def capture_handoff(
+        self,
+        run_id: str,
+        attempt_id: str,
+        handoff_id: str,
+        worktree: Path,
+        submission_fingerprint: str,
+    ) -> GitCodeResult:
+        """Capture one immutable, host-confirmed handoff without touching candidate state."""
+        run_key = str(normalize_id(run_id))
+        attempt_key = str(normalize_id(attempt_id))
+        handoff_key = str(normalize_id(handoff_id))
+        fingerprint = _fingerprint(submission_fingerprint)
+        metadata_path = self._handoff_path(run_key, attempt_key, handoff_key)
+        if metadata_path.exists():
+            existing = self.load_handoff_snapshot(
+                run_key,
+                attempt_key,
+                handoff_key,
+                fingerprint,
+            )
+            if existing is None:  # pragma: no cover - metadata_path.exists() above
+                raise MetadataError(f"Handoff {handoff_key} metadata disappeared")
+            return existing
+
+        pin = self.load_run_base(run_id=run_key)
+        workspace = self._worktree(Path(worktree))
+        attempt_document = self._read_attempt(run_key, attempt_key)
+        if _string(attempt_document, "workspace") != str(workspace):
+            raise MetadataError("Attempt does not own this worktree")
+        dependencies = self._dependency_baseline(attempt_document, attempt_id=attempt_key)
+        patch_path = self._handoff_patch_path(run_key, attempt_key, handoff_key)
+        result = self._capture_git_snapshot(
+            run_id=run_key,
+            attempt_id=attempt_key,
+            workspace=workspace,
+            base_commit=pin.base_commit,
+            diff_path=patch_path,
+            message=f"ehai: capture handoff {handoff_key}",
+        )
+        patch = patch_path.read_bytes()
+        metadata: dict[str, JsonValue] = {
+            "kind": "handoff",
+            "owner": {
+                "run_id": run_key,
+                "attempt_id": attempt_key,
+                "handoff_id": handoff_key,
+            },
+            "run_id": run_key,
+            "attempt_id": attempt_key,
+            "handoff_id": handoff_key,
+            "submission_fingerprint": fingerprint,
+            "base_commit": pin.base_commit,
+            "dependencies": list(dependencies),
+            "snapshot": {
+                "workspace": str(workspace),
+                "commit": result.commit,
+                "diff_path": str(patch_path),
+                "patch_size_bytes": len(patch),
+                "patch_sha256": sha256(patch).hexdigest(),
+            },
+        }
+        # The patch is atomically visible before metadata. If metadata publication
+        # fails, the orphan patch has no handoff identity and is never loadable.
+        self._write(metadata_path, metadata)
+        return result
+
+    def load_handoff_snapshot(
+        self,
+        run_id: str,
+        attempt_id: str,
+        handoff_id: str,
+        submission_fingerprint: str,
+    ) -> GitCodeResult | None:
+        """Load and fully verify one immutable handoff, or return None if absent."""
+        run_key = str(normalize_id(run_id))
+        attempt_key = str(normalize_id(attempt_id))
+        handoff_key = str(normalize_id(handoff_id))
+        fingerprint = _fingerprint(submission_fingerprint)
+        metadata_path = self._handoff_path(run_key, attempt_key, handoff_key)
+        if not metadata_path.exists():
+            return None
+        if not metadata_path.is_file():
+            raise MetadataError(f"Handoff metadata is not a file: {metadata_path}")
+
+        document = self._read(metadata_path)
+        if document.get("kind") != "handoff":
+            raise MetadataError(f"Handoff {handoff_key} has an invalid kind")
+        owner = _object(document, "owner")
+        if (
+            _string(owner, "run_id") != run_key
+            or _string(owner, "attempt_id") != attempt_key
+            or _string(owner, "handoff_id") != handoff_key
+        ):
+            raise MetadataError(f"Handoff {handoff_key} owner does not match its path")
+        if (
+            _string(document, "run_id") != run_key
+            or _string(document, "attempt_id") != attempt_key
+            or _string(document, "handoff_id") != handoff_key
+        ):
+            raise MetadataError(f"Handoff {handoff_key} owner metadata is inconsistent")
+        if _string(document, "submission_fingerprint") != fingerprint:
+            raise MetadataError(f"Handoff {handoff_key} submission fingerprint changed")
+
+        pin = self.load_run_base(run_id=run_key)
+        base_commit = self._commit_id(self.base_workspace, _string(document, "base_commit"))
+        if base_commit != pin.base_commit:
+            raise MetadataError(f"Handoff {handoff_key} base does not match its Run")
+        attempt_document = self._read_attempt(run_key, attempt_key)
+        dependencies = self._dependency_baseline(attempt_document, attempt_id=attempt_key)
+        if tuple(_strings(document, "dependencies")) != dependencies:
+            raise MetadataError(f"Handoff {handoff_key} dependency baseline changed")
+        for dependency in dependencies:
+            self._commit_id(self.base_workspace, dependency)
+
+        snapshot = _object(document, "snapshot")
+        workspace = self._owned(Path(_string(snapshot, "workspace")))
+        if _string(attempt_document, "workspace") != str(workspace):
+            raise MetadataError(f"Handoff {handoff_key} workspace owner changed")
+        commit = self._commit_id(self.base_workspace, _string(snapshot, "commit"))
+        self._git(self.base_workspace, ("merge-base", "--is-ancestor", pin.base_commit, commit))
+        patch_path = self._handoff_patch_path(run_key, attempt_key, handoff_key)
+        if _string(snapshot, "diff_path") != str(patch_path):
+            raise MetadataError(f"Handoff {handoff_key} patch path does not match its identity")
+        if not patch_path.is_file():
+            raise MetadataError(f"Handoff {handoff_key} patch is missing")
+        try:
+            patch = patch_path.read_bytes()
+        except OSError as error:
+            raise MetadataError(f"Handoff {handoff_key} patch cannot be read") from error
+        if type(snapshot.get("patch_size_bytes")) is not int:
+            raise MetadataError(f"Handoff {handoff_key} patch size is invalid")
+        if snapshot["patch_size_bytes"] != len(patch):
+            raise MetadataError(f"Handoff {handoff_key} patch size changed")
+        patch_digest = _string(snapshot, "patch_sha256").lower()
+        if not _is_sha256(patch_digest) or patch_digest != sha256(patch).hexdigest():
+            raise MetadataError(f"Handoff {handoff_key} patch digest changed")
+        expected_patch = self._git(
+            self.base_workspace,
+            ("diff", "--binary", "--full-index", "--no-ext-diff", pin.base_commit, commit),
+        ).stdout
+        if expected_patch != patch:
+            raise MetadataError(f"Handoff {handoff_key} patch does not match its commit")
+        return GitCodeResult(run_key, attempt_key, workspace, pin.base_commit, commit, patch_path)
+
     def capture_result(
         self,
         *,
@@ -209,6 +380,31 @@ class GitCodeWorkspace:
         snapshot = self.load_attempt_snapshot(run_id=run_id, attempt_id=attempt_id)
         if snapshot.result is not None:
             return snapshot.result
+        diff_path = self._path(run_id, f"{normalize_id(attempt_id)}.patch")
+        result = self._capture_git_snapshot(
+            run_id=run_id,
+            attempt_id=attempt_id,
+            workspace=workspace,
+            base_commit=self.load_run_base(run_id=run_id).base_commit,
+            diff_path=diff_path,
+            message=message or "ehai: capture candidate code",
+        )
+        document = self._read_attempt(run_id, attempt_id)
+        document["result"] = {"commit": result.commit, "diff_path": str(diff_path)}
+        self._write(self._attempt_path(run_id, attempt_id), document)
+        return result
+
+    def _capture_git_snapshot(
+        self,
+        *,
+        run_id: str,
+        attempt_id: str,
+        workspace: Path,
+        base_commit: str,
+        diff_path: Path,
+        message: str,
+    ) -> GitCodeResult:
+        """Capture the current worktree without deciding its candidate meaning."""
         preparation = self.resume_worktree(run_id=run_id, attempt_id=attempt_id)
         if preparation.conflicts:
             raise MetadataError(
@@ -221,23 +417,77 @@ class GitCodeWorkspace:
         if set(ignored.splitlines()).intersection(changed.splitlines()):
             raise MetadataError("Refusing to capture changed ignored files")
         if changed:
-            self._commit_index(workspace, message or "ehai: capture candidate code")
+            self._commit_index(workspace, message)
         commit = self._commit_id(workspace, "HEAD")
-        base = self.load_run_base(run_id=run_id).base_commit
-        self._git(workspace, ("merge-base", "--is-ancestor", base, commit))
+        self._git(workspace, ("merge-base", "--is-ancestor", base_commit, commit))
         patch = self._git(
-            workspace, ("diff", "--binary", "--full-index", "--no-ext-diff", base, commit)
+            workspace,
+            ("diff", "--binary", "--full-index", "--no-ext-diff", base_commit, commit),
         ).stdout
-        diff_path = self._path(run_id, f"{normalize_id(attempt_id)}.patch")
-        diff_path.parent.mkdir(parents=True, exist_ok=True)
-        diff_path.write_bytes(patch)
-        document = self._read_attempt(run_id, attempt_id)
-        document["result"] = {"commit": commit, "diff_path": str(diff_path)}
-        self._write(self._attempt_path(run_id, attempt_id), document)
-        return GitCodeResult(run_id, attempt_id, workspace, base, commit, diff_path)
+        self._write_bytes(diff_path, patch)
+        return GitCodeResult(
+            str(normalize_id(run_id)),
+            str(normalize_id(attempt_id)),
+            workspace,
+            base_commit,
+            commit,
+            diff_path,
+        )
+
+    def prepare_adoption_worktree(self, adoption: ResultAdoption) -> Path:
+        """Prepare an isolated check workspace for a host-authorized accepted result.
+
+        The caller must load the adoption from durable state and validate its
+        artifact bytes. This Git operation does not approve result suitability.
+        A different target base requires integration and fresh result evidence;
+        it cannot silently use the old repository context for target checks.
+        """
+        source = self.load_attempt_snapshot(
+            run_id=str(adoption.source_run_id), attempt_id=str(adoption.source_attempt_id)
+        ).result
+        if source is None:
+            raise MetadataError("Adopted producer has no submitted code snapshot")
+        target_base = self.load_run_base(run_id=str(adoption.target_run_id))
+        if target_base.base_commit != source.base_commit:
+            raise MetadataError("Adopted code needs integration against the changed target base")
+        workspace = self._owned(self.owned_root / f"adoption-{adoption.adoption_id}")
+        path = self._path(adoption.target_run_id, f"adoption-{adoption.adoption_id}.json")
+        expected: dict[str, JsonValue] = {
+            "adoption": adoption.to_dict(),
+            "repository": str(self._repository()),
+            "workspace": str(workspace),
+            "base_commit": target_base.base_commit,
+            "source_commit": source.commit,
+        }
+        if path.exists():
+            if self._read(path) != expected:
+                raise MetadataError("Adoption workspace identity or accepted code changed")
+        else:
+            if workspace.exists():
+                raise MetadataError("Unregistered adoption workspace already exists")
+            # Retain intent before invoking Git. A missing directory can be
+            # created after interruption, but existing dirty state is not reset.
+            self._write(path, expected)
+        if not workspace.exists():
+            workspace.parent.mkdir(parents=True, exist_ok=True)
+            self._git(
+                self.base_workspace,
+                ("worktree", "add", "--detach", str(workspace), source.commit),
+            )
+        verified = self._worktree(workspace)
+        if self._commit_id(verified, "HEAD") != source.commit:
+            raise MetadataError("Adoption workspace no longer contains its accepted commit")
+        if self._merge_heads(verified) or self._text(verified, ("status", "--porcelain")):
+            raise MetadataError("Adoption workspace changed; retain it for investigation")
+        return verified
 
     def read_diff(self, result: GitCodeResult) -> bytes:
         return self._owned(result.diff_path).read_bytes()
+
+    def prepared_commit(self, *, run_id: str, attempt_id: str) -> str:
+        """Return the immutable code baseline recorded before a Worker started."""
+        document = self._read_attempt(run_id, attempt_id)
+        return self._commit_id(self.base_workspace, _string(document, "prepared_commit"))
 
     def _commit_index(self, workspace: Path, message: str) -> None:
         parents = (self._commit_id(workspace, "HEAD"), *self._merge_heads(workspace))
@@ -268,6 +518,18 @@ class GitCodeWorkspace:
 
     def _attempt_path(self, run_id: str, attempt_id: str) -> Path:
         return self._path(run_id, f"{normalize_id(attempt_id)}.json")
+
+    def _handoff_path(self, run_id: str, attempt_id: str, handoff_id: str) -> Path:
+        return self._path(
+            run_id,
+            f"{normalize_id(attempt_id)}-handoff-{normalize_id(handoff_id)}.json",
+        )
+
+    def _handoff_patch_path(self, run_id: str, attempt_id: str, handoff_id: str) -> Path:
+        return self._path(
+            run_id,
+            f"{normalize_id(attempt_id)}-handoff-{normalize_id(handoff_id)}.patch",
+        )
 
     def _path(self, run_id: str, name: str) -> Path:
         return self._owned(self.metadata_root / str(normalize_id(run_id)) / name)
@@ -352,9 +614,74 @@ class GitCodeWorkspace:
         finally:
             temporary.unlink(missing_ok=True)
 
+    @staticmethod
+    def _write_bytes(path: Path, content: bytes) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with tempfile.NamedTemporaryFile(dir=path.parent, delete=False) as stream:
+            temporary = Path(stream.name)
+            stream.write(content)
+            stream.flush()
+            os.fsync(stream.fileno())
+        try:
+            os.replace(temporary, path)
+        finally:
+            temporary.unlink(missing_ok=True)
+
+    def _dependency_baseline(
+        self, document: dict[str, JsonValue], *, attempt_id: str
+    ) -> tuple[str, ...]:
+        values = document.get("dependency_upstreams")
+        if not isinstance(values, list):
+            raise MetadataError(f"Attempt {attempt_id} has no valid persisted dependency baseline")
+        normalized: list[str] = []
+        for value in values:
+            if not isinstance(value, str):
+                raise MetadataError(
+                    f"Attempt {attempt_id} has no valid persisted dependency baseline"
+                )
+            normalized.append(value)
+        try:
+            return tuple(self._commit_id(self.base_workspace, value) for value in normalized)
+        except (MetadataError, ValueError) as error:
+            raise MetadataError(
+                f"Attempt {attempt_id} has an invalid persisted dependency baseline"
+            ) from error
+
 
 def _string(document: dict[str, JsonValue], name: str) -> str:
     value = document.get(name)
     if not isinstance(value, str):
         raise MetadataError(f"Code state has no string {name}")
     return value
+
+
+def _object(document: dict[str, JsonValue], name: str) -> dict[str, JsonValue]:
+    value = document.get(name)
+    if not isinstance(value, dict):
+        raise MetadataError(f"Code state has no object {name}")
+    return value
+
+
+def _strings(document: dict[str, JsonValue], name: str) -> tuple[str, ...]:
+    value = document.get(name)
+    if not isinstance(value, list):
+        raise MetadataError(f"Code state has no string array {name}")
+    strings: list[str] = []
+    for item in value:
+        if not isinstance(item, str):
+            raise MetadataError(f"Code state has no string array {name}")
+        strings.append(item)
+    return tuple(strings)
+
+
+def _fingerprint(value: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError("submission_fingerprint must be non-blank")
+    normalized = value.strip()
+    if len(normalized) > 4096 or "\x00" in normalized:
+        raise ValueError("submission_fingerprint is invalid")
+    return normalized
+
+
+def _is_sha256(value: str) -> bool:
+    return len(value) == 64 and all(character in "0123456789abcdef" for character in value)

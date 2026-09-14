@@ -10,11 +10,12 @@ from hashlib import sha256
 from typing import Protocol, runtime_checkable
 
 from ehai import ID, JsonValue, json_dumps, json_loads, normalize_id
+from ehai.domain.adoptions import ResultAdoption
 from ehai.domain.artifacts import Artifact, ArtifactKind
 from ehai.domain.checking import CheckSpec
 from ehai.domain.execution import Attempt, AttemptStatus, Run, RunStatus
 from ehai.domain.goal import CompletionContract
-from ehai.domain.planning import PlanNode, PlanNodeStatus
+from ehai.domain.planning import PlanNode, PlanNodeStatus, PlanRevision
 
 _MAX_ERROR_OUTPUT_BYTES = 1_048_576
 _MAX_ERROR_REASON_CHARACTERS = 2_000
@@ -92,9 +93,15 @@ class ArtifactInputSnapshot:
     size_bytes: int
     run_id: ID | None = None
     attempt_id: ID | None = None
+    adoption: ResultAdoption | None = None
 
     @classmethod
-    def from_artifact(cls, artifact: Artifact, content: bytes) -> ArtifactInputSnapshot:
+    def from_artifact(
+        cls,
+        artifact: Artifact,
+        content: bytes,
+        adoption: ResultAdoption | None = None,
+    ) -> ArtifactInputSnapshot:
         """Build and verify a content snapshot from trusted Artifact metadata and bytes."""
         if not isinstance(artifact, Artifact):
             raise TypeError("artifact must be an Artifact")
@@ -122,6 +129,7 @@ class ArtifactInputSnapshot:
             size_bytes=artifact.size_bytes,
             run_id=artifact.run_id,
             attempt_id=artifact.attempt_id,
+            adoption=adoption,
         )
 
     def __post_init__(self) -> None:
@@ -163,10 +171,38 @@ class ArtifactInputSnapshot:
             raise ValueError("Artifact input content size does not match size_bytes")
         if sha256(decoded).hexdigest() != self.sha256:
             raise ValueError("Artifact input content SHA-256 does not match metadata")
+        adoption = self.adoption
+        if adoption is not None:
+            if not isinstance(adoption, ResultAdoption):
+                raise TypeError("Artifact input adoption must be a ResultAdoption or None")
+            if (
+                self.run_id != adoption.source_run_id
+                or self.plan_node_id != adoption.source_plan_node_id
+                or self.attempt_id != adoption.source_attempt_id
+            ):
+                raise ValueError("Artifact input source identity does not match its adoption")
+            evidence = next(
+                (item for item in adoption.evidence if item.artifact_id == self.artifact_id),
+                None,
+            )
+            if evidence is None or evidence.sha256 != self.sha256:
+                raise ValueError("Artifact input is not the adopted evidence version")
+            if self.kind not in {ArtifactKind.CANDIDATE, ArtifactKind.PATCH}:
+                raise ValueError("Adopted Artifact input must be a candidate or patch")
+
+    @property
+    def effective_run_id(self) -> ID | None:
+        """Return the target Run identity used for dependency mapping."""
+        return self.run_id if self.adoption is None else self.adoption.target_run_id
+
+    @property
+    def effective_plan_node_id(self) -> ID:
+        """Return the target PlanNode identity used for dependency mapping."""
+        return self.plan_node_id if self.adoption is None else self.adoption.target_plan_node_id
 
     def to_prompt_dict(self) -> dict[str, JsonValue]:
         """Return the stable JSON form exposed to Workers."""
-        return {
+        payload: dict[str, JsonValue] = {
             "artifact_id": self.artifact_id,
             "plan_node_id": self.plan_node_id,
             "name": self.name,
@@ -177,6 +213,16 @@ class ArtifactInputSnapshot:
             "encoding": self.encoding,
             "content": self.content,
         }
+        if self.adoption is not None:
+            payload["adoption"] = {
+                "adoption_id": self.adoption.adoption_id,
+                "target_run_id": self.adoption.target_run_id,
+                "target_plan_node_id": self.adoption.target_plan_node_id,
+                "source_run_id": self.adoption.source_run_id,
+                "source_plan_node_id": self.adoption.source_plan_node_id,
+                "source_attempt_id": self.adoption.source_attempt_id,
+            }
+        return payload
 
     def _decoded_content(self) -> bytes:
         if self.encoding == "utf-8":
@@ -185,6 +231,46 @@ class ArtifactInputSnapshot:
             return base64.b64decode(self.content.encode("ascii"), validate=True)
         except (UnicodeEncodeError, binascii.Error) as error:
             raise ValueError("Artifact input base64 content is invalid") from error
+
+
+@dataclass(frozen=True, slots=True)
+class AdoptedResultInputs:
+    """Host input-applicability request, deliberately without a synthetic Attempt."""
+
+    run: Run
+    plan_revision: PlanRevision
+    plan_node: PlanNode
+    adoption: ResultAdoption
+    artifact_inputs: tuple[ArtifactInputSnapshot, ...] = ()
+
+    def __post_init__(self) -> None:
+        if (
+            self.adoption.target_run_id != self.run.run_id
+            or self.adoption.target_plan_revision_id != self.run.plan_revision_id
+            or self.adoption.target_plan_node_id != self.plan_node.plan_node_id
+            or self.adoption.source_run_id != self.run.predecessor_run_id
+            or self.plan_revision.plan_revision_id != self.run.plan_revision_id
+            or self.plan_revision.goal_id != self.run.goal_id
+            or self.plan_node not in self.plan_revision.nodes
+        ):
+            raise ValueError("Adopted input request does not match its target execution scope")
+        object.__setattr__(self, "artifact_inputs", tuple(self.artifact_inputs))
+        for artifact in self.artifact_inputs:
+            if artifact.effective_run_id != self.run.run_id:
+                raise ValueError("Adopted input request contains an unbound foreign Artifact")
+            if artifact.adoption is not None and (
+                artifact.adoption.target_plan_revision_id != self.run.plan_revision_id
+                or artifact.adoption.source_run_id != self.run.predecessor_run_id
+            ):
+                raise ValueError("Adopted input request contains an unrelated adoption")
+
+    @property
+    def run_id(self) -> ID:
+        return self.run.run_id
+
+    @property
+    def plan_node_id(self) -> ID:
+        return self.plan_node.plan_node_id
 
 
 @dataclass(frozen=True, slots=True, init=False)
@@ -257,7 +343,19 @@ class WorkerRequest:
         foreign_artifacts = tuple(
             artifact.artifact_id
             for artifact in artifacts
-            if artifact.run_id is not None and artifact.run_id != run.run_id
+            if (
+                artifact.adoption is None
+                and artifact.run_id is not None
+                and artifact.run_id != run.run_id
+            )
+            or (
+                artifact.adoption is not None
+                and (
+                    artifact.effective_run_id != run.run_id
+                    or artifact.adoption.target_plan_revision_id != run.plan_revision_id
+                    or artifact.adoption.source_run_id != run.predecessor_run_id
+                )
+            )
         )
         if foreign_artifacts:
             raise ValueError(f"{owner} contains Artifacts from another Run: {foreign_artifacts}")

@@ -9,12 +9,16 @@ from types import TracebackType
 from typing import Protocol, Self, runtime_checkable
 
 from ehai import ID, JsonValue, json_dumps, json_loads
+from ehai.application.process_obligations import ProcessObligationMapping
+from ehai.domain.adoptions import ResultAdoption
 from ehai.domain.artifacts import Artifact
 from ehai.domain.checking import Checkpoint, CheckRun, CheckSpec
 from ehai.domain.events import Event
 from ehai.domain.execution import Attempt, Run
 from ehai.domain.goal import CompletionContract, Goal, Project
 from ehai.domain.planning import PlanRevision
+from ehai.domain.process import ProcessRevision
+from ehai.domain.process_drafts import ProcessDraft
 from ehai.domain.runtime import DispatchWork, DispatchWorkStatus
 from ehai.domain.workers import (
     AgentSessionRef,
@@ -23,6 +27,10 @@ from ehai.domain.workers import (
     WorkerEndpoint,
     WorkerProfile,
 )
+
+
+class StateConflictError(RuntimeError):
+    """A requested write conflicts with retained identity or current execution state."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -121,6 +129,34 @@ class CurrentStateReader(Protocol):
 
     def get_plan_revision(self, plan_revision_id: ID) -> PlanRevision | None:
         """Return a PlanRevision by ID."""
+        ...
+
+    def get_execution_plan(self, run_id: ID) -> PlanRevision | None:
+        """Return a Run's current execution graph, separate from its approved proposal."""
+        ...
+
+    def get_process_revision(self, process_revision_id: ID) -> ProcessRevision | None:
+        """Return one immutable process graph snapshot."""
+        ...
+
+    def get_process_draft(self, draft_id: ID) -> ProcessDraft | None:
+        """Return one retained Planner process draft."""
+        ...
+
+    def list_process_drafts(self, run_id: ID) -> tuple[ProcessDraft, ...]:
+        """List retained process drafts for one Run in request order."""
+        ...
+
+    def get_active_process_revision(self, run_id: ID) -> ProcessRevision | None:
+        """Return the process version governing a Run's current execution graph."""
+        ...
+
+    def get_result_adoption(self, adoption_id: ID) -> ResultAdoption | None:
+        """Return one immutable cross-Run result adoption fact."""
+        ...
+
+    def list_result_adoptions(self, target_run_id: ID) -> tuple[ResultAdoption, ...]:
+        """List result adoption facts for one target Run in creation order."""
         ...
 
     def list_plan_revisions(self, goal_id: ID) -> tuple[PlanRevision, ...]:
@@ -222,6 +258,33 @@ class CurrentStateRepository(CurrentStateReader, Protocol):
 
     def put_plan_revision(self, plan_revision: PlanRevision) -> None:
         """Insert or replace a PlanRevision snapshot by ID."""
+        ...
+
+    def put_execution_plan(self, run_id: ID, plan_revision: PlanRevision) -> None:
+        """Persist graph state transitions for one Run without overwriting its approval."""
+        ...
+
+    def publish_process_revision(
+        self,
+        revision: ProcessRevision,
+        *,
+        expected_current: PlanRevision,
+        obligation_mapping: ProcessObligationMapping,
+        source_documents: Mapping[str, str],
+    ) -> None:
+        """Atomically retain a validated successor and its current execution graph.
+
+        The application must establish requirement/interface/permission and
+        obligation preservation for expected_current before calling this primitive.
+        """
+        ...
+
+    def put_process_draft(self, draft: ProcessDraft) -> None:
+        """Persist one Planner draft without registering its candidate process graph."""
+        ...
+
+    def put_result_adoption(self, record: ResultAdoption) -> None:
+        """Persist one host-validated, immutable cross-Run result adoption fact."""
         ...
 
     def put_run(self, run: Run) -> None:

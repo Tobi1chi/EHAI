@@ -3,21 +3,49 @@
 from __future__ import annotations
 
 import sqlite3
+from collections.abc import Mapping
+from dataclasses import replace
 from datetime import datetime
 
-from ehai import ID, format_utc_datetime, json_dumps, json_loads, parse_utc_datetime
-from ehai.application.ports import CommandReceipt, StoredEvent
-from ehai.domain.artifacts import Artifact
-from ehai.domain.checking import Checkpoint, CheckRun, CheckRunStatus, CheckSpec
+from ehai import ID, format_utc_datetime, json_dumps, json_loads, new_id, parse_utc_datetime
+from ehai.application.ports import CommandReceipt, StateConflictError, StoredEvent
+from ehai.application.process_changes import validate_process_gate_preservation
+from ehai.application.process_obligations import ProcessObligationMapping
+from ehai.domain.adoptions import ResultAdoption
+from ehai.domain.artifacts import Artifact, ArtifactKind
+from ehai.domain.checking import CheckKind, Checkpoint, CheckRun, CheckRunStatus, CheckSpec
 from ehai.domain.events import Event, EventType
 from ehai.domain.execution import Attempt, AttemptStatus, Run, RunStatus
 from ehai.domain.goal import CompletionContract, Goal, Project
 from ehai.domain.planning import (
     BranchStatus,
     PlanNode,
+    PlanNodeKind,
     PlanNodeStatus,
     PlanRevision,
     PlanRevisionStatus,
+)
+from ehai.domain.process import (
+    ProcessRevision,
+    ProcessRevisionSource,
+    branch_selection_signature,
+)
+from ehai.domain.process import (
+    node_definition as _node_definition,
+)
+from ehai.domain.process import (
+    node_input_scope as _node_input_scope,
+)
+from ehai.domain.process import (
+    process_approval_identity as _process_approval_identity,
+)
+from ehai.domain.process import (
+    process_graph_definition as _plan_structure,
+)
+from ehai.domain.process_drafts import (
+    ProcessDraft,
+    ProcessDraftStatus,
+    process_draft_identity,
 )
 from ehai.domain.runtime import DispatchWork, DispatchWorkStatus
 from ehai.domain.workers import (
@@ -31,7 +59,6 @@ from ehai.infrastructure.sqlite.codec import (
     decode_agent_session_ref,
     decode_artifact,
     decode_attempt,
-    decode_branch,
     decode_builtin_execution_ref,
     decode_check_run,
     decode_check_spec,
@@ -39,10 +66,12 @@ from ehai.infrastructure.sqlite.codec import (
     decode_completion_contract,
     decode_dispatch_work,
     decode_edge,
+    decode_execution_plan,
     decode_external_execution_ref,
     decode_goal,
     decode_plan_node,
-    decode_plan_revision,
+    decode_process_draft,
+    decode_process_revision,
     decode_project,
     decode_run,
     decode_worker_endpoint,
@@ -58,10 +87,13 @@ from ehai.infrastructure.sqlite.codec import (
     encode_completion_contract,
     encode_dispatch_work,
     encode_edge,
+    encode_execution_plan,
     encode_external_execution_ref,
     encode_goal,
     encode_plan_node,
     encode_plan_revision,
+    encode_process_draft,
+    encode_process_revision,
     encode_project,
     encode_run,
     encode_worker_endpoint,
@@ -69,7 +101,7 @@ from ehai.infrastructure.sqlite.codec import (
 )
 
 
-class PersistenceConflictError(RuntimeError):
+class PersistenceConflictError(StateConflictError):
     """Raised when immutable persisted identity is reused for different data."""
 
 
@@ -100,27 +132,50 @@ _PLAN_NODE_STATUS_TRANSITIONS = {
         {PlanNodeStatus.PENDING, PlanNodeStatus.READY, PlanNodeStatus.PRUNED}
     ),
     PlanNodeStatus.READY: frozenset(
-        {PlanNodeStatus.READY, PlanNodeStatus.RUNNING, PlanNodeStatus.PRUNED}
+        {
+            PlanNodeStatus.PENDING,
+            PlanNodeStatus.READY,
+            PlanNodeStatus.RUNNING,
+            PlanNodeStatus.PRUNED,
+        }
     ),
     PlanNodeStatus.RUNNING: frozenset(
-        {PlanNodeStatus.RUNNING, PlanNodeStatus.CANDIDATE, PlanNodeStatus.FAILED}
+        {
+            PlanNodeStatus.RUNNING,
+            PlanNodeStatus.CANDIDATE,
+            PlanNodeStatus.FAILED,
+            PlanNodeStatus.BLOCKED,
+        }
     ),
+    PlanNodeStatus.BLOCKED: frozenset({PlanNodeStatus.BLOCKED, PlanNodeStatus.PENDING}),
     PlanNodeStatus.CANDIDATE: frozenset(
-        {PlanNodeStatus.CANDIDATE, PlanNodeStatus.VERIFYING, PlanNodeStatus.FAILED}
+        {
+            PlanNodeStatus.PENDING,
+            PlanNodeStatus.CANDIDATE,
+            PlanNodeStatus.VERIFYING,
+            PlanNodeStatus.FAILED,
+        }
     ),
     PlanNodeStatus.VERIFYING: frozenset(
-        {PlanNodeStatus.VERIFYING, PlanNodeStatus.COMPLETED, PlanNodeStatus.FAILED}
+        {
+            PlanNodeStatus.PENDING,
+            PlanNodeStatus.VERIFYING,
+            PlanNodeStatus.COMPLETED,
+            PlanNodeStatus.FAILED,
+        }
     ),
-    PlanNodeStatus.FAILED: frozenset({PlanNodeStatus.FAILED, PlanNodeStatus.READY}),
-    PlanNodeStatus.COMPLETED: frozenset({PlanNodeStatus.COMPLETED}),
-    PlanNodeStatus.PRUNED: frozenset({PlanNodeStatus.PRUNED}),
+    PlanNodeStatus.FAILED: frozenset(
+        {PlanNodeStatus.PENDING, PlanNodeStatus.FAILED, PlanNodeStatus.READY}
+    ),
+    PlanNodeStatus.COMPLETED: frozenset({PlanNodeStatus.PENDING, PlanNodeStatus.COMPLETED}),
+    PlanNodeStatus.PRUNED: frozenset({PlanNodeStatus.PENDING, PlanNodeStatus.PRUNED}),
 }
 _BRANCH_STATUS_TRANSITIONS = {
     BranchStatus.ACTIVE: frozenset(
         {BranchStatus.ACTIVE, BranchStatus.SELECTED, BranchStatus.PRUNED}
     ),
-    BranchStatus.SELECTED: frozenset({BranchStatus.SELECTED}),
-    BranchStatus.PRUNED: frozenset({BranchStatus.PRUNED}),
+    BranchStatus.SELECTED: frozenset({BranchStatus.ACTIVE, BranchStatus.SELECTED}),
+    BranchStatus.PRUNED: frozenset({BranchStatus.ACTIVE, BranchStatus.PRUNED}),
 }
 _RUN_STATUS_TRANSITIONS = {
     RunStatus.PENDING: frozenset({RunStatus.PENDING, RunStatus.RUNNING, RunStatus.CANCELLED}),
@@ -415,6 +470,13 @@ class SQLiteCurrentStateRepository:
         )
 
     def put_plan_revision(self, plan_revision: PlanRevision) -> None:
+        existing = self.get_plan_revision(plan_revision.plan_revision_id)
+        if existing is not None and existing.status is PlanRevisionStatus.APPROVED:
+            if existing != plan_revision:
+                raise PersistenceConflictError(
+                    "Approved PlanRevision is immutable; update the Run execution plan instead"
+                )
+            return
         self._validate_plan_update(plan_revision)
         self._validate_plan_child_identity(plan_revision)
         self._connection.execute(
@@ -496,39 +558,7 @@ class SQLiteCurrentStateRepository:
 
     def get_plan_revision(self, plan_revision_id: ID) -> PlanRevision | None:
         snapshot = self._snapshot("plan_revisions", "plan_revision_id", plan_revision_id)
-        if snapshot is None:
-            return None
-        nodes = tuple(
-            decode_plan_node(value)
-            for value in self._snapshots(
-                """
-                SELECT snapshot_json FROM plan_nodes
-                WHERE plan_revision_id = ? ORDER BY sort_index
-                """,
-                (plan_revision_id,),
-            )
-        )
-        edges = tuple(
-            decode_edge(value)
-            for value in self._snapshots(
-                """
-                SELECT snapshot_json FROM edges
-                WHERE plan_revision_id = ? ORDER BY sort_index
-                """,
-                (plan_revision_id,),
-            )
-        )
-        branches = tuple(
-            decode_branch(value)
-            for value in self._snapshots(
-                """
-                SELECT snapshot_json FROM branches
-                WHERE plan_revision_id = ? ORDER BY sort_index
-                """,
-                (plan_revision_id,),
-            )
-        )
-        return decode_plan_revision(snapshot, nodes, edges, branches)
+        return None if snapshot is None else decode_execution_plan(snapshot)
 
     def list_plan_revisions(self, goal_id: ID) -> tuple[PlanRevision, ...]:
         return tuple(
@@ -542,6 +572,507 @@ class SQLiteCurrentStateRepository:
             )
         )
 
+    def get_execution_plan(self, run_id: ID) -> PlanRevision | None:
+        run = self.get_run(run_id)
+        if run is None:
+            return None
+        snapshot = self._snapshot("run_execution_plans", "run_id", run_id)
+        if snapshot is None:
+            raise PersistenceConflictError(f"Run {run_id} has no execution plan")
+        plan = decode_execution_plan(snapshot)
+        if plan.plan_revision_id != run.plan_revision_id or plan.goal_id != run.goal_id:
+            raise PersistenceConflictError(f"Run {run_id} execution plan ownership changed")
+        return plan
+
+    def put_execution_plan(self, run_id: ID, plan_revision: PlanRevision) -> None:
+        run = self._required_run(run_id)
+        existing = self._required_execution_plan(run_id)
+        if plan_revision.plan_revision_id != run.plan_revision_id:
+            raise PersistenceConflictError(f"Run {run_id} execution plan approval changed")
+        process = self._required_active_process_revision(run_id)
+        if _plan_structure(process.graph) != _plan_structure(plan_revision):
+            raise PersistenceConflictError(
+                "Execution graph differs from its active ProcessRevision"
+            )
+        self._validate_graph_update(existing, plan_revision, run_id=run_id)
+        self._connection.execute(
+            "UPDATE run_execution_plans SET snapshot_json = ? WHERE run_id = ?",
+            (encode_execution_plan(plan_revision), run_id),
+        )
+
+    def get_process_revision(self, process_revision_id: ID) -> ProcessRevision | None:
+        snapshot = self._snapshot("process_revisions", "process_revision_id", process_revision_id)
+        return None if snapshot is None else decode_process_revision(snapshot)
+
+    def get_process_draft(self, draft_id: ID) -> ProcessDraft | None:
+        row = self._connection.execute(
+            """
+            SELECT draft_id, run_id, parent_process_revision_id, created_at, status, snapshot_json
+            FROM process_drafts WHERE draft_id = ?
+            """,
+            (draft_id,),
+        ).fetchone()
+        return None if row is None else self._decode_process_draft_row(row)
+
+    def list_process_drafts(self, run_id: ID) -> tuple[ProcessDraft, ...]:
+        return tuple(
+            self._decode_process_draft_row(row)
+            for row in self._connection.execute(
+                """
+                SELECT draft_id, run_id, parent_process_revision_id, created_at, status,
+                    snapshot_json
+                FROM process_drafts
+                WHERE run_id = ? ORDER BY created_at, draft_id
+                """,
+                (run_id,),
+            ).fetchall()
+        )
+
+    def get_result_adoption(self, adoption_id: ID) -> ResultAdoption | None:
+        row = self._connection.execute(
+            """
+            SELECT adoption_id, target_run_id, target_plan_revision_id, target_plan_node_id,
+                source_run_id, source_plan_revision_id, source_process_revision_id,
+                source_plan_node_id, source_attempt_id, created_at, snapshot_json
+            FROM result_adoptions WHERE adoption_id = ?
+            """,
+            (adoption_id,),
+        ).fetchone()
+        return None if row is None else self._decode_result_adoption_row(row)
+
+    def list_result_adoptions(self, target_run_id: ID) -> tuple[ResultAdoption, ...]:
+        return tuple(
+            self._decode_result_adoption_row(row)
+            for row in self._connection.execute(
+                """
+                SELECT adoption_id, target_run_id, target_plan_revision_id, target_plan_node_id,
+                source_run_id, source_plan_revision_id, source_process_revision_id,
+                source_plan_node_id, source_attempt_id, created_at, snapshot_json
+            FROM result_adoptions
+                WHERE target_run_id = ? ORDER BY created_at, adoption_id
+                """,
+                (target_run_id,),
+            ).fetchall()
+        )
+
+    def put_result_adoption(self, record: ResultAdoption) -> None:
+        if not isinstance(record, ResultAdoption):
+            raise TypeError("record must be a ResultAdoption")
+
+        existing = self.get_result_adoption(record.adoption_id)
+        if existing is not None:
+            if existing != record:
+                raise PersistenceConflictError(f"ResultAdoption {record.adoption_id} is immutable")
+            return
+
+        collision = self._connection.execute(
+            """
+            SELECT adoption_id FROM result_adoptions
+            WHERE target_run_id = ? AND target_plan_node_id = ?
+            """,
+            (record.target_run_id, record.target_plan_node_id),
+        ).fetchone()
+        if collision is not None:
+            raise PersistenceConflictError(
+                "Target Run and PlanNode already have a different ResultAdoption"
+            )
+
+        self._validate_result_adoption(record)
+        snapshot = json_dumps(record.to_dict())
+        try:
+            self._connection.execute(
+                """
+                INSERT INTO result_adoptions(
+                    adoption_id, target_run_id, target_plan_revision_id, target_plan_node_id,
+                    source_run_id, source_plan_revision_id, source_process_revision_id,
+                    source_plan_node_id, source_attempt_id, created_at, snapshot_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    record.adoption_id,
+                    record.target_run_id,
+                    record.target_plan_revision_id,
+                    record.target_plan_node_id,
+                    record.source_run_id,
+                    record.source_plan_revision_id,
+                    record.source_process_revision_id,
+                    record.source_plan_node_id,
+                    record.source_attempt_id,
+                    format_utc_datetime(record.created_at),
+                    snapshot,
+                ),
+            )
+        except sqlite3.IntegrityError as error:
+            raise PersistenceConflictError(
+                f"ResultAdoption {record.adoption_id} cannot be persisted"
+            ) from error
+
+    def put_process_draft(self, draft: ProcessDraft) -> None:
+        snapshot = encode_process_draft(draft)
+        existing = self.get_process_draft(draft.draft_id)
+        if existing is None:
+            self._validate_new_process_draft(draft)
+        else:
+            self._validate_process_draft_update(existing, draft)
+            if existing == draft:
+                return
+        self._connection.execute(
+            """
+            INSERT INTO process_drafts(
+                draft_id, run_id, parent_process_revision_id, created_at, status, snapshot_json
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(draft_id) DO UPDATE SET
+                status = excluded.status,
+                snapshot_json = excluded.snapshot_json
+            """,
+            (
+                draft.draft_id,
+                draft.run_id,
+                draft.parent_process_revision_id,
+                format_utc_datetime(draft.created_at),
+                draft.status.value,
+                snapshot,
+            ),
+        )
+
+    def publish_process_revision(
+        self,
+        revision: ProcessRevision,
+        *,
+        expected_current: PlanRevision,
+        obligation_mapping: ProcessObligationMapping,
+        source_documents: Mapping[str, str],
+    ) -> None:
+        """Persist a successor after application-level boundary review, never approve it."""
+        existing = self.get_process_revision(revision.process_revision_id)
+        if existing is not None:
+            if existing != revision:
+                raise PersistenceConflictError("ProcessRevision identity is immutable")
+            return
+        run = self._required_run(revision.run_id)
+        previous = self._required_active_process_revision(run.run_id)
+        current = self._required_execution_plan(run.run_id)
+        if current != expected_current:
+            raise PersistenceConflictError("Execution graph changed while the process was reviewed")
+        approved = self._required_plan_revision(run.plan_revision_id)
+        if run.status not in {RunStatus.RUNNING, RunStatus.PAUSED}:
+            raise PersistenceConflictError("Process adjustment requires a nonterminal started Run")
+        if (
+            revision.source is not ProcessRevisionSource.PLANNER_ADJUSTMENT
+            or revision.parent_process_revision_id != previous.process_revision_id
+            or revision.version != previous.version + 1
+            or revision.created_at < previous.created_at
+        ):
+            raise PersistenceConflictError("Process adjustment does not follow the active version")
+        if _process_approval_identity(revision.graph) != _process_approval_identity(approved):
+            raise PersistenceConflictError("Process adjustment changed its original approval")
+        if any(
+            attempt.status in {AttemptStatus.PENDING, AttemptStatus.RUNNING}
+            for attempt in self.list_attempts(run.run_id)
+        ):
+            raise PersistenceConflictError(
+                "Stop in-flight and queued Attempts before changing process"
+            )
+        proposed_nodes = {node.plan_node_id: node for node in revision.graph.nodes}
+        for node in current.nodes:
+            if node.status is PlanNodeStatus.RUNNING:
+                raise PersistenceConflictError("Recover running node state before changing process")
+            if (
+                node.status
+                in {
+                    PlanNodeStatus.BLOCKED,
+                    PlanNodeStatus.CANDIDATE,
+                    PlanNodeStatus.VERIFYING,
+                }
+                and proposed_nodes.get(node.plan_node_id) != node
+            ):
+                raise PersistenceConflictError("Process adjustment would strand unresolved work")
+        for check in self.list_check_runs(run.run_id):
+            if check.status in {CheckRunStatus.PENDING, CheckRunStatus.RUNNING} and (
+                check.human_request is None or check.plan_node_id not in proposed_nodes
+            ):
+                raise PersistenceConflictError("Process adjustment would strand an active Check")
+        validate_process_gate_preservation(
+            approved,
+            previous,
+            revision,
+            obligation_mapping=obligation_mapping,
+            source_documents=source_documents,
+        )
+        self._validate_retained_process_selections(run.run_id, current, revision.graph)
+        self._connection.execute("SAVEPOINT publish_process_revision")
+        try:
+            self._insert_process_members(current, revision.graph)
+            self._connection.execute(
+                """
+                INSERT INTO process_revisions(
+                    process_revision_id, run_id, version, parent_process_revision_id, snapshot_json
+                ) VALUES (?, ?, ?, ?, ?)
+                """,
+                (
+                    revision.process_revision_id,
+                    revision.run_id,
+                    revision.version,
+                    revision.parent_process_revision_id,
+                    encode_process_revision(revision),
+                ),
+            )
+            self._connection.execute(
+                """
+                UPDATE run_execution_plans SET snapshot_json = ?, active_process_revision_id = ?
+                WHERE run_id = ?
+                """,
+                (encode_execution_plan(revision.graph), revision.process_revision_id, run.run_id),
+            )
+        except BaseException:
+            self._connection.execute("ROLLBACK TO SAVEPOINT publish_process_revision")
+            self._connection.execute("RELEASE SAVEPOINT publish_process_revision")
+            raise
+        self._connection.execute("RELEASE SAVEPOINT publish_process_revision")
+
+    def _validate_retained_process_selections(
+        self, run_id: ID, current: PlanRevision, proposed: PlanRevision
+    ) -> None:
+        """Retained choices must still name the latest successful candidate evidence."""
+        current_branches = {branch.branch_id: branch for branch in current.branches}
+        retained = tuple(
+            branch
+            for branch in proposed.branches
+            if branch.status is BranchStatus.SELECTED and branch.branch_id in current_branches
+        )
+        if not retained:
+            return
+        latest = {
+            attempt.plan_node_id: attempt.attempt_id
+            for attempt in sorted(self.list_attempts(run_id), key=lambda item: item.sequence)
+            if attempt.status is AttemptStatus.SUCCEEDED
+        }
+        artifact_nodes: dict[str, ID] = {
+            artifact.artifact_id: artifact.plan_node_id
+            for artifact in self.list_artifacts_for_run(run_id)
+            if artifact.kind in {ArtifactKind.CANDIDATE, ArtifactKind.PATCH}
+            and artifact.plan_node_id is not None
+            and artifact.attempt_id is not None
+            and artifact.attempt_id == latest.get(artifact.plan_node_id)
+        }
+        nodes = {node.plan_node_id: node for node in proposed.nodes}
+        retained_groups = {(branch.fork_node_id, branch.merge_node_id) for branch in retained}
+        retained_nodes = {
+            node_id
+            for branch in proposed.branches
+            if (branch.fork_node_id, branch.merge_node_id) in retained_groups
+            for node_id in branch.node_ids
+        }
+        run = self._required_run(run_id)
+        for adoption in self.list_result_adoptions(run_id):
+            target_id = adoption.target_plan_node_id
+            if target_id not in retained_nodes or target_id in latest:
+                continue
+            target_node = nodes[target_id]
+            if target_node.status is not PlanNodeStatus.COMPLETED:
+                continue
+            producer = self._required_attempt(adoption.source_attempt_id)
+            self._adoption_verification(run, target_id, producer, adoption.adoption_id)
+            current_node = _required_plan_node(current, target_id)
+            if replace(target_node, status=current_node.status) != current_node:
+                raise PersistenceConflictError("Retained adopted Branch node changed definition")
+            for adopted_evidence in adoption.evidence:
+                if adopted_evidence.artifact_id in artifact_nodes:
+                    raise PersistenceConflictError("Retained Branch evidence has ambiguous targets")
+                artifact_nodes[adopted_evidence.artifact_id] = target_id
+        for selected in retained:
+            row = self._connection.execute(
+                """
+                SELECT event_json FROM event_log
+                WHERE run_id = ? AND event_type = ?
+                    AND json_extract(event_json, '$.correlation_id') = ?
+                ORDER BY event_offset DESC LIMIT 1
+                """,
+                (run_id, EventType.BRANCH_SELECTED.value, selected.branch_id),
+            ).fetchone()
+            if row is None:
+                raise PersistenceConflictError("Retained Branch selection has no evidence Event")
+            payload = Event.from_json(_row_string(row, "event_json")).payload
+            evidence = payload.get("evidence_artifact_ids")
+            chosen = payload.get("selected_artifact_ids")
+            group = tuple(
+                branch
+                for branch in proposed.branches
+                if (branch.fork_node_id, branch.merge_node_id)
+                == (selected.fork_node_id, selected.merge_node_id)
+            )
+            candidate_nodes = {node_id for branch in group for node_id in branch.node_ids}
+            if (
+                payload.get("branch_id") != selected.branch_id
+                or payload.get("fork_node_id") != selected.fork_node_id
+                or not isinstance(evidence, list)
+                or not evidence
+                or payload.get("compared_artifact_ids", evidence) != evidence
+                or not isinstance(chosen, list)
+                or not chosen
+                or any(
+                    not isinstance(value, str)
+                    or value not in artifact_nodes
+                    or artifact_nodes[value] not in candidate_nodes
+                    for value in evidence
+                )
+                or any(
+                    not isinstance(value, str)
+                    or value not in artifact_nodes
+                    or artifact_nodes[value] not in selected.node_ids
+                    for value in chosen
+                )
+            ):
+                raise PersistenceConflictError(
+                    "Retained Branch selection refers to stale or invalid candidate Artifacts"
+                )
+            compared_nodes = {artifact_nodes[value] for value in evidence if isinstance(value, str)}
+            if any(
+                all(
+                    nodes[node_id].status is PlanNodeStatus.COMPLETED for node_id in branch.node_ids
+                )
+                and not compared_nodes.intersection(branch.node_ids)
+                for branch in group
+            ) or any(
+                nodes[node_id].status is not PlanNodeStatus.COMPLETED
+                for node_id in selected.node_ids
+            ):
+                raise PersistenceConflictError(
+                    "Retained Branch selection no longer covers its viable candidate group"
+                )
+
+    def _insert_process_members(self, current: PlanRevision, proposed: PlanRevision) -> None:
+        old_nodes = {node.plan_node_id: node for node in current.nodes}
+        old_branches = {branch.branch_id: branch for branch in current.branches}
+        for node in proposed.nodes:
+            stored = self._connection.execute(
+                "SELECT plan_revision_id, snapshot_json FROM plan_nodes WHERE plan_node_id = ?",
+                (node.plan_node_id,),
+            ).fetchone()
+            if stored is not None:
+                old = old_nodes.get(node.plan_node_id)
+                if (
+                    _row_string(stored, "plan_revision_id") != proposed.plan_revision_id
+                    or old is None
+                    or _node_definition(decode_plan_node(_row_string(stored, "snapshot_json")))
+                    != _node_definition(node)
+                    or old != node
+                    or _node_input_scope(current, node.plan_node_id)
+                    != _node_input_scope(proposed, node.plan_node_id)
+                ):
+                    raise PersistenceConflictError(
+                        "Changed task/input must use a new node identity"
+                    )
+                continue
+            if node.status is not PlanNodeStatus.PENDING:
+                raise PersistenceConflictError("A new process node must start pending")
+            self._connection.execute(
+                """
+                INSERT INTO plan_nodes(plan_node_id, plan_revision_id, sort_index, snapshot_json)
+                SELECT ?, ?, COALESCE(MAX(sort_index), -1) + 1, ? FROM plan_nodes
+                WHERE plan_revision_id = ?
+                """,
+                (
+                    node.plan_node_id,
+                    proposed.plan_revision_id,
+                    encode_plan_node(node),
+                    proposed.plan_revision_id,
+                ),
+            )
+        for branch in proposed.branches:
+            stored = self._connection.execute(
+                "SELECT plan_revision_id, snapshot_json FROM branches WHERE branch_id = ?",
+                (branch.branch_id,),
+            ).fetchone()
+            if stored is not None:
+                old_branch = old_branches.get(branch.branch_id)
+                if (
+                    _row_string(stored, "plan_revision_id") != proposed.plan_revision_id
+                    or old_branch is None
+                ):
+                    raise PersistenceConflictError(
+                        "Process branch identity crosses its current scope"
+                    )
+                selection_changed = branch_selection_signature(
+                    current, branch.branch_id
+                ) != branch_selection_signature(proposed, branch.branch_id)
+                expected_status = BranchStatus.ACTIVE if selection_changed else old_branch.status
+                if branch.status is not expected_status:
+                    raise PersistenceConflictError(
+                        "Branch selection must be preserved or invalidated "
+                        "with its candidate inputs"
+                    )
+                continue
+            if branch.status is not BranchStatus.ACTIVE:
+                raise PersistenceConflictError("New process branches must start active")
+            self._connection.execute(
+                """
+                INSERT INTO branches(
+                    branch_id, plan_revision_id, fork_node_id, merge_node_id,
+                    sort_index, snapshot_json
+                ) SELECT ?, ?, ?, ?, COALESCE(MAX(sort_index), -1) + 1, ? FROM branches
+                WHERE plan_revision_id = ?
+                """,
+                (
+                    branch.branch_id,
+                    proposed.plan_revision_id,
+                    branch.fork_node_id,
+                    branch.merge_node_id,
+                    encode_branch(branch),
+                    proposed.plan_revision_id,
+                ),
+            )
+        for edge in proposed.edges:
+            stored = self._connection.execute(
+                "SELECT plan_revision_id, snapshot_json FROM edges WHERE edge_id = ?",
+                (edge.edge_id,),
+            ).fetchone()
+            if stored is not None:
+                if (
+                    _row_string(stored, "plan_revision_id") != proposed.plan_revision_id
+                    or decode_edge(_row_string(stored, "snapshot_json")) != edge
+                ):
+                    raise PersistenceConflictError("Changed edge must use a new identity")
+                continue
+            self._connection.execute(
+                """
+                INSERT INTO edges(
+                    edge_id, plan_revision_id, source_node_id, target_node_id,
+                    branch_id, sort_index, snapshot_json
+                ) SELECT ?, ?, ?, ?, ?, COALESCE(MAX(sort_index), -1) + 1, ? FROM edges
+                WHERE plan_revision_id = ?
+                """,
+                (
+                    edge.edge_id,
+                    proposed.plan_revision_id,
+                    edge.source_node_id,
+                    edge.target_node_id,
+                    edge.branch_id,
+                    encode_edge(edge),
+                    proposed.plan_revision_id,
+                ),
+            )
+
+    def get_active_process_revision(self, run_id: ID) -> ProcessRevision | None:
+        run = self.get_run(run_id)
+        if run is None:
+            return None
+        row = self._connection.execute(
+            "SELECT active_process_revision_id FROM run_execution_plans WHERE run_id = ?",
+            (run_id,),
+        ).fetchone()
+        if row is None or row[0] is None:
+            raise PersistenceConflictError(f"Run {run_id} has no active ProcessRevision")
+        process = self.get_process_revision(ID(_row_index_string(row, 0)))
+        if (
+            process is None
+            or process.run_id != run_id
+            or process.graph.plan_revision_id != run.plan_revision_id
+            or process.graph.goal_id != run.goal_id
+        ):
+            raise PersistenceConflictError(f"Run {run_id} active ProcessRevision ownership changed")
+        return process
+
     def put_run(self, run: Run) -> None:
         plan_revision = self._required_plan_revision(run.plan_revision_id)
         if plan_revision.goal_id != run.goal_id:
@@ -549,6 +1080,29 @@ class SQLiteCurrentStateRepository:
                 f"Run {run.run_id} Goal does not match PlanRevision {run.plan_revision_id}"
             )
         existing = self.get_run(run.run_id)
+        if existing is None and run.predecessor_run_id is not None:
+            predecessor = self._required_run(run.predecessor_run_id)
+            if (
+                run.status is not RunStatus.PENDING
+                or predecessor.goal_id != run.goal_id
+                or predecessor.status is not RunStatus.PAUSED
+                or predecessor.plan_revision_id == run.plan_revision_id
+                or plan_revision.status is not PlanRevisionStatus.APPROVED
+            ):
+                raise PersistenceConflictError(
+                    "Successor requires a paused same-Goal predecessor and a new approved plan"
+                )
+            if any(
+                attempt.status in {AttemptStatus.PENDING, AttemptStatus.RUNNING}
+                for attempt in self.list_attempts(predecessor.run_id)
+            ):
+                raise PersistenceConflictError("Successor predecessor has unresolved Attempts")
+            for check in self.list_check_runs(predecessor.run_id):
+                spec = self.get_check_spec(check.check_id)
+                if check.status in {CheckRunStatus.PENDING, CheckRunStatus.RUNNING} and (
+                    spec is None or spec.kind is not CheckKind.HUMAN
+                ):
+                    raise PersistenceConflictError("Successor predecessor has unresolved Checks")
         if existing is not None:
             if _run_identity(existing) != _run_identity(run):
                 raise PersistenceConflictError(f"Run {run.run_id} identity changed")
@@ -568,6 +1122,36 @@ class SQLiteCurrentStateRepository:
                 encode_run(run),
             ),
         )
+        if existing is None:
+            process = ProcessRevision(
+                process_revision_id=new_id(),
+                run_id=run.run_id,
+                version=1,
+                graph=plan_revision,
+                created_at=run.created_at,
+                reason="Execution starts from the original approved plan",
+                source=ProcessRevisionSource.RUN_STARTED,
+            )
+            self._connection.execute(
+                """
+                INSERT INTO process_revisions(process_revision_id, run_id, version, snapshot_json)
+                VALUES (?, ?, ?, ?)
+                """,
+                (process.process_revision_id, run.run_id, 1, encode_process_revision(process)),
+            )
+            self._connection.execute(
+                """
+                INSERT INTO run_execution_plans(
+                    run_id, plan_revision_id, snapshot_json, active_process_revision_id
+                ) VALUES (?, ?, ?, ?)
+                """,
+                (
+                    run.run_id,
+                    run.plan_revision_id,
+                    encode_execution_plan(plan_revision),
+                    process.process_revision_id,
+                ),
+            )
 
     def get_run(self, run_id: ID) -> Run | None:
         snapshot = self._snapshot("runs", "run_id", run_id)
@@ -586,10 +1170,14 @@ class SQLiteCurrentStateRepository:
         )
 
     def put_attempt(self, attempt: Attempt) -> None:
-        run = self._required_run(attempt.run_id)
-        plan_revision = self._required_plan_revision(run.plan_revision_id)
+        self._required_run(attempt.run_id)
+        plan_revision = self._attempt_plan(attempt)
         _required_plan_node(plan_revision, attempt.plan_node_id)
         existing = self.get_attempt(attempt.attempt_id)
+        if existing is None:
+            process = self._required_active_process_revision(attempt.run_id)
+            if attempt.process_revision_id != process.process_revision_id:
+                raise PersistenceConflictError("New Attempt must bind the active ProcessRevision")
         if existing is not None:
             if _attempt_identity(existing) != _attempt_identity(attempt):
                 raise PersistenceConflictError(f"Attempt {attempt.attempt_id} identity changed")
@@ -761,11 +1349,17 @@ class SQLiteCurrentStateRepository:
     ) -> DispatchWork | None:
         row = self._connection.execute(
             """
-            SELECT snapshot_json FROM dispatch_work
-            WHERE status = 'pending'
-               OR (status = 'claimed' AND lease_expires_at <= ?)
-            ORDER BY CASE status WHEN 'claimed' THEN 0 ELSE 1 END,
-                     created_at, dispatch_work_id
+            SELECT work.snapshot_json FROM dispatch_work AS work
+            JOIN runs AS run ON run.run_id = work.run_id
+            WHERE (work.status = 'pending'
+               OR (work.status = 'claimed' AND work.lease_expires_at <= ?))
+              AND (json_extract(run.snapshot_json, '$.status') != 'paused' OR EXISTS (
+                  SELECT 1 FROM attempts AS attempt
+                  WHERE attempt.run_id = work.run_id
+                    AND json_extract(attempt.snapshot_json, '$.status') = 'running'
+              ))
+            ORDER BY CASE work.status WHEN 'claimed' THEN 0 ELSE 1 END,
+                     work.created_at, work.dispatch_work_id
             LIMIT 1
             """,
             (format_utc_datetime(at),),
@@ -961,8 +1555,7 @@ class SQLiteCurrentStateRepository:
             raise PersistenceConflictError(
                 f"Attempt {attempt.attempt_id} assignment crosses execution scope"
             )
-        run = self._required_run(attempt.run_id)
-        plan = self._required_plan_revision(run.plan_revision_id)
+        plan = self._attempt_plan(attempt)
         node = _required_plan_node(plan, attempt.plan_node_id)
         if not node.required_capabilities.issubset(profile.capabilities):
             raise PersistenceConflictError(
@@ -1089,25 +1682,58 @@ class SQLiteCurrentStateRepository:
 
     def put_check_run(self, check_run: CheckRun) -> None:
         attempt = self._required_attempt(check_run.attempt_id)
-        if attempt.run_id != check_run.run_id or attempt.plan_node_id != check_run.plan_node_id:
-            raise PersistenceConflictError(
-                f"CheckRun {check_run.check_run_id} does not match Attempt {attempt.attempt_id}"
-            )
         run = self._required_run(check_run.run_id)
-        node = _required_plan_node(
-            self._required_plan_revision(run.plan_revision_id),
-            check_run.plan_node_id,
-        )
+        if check_run.adoption_id is None:
+            if attempt.run_id != check_run.run_id or attempt.plan_node_id != check_run.plan_node_id:
+                raise PersistenceConflictError(
+                    f"CheckRun {check_run.check_run_id} does not match Attempt {attempt.attempt_id}"
+                )
+            plan = self._attempt_plan(attempt)
+        else:
+            adoption = self._adoption_verification(
+                run, check_run.plan_node_id, attempt, check_run.adoption_id
+            )
+            plan = self._required_execution_plan(run.run_id)
+            if check_run.result is not None and not set(
+                check_run.result.evidence_artifact_ids
+            ).issubset(item.artifact_id for item in adoption.evidence):
+                raise PersistenceConflictError("Adopted Check result has unrelated evidence")
+        node = _required_plan_node(plan, check_run.plan_node_id)
         if check_run.check_id not in node.required_check_ids:
             raise PersistenceConflictError(
                 f"CheckRun {check_run.check_run_id} Check is not required by PlanNode "
                 f"{node.plan_node_id}"
             )
+        if check_run.human_request is not None or check_run.human_decision is not None:
+            check_spec = self.get_check_spec(check_run.check_id)
+            if check_spec is None:
+                raise PersistenceConflictError(
+                    f"CheckRun {check_run.check_run_id} CheckSpec {check_run.check_id} "
+                    "is not persisted"
+                )
+            if check_spec.kind is not CheckKind.HUMAN:
+                raise PersistenceConflictError(
+                    f"CheckRun {check_run.check_run_id} has human metadata for a non-human Check"
+                )
+            self._validate_human_check_run(check_run, run, node, attempt)
         existing = self.get_check_run(check_run.check_run_id)
         if existing is not None:
             if _check_run_identity(existing) != _check_run_identity(check_run):
                 raise PersistenceConflictError(
                     f"CheckRun {check_run.check_run_id} identity changed"
+                )
+            if existing.human_request is not None and (
+                existing.human_request != check_run.human_request
+            ):
+                raise PersistenceConflictError(
+                    f"CheckRun {check_run.check_run_id} human request is immutable"
+                )
+            if existing.human_decision is not None and (
+                existing.human_decision != check_run.human_decision
+                or existing.result != check_run.result
+            ):
+                raise PersistenceConflictError(
+                    f"CheckRun {check_run.check_run_id} human decision is immutable"
                 )
             if check_run.status not in _CHECK_RUN_STATUS_TRANSITIONS[existing.status]:
                 raise PersistenceConflictError(
@@ -1132,6 +1758,99 @@ class SQLiteCurrentStateRepository:
             ),
         )
 
+    def _validate_human_check_run(
+        self,
+        check_run: CheckRun,
+        run: Run,
+        node: PlanNode,
+        attempt: Attempt,
+    ) -> None:
+        request = check_run.human_request
+        if request is None:
+            if check_run.human_decision is not None:
+                raise PersistenceConflictError(
+                    f"CheckRun {check_run.check_run_id} human decision has no request"
+                )
+            return
+        if request.plan_revision_id != run.plan_revision_id:
+            raise PersistenceConflictError(
+                f"CheckRun {check_run.check_run_id} human request PlanRevision does not match Run"
+            )
+        plan = (
+            self._attempt_plan(attempt)
+            if check_run.adoption_id is None
+            else self._required_execution_plan(run.run_id)
+        )
+        if plan.status is not PlanRevisionStatus.APPROVED:
+            raise PersistenceConflictError(
+                f"CheckRun {check_run.check_run_id} human request requires an approved PlanRevision"
+            )
+        if (
+            request.completion_contract_id != plan.completion_contract_id
+            or request.completion_contract_version != plan.completion_contract_version
+        ):
+            raise PersistenceConflictError(
+                f"CheckRun {check_run.check_run_id} human request CompletionContract does not "
+                "match its approved PlanRevision"
+            )
+        contract = self.get_completion_contract(request.completion_contract_id)
+        if contract is None:
+            raise PersistenceConflictError(
+                f"CheckRun {check_run.check_run_id} human request CompletionContract is missing"
+            )
+        if (
+            contract.goal_id != run.goal_id
+            or contract.completion_contract_id != request.completion_contract_id
+            or contract.version != request.completion_contract_version
+            or not contract.is_confirmed
+        ):
+            raise PersistenceConflictError(
+                f"CheckRun {check_run.check_run_id} human request CompletionContract is not "
+                "the current Run contract"
+            )
+        if attempt.status is not AttemptStatus.SUCCEEDED:
+            raise PersistenceConflictError(
+                f"CheckRun {check_run.check_run_id} human request requires a succeeded Attempt"
+            )
+        if (
+            check_run.human_decision is not None
+            and check_run.status is not CheckRunStatus.COMPLETED
+        ):
+            raise PersistenceConflictError(
+                f"CheckRun {check_run.check_run_id} human decision requires a completed CheckRun"
+            )
+
+        attempt_artifact_ids = set(attempt.artifact_ids)
+        request_artifact_ids = {evidence.artifact_id for evidence in request.evidence}
+        if request_artifact_ids != attempt_artifact_ids:
+            raise PersistenceConflictError(
+                f"CheckRun {check_run.check_run_id} human evidence must cover the complete "
+                f"Attempt {attempt.attempt_id} candidate/patch snapshot"
+            )
+        for evidence in request.evidence:
+            if evidence.artifact_id not in attempt_artifact_ids:
+                raise PersistenceConflictError(
+                    f"CheckRun {check_run.check_run_id} human evidence Artifact "
+                    f"{evidence.artifact_id} is not on Attempt {attempt.attempt_id}"
+                )
+            artifact = self.get_artifact(evidence.artifact_id)
+            if artifact is None:
+                raise PersistenceConflictError(
+                    f"CheckRun {check_run.check_run_id} human evidence Artifact "
+                    f"{evidence.artifact_id} is missing"
+                )
+            if (
+                artifact.kind not in {ArtifactKind.CANDIDATE, ArtifactKind.PATCH}
+                or artifact.run_id != attempt.run_id
+                or artifact.plan_node_id != attempt.plan_node_id
+                or artifact.attempt_id != attempt.attempt_id
+                or artifact.sha256 != evidence.sha256
+            ):
+                raise PersistenceConflictError(
+                    f"CheckRun {check_run.check_run_id} human evidence Artifact "
+                    f"{evidence.artifact_id} is not the current candidate/patch version"
+                )
+
     def get_check_run(self, check_run_id: ID) -> CheckRun | None:
         snapshot = self._snapshot("check_runs", "check_run_id", check_run_id)
         return None if snapshot is None else decode_check_run(snapshot)
@@ -1149,15 +1868,15 @@ class SQLiteCurrentStateRepository:
         )
 
     def put_checkpoint(self, checkpoint: Checkpoint) -> None:
-        self._validate_checkpoint_references(checkpoint)
-        snapshot = encode_checkpoint(checkpoint)
-        existing = self._snapshot("checkpoints", "checkpoint_id", checkpoint.checkpoint_id)
+        existing = self.get_checkpoint(checkpoint.checkpoint_id)
         if existing is not None:
-            if existing != snapshot:
+            if existing != checkpoint:
                 raise PersistenceConflictError(
                     f"Checkpoint {checkpoint.checkpoint_id} is immutable"
                 )
             return
+        self._validate_checkpoint_references(checkpoint)
+        snapshot = encode_checkpoint(checkpoint)
         self._connection.execute(
             """
             INSERT INTO checkpoints(
@@ -1227,7 +1946,15 @@ class SQLiteCurrentStateRepository:
                 f"Checkpoint {checkpoint.checkpoint_id} is superseded and cannot be restored"
             )
         current_run = self._required_run(checkpoint.run_id)
-        current_plan = self._required_plan_revision(checkpoint.plan_revision_id)
+        current_plan = self._required_execution_plan(checkpoint.run_id)
+        process = self._required_active_process_revision(checkpoint.run_id)
+        legacy_baseline = (
+            checkpoint.process_revision_id is None
+            and process.version == 1
+            and process.source is ProcessRevisionSource.LEGACY_SNAPSHOT
+        )
+        if checkpoint.process_revision_id != process.process_revision_id and not legacy_baseline:
+            raise PersistenceConflictError("Checkpoint belongs to a different ProcessRevision")
         if current_run.status is not RunStatus.PAUSED:
             raise PersistenceConflictError(
                 f"Run {current_run.run_id} must be paused before Checkpoint restore"
@@ -1255,22 +1982,8 @@ class SQLiteCurrentStateRepository:
             )
 
         self._connection.execute(
-            "UPDATE plan_revisions SET snapshot_json = ? WHERE plan_revision_id = ?",
-            (encode_plan_revision(checkpoint.plan_revision), checkpoint.plan_revision_id),
-        )
-        self._connection.executemany(
-            "UPDATE plan_nodes SET snapshot_json = ? WHERE plan_node_id = ?",
-            (
-                (encode_plan_node(node), node.plan_node_id)
-                for node in checkpoint.plan_revision.nodes
-            ),
-        )
-        self._connection.executemany(
-            "UPDATE branches SET snapshot_json = ? WHERE branch_id = ?",
-            (
-                (encode_branch(branch), branch.branch_id)
-                for branch in checkpoint.plan_revision.branches
-            ),
+            "UPDATE run_execution_plans SET snapshot_json = ? WHERE run_id = ?",
+            (encode_execution_plan(checkpoint.plan_revision), checkpoint.run_id),
         )
         self._connection.execute(
             "UPDATE runs SET snapshot_json = ? WHERE run_id = ?",
@@ -1280,7 +1993,11 @@ class SQLiteCurrentStateRepository:
     def put_artifact(self, artifact: Artifact) -> None:
         if artifact.run_id is not None:
             run = self._required_run(artifact.run_id)
-            plan_revision = self._required_plan_revision(run.plan_revision_id)
+            plan_revision = (
+                self._required_execution_plan(run.run_id)
+                if artifact.attempt_id is None
+                else self._attempt_plan(self._required_attempt(artifact.attempt_id))
+            )
             if artifact.plan_node_id is not None:
                 _required_plan_node(plan_revision, artifact.plan_node_id)
             if artifact.attempt_id is not None:
@@ -1318,6 +2035,199 @@ class SQLiteCurrentStateRepository:
             ),
         )
 
+    def _adoption_verification(
+        self, run: Run, node_id: ID, attempt: Attempt, adoption_id: ID
+    ) -> ResultAdoption:
+        """Resolve a retained target binding without relabelling its producer."""
+        record = self.get_result_adoption(adoption_id)
+        if record is None or (
+            record.target_run_id != run.run_id
+            or record.target_plan_revision_id != run.plan_revision_id
+            or record.target_plan_node_id != node_id
+            or record.source_run_id != run.predecessor_run_id
+            or record.source_run_id != attempt.run_id
+            or record.source_plan_node_id != attempt.plan_node_id
+            or record.source_attempt_id != attempt.attempt_id
+            or attempt.status is not AttemptStatus.SUCCEEDED
+        ):
+            raise PersistenceConflictError("Verification has no matching adopted producer")
+        approved = self._required_plan_revision(run.plan_revision_id)
+        original_node = _required_plan_node(approved, node_id)
+        if original_node.kind not in {PlanNodeKind.WORK, PlanNodeKind.MERGE}:
+            raise PersistenceConflictError("Only implementation nodes can accept prior results")
+        current_node = _required_plan_node(self._required_execution_plan(run.run_id), node_id)
+        if replace(current_node, status=original_node.status) != original_node:
+            raise PersistenceConflictError("Adopted target node changed after its acceptance")
+        if any(item.plan_node_id == node_id for item in self.list_attempts(run.run_id)):
+            raise PersistenceConflictError("Target execution has superseded the adopted result")
+        if {item.artifact_id for item in record.evidence} != set(attempt.artifact_ids):
+            raise PersistenceConflictError("Adopted producer evidence no longer matches")
+        for evidence in record.evidence:
+            artifact = self.get_artifact(evidence.artifact_id)
+            if artifact is None or (
+                artifact.run_id != attempt.run_id
+                or artifact.plan_node_id != attempt.plan_node_id
+                or artifact.attempt_id != attempt.attempt_id
+                or artifact.sha256 != evidence.sha256
+                or artifact.kind not in {ArtifactKind.CANDIDATE, ArtifactKind.PATCH}
+            ):
+                raise PersistenceConflictError("Adopted verification evidence is inconsistent")
+        return record
+
+    def _validate_result_adoption(self, record: ResultAdoption) -> None:
+        target_run = self._required_run(record.target_run_id)
+        if target_run.predecessor_run_id != record.source_run_id:
+            raise PersistenceConflictError("ResultAdoption source is not the bound predecessor Run")
+        if target_run.status is not RunStatus.PENDING:
+            raise PersistenceConflictError(
+                f"ResultAdoption target Run {target_run.run_id} must be pending"
+            )
+        target_plan = self._required_plan_revision(record.target_plan_revision_id)
+        if target_plan.status is not PlanRevisionStatus.APPROVED:
+            raise PersistenceConflictError(
+                f"ResultAdoption target PlanRevision {target_plan.plan_revision_id} "
+                "must be approved"
+            )
+        if (
+            target_run.plan_revision_id != record.target_plan_revision_id
+            or target_plan.goal_id != target_run.goal_id
+        ):
+            raise PersistenceConflictError(
+                "ResultAdoption target Run and PlanRevision do not match"
+            )
+        target_execution_plan = self._required_execution_plan(target_run.run_id)
+        if (
+            target_execution_plan.plan_revision_id != record.target_plan_revision_id
+            or target_execution_plan.goal_id != target_run.goal_id
+        ):
+            raise PersistenceConflictError(
+                "ResultAdoption target execution plan does not match its approved PlanRevision"
+            )
+        target_node = _required_plan_node(target_execution_plan, record.target_plan_node_id)
+        if target_node.kind not in {PlanNodeKind.WORK, PlanNodeKind.MERGE}:
+            raise PersistenceConflictError("ResultAdoption target must be an implementation node")
+        if target_node.status is not PlanNodeStatus.PENDING:
+            raise PersistenceConflictError(
+                f"ResultAdoption target PlanNode {target_node.plan_node_id} must be pending"
+            )
+
+        source_run = self._required_run(record.source_run_id)
+        if source_run.status is not RunStatus.PAUSED:
+            raise PersistenceConflictError(
+                f"ResultAdoption source Run {source_run.run_id} must be paused"
+            )
+        if source_run.goal_id != target_run.goal_id:
+            raise PersistenceConflictError(
+                "ResultAdoption source and target Runs must belong to the same Goal"
+            )
+        source_plan = self._required_plan_revision(record.source_plan_revision_id)
+        if (
+            source_plan.status is not PlanRevisionStatus.APPROVED
+            or source_run.plan_revision_id != record.source_plan_revision_id
+            or source_plan.goal_id != source_run.goal_id
+        ):
+            raise PersistenceConflictError(
+                "ResultAdoption source Run and PlanRevision do not match"
+            )
+        source_execution_plan = self._required_execution_plan(source_run.run_id)
+        if (
+            source_execution_plan.plan_revision_id != record.source_plan_revision_id
+            or source_execution_plan.goal_id != source_run.goal_id
+        ):
+            raise PersistenceConflictError(
+                "ResultAdoption source execution plan does not match its PlanRevision"
+            )
+        active_process = self._required_active_process_revision(source_run.run_id)
+        if active_process.process_revision_id != record.source_process_revision_id:
+            raise PersistenceConflictError(
+                "ResultAdoption source ProcessRevision is not the active revision"
+            )
+        source_node = _required_plan_node(source_execution_plan, record.source_plan_node_id)
+        if source_node.status is not PlanNodeStatus.COMPLETED:
+            raise PersistenceConflictError(
+                f"ResultAdoption source PlanNode {source_node.plan_node_id} must be completed"
+            )
+
+        attempts = self.list_attempts(source_run.run_id)
+        if any(
+            attempt.status in {AttemptStatus.PENDING, AttemptStatus.RUNNING} for attempt in attempts
+        ):
+            raise PersistenceConflictError(
+                f"ResultAdoption source Run {source_run.run_id} has unresolved Attempts"
+            )
+        successful_attempts = tuple(
+            attempt
+            for attempt in attempts
+            if attempt.plan_node_id == source_node.plan_node_id
+            and attempt.status is AttemptStatus.SUCCEEDED
+        )
+        if (
+            not successful_attempts
+            or successful_attempts[-1].attempt_id != record.source_attempt_id
+        ):
+            raise PersistenceConflictError(
+                "ResultAdoption source Attempt is not the latest succeeded Attempt for its node"
+            )
+        source_attempt = successful_attempts[-1]
+        if (
+            source_attempt.run_id != source_run.run_id
+            or source_attempt.plan_node_id != source_node.plan_node_id
+            or source_attempt.attempt_id != record.source_attempt_id
+        ):
+            raise PersistenceConflictError("ResultAdoption source Attempt ownership does not match")
+
+        check_specs = {
+            spec.check_id: spec for spec in self.list_check_specs(source_plan.plan_revision_id)
+        }
+        for check in self.list_check_runs(source_run.run_id):
+            if check.status not in {CheckRunStatus.PENDING, CheckRunStatus.RUNNING}:
+                continue
+            check_spec = check_specs.get(check.check_id)
+            if check_spec is None or check_spec.kind is not CheckKind.HUMAN:
+                raise PersistenceConflictError(
+                    f"ResultAdoption source Run {source_run.run_id} has an unresolved "
+                    "automatic Check"
+                )
+
+        source_branch = next(
+            (
+                branch
+                for branch in source_execution_plan.branches
+                if source_node.plan_node_id in branch.node_ids
+            ),
+            None,
+        )
+        if source_branch is not None and source_branch.status is not BranchStatus.SELECTED:
+            raise PersistenceConflictError(
+                f"ResultAdoption source PlanNode {source_node.plan_node_id} belongs to "
+                f"unselected Branch {source_branch.branch_id}"
+            )
+
+        evidence_ids = tuple(item.artifact_id for item in record.evidence)
+        if len(evidence_ids) != len(source_attempt.artifact_ids) or set(evidence_ids) != set(
+            source_attempt.artifact_ids
+        ):
+            raise PersistenceConflictError(
+                "ResultAdoption evidence must exactly match the source Attempt Artifacts"
+            )
+        for evidence in record.evidence:
+            artifact = self.get_artifact(evidence.artifact_id)
+            if artifact is None:
+                raise PersistenceConflictError(
+                    f"ResultAdoption evidence Artifact {evidence.artifact_id} is not persisted"
+                )
+            if (
+                artifact.kind not in {ArtifactKind.CANDIDATE, ArtifactKind.PATCH}
+                or artifact.run_id != source_run.run_id
+                or artifact.plan_node_id != source_node.plan_node_id
+                or artifact.attempt_id != source_attempt.attempt_id
+                or artifact.sha256 != evidence.sha256
+            ):
+                raise PersistenceConflictError(
+                    f"ResultAdoption evidence Artifact {evidence.artifact_id} does not match "
+                    "the source Attempt"
+                )
+
     def get_artifact(self, artifact_id: ID) -> Artifact | None:
         snapshot = self._snapshot("artifacts", "artifact_id", artifact_id)
         return None if snapshot is None else decode_artifact(snapshot)
@@ -1338,6 +2248,67 @@ class SQLiteCurrentStateRepository:
         existing = self.get_plan_revision(plan_revision.plan_revision_id)
         if existing is None:
             return
+        self._validate_graph_update(existing, plan_revision)
+
+    def _validate_new_process_draft(self, draft: ProcessDraft) -> None:
+        if draft.status is not ProcessDraftStatus.PLANNING:
+            raise PersistenceConflictError("A new ProcessDraft must start in planning status")
+        run = self._required_run(draft.run_id)
+        if run.status not in {RunStatus.RUNNING, RunStatus.PAUSED}:
+            raise PersistenceConflictError("ProcessDraft requires a nonterminal started Run")
+        current = self._required_execution_plan(run.run_id)
+        if current != draft.base_execution_plan:
+            raise PersistenceConflictError("ProcessDraft base execution plan is stale")
+        active = self._required_active_process_revision(run.run_id)
+        if active.process_revision_id != draft.parent_process_revision_id:
+            raise PersistenceConflictError("ProcessDraft parent is not the active ProcessRevision")
+        if _plan_structure(active.graph) != _plan_structure(draft.base_execution_plan):
+            raise PersistenceConflictError("ProcessDraft parent graph does not match its baseline")
+
+    def _validate_process_draft_update(self, existing: ProcessDraft, draft: ProcessDraft) -> None:
+        if process_draft_identity(existing) != process_draft_identity(draft):
+            raise PersistenceConflictError(f"ProcessDraft {draft.draft_id} identity changed")
+        if existing == draft:
+            return
+        if existing.status is not ProcessDraftStatus.PLANNING:
+            raise PersistenceConflictError(f"ProcessDraft {draft.draft_id} outcome is immutable")
+        if draft.status is ProcessDraftStatus.PLANNING:
+            raise PersistenceConflictError(f"ProcessDraft {draft.draft_id} planning state changed")
+        if draft.status is ProcessDraftStatus.READY:
+            self._validate_process_draft_candidate(draft)
+            return
+        if draft.status is ProcessDraftStatus.FAILED:
+            return
+        raise PersistenceConflictError(f"ProcessDraft {draft.draft_id} has an invalid status")
+
+    def _validate_process_draft_candidate(self, draft: ProcessDraft) -> None:
+        candidate = draft.candidate
+        if candidate is None:  # pragma: no cover - ProcessDraft validates this
+            raise PersistenceConflictError("A ready ProcessDraft requires a candidate")
+        parent = self.get_process_revision(draft.parent_process_revision_id)
+        if parent is None or parent.run_id != draft.run_id:
+            raise PersistenceConflictError("ProcessDraft candidate parent is not retained")
+        if candidate.version != parent.version + 1:
+            raise PersistenceConflictError(
+                "ProcessDraft candidate must be the immediate successor of its parent"
+            )
+        approved = self._required_plan_revision(draft.base_execution_plan.plan_revision_id)
+        if _process_approval_identity(approved) != _process_approval_identity(
+            draft.base_execution_plan
+        ):
+            raise PersistenceConflictError("ProcessDraft approval baseline changed")
+        if _process_approval_identity(candidate.graph) != _process_approval_identity(
+            draft.base_execution_plan
+        ):
+            raise PersistenceConflictError("ProcessDraft candidate changed its approval identity")
+
+    def _validate_graph_update(
+        self,
+        existing: PlanRevision,
+        plan_revision: PlanRevision,
+        *,
+        run_id: ID | None = None,
+    ) -> None:
         if _plan_structure(existing) != _plan_structure(plan_revision):
             raise PersistenceConflictError(
                 f"PlanRevision {plan_revision.plan_revision_id} structure changed"
@@ -1354,6 +2325,41 @@ class SQLiteCurrentStateRepository:
                 f"PlanRevision {plan_revision.plan_revision_id} approval timestamp changed"
             )
         for previous_node, current_node in zip(existing.nodes, plan_revision.nodes, strict=True):
+            adopting_candidate = (
+                previous_node.status is PlanNodeStatus.READY
+                and current_node.status is PlanNodeStatus.CANDIDATE
+            )
+            adopting_intermediate = (
+                previous_node.status is PlanNodeStatus.CANDIDATE
+                and current_node.status is PlanNodeStatus.COMPLETED
+                and not current_node.required_check_ids
+                and any(
+                    edge.source_node_id == current_node.plan_node_id for edge in plan_revision.edges
+                )
+            )
+            if run_id is not None and (adopting_candidate or adopting_intermediate):
+                adoption = next(
+                    (
+                        item
+                        for item in self.list_result_adoptions(run_id)
+                        if item.target_plan_node_id == current_node.plan_node_id
+                    ),
+                    None,
+                )
+                if adoption is not None and not any(
+                    item.plan_node_id == current_node.plan_node_id
+                    for item in self.list_attempts(run_id)
+                ):
+                    run = self._required_run(run_id)
+                    if run.status is not RunStatus.RUNNING:
+                        raise PersistenceConflictError("Adopted result requires a running target")
+                    self._adoption_verification(
+                        run,
+                        current_node.plan_node_id,
+                        self._required_attempt(adoption.source_attempt_id),
+                        adoption.adoption_id,
+                    )
+                    continue
             if (
                 previous_node.status is PlanNodeStatus.CANDIDATE
                 and current_node.status is PlanNodeStatus.COMPLETED
@@ -1364,11 +2370,11 @@ class SQLiteCurrentStateRepository:
             ):
                 evidence = self._connection.execute(
                     """
-                    SELECT a.snapshot_json FROM attempts a JOIN runs r ON r.run_id = a.run_id
-                    WHERE a.plan_node_id = ? AND r.plan_revision_id = ?
+                    SELECT a.snapshot_json FROM attempts a
+                    WHERE a.plan_node_id = ? AND a.run_id = ?
                     ORDER BY a.sequence DESC LIMIT 1
                     """,
-                    (current_node.plan_node_id, plan_revision.plan_revision_id),
+                    (current_node.plan_node_id, run_id),
                 ).fetchone()
                 if evidence is not None:
                     attempt = decode_attempt(_row_index_string(evidence, 0))
@@ -1388,7 +2394,10 @@ class SQLiteCurrentStateRepository:
                 )
 
     def _validate_checkpoint_references(self, checkpoint: Checkpoint) -> None:
-        persisted_plan = self._required_plan_revision(checkpoint.plan_revision_id)
+        process = self._required_active_process_revision(checkpoint.run_id)
+        if checkpoint.process_revision_id != process.process_revision_id:
+            raise PersistenceConflictError("New Checkpoint must bind the active ProcessRevision")
+        persisted_plan = self._required_execution_plan(checkpoint.run_id)
         if persisted_plan != checkpoint.plan_revision:
             raise PersistenceConflictError(
                 f"Checkpoint {checkpoint.checkpoint_id} PlanRevision snapshot is stale"
@@ -1424,10 +2433,21 @@ class SQLiteCurrentStateRepository:
                 f"Checkpoint {checkpoint.checkpoint_id} Gate omits a required PlanNode Check"
             )
         attempt = self._required_attempt(decision.attempt_id)
-        if attempt.run_id != decision.run_id or attempt.plan_node_id != decision.plan_node_id:
-            raise PersistenceConflictError(
-                f"Checkpoint {checkpoint.checkpoint_id} Gate Attempt ownership does not match"
+        if decision.adoption_id is None:
+            if attempt.run_id != decision.run_id or attempt.plan_node_id != decision.plan_node_id:
+                raise PersistenceConflictError(
+                    f"Checkpoint {checkpoint.checkpoint_id} Gate Attempt ownership does not match"
+                )
+        else:
+            adoption = self._adoption_verification(
+                persisted_run, decision.plan_node_id, attempt, decision.adoption_id
             )
+            if not set(decision.evidence_artifact_ids).issubset(
+                item.artifact_id for item in adoption.evidence
+            ):
+                raise PersistenceConflictError(
+                    "Adopted Gate has evidence outside its accepted result"
+                )
 
         decision_evidence = set(decision.evidence_artifact_ids)
         for check_id in decision.required_check_ids:
@@ -1447,6 +2467,7 @@ class SQLiteCurrentStateRepository:
                 check_run.result
                 for check_run in candidates
                 if check_run.status is CheckRunStatus.COMPLETED
+                and check_run.adoption_id == decision.adoption_id
                 and check_run.result is not None
                 and check_run.result.passed
                 and check_run.result.evidence_artifact_ids
@@ -1468,8 +2489,8 @@ class SQLiteCurrentStateRepository:
                     f"{artifact_id} is not persisted"
                 )
             if (
-                artifact.run_id != decision.run_id
-                or artifact.plan_node_id != decision.plan_node_id
+                artifact.run_id != attempt.run_id
+                or artifact.plan_node_id != attempt.plan_node_id
                 or artifact.attempt_id != decision.attempt_id
             ):
                 raise PersistenceConflictError(
@@ -1553,6 +2574,51 @@ class SQLiteCurrentStateRepository:
         ).fetchone()
         return None if row is None else _row_string(row, "snapshot_json")
 
+    def _decode_process_draft_row(self, row: sqlite3.Row) -> ProcessDraft:
+        draft = decode_process_draft(_row_string(row, "snapshot_json"))
+        if (
+            _row_string(row, "draft_id") != str(draft.draft_id)
+            or _row_string(row, "run_id") != str(draft.run_id)
+            or _row_string(row, "parent_process_revision_id")
+            != str(draft.parent_process_revision_id)
+            or _row_string(row, "created_at") != format_utc_datetime(draft.created_at)
+            or _row_string(row, "status") != draft.status.value
+        ):
+            raise PersistenceConflictError(
+                f"ProcessDraft {draft.draft_id} projection does not match its snapshot"
+            )
+        return draft
+
+    def _decode_result_adoption_row(self, row: sqlite3.Row) -> ResultAdoption:
+        try:
+            decoded = json_loads(_row_string(row, "snapshot_json"))
+            if not isinstance(decoded, dict):
+                raise ValueError("snapshot is not a JSON object")
+            record = ResultAdoption.from_mapping(decoded)
+        except (TypeError, ValueError) as error:
+            raise PersistenceConflictError("ResultAdoption snapshot is invalid") from error
+
+        for field_name in (
+            "adoption_id",
+            "target_run_id",
+            "target_plan_revision_id",
+            "target_plan_node_id",
+            "source_run_id",
+            "source_plan_revision_id",
+            "source_process_revision_id",
+            "source_plan_node_id",
+            "source_attempt_id",
+        ):
+            if _row_string(row, field_name) != str(getattr(record, field_name)):
+                raise PersistenceConflictError(
+                    f"ResultAdoption {record.adoption_id} projection does not match its snapshot"
+                )
+        if _row_string(row, "created_at") != format_utc_datetime(record.created_at):
+            raise PersistenceConflictError(
+                f"ResultAdoption {record.adoption_id} projection does not match its snapshot"
+            )
+        return record
+
     def _snapshots(
         self,
         sql: str,
@@ -1590,6 +2656,33 @@ class SQLiteCurrentStateRepository:
         if revision is None:  # pragma: no cover - selected from the same transaction
             raise RuntimeError(f"PlanRevision {plan_revision_id} disappeared during query")
         return revision
+
+    def _required_execution_plan(self, run_id: ID) -> PlanRevision:
+        plan = self.get_execution_plan(run_id)
+        if plan is None:
+            raise PersistenceConflictError(f"Run {run_id} has no execution plan")
+        return plan
+
+    def _required_active_process_revision(self, run_id: ID) -> ProcessRevision:
+        process = self.get_active_process_revision(run_id)
+        if process is None:
+            raise PersistenceConflictError(f"Run {run_id} has no active ProcessRevision")
+        return process
+
+    def _attempt_plan(self, attempt: Attempt) -> PlanRevision:
+        run = self._required_run(attempt.run_id)
+        if attempt.process_revision_id is None:
+            return self._required_plan_revision(run.plan_revision_id)
+        process = self.get_process_revision(attempt.process_revision_id)
+        if (
+            process is None
+            or process.run_id != run.run_id
+            or process.graph.plan_revision_id != run.plan_revision_id
+        ):
+            raise PersistenceConflictError(
+                f"Attempt {attempt.attempt_id} process ownership changed"
+            )
+        return process.graph
 
 
 class SQLiteEventLog:
@@ -1771,58 +2864,8 @@ def _completion_contract_structure(contract: CompletionContract) -> tuple[object
     )
 
 
-def _plan_structure(plan_revision: PlanRevision) -> tuple[object, ...]:
-    nodes = tuple(
-        (
-            node.plan_node_id,
-            node.title,
-            node.instruction,
-            node.kind,
-            node.required_dependency_ids,
-            node.required_check_ids,
-            node.required_capabilities,
-            node.session_policy,
-        )
-        for node in plan_revision.nodes
-    )
-    edges = tuple(
-        (
-            edge.edge_id,
-            edge.source_node_id,
-            edge.target_node_id,
-            edge.edge_type,
-            edge.branch_id,
-            edge.condition,
-        )
-        for edge in plan_revision.edges
-    )
-    branches = tuple(
-        (
-            branch.branch_id,
-            branch.label,
-            branch.fork_node_id,
-            branch.node_ids,
-            branch.merge_node_id,
-        )
-        for branch in plan_revision.branches
-    )
-    return (
-        plan_revision.plan_revision_id,
-        plan_revision.goal_id,
-        plan_revision.version,
-        plan_revision.completion_contract_id,
-        plan_revision.completion_contract_version,
-        plan_revision.created_at,
-        plan_revision.supersedes_plan_revision_id,
-        plan_revision.design_document,
-        nodes,
-        edges,
-        branches,
-    )
-
-
 def _run_identity(run: Run) -> tuple[object, ...]:
-    return (run.run_id, run.goal_id, run.plan_revision_id, run.created_at)
+    return (run.run_id, run.goal_id, run.plan_revision_id, run.created_at, run.predecessor_run_id)
 
 
 def _attempt_identity(attempt: Attempt) -> tuple[object, ...]:
@@ -1832,6 +2875,7 @@ def _attempt_identity(attempt: Attempt) -> tuple[object, ...]:
         attempt.plan_node_id,
         attempt.sequence,
         attempt.created_at,
+        attempt.process_revision_id,
     )
 
 
@@ -1864,6 +2908,7 @@ def _check_run_identity(check_run: CheckRun) -> tuple[object, ...]:
         check_run.run_id,
         check_run.plan_node_id,
         check_run.attempt_id,
+        check_run.adoption_id,
         check_run.check_id,
         check_run.created_at,
     )

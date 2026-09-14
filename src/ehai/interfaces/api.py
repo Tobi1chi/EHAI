@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Annotated, Any
 
 from fastapi import APIRouter, FastAPI, Header, Query
@@ -9,20 +10,27 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.requests import Request
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 
-from ehai import ID, normalize_id
+from ehai import ID, json_dumps, normalize_id
 from ehai.application.commands import (
+    ApplyProcess,
     ApprovePlan,
     CancelRun,
     CreateGoal,
     CreateProject,
+    DecideHumanCheck,
     DiscussPlan,
     PauseRun,
     ProposePlan,
+    ProposeProcess,
     ReplanPlan,
+    ReplyIntervention,
     ResumeRun,
+    ReviewProcess,
     StartRun,
 )
 from ehai.application.orchestrator import OrchestrationError
+from ehai.application.ports import StateConflictError
+from ehai.application.process_adjustments import ProcessAdjustments
 from ehai.application.queries import QueryNotFoundError, QueryService
 from ehai.application.run_control import RunControlConflictError, RunControlError
 from ehai.application.runtime_control import RuntimeControlError, RuntimeControlService
@@ -33,27 +41,33 @@ from ehai.application.service import (
     IdempotencyConflictError,
 )
 from ehai.domain.checking import InvalidCheckRunTransition
-from ehai.domain.execution import InvalidAttemptTransition, InvalidRunTransition
+from ehai.domain.execution import InvalidAttemptTransition, InvalidRunTransition, RunStatus
 from ehai.domain.goal import GoalInvariantError
 from ehai.domain.planning import PlanInvariantError, PlanTransitionError
 from ehai.interfaces.http_models import (
+    ApplyProcessRequest,
     ApprovePlanRequest,
     CancelRunRequest,
     CreateGoalRequest,
     CreateProjectRequest,
     DataResponse,
+    DecideHumanCheckRequest,
     DiscussPlanRequest,
     ErrorDetail,
     ErrorResponse,
     ExtendAttemptDeadlineRequest,
     ProposePlanRequest,
+    ProposeProcessRequest,
     ReplanPlanRequest,
+    ReplyInterventionRequest,
     ResolveWorkerRequestRequest,
+    ReviewProcessRequest,
     RunActionRequest,
     StartRunRequest,
     UuidInput,
 )
 from ehai.interfaces.public_documents import public_json_value
+from ehai.interfaces.session_host import ExecutionConfig
 from ehai.interfaces.sse import create_event_stream_endpoint
 
 
@@ -137,6 +151,9 @@ def create_app(
     execution_service: ExecutionService,
     query_service: QueryService,
     runtime_control: RuntimeControlService | None = None,
+    *,
+    process_adjustments: ProcessAdjustments | None = None,
+    execution_config_validator: Callable[[ExecutionConfig], None] | None = None,
 ) -> FastAPI:
     """Create the additive P2 HTTP surface around already-constructed services."""
     app = FastAPI(title="EHAI Execution Plane", version="2")
@@ -214,6 +231,9 @@ def create_app(
                     request.message,
                     tuple(request.criteria),
                     None if request.conversation_id is None else _id(str(request.conversation_id)),
+                    source_run_id=(
+                        None if request.source_run_id is None else _id(str(request.source_run_id))
+                    ),
                 )
             )
         )
@@ -245,6 +265,77 @@ def create_app(
         )
 
     @router.post(
+        "/commands/propose-process",
+        response_model=DataResponse,
+        responses={
+            200: _response_contract(
+                "commands.schema.json#/$defs/ProcessDraftAcceptedResponse",
+                "Process draft request",
+            ),
+            **_WRITE_RESPONSES,
+        },
+        operation_id="proposeProcess",
+    )
+    async def propose_process(request: ProposeProcessRequest) -> DataResponse:
+        draft = await execution_service.propose_process_async(
+            ProposeProcess(
+                request.idempotency_key,
+                _id(str(request.run_id)),
+                request.reason,
+            )
+        )
+        return _response({"draft_id": draft.draft_id, "status": draft.status.value})
+
+    @router.post(
+        "/commands/review-process",
+        response_model=DataResponse,
+        responses={
+            200: _response_contract(
+                "commands.schema.json#/$defs/ProcessReviewAcceptedResponse",
+                "Process review",
+            ),
+            **_WRITE_RESPONSES,
+        },
+        operation_id="reviewProcess",
+    )
+    async def review_process(request: ReviewProcessRequest) -> DataResponse:
+        review = await execution_service.review_process_async(
+            ReviewProcess(
+                request.idempotency_key,
+                _id(str(request.draft_id)),
+            )
+        )
+        return _response(
+            {
+                "review_id": review.review_id,
+                "status": review.status.value,
+                "preserves_boundary": review.preserves_boundary,
+            }
+        )
+
+    @router.post(
+        "/commands/apply-process",
+        response_model=DataResponse,
+        responses={
+            201: _response_contract(
+                "queries.schema.json#/$defs/ProcessRevisionResponse",
+                "Applied ProcessRevision",
+            ),
+            **_WRITE_RESPONSES,
+        },
+        status_code=201,
+        operation_id="applyProcess",
+    )
+    def apply_process(request: ApplyProcessRequest) -> DataResponse:
+        process = execution_service.apply_process(
+            ApplyProcess(
+                request.idempotency_key,
+                _id(str(request.review_id)),
+            )
+        )
+        return _response(query_service.get_process_revision(process.process_revision_id))
+
+    @router.post(
         "/plans/approve",
         response_model=DataResponse,
         responses=_PLAN_RESPONSES,
@@ -267,11 +358,86 @@ def create_app(
         status_code=201,
     )
     def start_run(request: StartRunRequest) -> DataResponse:
-        return _response(
-            execution_service.start_run(
-                StartRun(request.idempotency_key, _id(str(request.plan_revision_id)))
+        if request.execution_config is None:
+            return _response(
+                execution_service.start_run(
+                    StartRun(request.idempotency_key, _id(str(request.plan_revision_id)))
+                )
+            )
+        document = request.execution_config.model_dump(mode="json")
+        if document.get("codex_server") is None:
+            document.pop("codex_server", None)
+        try:
+            config = ExecutionConfig.from_document(document)
+        except OSError as error:
+            raise ValueError("execution workspace is unavailable") from error
+        command = StartRun(
+            request.idempotency_key,
+            _id(str(request.plan_revision_id)),
+            authorized_execution_config_json=json_dumps(config.to_document()),
+        )
+        replay = execution_service.get_start_run_replay(command)
+        if replay is not None:
+            return _response(replay)
+        if execution_config_validator is None:
+            raise StateConflictError("This host does not support explicit execution configuration")
+        execution_config_validator(config)
+        return _response(execution_service.start_run(command))
+
+    @router.post(
+        "/check-runs/{check_run_id}/decision",
+        response_model=DataResponse,
+        responses=_RUN_WRITE_RESPONSES,
+        operation_id="decideHumanCheck",
+    )
+    def decide_human_check(
+        check_run_id: UuidInput,
+        request: DecideHumanCheckRequest,
+    ) -> DataResponse:
+        run = execution_service.decide_human_check(
+            DecideHumanCheck(
+                request.idempotency_key,
+                _id(str(check_run_id)),
+                request.request_token,
+                request.passed,
+                request.actor,
+                request.comment,
             )
         )
+        if runtime_control is not None and run.status is RunStatus.RUNNING:
+            runtime_control.resume_run_scheduling(run.run_id)
+        return _response(run)
+
+    @router.get(
+        "/runs/{run_id}/interventions",
+        response_model=DataResponse,
+        responses=_read_responses("InterventionListResponse", "Run interventions"),
+    )
+    def get_run_interventions(run_id: UuidInput) -> DataResponse:
+        return _response(query_service.list_interventions(_id(str(run_id))))
+
+    @router.post(
+        "/interventions/{intervention_id}/reply",
+        response_model=DataResponse,
+        responses=_RUN_WRITE_RESPONSES,
+        operation_id="replyIntervention",
+    )
+    def reply_intervention(
+        intervention_id: UuidInput,
+        request: ReplyInterventionRequest,
+    ) -> DataResponse:
+        run = execution_service.reply_intervention(
+            ReplyIntervention(
+                request.idempotency_key,
+                _id(str(intervention_id)),
+                request.request_token,
+                request.actor,
+                request.message,
+            )
+        )
+        if runtime_control is not None and run.status is RunStatus.RUNNING:
+            runtime_control.resume_run_scheduling(run.run_id)
+        return _response(run)
 
     @router.post(
         "/runs/{run_id}/pause",
@@ -280,14 +446,27 @@ def create_app(
     )
     async def pause_run(run_id: UuidInput, request: RunActionRequest) -> DataResponse:
         normalized_id = _id(str(run_id))
+        command = PauseRun(request.idempotency_key, normalized_id)
+        replay = execution_service.get_run_control_replay(command)
+        if replay is not None:
+            return _response(replay)
+        if process_adjustments is not None:
+            await process_adjustments.cancel(normalized_id)
         if runtime_control is not None:
             await runtime_control.quiesce_run(normalized_id)
         try:
-            paused = execution_service.pause_run(PauseRun(request.idempotency_key, normalized_id))
+            paused = execution_service.pause_run(command)
         except BaseException:
             if runtime_control is not None:
                 runtime_control.resume_run_scheduling(normalized_id)
             raise
+        if process_adjustments is not None:
+            await process_adjustments.cancel(normalized_id)
+        if runtime_control is not None:
+            if paused.status is RunStatus.PAUSED:
+                runtime_control.release_run_dispatch(normalized_id)
+            else:
+                runtime_control.resume_run_scheduling(normalized_id)
         return _response(paused)
 
     @router.post(
@@ -297,7 +476,13 @@ def create_app(
     )
     async def resume_run(run_id: UuidInput, request: RunActionRequest) -> DataResponse:
         normalized_id = _id(str(run_id))
-        resumed = execution_service.resume_run(ResumeRun(request.idempotency_key, normalized_id))
+        command = ResumeRun(request.idempotency_key, normalized_id)
+        replay = execution_service.get_run_control_replay(command)
+        if replay is not None:
+            return _response(replay)
+        if process_adjustments is not None:
+            await process_adjustments.cancel(normalized_id)
+        resumed = execution_service.resume_run(command)
         if runtime_control is not None:
             runtime_control.resume_run_scheduling(normalized_id)
         return _response(resumed)
@@ -309,16 +494,24 @@ def create_app(
     )
     async def cancel_run(run_id: UuidInput, request: CancelRunRequest) -> DataResponse:
         normalized_id = _id(str(run_id))
+        command = CancelRun(request.idempotency_key, normalized_id, request.reason)
+        replay = execution_service.get_run_control_replay(command)
+        if replay is not None:
+            return _response(replay)
+        if process_adjustments is not None:
+            await process_adjustments.cancel(normalized_id)
         if runtime_control is not None:
             await runtime_control.quiesce_run(normalized_id)
         try:
-            cancelled = execution_service.cancel_run(
-                CancelRun(request.idempotency_key, normalized_id, request.reason)
-            )
+            cancelled = execution_service.cancel_run(command)
         except BaseException:
             if runtime_control is not None:
                 runtime_control.resume_run_scheduling(normalized_id)
             raise
+        if process_adjustments is not None:
+            await process_adjustments.cancel(normalized_id)
+        if runtime_control is not None:
+            runtime_control.release_run_dispatch(normalized_id)
         return _response(cancelled)
 
     @router.get(
@@ -450,6 +643,60 @@ def create_app(
         return _response(query_service.get_plan_graph(_id(str(plan_revision_id))))
 
     @router.get(
+        "/runs/{run_id}/plan",
+        response_model=DataResponse,
+        responses=_read_responses("PlanGraphResponse", "Current Run execution PlanGraph"),
+        operation_id="getRunPlan",
+    )
+    def get_run_plan(run_id: UuidInput) -> DataResponse:
+        return _response(query_service.get_run_plan(_id(str(run_id))))
+
+    @router.get(
+        "/process-revisions/{process_revision_id}",
+        response_model=DataResponse,
+        responses=_read_responses("ProcessRevisionResponse", "ProcessRevision"),
+        operation_id="getProcessRevision",
+    )
+    def get_process_revision(process_revision_id: UuidInput) -> DataResponse:
+        return _response(query_service.get_process_revision(_id(str(process_revision_id))))
+
+    @router.get(
+        "/process-drafts/{draft_id}",
+        response_model=DataResponse,
+        responses=_read_responses("ProcessDraftResponse", "Process draft"),
+        operation_id="getProcessDraft",
+    )
+    def get_process_draft(draft_id: UuidInput) -> DataResponse:
+        return _response(query_service.get_process_draft(_id(str(draft_id))))
+
+    @router.get(
+        "/process-reviews/{review_id}",
+        response_model=DataResponse,
+        responses=_read_responses("ProcessReviewResponse", "Process review"),
+        operation_id="getProcessReview",
+    )
+    def get_process_review(review_id: UuidInput) -> DataResponse:
+        return _response(query_service.get_process_review(_id(str(review_id))))
+
+    @router.get(
+        "/process-drafts/{draft_id}/reviews",
+        response_model=DataResponse,
+        responses=_read_responses("ProcessDraftReviewsResponse", "Process draft reviews"),
+        operation_id="getProcessDraftReviews",
+    )
+    def get_process_draft_reviews(draft_id: UuidInput) -> DataResponse:
+        return _response(query_service.get_process_draft_reviews(_id(str(draft_id))))
+
+    @router.get(
+        "/runs/{run_id}/process-drafts",
+        response_model=DataResponse,
+        responses=_read_responses("RunProcessDraftsResponse", "Run process drafts"),
+        operation_id="getRunProcessDrafts",
+    )
+    def get_run_process_drafts(run_id: UuidInput) -> DataResponse:
+        return _response(query_service.get_run_process_drafts(_id(str(run_id))))
+
+    @router.get(
         "/runs/{run_id}/trace",
         response_model=DataResponse,
         responses=_read_responses("ExecutionTraceResponse", "ExecutionTrace"),
@@ -472,6 +719,14 @@ def create_app(
     )
     def list_checks(run_id: UuidInput) -> DataResponse:
         return _response(query_service.list_check_runs(_id(str(run_id))))
+
+    @router.get(
+        "/runs/{run_id}/adoptions",
+        response_model=DataResponse,
+        responses=_read_responses("ResultAdoptionListResponse", "Run result adoptions"),
+    )
+    def list_result_adoptions(run_id: UuidInput) -> DataResponse:
+        return _response(query_service.list_result_adoptions(_id(str(run_id))))
 
     @router.get(
         "/runs/{run_id}/checkpoints",
@@ -564,6 +819,7 @@ def _install_error_handlers(app: FastAPI) -> None:
         return _error_response(409, "conflict", str(error))
 
     @app.exception_handler(ApplicationError)
+    @app.exception_handler(StateConflictError)
     @app.exception_handler(RunControlError)
     @app.exception_handler(RuntimeControlError)
     @app.exception_handler(OrchestrationError)

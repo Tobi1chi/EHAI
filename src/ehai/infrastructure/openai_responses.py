@@ -39,6 +39,7 @@ from ehai.application.builtin_agent import (
     ToolCall,
 )
 from ehai.application.execution_contracts import OPENAI_CREDENTIAL_REF
+from ehai.application.sanitization import bounded_redacted_text
 from ehai.domain.workers import WorkerKind, WorkerProfile
 
 _ACTIVE_RESPONSE_STATUSES = frozenset({"queued", "in_progress"})
@@ -292,7 +293,22 @@ class OpenAIResponsesModelClient(ModelClient):
                             text="".join(text_parts),
                             streamed_output_items=tuple(streamed_output_items),
                         )
-                    elif event.type in {"response.failed", "response.incomplete"}:
+                    elif event.type == "response.failed" or event.type == "response.incomplete":
+                        failure = event.response.error
+                        incomplete = event.response.incomplete_details
+                        self._observe(
+                            request,
+                            logical_request_id,
+                            "terminal_failure",
+                            http_request_id=stream.response.request.headers.get(
+                                "X-Client-Request-Id"
+                            ),
+                            response_id=seen_response_id,
+                            state=event.type,
+                            provider_error_code=None if failure is None else failure.code,
+                            provider_error_message=None if failure is None else failure.message,
+                            incomplete_reason=None if incomplete is None else incomplete.reason,
+                        )
                         raise OpenAIResponsesProtocolError(
                             f"Responses stream ended with {event.type}"
                         )
@@ -514,6 +530,7 @@ class OpenAIResponsesModelClient(ModelClient):
                 tool_choice=request.tool_choice,
                 store=True,
                 stream=True,
+                include=["reasoning.encrypted_content"],
                 max_output_tokens=self.max_output_tokens,
                 reasoning=(
                     omit if self.reasoning_effort is None else {"effort": self.reasoning_effort}
@@ -558,6 +575,7 @@ class OpenAIResponsesModelClient(ModelClient):
                 tool_choice=request.tool_choice,
                 store=True,
                 background=True,
+                include=["reasoning.encrypted_content"],
                 max_output_tokens=self.max_output_tokens,
                 reasoning=(
                     omit if self.reasoning_effort is None else {"effort": self.reasoning_effort}
@@ -588,10 +606,11 @@ class OpenAIResponsesModelClient(ModelClient):
         secret = self._client.api_key
         for name, value in payload.items():
             if isinstance(value, str):
-                payload[name] = (
-                    value.replace(secret, "[REDACTED]")[:512]
+                payload[name] = bounded_redacted_text(
+                    value.replace(secret, "[REDACTED]")
                     if isinstance(secret, str) and secret
-                    else value[:512]
+                    else value,
+                    max_bytes=512,
                 )
         request.on_transport_event(payload)
 
@@ -677,11 +696,7 @@ def _model_response(
     content = text if text and text.strip() else response.output_text
     usage = None if response.usage is None else _json_object(response.usage.model_dump(mode="json"))
     response_items = tuple(response.output) or streamed_output_items
-    output_items = tuple(
-        _json_object(item.model_dump(mode="json"))
-        for item in response_items
-        if item.type != "reasoning"
-    )
+    output_items = tuple(_json_object(item.model_dump(mode="json")) for item in response_items)
     tool_calls = tuple(
         ToolCall(item.call_id, item.name, _response_arguments(item.arguments))
         for item in response_items
@@ -760,6 +775,14 @@ def _response_input(messages: tuple[ModelMessage, ...]) -> ResponseInputParam:
                 }
             )
         else:
+            if message.output_items:
+                # Replay complete provider output in order, including opaque reasoning.
+                # Reconstructing only visible text/functions loses reasoning continuity
+                # when previous_response_id is disabled or unavailable.
+                items.extend(
+                    cast(ResponseInputParam, [dict(item) for item in message.output_items])
+                )
+                continue
             if message.content:
                 items.append({"role": "assistant", "content": message.content})
             items.extend(

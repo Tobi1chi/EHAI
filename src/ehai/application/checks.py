@@ -10,6 +10,7 @@ from types import MappingProxyType
 from typing import Protocol, runtime_checkable
 
 from ehai import ID, normalize_id, utc_now
+from ehai.domain.adoptions import ResultAdoption
 from ehai.domain.artifacts import Artifact
 from ehai.domain.checking import CheckKind, CheckResult, CheckRun, CheckSpec
 from ehai.domain.execution import Attempt, AttemptStatus, Run, RunStatus
@@ -34,6 +35,7 @@ class CheckContext:
     artifacts: tuple[Artifact, ...]
     workspace: Path
     code_workspace: bool = False
+    adoption: ResultAdoption | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.run, Run):
@@ -55,15 +57,33 @@ class CheckContext:
             raise ValueError(f"{owner} requires a succeeded Attempt")
         if self.plan_node.status is not PlanNodeStatus.VERIFYING:
             raise ValueError(f"{owner} requires a verifying PlanNode")
-        if self.attempt.run_id != self.run.run_id:
-            raise ValueError(f"{owner} Attempt belongs to another Run")
-        if self.attempt.plan_node_id != self.plan_node.plan_node_id:
-            raise ValueError(f"{owner} Attempt belongs to another PlanNode")
+        if self.adoption is None:
+            if self.attempt.run_id != self.run.run_id:
+                raise ValueError(f"{owner} Attempt belongs to another Run")
+            if self.attempt.plan_node_id != self.plan_node.plan_node_id:
+                raise ValueError(f"{owner} Attempt belongs to another PlanNode")
+        else:
+            adoption = self.adoption
+            if not isinstance(adoption, ResultAdoption):
+                raise ValueError(f"{owner} adoption must be a ResultAdoption")
+            if (
+                adoption.target_run_id != self.run.run_id
+                or adoption.target_plan_revision_id != self.run.plan_revision_id
+                or adoption.target_plan_node_id != self.plan_node.plan_node_id
+                or adoption.source_run_id != self.attempt.run_id
+                or adoption.source_plan_node_id != self.attempt.plan_node_id
+                or adoption.source_attempt_id != self.attempt.attempt_id
+            ):
+                raise ValueError(f"{owner} adoption does not match the target and producer")
+            if {item.artifact_id: item.sha256 for item in adoption.evidence} != {
+                artifact.artifact_id: artifact.sha256 for artifact in artifacts
+            }:
+                raise ValueError(f"{owner} artifacts do not match adopted evidence hashes")
         if {artifact.artifact_id for artifact in artifacts} != set(self.attempt.artifact_ids):
             raise ValueError(f"{owner} artifacts must match the Attempt Artifact snapshot")
         if any(
-            artifact.run_id != self.run.run_id
-            or artifact.plan_node_id != self.plan_node.plan_node_id
+            artifact.run_id != self.attempt.run_id
+            or artifact.plan_node_id != self.attempt.plan_node_id
             or artifact.attempt_id != self.attempt.attempt_id
             for artifact in artifacts
         ):
@@ -82,8 +102,13 @@ class CheckContext:
 
     @property
     def attempt_id(self) -> ID:
-        """Return the checked Attempt ID."""
+        """Return the real producer Attempt ID, including adopted results."""
         return self.attempt.attempt_id
+
+    @property
+    def adoption_id(self) -> ID | None:
+        """Return the explicit target binding for a cross-Run result, if any."""
+        return None if self.adoption is None else self.adoption.adoption_id
 
     @property
     def plan_node_id(self) -> ID:
@@ -166,6 +191,8 @@ class CheckRunner:
         """Create, start, and terminally advance a CheckRun."""
         if not isinstance(spec, CheckSpec):
             raise TypeError("spec must be a CheckSpec")
+        if spec.kind is CheckKind.HUMAN:
+            raise ValueError("Human Checks require a persisted human decision, not an adapter")
         if not isinstance(context, CheckContext):
             raise TypeError("context must be a CheckContext")
         if spec.check_id not in context.plan_node.required_check_ids:
@@ -178,6 +205,7 @@ class CheckRunner:
             run_id=context.run_id,
             plan_node_id=context.plan_node_id,
             attempt_id=context.attempt_id,
+            adoption_id=context.adoption_id,
             check_id=spec.check_id,
             created_at=started_at,
         ).start(at=started_at)
@@ -207,6 +235,7 @@ class CheckRunner:
             run_id=context.run_id,
             plan_node_id=context.plan_node_id,
             attempt_id=context.attempt_id,
+            adoption_id=context.adoption_id,
             passed=outcome.passed,
             evaluated_at=evaluated_at,
             evidence_artifact_ids=outcome.evidence_artifact_ids,

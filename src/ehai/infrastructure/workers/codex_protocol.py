@@ -80,6 +80,7 @@ def build_codex_prompt(request: WorkerRequest) -> str:
     }
     node: dict[str, JsonValue] = {
         "instruction": request.plan_node.instruction,
+        "kind": request.plan_node.kind.value,
         "plan_node_id": request.plan_node_id,
         "title": request.plan_node.title,
     }
@@ -124,6 +125,24 @@ def build_codex_prompt(request: WorkerRequest) -> str:
             "--- SELECTED_ARTIFACT_CONTENTS_JSON ---",
             json_dumps(selected_artifacts),
         )
+    if request.plan_node.kind is PlanNodeKind.REVIEWER:
+        role_sections = (
+            "Act as the stage Reviewer. Inspect the prepared code and every supplied "
+            "input Artifact.",
+            "Do not modify the workspace. Host Checks and the Gate remain the completion "
+            "authority.",
+            "Return review evidence and recommendations; do not claim that your "
+            "recommendation passed the Gate.",
+        )
+        output_notes = (
+            "For a reviewer PlanNode, return exactly one Artifact with kind candidate, "
+            "name review.json, and media_type application/json. Its content must be a "
+            "JSON object with exactly these keys: summary, findings, evidence_artifact_ids, "
+            "recommended_action. Each finding has exactly severity, message, and evidence; "
+            "severity is blocker, major, minor, or note. evidence_artifact_ids must cover "
+            "every supplied input Artifact exactly once. recommended_action must be pass "
+            "or revise.",
+        )
     sections = (
         "EHAI CODEX WORKER PROTOCOL v1",
         "You are executing one Worker Attempt.",
@@ -155,6 +174,8 @@ def _check_spec_document(check: CheckSpec) -> dict[str, JsonValue]:
         "kind": check.kind.value,
         "description": check.description,
         "required": check.required,
+        "command_argv": list(check.command_argv),
+        "semantic_required_terms": list(check.semantic_required_terms),
     }
 
 

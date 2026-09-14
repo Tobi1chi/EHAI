@@ -29,7 +29,20 @@ const requiredOperations = [
   "get_planning_conversation_api_v1_planning__conversation_id__get",
   "approve_plan_api_v1_plans_approve_post",
   "start_run_api_v1_runs_start_post",
+  "proposeProcess",
+  "reviewProcess",
+  "applyProcess",
+  "decideHumanCheck",
+  "get_run_interventions_api_v1_runs__run_id__interventions_get",
+  "list_result_adoptions_api_v1_runs__run_id__adoptions_get",
+  "replyIntervention",
   "get_run_api_v1_runs__run_id__get",
+  "getRunPlan",
+  "getProcessRevision",
+  "getProcessDraft",
+  "getProcessReview",
+  "getProcessDraftReviews",
+  "getRunProcessDrafts",
   "list_worker_profiles_api_v1_workers_profiles_get",
   "list_worker_endpoints_api_v1_workers_endpoints_get",
   "get_attempt_runtime_api_v1_attempts__attempt_id__runtime_get",
@@ -197,6 +210,29 @@ export class EhaiApiClient {
     return this.request("/runs/start", "POST", request);
   }
 
+  proposeProcess(request: ProposeProcessRequest): Promise<ProcessDraftAcceptedResponse> {
+    return this.request("/commands/propose-process", "POST", request);
+  }
+
+  reviewProcess(request: ReviewProcessRequest): Promise<ProcessReviewAcceptedResponse> {
+    return this.request("/commands/review-process", "POST", request);
+  }
+
+  applyProcess(request: ApplyProcessRequest): Promise<ProcessRevisionResponse> {
+    return this.request("/commands/apply-process", "POST", request);
+  }
+
+  decideHumanCheck(
+    checkRunId: string,
+    request: DecideHumanCheckRequest,
+  ): Promise<RunResponse> {
+    return this.request(
+      \`/check-runs/\${encodeURIComponent(checkRunId)}/decision\`,
+      "POST",
+      request,
+    );
+  }
+
   pauseRun(runId: string, request: PauseRunRequest): Promise<RunResponse> {
     return this.request(\`/runs/\${encodeURIComponent(runId)}/pause\`, "POST", request);
   }
@@ -213,8 +249,54 @@ export class EhaiApiClient {
     return this.request(\`/runs/\${encodeURIComponent(runId)}\`, "GET");
   }
 
+  getRunInterventions(runId: string): Promise<InterventionListResponse> {
+    return this.request(\`/runs/\${encodeURIComponent(runId)}/interventions\`, "GET");
+  }
+
+  listResultAdoptions(runId: string): Promise<ResultAdoptionListResponse> {
+    return this.request(\`/runs/\${encodeURIComponent(runId)}/adoptions\`, "GET");
+  }
+
+  replyIntervention(
+    interventionId: string,
+    request: ReplyInterventionRequest,
+  ): Promise<RunResponse> {
+    return this.request(
+      \`/interventions/\${encodeURIComponent(interventionId)}/reply\`,
+      "POST",
+      request,
+    );
+  }
+
   getPlanGraph(planRevisionId: string): Promise<PlanGraphResponse> {
     return this.request(\`/plans/\${encodeURIComponent(planRevisionId)}\`, "GET");
+  }
+
+  getRunPlan(runId: string): Promise<PlanGraphResponse> {
+    return this.request(\`/runs/\${encodeURIComponent(runId)}/plan\`, "GET");
+  }
+
+  getProcessRevision(processRevisionId: string): Promise<ProcessRevisionResponse> {
+    return this.request(
+      \`/process-revisions/\${encodeURIComponent(processRevisionId)}\`,
+      "GET",
+    );
+  }
+
+  getProcessDraft(draftId: string): Promise<ProcessDraftResponse> {
+    return this.request(\`/process-drafts/\${encodeURIComponent(draftId)}\`, "GET");
+  }
+
+  getProcessReview(reviewId: string): Promise<ProcessReviewResponse> {
+    return this.request(\`/process-reviews/\${encodeURIComponent(reviewId)}\`, "GET");
+  }
+
+  getProcessDraftReviews(draftId: string): Promise<ProcessDraftReviewsResponse> {
+    return this.request(\`/process-drafts/\${encodeURIComponent(draftId)}/reviews\`, "GET");
+  }
+
+  getRunProcessDrafts(runId: string): Promise<RunProcessDraftsResponse> {
+    return this.request(\`/runs/\${encodeURIComponent(runId)}/process-drafts\`, "GET");
   }
 
   getExecutionTrace(runId: string): Promise<ExecutionTraceResponse> {

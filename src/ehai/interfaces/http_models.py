@@ -10,6 +10,7 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
+    StrictBool,
     StringConstraints,
     field_serializer,
     field_validator,
@@ -18,11 +19,23 @@ from pydantic import (
 from ehai import JsonValue, format_utc_datetime, normalize_id
 
 NonBlank = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
-P1CompletionCriterion = Literal[
-    "artifact:non-empty",
-    "command:exit-zero",
-    "semantic:required-terms",
+HumanCompletionCriterion = Annotated[
+    str,
+    StringConstraints(
+        strip_whitespace=True,
+        min_length=7,
+        max_length=8000,
+        pattern=r"^human:\s*\S.*$",
+    ),
 ]
+P1CompletionCriterion = (
+    Literal[
+        "artifact:non-empty",
+        "command:exit-zero",
+        "semantic:required-terms",
+    ]
+    | HumanCompletionCriterion
+)
 UuidInput = Annotated[
     str,
     StringConstraints(
@@ -63,9 +76,27 @@ class ReplanPlanRequest(_StrictRequest):
     source_run_id: UuidInput | None = None
 
 
+class ProposeProcessRequest(_StrictRequest):
+    idempotency_key: NonBlank
+    run_id: UuidInput
+    reason: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=16000)]
+
+
+class ReviewProcessRequest(_StrictRequest):
+    idempotency_key: NonBlank
+    draft_id: UuidInput
+
+
+class ApplyProcessRequest(_StrictRequest):
+    idempotency_key: NonBlank
+    review_id: UuidInput
+
+
 class DiscussPlanRequest(ProposePlanRequest):
+    criteria: list[P1CompletionCriterion] = Field(default_factory=list, max_length=3)
     message: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=8000)]
     conversation_id: UuidInput | None = None
+    source_run_id: UuidInput | None = None
 
 
 class ApprovePlanRequest(_StrictRequest):
@@ -74,9 +105,67 @@ class ApprovePlanRequest(_StrictRequest):
     completion_contract_id: UuidInput
 
 
+class ExecutionEndpointCapabilitiesRequest(_StrictRequest):
+    supports_background: StrictBool
+    supports_unique_items: StrictBool
+    supports_idempotent_create: StrictBool | None
+    supports_previous_response_id: StrictBool
+    supports_response_retrieval: StrictBool
+
+
+ExecutionText = Annotated[
+    str,
+    StringConstraints(strip_whitespace=True, min_length=1, pattern=r"^[^\x00]*[^\s\x00][^\x00]*$"),
+]
+
+
+class ExecutionCodexServerRequest(_StrictRequest):
+    executable: list[ExecutionText] = Field(min_length=1)
+    approval_policy: Literal["untrusted", "on-request", "never"]
+    sandbox: Literal["read-only", "workspace-write", "danger-full-access"]
+
+
+class ProcessAdjustmentPolicyRequest(_StrictRequest):
+    max_per_goal: Annotated[int, Field(strict=True, ge=1)]
+    model: ExecutionText
+    reasoning_effort: ExecutionText | None
+
+
+class GoalWorkerBudgetRequest(_StrictRequest):
+    max_worker_attempts: Annotated[int, Field(strict=True, ge=1)]
+
+
+class ExecutionConfigRequest(_StrictRequest):
+    """Explicit confirmation of the host's credential-free execution settings."""
+
+    config_version: Annotated[int, Field(strict=True, ge=1, le=1)]
+    worker_kind: Literal["builtin", "codex-server"]
+    model: ExecutionText
+    reasoning_effort: ExecutionText | None
+    capacity: Annotated[int, Field(strict=True, ge=1)]
+    workspace: ExecutionText
+    allowed_commands: list[Annotated[list[ExecutionText], Field(min_length=1)]] = Field(
+        json_schema_extra={"uniqueItems": True},
+        description="Distinct argv arrays; duplicates are checked after text normalization.",
+    )
+    available_shells: list[ExecutionText] = Field(
+        json_schema_extra={"uniqueItems": True},
+        description="Distinct shell names; duplicates are checked after text normalization.",
+    )
+    git_permissions: list[
+        Literal["git.read", "git.local_write", "git.remote_write", "git.dangerous"]
+    ]
+    endpoint_capabilities: ExecutionEndpointCapabilitiesRequest
+    command_timeout_seconds: Annotated[float, Field(strict=True, gt=0, allow_inf_nan=False)]
+    codex_server: ExecutionCodexServerRequest | None = None
+    process_adjustment: ProcessAdjustmentPolicyRequest | None = None
+    goal_worker_budget: GoalWorkerBudgetRequest | None = None
+
+
 class StartRunRequest(_StrictRequest):
     idempotency_key: NonBlank
     plan_revision_id: UuidInput
+    execution_config: ExecutionConfigRequest | None = None
 
 
 class RunActionRequest(_StrictRequest):
@@ -85,6 +174,41 @@ class RunActionRequest(_StrictRequest):
 
 class CancelRunRequest(RunActionRequest):
     reason: NonBlank | None = None
+
+
+class DecideHumanCheckRequest(_StrictRequest):
+    idempotency_key: NonBlank
+    request_token: Annotated[
+        str,
+        StringConstraints(
+            min_length=64,
+            max_length=64,
+            pattern=r"^[0-9a-fA-F]{64}$",
+        ),
+    ]
+    passed: StrictBool
+    actor: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=8000)]
+    comment: Annotated[
+        str,
+        StringConstraints(strip_whitespace=True, min_length=1, max_length=8000),
+    ]
+
+
+class ReplyInterventionRequest(_StrictRequest):
+    idempotency_key: NonBlank
+    request_token: Annotated[
+        str,
+        StringConstraints(
+            min_length=64,
+            max_length=64,
+            pattern=r"^[0-9a-fA-F]{64}$",
+        ),
+    ]
+    actor: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=8000)]
+    message: Annotated[
+        str,
+        StringConstraints(strip_whitespace=True, min_length=1, max_length=8000),
+    ]
 
 
 class ExtendAttemptDeadlineRequest(_StrictRequest):

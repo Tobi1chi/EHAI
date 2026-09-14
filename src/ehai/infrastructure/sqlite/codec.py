@@ -15,6 +15,9 @@ from ehai.domain.checking import (
     CheckRunStatus,
     CheckSpec,
     GateDecision,
+    HumanCheckDecision,
+    HumanCheckEvidence,
+    HumanCheckRequest,
 )
 from ehai.domain.execution import Attempt, AttemptStatus, Run, RunStatus
 from ehai.domain.goal import CompletionContract, Goal, GoalStatus, Project
@@ -26,9 +29,12 @@ from ehai.domain.planning import (
     PlanNode,
     PlanNodeKind,
     PlanNodeStatus,
+    PlanPhase,
     PlanRevision,
     PlanRevisionStatus,
 )
+from ehai.domain.process import ProcessRevision, ProcessRevisionSource
+from ehai.domain.process_drafts import ProcessDraft, ProcessDraftStatus
 from ehai.domain.runtime import DispatchWork, DispatchWorkStatus
 from ehai.domain.workers import (
     AgentSessionRef,
@@ -113,7 +119,115 @@ def decode_goal(snapshot: str, completion_contract: CompletionContract | None) -
 
 
 def encode_plan_revision(revision: PlanRevision) -> str:
-    return json_dumps(_plan_revision_document(revision))
+    """Freeze approval membership in the version, not in mutable table membership."""
+    return encode_execution_plan(revision)
+
+
+def encode_execution_plan(revision: PlanRevision) -> str:
+    """Encode the complete Run-owned graph independently of approval child rows."""
+    document = _plan_revision_document(revision)
+    document["nodes"] = [_plan_node_document(node) for node in revision.nodes]
+    document["edges"] = [_edge_document(edge) for edge in revision.edges]
+    document["branches"] = [_branch_document(branch) for branch in revision.branches]
+    return json_dumps(document)
+
+
+def decode_execution_plan(snapshot: str) -> PlanRevision:
+    """Restore a complete execution graph, retaining its original approval identity."""
+    document = _load_object(snapshot, "ExecutionPlan")
+    return _decode_plan_revision_document(
+        document,
+        tuple(_decode_plan_node_document(node) for node in _object_list(document, "nodes", "Node")),
+        tuple(_decode_edge_document(edge) for edge in _object_list(document, "edges", "Edge")),
+        tuple(
+            _decode_branch_document(branch)
+            for branch in _object_list(document, "branches", "Branch")
+        ),
+    )
+
+
+def encode_process_revision(revision: ProcessRevision) -> str:
+    return json_dumps(
+        {
+            "process_revision_id": revision.process_revision_id,
+            "run_id": revision.run_id,
+            "version": revision.version,
+            "graph": json_loads(encode_execution_plan(revision.graph)),
+            "created_at": format_utc_datetime(revision.created_at),
+            "reason": revision.reason,
+            "source": revision.source.value,
+            "parent_process_revision_id": revision.parent_process_revision_id,
+            "gate_owners": {str(key): value for key, value in revision.gate_owners.items()},
+        }
+    )
+
+
+def decode_process_revision(snapshot: str) -> ProcessRevision:
+    document = _load_object(snapshot, "ProcessRevision")
+    return ProcessRevision(
+        process_revision_id=ID(_string(document, "process_revision_id")),
+        run_id=ID(_string(document, "run_id")),
+        version=_integer(document, "version"),
+        graph=decode_execution_plan(json_dumps(document["graph"])),
+        created_at=parse_utc_datetime(_string(document, "created_at")),
+        reason=_string(document, "reason"),
+        source=ProcessRevisionSource(_string(document, "source")),
+        parent_process_revision_id=_optional_id(document, "parent_process_revision_id"),
+        gate_owners=(
+            {
+                ID(key): ID(_json_string(value, "process Gate owner"))
+                for key, value in _object(document["gate_owners"], "Gate owners").items()
+            }
+            if "gate_owners" in document
+            else {}
+        ),
+    )
+
+
+def encode_process_draft(draft: ProcessDraft) -> str:
+    return json_dumps(
+        {
+            "draft_id": draft.draft_id,
+            "run_id": draft.run_id,
+            "parent_process_revision_id": draft.parent_process_revision_id,
+            "planner_session_ref_id": draft.planner_session_ref_id,
+            "base_execution_plan": json_loads(encode_execution_plan(draft.base_execution_plan)),
+            "reason": draft.reason,
+            "created_at": format_utc_datetime(draft.created_at),
+            "status": draft.status.value,
+            "candidate": (
+                None
+                if draft.candidate is None
+                else json_loads(encode_process_revision(draft.candidate))
+            ),
+            "error": draft.error,
+            "completed_at": _format_optional_datetime(draft.completed_at),
+        }
+    )
+
+
+def decode_process_draft(snapshot: str) -> ProcessDraft:
+    document = _load_object(snapshot, "ProcessDraft")
+    candidate = document.get("candidate")
+    return ProcessDraft(
+        draft_id=ID(_string(document, "draft_id")),
+        run_id=ID(_string(document, "run_id")),
+        parent_process_revision_id=ID(_string(document, "parent_process_revision_id")),
+        planner_session_ref_id=ID(_string(document, "planner_session_ref_id")),
+        base_execution_plan=decode_execution_plan(
+            json_dumps(_object(document.get("base_execution_plan"), "base_execution_plan"))
+        ),
+        reason=_string(document, "reason"),
+        created_at=parse_utc_datetime(_string(document, "created_at")),
+        status=ProcessDraftStatus(_string(document, "status")),
+        candidate=(
+            None
+            if candidate is None
+            else decode_process_revision(json_dumps(_object(candidate, "candidate")))
+        ),
+        error=_optional_string(document, "error"),
+        completed_at=_optional_datetime(document, "completed_at"),
+    )
 
 
 def decode_plan_revision(
@@ -190,6 +304,7 @@ def encode_attempt(attempt: Attempt) -> str:
             "deadline_at": _format_optional_datetime(attempt.deadline_at),
             "lease_expires_at": _format_optional_datetime(attempt.lease_expires_at),
             "queue_reason": attempt.queue_reason,
+            "process_revision_id": attempt.process_revision_id,
         }
     )
 
@@ -224,6 +339,7 @@ def decode_attempt(snapshot: str) -> Attempt:
         deadline_at=_optional_datetime(document, "deadline_at"),
         lease_expires_at=_optional_datetime(document, "lease_expires_at"),
         queue_reason=_optional_string(document, "queue_reason"),
+        process_revision_id=_optional_id(document, "process_revision_id"),
     )
 
 
@@ -395,6 +511,7 @@ def encode_check_run(check_run: CheckRun) -> str:
     return json_dumps(
         {
             "check_run_id": check_run.check_run_id,
+            **({} if check_run.adoption_id is None else {"adoption_id": check_run.adoption_id}),
             "run_id": check_run.run_id,
             "plan_node_id": check_run.plan_node_id,
             "attempt_id": check_run.attempt_id,
@@ -407,6 +524,16 @@ def encode_check_run(check_run: CheckRun) -> str:
                 None if check_run.result is None else _check_result_document(check_run.result)
             ),
             "failure_reason": check_run.failure_reason,
+            "human_request": (
+                None
+                if check_run.human_request is None
+                else _human_check_request_document(check_run.human_request)
+            ),
+            "human_decision": (
+                None
+                if check_run.human_decision is None
+                else _human_check_decision_document(check_run.human_decision)
+            ),
         }
     )
 
@@ -419,7 +546,10 @@ def decode_check_run(snapshot: str) -> CheckRun:
         if result_document is None
         else _decode_check_result_document(_object(result_document, "CheckResult"))
     )
+    request_document = document.get("human_request")
+    decision_document = document.get("human_decision")
     return CheckRun.rehydrate(
+        adoption_id=_optional_id(document, "adoption_id"),
         check_run_id=ID(_string(document, "check_run_id")),
         run_id=ID(_string(document, "run_id")),
         plan_node_id=ID(_string(document, "plan_node_id")),
@@ -431,6 +561,20 @@ def decode_check_run(snapshot: str) -> CheckRun:
         ended_at=_optional_datetime(document, "ended_at"),
         result=result,
         failure_reason=_optional_string(document, "failure_reason"),
+        human_request=(
+            None
+            if request_document is None
+            else _decode_human_check_request_document(
+                _object(request_document, "HumanCheckRequest")
+            )
+        ),
+        human_decision=(
+            None
+            if decision_document is None
+            else _decode_human_check_decision_document(
+                _object(decision_document, "HumanCheckDecision")
+            )
+        ),
     )
 
 
@@ -444,6 +588,7 @@ def encode_checkpoint(checkpoint: Checkpoint) -> str:
     return json_dumps(
         {
             "checkpoint_id": checkpoint.checkpoint_id,
+            "process_revision_id": checkpoint.process_revision_id,
             "plan_revision": plan_document,
             "run": _run_document(checkpoint.run),
             "event_offset": checkpoint.event_offset,
@@ -483,6 +628,7 @@ def decode_checkpoint(snapshot: str) -> Checkpoint:
     }
     return Checkpoint(
         checkpoint_id=ID(_string(document, "checkpoint_id")),
+        process_revision_id=_optional_id(document, "process_revision_id"),
         plan_revision=plan_revision,
         run=run,
         event_offset=_integer(document, "event_offset"),
@@ -543,6 +689,7 @@ def _plan_revision_document(revision: PlanRevision) -> dict[str, JsonValue]:
         "approved_at": _format_optional_datetime(revision.approved_at),
         "supersedes_plan_revision_id": revision.supersedes_plan_revision_id,
         "design_document": revision.design_document,
+        "phases": [_plan_phase_document(phase) for phase in revision.phases],
     }
 
 
@@ -566,6 +713,36 @@ def _decode_plan_revision_document(
         approved_at=_optional_datetime(document, "approved_at"),
         supersedes_plan_revision_id=_optional_id(document, "supersedes_plan_revision_id"),
         design_document=_optional_string(document, "design_document"),
+        phases=(
+            tuple(
+                _decode_plan_phase_document(phase)
+                for phase in _object_list(document, "phases", "PlanPhase")
+            )
+            if "phases" in document
+            else ()
+        ),
+    )
+
+
+def _plan_phase_document(phase: PlanPhase) -> dict[str, JsonValue]:
+    return {
+        "phase_id": phase.phase_id,
+        "title": phase.title,
+        "node_ids": list(phase.node_ids),
+        "reviewer_node_id": phase.reviewer_node_id,
+        "gate_node_id": phase.gate_node_id,
+        "rework_node_ids": list(phase.rework_node_ids),
+    }
+
+
+def _decode_plan_phase_document(document: Mapping[str, JsonValue]) -> PlanPhase:
+    return PlanPhase(
+        phase_id=ID(_string(document, "phase_id")),
+        title=_string(document, "title"),
+        node_ids=_ids(document, "node_ids"),
+        reviewer_node_id=ID(_string(document, "reviewer_node_id")),
+        gate_node_id=ID(_string(document, "gate_node_id")),
+        rework_node_ids=_ids(document, "rework_node_ids"),
     )
 
 
@@ -720,6 +897,9 @@ def _decode_branch_document(document: Mapping[str, JsonValue]) -> Branch:
 
 def _run_document(run: Run) -> dict[str, JsonValue]:
     return {
+        **(
+            {} if run.predecessor_run_id is None else {"predecessor_run_id": run.predecessor_run_id}
+        ),
         "run_id": run.run_id,
         "goal_id": run.goal_id,
         "plan_revision_id": run.plan_revision_id,
@@ -733,6 +913,7 @@ def _run_document(run: Run) -> dict[str, JsonValue]:
 
 def _decode_run_document(document: Mapping[str, JsonValue]) -> Run:
     return Run.rehydrate(
+        predecessor_run_id=_optional_id(document, "predecessor_run_id"),
         run_id=ID(_string(document, "run_id")),
         goal_id=ID(_string(document, "goal_id")),
         plan_revision_id=ID(_string(document, "plan_revision_id")),
@@ -746,6 +927,7 @@ def _decode_run_document(document: Mapping[str, JsonValue]) -> Run:
 
 def _check_result_document(result: CheckResult) -> dict[str, JsonValue]:
     return {
+        **({} if result.adoption_id is None else {"adoption_id": result.adoption_id}),
         "check_id": result.check_id,
         "check_run_id": result.check_run_id,
         "run_id": result.run_id,
@@ -759,8 +941,75 @@ def _check_result_document(result: CheckResult) -> dict[str, JsonValue]:
     }
 
 
+def _human_check_evidence_document(evidence: HumanCheckEvidence) -> dict[str, JsonValue]:
+    return {
+        "artifact_id": evidence.artifact_id,
+        "sha256": evidence.sha256,
+    }
+
+
+def _human_check_request_document(request: HumanCheckRequest) -> dict[str, JsonValue]:
+    return {
+        "plan_revision_id": request.plan_revision_id,
+        "completion_contract_id": request.completion_contract_id,
+        "completion_contract_version": request.completion_contract_version,
+        "question": request.question,
+        "evidence": [_human_check_evidence_document(evidence) for evidence in request.evidence],
+        "request_token": request.request_token,
+    }
+
+
+def _human_check_decision_document(decision: HumanCheckDecision) -> dict[str, JsonValue]:
+    return {
+        "actor": decision.actor,
+        "comment": decision.comment,
+        "decided_at": format_utc_datetime(decision.decided_at),
+    }
+
+
+def _decode_human_check_evidence_document(
+    document: Mapping[str, JsonValue],
+) -> HumanCheckEvidence:
+    return HumanCheckEvidence(
+        artifact_id=ID(_string(document, "artifact_id")),
+        sha256=_string(document, "sha256"),
+    )
+
+
+def _decode_human_check_request_document(
+    document: Mapping[str, JsonValue],
+) -> HumanCheckRequest:
+    request = HumanCheckRequest(
+        plan_revision_id=ID(_string(document, "plan_revision_id")),
+        completion_contract_id=ID(_string(document, "completion_contract_id")),
+        completion_contract_version=_integer(document, "completion_contract_version"),
+        question=_string(document, "question"),
+        evidence=tuple(
+            _decode_human_check_evidence_document(evidence)
+            for evidence in _object_list(document, "evidence", "HumanCheckEvidence")
+        ),
+    )
+    stored_token = document.get("request_token")
+    if stored_token is not None and (
+        not isinstance(stored_token, str) or stored_token.lower() != request.request_token
+    ):
+        raise ValueError("HumanCheckRequest request_token does not match its snapshot")
+    return request
+
+
+def _decode_human_check_decision_document(
+    document: Mapping[str, JsonValue],
+) -> HumanCheckDecision:
+    return HumanCheckDecision(
+        actor=_string(document, "actor"),
+        comment=_string(document, "comment"),
+        decided_at=parse_utc_datetime(_string(document, "decided_at")),
+    )
+
+
 def _decode_check_result_document(document: Mapping[str, JsonValue]) -> CheckResult:
     return CheckResult(
+        adoption_id=_optional_id(document, "adoption_id"),
         check_id=ID(_string(document, "check_id")),
         check_run_id=ID(_string(document, "check_run_id")),
         run_id=ID(_string(document, "run_id")),
@@ -776,6 +1025,7 @@ def _decode_check_result_document(document: Mapping[str, JsonValue]) -> CheckRes
 
 def _gate_decision_document(decision: GateDecision) -> dict[str, JsonValue]:
     return {
+        **({} if decision.adoption_id is None else {"adoption_id": decision.adoption_id}),
         "gate_id": decision.gate_id,
         "run_id": decision.run_id,
         "plan_node_id": decision.plan_node_id,
@@ -791,6 +1041,7 @@ def _gate_decision_document(decision: GateDecision) -> dict[str, JsonValue]:
 
 def _decode_gate_decision_document(document: Mapping[str, JsonValue]) -> GateDecision:
     return GateDecision(
+        adoption_id=_optional_id(document, "adoption_id"),
         gate_id=ID(_string(document, "gate_id")),
         run_id=ID(_string(document, "run_id")),
         plan_node_id=ID(_string(document, "plan_node_id")),

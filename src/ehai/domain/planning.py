@@ -14,6 +14,7 @@ from ehai.domain.goal import CompletionContract
 from ehai.domain.workers import SessionPolicy, WorkerCapability
 
 if TYPE_CHECKING:
+    from ehai.domain.adoptions import ResultAdoption
     from ehai.domain.checking import GateDecision
 
 _CONTROLLED_STATE = object()
@@ -37,12 +38,13 @@ class EdgeType(StrEnum):
 
 
 class PlanNodeKind(StrEnum):
-    """Structural roles a PlanNode can have in P1."""
+    """Structural roles a PlanNode can have in an approved execution graph."""
 
     WORK = "work"
     FORK = "fork"
     EVALUATOR = "evaluator"
     MERGE = "merge"
+    REVIEWER = "reviewer"
 
 
 class PlanNodeStatus(StrEnum):
@@ -51,6 +53,7 @@ class PlanNodeStatus(StrEnum):
     PENDING = "pending"
     READY = "ready"
     RUNNING = "running"
+    BLOCKED = "blocked"
     CANDIDATE = "candidate"
     VERIFYING = "verifying"
     COMPLETED = "completed"
@@ -175,6 +178,16 @@ class PlanNode:
         """Move a candidate into Check execution."""
         return self._transition(PlanNodeStatus.VERIFYING, allowed_from=(PlanNodeStatus.CANDIDATE,))
 
+    def submit_adopted_candidate(self, adoption: ResultAdoption) -> Self:
+        """Receive an accepted prior result after readiness, without claiming Worker execution."""
+        if adoption.target_plan_node_id != self.plan_node_id:
+            raise PlanTransitionError("Adopted result belongs to another target node")
+        if self.kind not in {PlanNodeKind.WORK, PlanNodeKind.MERGE}:
+            raise PlanTransitionError("Only implementation results can bypass new Worker execution")
+        if not adoption.evidence:
+            raise PlanTransitionError("Adopted result requires accepted evidence")
+        return self._transition(PlanNodeStatus.CANDIDATE, allowed_from=(PlanNodeStatus.READY,))
+
     def accept_intermediate(self) -> Self:
         """Accept an unchecked intermediate result without satisfying the Goal."""
         if self.required_check_ids:
@@ -212,6 +225,29 @@ class PlanNode:
     def retry(self) -> Self:
         """Return a failed node to ready for another Attempt."""
         return self._transition(PlanNodeStatus.READY, allowed_from=(PlanNodeStatus.FAILED,))
+
+    def block(self) -> Self:
+        """Wait for a durable intervention, without treating the route as failed."""
+        return self._transition(PlanNodeStatus.BLOCKED, allowed_from=(PlanNodeStatus.RUNNING,))
+
+    def unblock(self) -> Self:
+        """Recheck dependencies after the user resolves the corresponding intervention."""
+        return self._transition(PlanNodeStatus.PENDING, allowed_from=(PlanNodeStatus.BLOCKED,))
+
+    def reopen_for_rework(self) -> Self:
+        """Reopen a node for an approved-boundary rework without changing its structure."""
+        return self._transition(
+            PlanNodeStatus.PENDING,
+            allowed_from=(
+                PlanNodeStatus.COMPLETED,
+                PlanNodeStatus.FAILED,
+                PlanNodeStatus.CANDIDATE,
+                PlanNodeStatus.VERIFYING,
+                PlanNodeStatus.READY,
+                PlanNodeStatus.PRUNED,
+                PlanNodeStatus.PENDING,
+            ),
+        )
 
     def prune(self) -> Self:
         """Prune an unexecuted node while preserving the immutable node record."""
@@ -357,12 +393,64 @@ class Branch:
         """Prune an active branch while preserving every historical node reference."""
         return self._transition(BranchStatus.PRUNED)
 
+    def reopen_selection(self) -> Self:
+        """Invalidate a prior branch selection and return the branch to the active set."""
+        if self.status is BranchStatus.ACTIVE:
+            return self
+        return replace(self, status=BranchStatus.ACTIVE, _state_token=_CONTROLLED_STATE)
+
     def _transition(self, target: BranchStatus) -> Self:
         if self.status is not BranchStatus.ACTIVE:
             raise PlanTransitionError(
                 f"Branch {self.branch_id} cannot transition from {self.status} to {target}"
             )
         return replace(self, status=target, _state_token=_CONTROLLED_STATE)
+
+
+@dataclass(frozen=True, slots=True)
+class PlanPhase:
+    """One approved execution phase ending in a Reviewer-owned Gate."""
+
+    phase_id: ID
+    title: str
+    node_ids: tuple[ID, ...]
+    reviewer_node_id: ID
+    gate_node_id: ID
+    rework_node_ids: tuple[ID, ...]
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "phase_id", normalize_id(self.phase_id))
+        owner = f"PlanPhase {self.phase_id}"
+        title = self.title.strip()
+        if not title:
+            raise PlanInvariantError(f"{owner} requires a title")
+        object.__setattr__(self, "title", title)
+        node_ids = tuple(_validated_id(node_id, owner, "node_id") for node_id in self.node_ids)
+        if not node_ids or len(set(node_ids)) != len(node_ids):
+            raise PlanInvariantError(f"{owner} requires unique PlanNode IDs")
+        object.__setattr__(self, "node_ids", node_ids)
+        object.__setattr__(
+            self,
+            "reviewer_node_id",
+            _validated_id(self.reviewer_node_id, owner, "reviewer_node_id"),
+        )
+        object.__setattr__(
+            self,
+            "gate_node_id",
+            _validated_id(self.gate_node_id, owner, "gate_node_id"),
+        )
+        if self.reviewer_node_id not in node_ids or self.gate_node_id not in node_ids:
+            raise PlanInvariantError(f"{owner} Reviewer and Gate nodes must belong to the Phase")
+        if self.reviewer_node_id != self.gate_node_id:
+            raise PlanInvariantError(f"{owner} Gate must be owned by its Reviewer node")
+        rework = tuple(
+            _validated_id(node_id, owner, "rework_node_id") for node_id in self.rework_node_ids
+        )
+        if not rework or len(set(rework)) != len(rework) or not set(rework).issubset(node_ids):
+            raise PlanInvariantError(f"{owner} requires unique in-Phase rework nodes")
+        if self.reviewer_node_id in rework:
+            raise PlanInvariantError(f"{owner} Reviewer cannot be a rework target")
+        object.__setattr__(self, "rework_node_ids", rework)
 
 
 @dataclass(frozen=True, slots=True)
@@ -378,6 +466,7 @@ class PlanRevision:
     edges: tuple[Edge, ...]
     branches: tuple[Branch, ...]
     created_at: datetime
+    phases: tuple[PlanPhase, ...] = ()
     status: PlanRevisionStatus = PlanRevisionStatus.DRAFT
     approved_at: datetime | None = None
     supersedes_plan_revision_id: ID | None = None
@@ -414,6 +503,7 @@ class PlanRevision:
         object.__setattr__(self, "nodes", tuple(self.nodes))
         object.__setattr__(self, "edges", tuple(self.edges))
         object.__setattr__(self, "branches", tuple(self.branches))
+        object.__setattr__(self, "phases", tuple(self.phases))
         if self.supersedes_plan_revision_id is not None:
             object.__setattr__(
                 self,
@@ -455,6 +545,7 @@ class PlanRevision:
         nodes: Iterable[PlanNode],
         edges: Iterable[Edge],
         branches: Iterable[Branch] = (),
+        phases: Iterable[PlanPhase] = (),
         *,
         plan_revision_id: ID | None = None,
         version: int = 1,
@@ -476,6 +567,7 @@ class PlanRevision:
             nodes=tuple(nodes),
             edges=tuple(edges),
             branches=tuple(branches),
+            phases=tuple(phases),
             created_at=created_at or utc_now(),
             supersedes_plan_revision_id=supersedes_plan_revision_id,
             design_document=design_document,
@@ -498,6 +590,7 @@ class PlanRevision:
         approved_at: datetime | None,
         supersedes_plan_revision_id: ID | None,
         design_document: str | None = None,
+        phases: Iterable[PlanPhase] = (),
     ) -> Self:
         """Restore a validated PlanRevision snapshot from trusted persistence data."""
         return cls(
@@ -509,6 +602,7 @@ class PlanRevision:
             nodes=tuple(nodes),
             edges=tuple(edges),
             branches=tuple(branches),
+            phases=tuple(phases),
             created_at=created_at,
             status=status,
             approved_at=approved_at,
@@ -527,6 +621,7 @@ class PlanRevision:
         _require_unique_ids((node.plan_node_id for node in self.nodes), owner, "PlanNode")
         _require_unique_ids((edge.edge_id for edge in self.edges), owner, "Edge")
         _require_unique_ids((branch.branch_id for branch in self.branches), owner, "Branch")
+        _require_unique_ids((phase.phase_id for phase in self.phases), owner, "PlanPhase")
 
         edge_keys: set[tuple[ID, ID, EdgeType, ID | None]] = set()
         for edge in self.edges:
@@ -560,8 +655,18 @@ class PlanRevision:
         if dependency_pairs != declared_pairs:
             raise PlanInvariantError(f"{owner} dependency Edges must match required dependencies")
 
+        for node in self.nodes:
+            if node.kind is PlanNodeKind.REVIEWER and (
+                not node.required_dependency_ids or not node.required_check_ids
+            ):
+                raise PlanInvariantError(
+                    f"{owner} reviewer PlanNode {node.plan_node_id} requires dependencies "
+                    "and a Gate"
+                )
+
         _require_acyclic(self.nodes, self.edges, owner=owner)
         self._validate_branches(node_by_id, branch_by_id)
+        self._validate_phases(node_by_id)
 
     def approve(
         self,
@@ -598,6 +703,7 @@ class PlanRevision:
         nodes: Iterable[PlanNode],
         edges: Iterable[Edge],
         branches: Iterable[Branch] = (),
+        phases: Iterable[PlanPhase] = (),
         *,
         plan_revision_id: ID | None = None,
         created_at: datetime | None = None,
@@ -614,12 +720,82 @@ class PlanRevision:
             nodes=nodes,
             edges=edges,
             branches=branches,
+            phases=phases,
             plan_revision_id=plan_revision_id,
             version=self.version + 1,
             supersedes_plan_revision_id=self.plan_revision_id,
             created_at=created_at,
             design_document=design_document,
         )
+
+    def _validate_phases(self, node_by_id: dict[ID, PlanNode]) -> None:
+        if not self.phases:
+            return
+        owner = f"PlanRevision {self.plan_revision_id}"
+        memberships: dict[ID, int] = {}
+        phase_index: dict[ID, int] = {}
+        for index, phase in enumerate(self.phases):
+            for node_id in phase.node_ids:
+                if node_id not in node_by_id:
+                    raise PlanInvariantError(f"{owner} PlanPhase references unknown PlanNode")
+                if node_id in memberships:
+                    raise PlanInvariantError(f"{owner} PlanNode belongs to multiple Phases")
+                memberships[node_id] = index
+                phase_index[node_id] = index
+            reviewer = node_by_id[phase.reviewer_node_id]
+            if reviewer.kind is not PlanNodeKind.REVIEWER or not reviewer.required_check_ids:
+                raise PlanInvariantError(
+                    f"{owner} PlanPhase Reviewer must be a reviewer node with an approved Gate"
+                )
+            if any(
+                node_by_id[node_id].kind not in {PlanNodeKind.WORK, PlanNodeKind.MERGE}
+                for node_id in phase.rework_node_ids
+            ):
+                raise PlanInvariantError(
+                    f"{owner} PlanPhase rework targets must be work or merge nodes"
+                )
+            reachable = _reverse_reachable(
+                phase.reviewer_node_id,
+                phase.node_ids,
+                self.edges,
+            )
+            if set(phase.node_ids) != reachable:
+                raise PlanInvariantError(
+                    f"{owner} every PlanPhase node must feed its Reviewer Gate"
+                )
+        if set(memberships) != set(node_by_id):
+            raise PlanInvariantError(f"{owner} Phases must partition every PlanNode")
+        for edge in self.edges:
+            source_phase = phase_index[edge.source_node_id]
+            target_phase = phase_index[edge.target_node_id]
+            if source_phase > target_phase:
+                raise PlanInvariantError(f"{owner} edges cannot point back to an earlier Phase")
+            if (
+                source_phase < target_phase
+                and edge.source_node_id != self.phases[source_phase].gate_node_id
+            ):
+                raise PlanInvariantError(
+                    f"{owner} cross-Phase edges must originate at the source Phase Gate"
+                )
+        for index, phase in enumerate(self.phases[1:], start=1):
+            phase_nodes = set(phase.node_ids)
+            internal_targets = {
+                edge.target_node_id
+                for edge in self.edges
+                if edge.source_node_id in phase_nodes and edge.target_node_id in phase_nodes
+            }
+            roots = phase_nodes - internal_targets
+            previous_gate = self.phases[index - 1].gate_node_id
+            for root in roots:
+                if not any(
+                    edge.source_node_id == previous_gate
+                    and edge.target_node_id == root
+                    and edge.edge_type is EdgeType.DEPENDENCY
+                    for edge in self.edges
+                ):
+                    raise PlanInvariantError(
+                        f"{owner} every Phase root must depend on the previous Phase Gate"
+                    )
 
     def _validate_branches(
         self,
@@ -722,6 +898,23 @@ def _require_unique_ids(ids: Iterable[ID], owner: str, item_name: str) -> None:
         if item_id in seen:
             raise PlanInvariantError(f"{owner} contains duplicate {item_name} ID {item_id}")
         seen.add(item_id)
+
+
+def _reverse_reachable(target: ID, node_ids: tuple[ID, ...], edges: tuple[Edge, ...]) -> set[ID]:
+    allowed = set(node_ids)
+    incoming: dict[ID, list[ID]] = {node_id: [] for node_id in node_ids}
+    for edge in edges:
+        if edge.source_node_id in allowed and edge.target_node_id in allowed:
+            incoming[edge.target_node_id].append(edge.source_node_id)
+    reached: set[ID] = set()
+    pending = [target]
+    while pending:
+        node_id = pending.pop()
+        if node_id in reached:
+            continue
+        reached.add(node_id)
+        pending.extend(incoming[node_id])
+    return reached
 
 
 def _require_acyclic(nodes: tuple[PlanNode, ...], edges: tuple[Edge, ...], *, owner: str) -> None:

@@ -5,8 +5,9 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass
 from itertools import pairwise
+from typing import cast
 
-from ehai import JsonValue
+from ehai import ID, JsonValue, normalize_id
 from ehai.application.builtin_agent import ToolDefinition
 from ehai.application.planner import (
     BranchTemplate,
@@ -14,10 +15,17 @@ from ehai.application.planner import (
     ExplorationBudget,
     ExplorationUsage,
     NodeGateTemplate,
+    PhaseTemplate,
     PlanNodeTemplate,
     PlanTemplate,
 )
-from ehai.domain.planning import EdgeType, PlanNodeKind
+from ehai.domain.planning import EdgeType, PlanNodeKind, PlanRevision
+from ehai.domain.process import (
+    ProcessRevision,
+    process_approval_identity,
+    process_graph_definition,
+)
+from ehai.domain.workers import SessionPolicy, WorkerCapability
 
 MAX_PLAN_OPERATIONS = 128
 """Maximum accepted graph mutations per Planner run; rejected mutations also count."""
@@ -27,6 +35,7 @@ MAX_VALIDATION_RETRIES = 4
 
 _NODE_KINDS = tuple(kind.value for kind in PlanNodeKind)
 _EDGE_TYPES = tuple(edge.value for edge in EdgeType)
+_SESSION_POLICIES = tuple(policy.value for policy in SessionPolicy)
 
 _MUTATION_TOOLS = (
     "add_plan_node",
@@ -35,8 +44,10 @@ _MUTATION_TOOLS = (
     "add_plan_edge",
     "remove_plan_edge",
     "set_plan_branch",
+    "set_plan_phase",
     "set_node_gate",
     "set_final_gate",
+    "move_process_gate",
 )
 
 
@@ -76,6 +87,8 @@ class _DraftNode:
     title: str
     instruction: str
     kind: PlanNodeKind
+    required_capabilities: frozenset[WorkerCapability]
+    session_policy: SessionPolicy
 
 
 @dataclass(slots=True)
@@ -101,6 +114,17 @@ class _DraftNodeGate:
     node_key: str
     name: str
     command_argv: tuple[str, ...]
+    human_question: str | None
+
+
+@dataclass(slots=True)
+class _DraftPhase:
+    key: str
+    title: str
+    nodes: tuple[str, ...]
+    reviewer: str
+    gate: str
+    rework_nodes: tuple[str, ...]
 
 
 class PlanGraphToolRuntime:
@@ -126,11 +150,50 @@ class PlanGraphToolRuntime:
         self._nodes: dict[str, _DraftNode] = {}
         self._edges: dict[tuple[str, str, EdgeType, str | None], _DraftEdge] = {}
         self._branches: dict[str, _DraftBranch] = {}
+        self._phases: dict[str, _DraftPhase] = {}
         self._node_gates: dict[str, _DraftNodeGate] = {}
         self._operations_used = 0
         self._validation_failures = 0
         self._finished_template: PlanTemplate | None = None
         self._final_gate_argv: tuple[str, ...] = ()
+        self._final_human_question: str | None = None
+        self._process_mode = False
+        self._retained_check_ids: dict[str, tuple[ID, ...]] = {}
+        self._retained_gate_owners: dict[ID, str] = {}
+        self._process_final_gate_id: ID | None = None
+
+    @classmethod
+    def from_process(
+        cls,
+        process: ProcessRevision,
+        current: PlanRevision,
+        budget: ExplorationBudget,
+        *,
+        planner_event_types: tuple[str, ...] = (),
+    ) -> PlanGraphToolRuntime:
+        """Seed a process-mode draft from an existing ProcessRevision graph.
+
+        Existing domain UUIDs become local Tool keys verbatim.  The process's
+        stable Gate-to-owner bindings and original Check IDs are retained as
+        immutable template metadata; no local command, Check, or domain ID is
+        created by this runtime.
+        """
+        if not isinstance(process, ProcessRevision):
+            raise TypeError("process must be a ProcessRevision")
+        if not isinstance(current, PlanRevision):
+            raise TypeError("current must be a PlanRevision")
+        if process_approval_identity(process.graph) != process_approval_identity(
+            current
+        ) or process_graph_definition(process.graph) != process_graph_definition(current):
+            raise ValueError("Process seed must match its frozen definition and approval identity")
+        runtime = cls(
+            budget,
+            planner_event_types=planner_event_types,
+            require_final_gate=True,
+        )
+        runtime._process_mode = True
+        runtime._seed_process_graph(process, current)
+        return runtime
 
     @property
     def operations_used(self) -> int:
@@ -148,6 +211,98 @@ class PlanGraphToolRuntime:
     def validation_budget_exhausted(self) -> bool:
         return self._validation_failures > MAX_VALIDATION_RETRIES
 
+    def _seed_process_graph(self, process: ProcessRevision, current: PlanRevision) -> None:
+        """Copy an existing graph into local-key draft state without allocating IDs."""
+        current_nodes = {str(node.plan_node_id): node for node in current.nodes}
+        source_nodes = {node.plan_node_id: node for node in process.graph.nodes}
+        self._nodes = {
+            key: _DraftNode(
+                key=key,
+                title=node.title,
+                instruction=node.instruction,
+                kind=node.kind,
+                required_capabilities=node.required_capabilities,
+                session_policy=node.session_policy,
+            )
+            for key, node in current_nodes.items()
+        }
+        self._edges = {
+            (
+                str(edge.source_node_id),
+                str(edge.target_node_id),
+                edge.edge_type,
+                None if edge.branch_id is None else str(edge.branch_id),
+            ): _DraftEdge(
+                source=str(edge.source_node_id),
+                target=str(edge.target_node_id),
+                edge_type=edge.edge_type,
+                branch_key=None if edge.branch_id is None else str(edge.branch_id),
+                condition=edge.condition,
+            )
+            for edge in current.edges
+        }
+        self._branches = {
+            str(branch.branch_id): _DraftBranch(
+                key=str(branch.branch_id),
+                label=branch.label,
+                fork=str(branch.fork_node_id),
+                nodes=tuple(str(node_id) for node_id in branch.node_ids),
+                merge=str(branch.merge_node_id),
+            )
+            for branch in current.branches
+        }
+        self._phases = {
+            str(phase.phase_id): _DraftPhase(
+                key=str(phase.phase_id),
+                title=phase.title,
+                nodes=tuple(str(node_id) for node_id in phase.node_ids),
+                reviewer=str(phase.reviewer_node_id),
+                gate=str(phase.gate_node_id),
+                rework_nodes=tuple(str(node_id) for node_id in phase.rework_node_ids),
+            )
+            for phase in current.phases
+        }
+        retained_checks: dict[str, tuple[ID, ...]] = {}
+        retained_owners: dict[ID, str] = {}
+        for raw_gate_id, raw_owner_id in process.gate_owners.items():
+            try:
+                gate_id = normalize_id(raw_gate_id)
+                owner_id = normalize_id(raw_owner_id)
+            except ValueError as error:
+                raise ValueError("Process Gate bindings must contain valid IDs") from error
+            source_node = source_nodes.get(owner_id)
+            owner_key = str(owner_id)
+            if source_node is None or not source_node.required_check_ids:
+                raise ValueError(
+                    f"Process Gate {gate_id} has no frozen required Checks in its source graph"
+                )
+            if owner_key not in current_nodes:
+                raise ValueError(f"Process Gate {gate_id} targets an unknown current node")
+            if owner_key in retained_checks:
+                raise ValueError(f"Process Gate owner {owner_key} is assigned more than once")
+            retained_checks[owner_key] = tuple(source_node.required_check_ids)
+            retained_owners[gate_id] = owner_key
+        terminal_keys = self._terminal_node_keys()
+        if len(terminal_keys) != 1:
+            raise ValueError(
+                "Process mode requires current graph to have exactly one terminal node"
+            )
+        final_gate_ids = tuple(
+            gate_id
+            for gate_id, owner_key in retained_owners.items()
+            if owner_key == terminal_keys[0]
+        )
+        if len(final_gate_ids) != 1:
+            raise ValueError(
+                "Process mode requires the original final Gate to own the current terminal node"
+            )
+        self._retained_check_ids = retained_checks
+        self._retained_gate_owners = retained_owners
+        self._process_final_gate_id = final_gate_ids[0]
+        self._node_gates = {}
+        self._final_gate_argv = ()
+        self._final_human_question = None
+
     def build_template(self) -> PlanTemplate:
         """Return the validated template after a successful finish_plan."""
         if self._finished_template is None:
@@ -155,7 +310,8 @@ class PlanGraphToolRuntime:
         return self._finished_template
 
     def tool_definitions(self) -> tuple[ToolDefinition, ...]:
-        return tuple(_TOOL_DEFINITIONS[name] for name in _TOOL_ORDER)
+        order = _PROCESS_TOOL_ORDER if self._process_mode else _TOOL_ORDER
+        return tuple(_TOOL_DEFINITIONS[name] for name in order)
 
     def execute(self, name: str, arguments: Mapping[str, JsonValue]) -> dict[str, JsonValue]:
         """Dispatch one Tool Call and return a structured result for the model."""
@@ -220,6 +376,10 @@ class PlanGraphToolRuntime:
             title=_required_text(arguments, "title", location),
             instruction=_required_text(arguments, "instruction", location),
             kind=_required_node_kind(arguments, "kind", location),
+            required_capabilities=_optional_capabilities(
+                arguments, "required_capabilities", location
+            ),
+            session_policy=_optional_session_policy(arguments, "session_policy", location),
         )
 
     def _tool_update_plan_node(self, arguments: Mapping[str, JsonValue]) -> None:
@@ -230,9 +390,43 @@ class PlanGraphToolRuntime:
             raise _ToolRejection(
                 PlanIssue("UNKNOWN_NODE", location, f"Node {key!r} does not exist")
             )
-        node.title = _required_text(arguments, "title", location)
-        node.instruction = _required_text(arguments, "instruction", location)
-        node.kind = _required_node_kind(arguments, "kind", location)
+        replacement = _DraftNode(
+            key=node.key,
+            title=_required_text(arguments, "title", location),
+            instruction=_required_text(arguments, "instruction", location),
+            kind=_required_node_kind(arguments, "kind", location),
+            required_capabilities=_optional_capabilities(
+                arguments,
+                "required_capabilities",
+                location,
+                default=node.required_capabilities,
+            ),
+            session_policy=_optional_session_policy(
+                arguments,
+                "session_policy",
+                location,
+                default=node.session_policy,
+            ),
+        )
+        if (
+            self._process_mode
+            and key in self._retained_check_ids
+            and replacement.kind
+            not in {
+                PlanNodeKind.WORK,
+                PlanNodeKind.MERGE,
+                PlanNodeKind.REVIEWER,
+            }
+        ):
+            raise _ToolRejection(
+                PlanIssue(
+                    "RETAINED_GATE_INVALID_KIND",
+                    location,
+                    "A retained process Gate owner must remain a work, merge, or reviewer node",
+                    (key,),
+                )
+            )
+        self._nodes[key] = replacement
 
     def _tool_remove_plan_node(self, arguments: Mapping[str, JsonValue]) -> None:
         key = _required_key(arguments, "key", "nodes")
@@ -240,6 +434,15 @@ class PlanGraphToolRuntime:
         if key not in self._nodes:
             raise _ToolRejection(
                 PlanIssue("UNKNOWN_NODE", location, f"Node {key!r} does not exist")
+            )
+        if self._process_mode and key in self._retained_check_ids:
+            raise _ToolRejection(
+                PlanIssue(
+                    "NODE_GATE_MOVE_REQUIRED",
+                    location,
+                    "Move the retained process Gate before removing its owner node",
+                    (key,),
+                )
             )
         referencing = [
             branch.key
@@ -253,6 +456,16 @@ class PlanGraphToolRuntime:
                     location,
                     f"Node {key!r} is referenced by branches {referencing}",
                     (key, *referencing),
+                )
+            )
+        phase_references = tuple(phase.key for phase in self._phases.values() if key in phase.nodes)
+        if phase_references:
+            raise _ToolRejection(
+                PlanIssue(
+                    "NODE_IN_USE",
+                    location,
+                    f"Node {key!r} is referenced by phases {phase_references}",
+                    (key, *phase_references),
                 )
             )
         del self._nodes[key]
@@ -410,10 +623,101 @@ class PlanGraphToolRuntime:
             )
         self._branches[branch_key] = _DraftBranch(branch_key, label, fork, node_keys, merge)
 
+    def _tool_set_plan_phase(self, arguments: Mapping[str, JsonValue]) -> None:
+        phase_key = _required_key(arguments, "phase_key", "phases")
+        location = f"phases.{phase_key}"
+        existing = self._phases.get(phase_key)
+        if arguments.get("remove") is True:
+            if existing is None:
+                raise _ToolRejection(
+                    PlanIssue("UNKNOWN_PHASE", location, f"Phase {phase_key!r} does not exist")
+                )
+            del self._phases[phase_key]
+            return
+        title = _required_text(arguments, "title", location)
+        node_keys = _required_node_keys(arguments, "node_keys", location)
+        reviewer = _required_key(arguments, "reviewer_node_key", location)
+        gate = _required_key(arguments, "gate_node_key", location)
+        rework = _required_node_keys(arguments, "rework_node_keys", location)
+        missing = tuple(
+            key for key in (*node_keys, reviewer, gate, *rework) if key not in self._nodes
+        )
+        if missing:
+            raise _ToolRejection(
+                PlanIssue(
+                    "UNKNOWN_NODE",
+                    location,
+                    f"Phase references unknown node(s) {missing}",
+                    missing,
+                )
+            )
+        if reviewer not in node_keys or gate not in node_keys or reviewer != gate:
+            raise _ToolRejection(
+                PlanIssue(
+                    "PHASE_GATE_INVALID",
+                    location,
+                    "Phase Reviewer and Gate must be the same node inside node_keys",
+                    (phase_key, reviewer, gate),
+                )
+            )
+        if self._nodes[reviewer].kind is not PlanNodeKind.REVIEWER:
+            raise _ToolRejection(
+                PlanIssue(
+                    "PHASE_REVIEWER_INVALID",
+                    location,
+                    "reviewer_node_key must identify a reviewer node",
+                    (phase_key, reviewer),
+                )
+            )
+        if (
+            reviewer in rework
+            or not set(rework).issubset(node_keys)
+            or any(
+                self._nodes[key].kind not in {PlanNodeKind.WORK, PlanNodeKind.MERGE}
+                for key in rework
+            )
+        ):
+            raise _ToolRejection(
+                PlanIssue(
+                    "PHASE_REWORK_INVALID",
+                    location,
+                    "Phase rework targets must be in-Phase work or merge nodes, not Reviewer",
+                    (phase_key, *rework),
+                )
+            )
+        self._phases[phase_key] = _DraftPhase(phase_key, title, node_keys, reviewer, gate, rework)
+
     def _tool_set_final_gate(self, arguments: Mapping[str, JsonValue]) -> None:
-        self._final_gate_argv = _required_gate_argv(arguments, "final_gate.argv")
+        if self._process_mode:
+            raise _ToolRejection(
+                PlanIssue(
+                    "PROCESS_GATE_FROZEN",
+                    "final_gate",
+                    "set_final_gate is unavailable in process mode; move the retained Gate instead",
+                )
+            )
+        argv = _required_gate_argv(arguments, "final_gate.argv")
+        human_question = _optional_text(arguments, "human_question", "final_gate")
+        if not argv and human_question is None:
+            raise _ToolRejection(
+                PlanIssue(
+                    "INVALID_ARGUMENT",
+                    "final_gate",
+                    "final gate requires command argv or human_question",
+                )
+            )
+        self._final_gate_argv = argv
+        self._final_human_question = human_question
 
     def _tool_set_node_gate(self, arguments: Mapping[str, JsonValue]) -> None:
+        if self._process_mode:
+            raise _ToolRejection(
+                PlanIssue(
+                    "PROCESS_GATE_FROZEN",
+                    "node_gates",
+                    "set_node_gate is unavailable in process mode; move the retained Gate instead",
+                )
+            )
         node_key = _required_key(arguments, "node_key", "node_gates")
         location = f"node_gates.{node_key}"
         node = self._nodes.get(node_key)
@@ -426,28 +730,146 @@ class PlanGraphToolRuntime:
                     (node_key,),
                 )
             )
-        if node.kind not in {PlanNodeKind.WORK, PlanNodeKind.MERGE}:
+        if node.kind not in {
+            PlanNodeKind.WORK,
+            PlanNodeKind.MERGE,
+            PlanNodeKind.REVIEWER,
+        }:
             raise _ToolRejection(
                 PlanIssue(
                     "NODE_GATE_INVALID_KIND",
                     location,
-                    "Automatic node Gates may only be attached to work or merge nodes",
+                    "Node Gates may only be attached to work, merge, or reviewer nodes",
+                    (node_key,),
+                )
+            )
+        name = _required_text(arguments, "name", location)
+        command_argv = _required_gate_argv(arguments, f"{location}.argv")
+        human_question = _optional_text(arguments, "human_question", location)
+        if not command_argv and human_question is None:
+            raise _ToolRejection(
+                PlanIssue(
+                    "INVALID_ARGUMENT",
+                    location,
+                    "node Gate requires command argv or human_question",
                     (node_key,),
                 )
             )
         self._node_gates[node_key] = _DraftNodeGate(
             node_key=node_key,
-            name=_required_text(arguments, "name", location),
-            command_argv=_required_gate_argv(arguments, f"{location}.argv"),
+            name=name,
+            command_argv=command_argv,
+            human_question=human_question,
         )
+
+    def _tool_move_process_gate(self, arguments: Mapping[str, JsonValue]) -> None:
+        if not self._process_mode:
+            raise _ToolRejection(
+                PlanIssue(
+                    "PROCESS_MODE_REQUIRED",
+                    "move_process_gate",
+                    "move_process_gate is available only in process mode",
+                )
+            )
+        raw_gate_id = arguments.get("approved_gate_id")
+        if not isinstance(raw_gate_id, str) or not raw_gate_id.strip():
+            raise _ToolRejection(
+                PlanIssue(
+                    "INVALID_ARGUMENT",
+                    "move_process_gate.approved_gate_id",
+                    "approved_gate_id must be a non-blank UUID",
+                )
+            )
+        try:
+            approved_gate_id = normalize_id(raw_gate_id)
+        except ValueError as error:
+            raise _ToolRejection(
+                PlanIssue(
+                    "INVALID_ARGUMENT",
+                    "move_process_gate.approved_gate_id",
+                    "approved_gate_id must be a valid UUID",
+                )
+            ) from error
+        node_key = _required_key(arguments, "node_key", "move_process_gate")
+        current_owner = self._retained_gate_owners.get(approved_gate_id)
+        if current_owner is None:
+            raise _ToolRejection(
+                PlanIssue(
+                    "UNKNOWN_RETAINED_GATE",
+                    "move_process_gate.approved_gate_id",
+                    f"Retained process Gate {approved_gate_id} does not exist",
+                    (str(approved_gate_id),),
+                )
+            )
+        target = self._nodes.get(node_key)
+        if target is None:
+            raise _ToolRejection(
+                PlanIssue(
+                    "UNKNOWN_NODE",
+                    "move_process_gate.node_key",
+                    f"Node {node_key!r} does not exist",
+                    (node_key,),
+                )
+            )
+        if node_key == current_owner or node_key in self._retained_check_ids:
+            raise _ToolRejection(
+                PlanIssue(
+                    "GATE_TARGET_OCCUPIED",
+                    "move_process_gate.node_key",
+                    "The target node already owns a retained process Gate",
+                    (node_key,),
+                )
+            )
+        if target.kind not in {
+            PlanNodeKind.WORK,
+            PlanNodeKind.MERGE,
+            PlanNodeKind.REVIEWER,
+        }:
+            raise _ToolRejection(
+                PlanIssue(
+                    "RETAINED_GATE_INVALID_KIND",
+                    "move_process_gate.node_key",
+                    "A retained process Gate may move only to a work, merge, or reviewer node",
+                    (node_key,),
+                )
+            )
+        checks = self._retained_check_ids.get(current_owner)
+        if checks is None:
+            raise _ToolRejection(
+                PlanIssue(
+                    "RETAINED_GATE_CORRUPT",
+                    "move_process_gate.approved_gate_id",
+                    "The retained process Gate has no frozen Check group",
+                    (str(approved_gate_id),),
+                )
+            )
+        # Compute both replacements before assigning either mapping so a
+        # rejected or malformed move cannot leave half of the binding changed.
+        retained_checks = dict(self._retained_check_ids)
+        retained_owners = dict(self._retained_gate_owners)
+        del retained_checks[current_owner]
+        retained_checks[node_key] = tuple(checks)
+        retained_owners[approved_gate_id] = node_key
+        self._retained_check_ids = retained_checks
+        self._retained_gate_owners = retained_owners
 
     def _inspect(self) -> dict[str, JsonValue]:
         return {
             "nodes": [_node_document(node) for node in self._nodes.values()],
             "edges": [_edge_document(edge) for edge in self._edges.values()],
             "branches": [_branch_document(branch) for branch in self._branches.values()],
+            "phases": [_phase_document(phase) for phase in self._phases.values()],
             "node_gates": [_node_gate_document(gate) for gate in self._node_gates.values()],
             "final_gate_argv": list(self._final_gate_argv),
+            "final_human_question": self._final_human_question,
+            "process_mode": self._process_mode,
+            "retained_check_ids": {
+                node_key: list(check_ids)
+                for node_key, check_ids in self._retained_check_ids.items()
+            },
+            "retained_gate_owners": {
+                str(gate_id): owner_key for gate_id, owner_key in self._retained_gate_owners.items()
+            },
             "require_final_gate": self._require_final_gate,
             "operations_used": self._operations_used,
             "operations_remaining": MAX_PLAN_OPERATIONS - self._operations_used,
@@ -462,6 +884,7 @@ class PlanGraphToolRuntime:
                 "nodes": len(self._nodes),
                 "edges": len(self._edges),
                 "branches": len(self._branches),
+                "phases": len(self._phases),
             }
         issues = self._validate_graph()
         if not issues:
@@ -481,6 +904,7 @@ class PlanGraphToolRuntime:
                 "nodes": len(self._nodes),
                 "edges": len(self._edges),
                 "branches": len(self._branches),
+                "phases": len(self._phases),
                 "operations_used": self._operations_used,
             }
         self._validation_failures += 1
@@ -563,7 +987,7 @@ class PlanGraphToolRuntime:
                     PlanIssue(
                         "FINAL_SINK_INVALID",
                         f"nodes.{final_node.key}",
-                        "The single terminal node must be a work or merge integration node",
+                        "The single terminal node must be a work, merge, or final reviewer node",
                         (final_node.key,),
                     )
                 )
@@ -576,16 +1000,19 @@ class PlanGraphToolRuntime:
                         (terminal_keys[0],),
                     )
                 )
-            final_gate = self._node_gates.get(terminal_keys[0])
-            if final_gate is not None:
-                issues.append(
-                    PlanIssue(
-                        "NODE_GATE_FINAL_CONFLICT",
-                        f"node_gates.{final_gate.node_key}",
-                        "The final node uses final_gate_argv; it cannot also have a node Gate",
-                        (final_gate.node_key,),
+            if self._process_mode:
+                issues.extend(self._validate_process_final_gate(terminal_keys[0]))
+            else:
+                final_gate = self._node_gates.get(terminal_keys[0])
+                if final_gate is not None:
+                    issues.append(
+                        PlanIssue(
+                            "NODE_GATE_FINAL_CONFLICT",
+                            f"node_gates.{final_gate.node_key}",
+                            "The final node uses the final Gate; it cannot also have a node Gate",
+                            (final_gate.node_key,),
+                        )
                     )
-                )
         for gate in self._node_gates.values():
             node = self._nodes.get(gate.node_key)
             if node is None:
@@ -597,16 +1024,24 @@ class PlanGraphToolRuntime:
                         (gate.node_key,),
                     )
                 )
-            elif node.kind not in {PlanNodeKind.WORK, PlanNodeKind.MERGE}:
+            elif node.kind not in {
+                PlanNodeKind.WORK,
+                PlanNodeKind.MERGE,
+                PlanNodeKind.REVIEWER,
+            }:
                 issues.append(
                     PlanIssue(
                         "NODE_GATE_INVALID_KIND",
                         f"node_gates.{gate.node_key}",
-                        "Automatic node Gates may only be attached to work or merge nodes",
+                        "Node Gates may only be attached to work, merge, or reviewer nodes",
                         (gate.node_key,),
                     )
                 )
-        if self._require_final_gate and not self._final_gate_argv:
+        if (
+            self._require_final_gate
+            and not self._process_mode
+            and not (self._final_gate_argv or self._final_human_question is not None)
+        ):
             issues.append(
                 PlanIssue(
                     "FINAL_GATE_REQUIRED",
@@ -645,13 +1080,139 @@ class PlanGraphToolRuntime:
                         (node.key,),
                     )
                 )
+            if node.kind is PlanNodeKind.REVIEWER:
+                predecessors = tuple(
+                    edge.source
+                    for edge in self._edges.values()
+                    if edge.target == node.key and edge.edge_type is EdgeType.DEPENDENCY
+                )
+                if not predecessors:
+                    issues.append(
+                        PlanIssue(
+                            "REVIEWER_DEPENDENCY_REQUIRED",
+                            f"nodes.{node.key}",
+                            "A reviewer node must depend on the phase outputs it reviews",
+                            (node.key,),
+                        )
+                    )
+                is_final_reviewer = node.key in terminal_keys
+                if not self._has_gate_owner(node.key) and not (
+                    is_final_reviewer
+                    and not self._process_mode
+                    and (self._final_gate_argv or self._final_human_question is not None)
+                ):
+                    issues.append(
+                        PlanIssue(
+                            "REVIEWER_GATE_REQUIRED",
+                            f"nodes.{node.key}",
+                            "A reviewer node must own a node Gate, or the final Gate when it "
+                            "is the final sink",
+                            (node.key,),
+                        )
+                    )
         if self._branches:
             issues.extend(self._validate_exploration_structure())
+        issues.extend(self._validate_phases())
+        if self._process_mode:
+            issues.extend(self._validate_retained_bindings())
         usage = self._usage()
         try:
             usage.require_within(self._budget)
         except ValueError as error:
             issues.append(PlanIssue("EXPLORATION_BUDGET_EXCEEDED", "graph", str(error)))
+        return issues
+
+    def _has_gate_owner(self, node_key: str) -> bool:
+        return node_key in self._node_gates or node_key in self._retained_check_ids
+
+    def _validate_process_final_gate(self, terminal_key: str) -> list[PlanIssue]:
+        if self._process_final_gate_id is None:
+            return [
+                PlanIssue(
+                    "FINAL_GATE_REQUIRED",
+                    "final_gate",
+                    "The original final Gate binding is missing in process mode",
+                )
+            ]
+        owner = self._retained_gate_owners.get(self._process_final_gate_id)
+        if owner != terminal_key:
+            return [
+                PlanIssue(
+                    "FINAL_GATE_TERMINAL_REQUIRED",
+                    "final_gate",
+                    "The original final Gate must remain bound to the unique terminal node",
+                    (terminal_key,),
+                )
+            ]
+        return []
+
+    def _validate_retained_bindings(self) -> list[PlanIssue]:
+        issues: list[PlanIssue] = []
+        owner_keys = set(self._retained_check_ids)
+        bound_keys = set(self._retained_gate_owners.values())
+        if owner_keys != bound_keys:
+            issues.append(
+                PlanIssue(
+                    "RETAINED_GATE_BINDING_INCOMPLETE",
+                    "retained_gate_owners",
+                    "Retained Check and Gate bindings must cover the same node owners",
+                )
+            )
+        seen_owners: set[str] = set()
+        for gate_id, owner_key in self._retained_gate_owners.items():
+            if owner_key in seen_owners:
+                issues.append(
+                    PlanIssue(
+                        "RETAINED_GATE_OWNER_DUPLICATE",
+                        f"retained_gate_owners.{gate_id}",
+                        f"Retained Gate owner {owner_key!r} is assigned more than once",
+                        (owner_key,),
+                    )
+                )
+            seen_owners.add(owner_key)
+            node = self._nodes.get(owner_key)
+            if node is None:
+                issues.append(
+                    PlanIssue(
+                        "RETAINED_GATE_UNKNOWN_NODE",
+                        f"retained_gate_owners.{gate_id}",
+                        f"Retained Gate owner {owner_key!r} is unknown",
+                        (owner_key,),
+                    )
+                )
+            elif node.kind not in {
+                PlanNodeKind.WORK,
+                PlanNodeKind.MERGE,
+                PlanNodeKind.REVIEWER,
+            }:
+                issues.append(
+                    PlanIssue(
+                        "RETAINED_GATE_INVALID_KIND",
+                        f"retained_gate_owners.{gate_id}",
+                        "Retained Gate owners must be work, merge, or reviewer nodes",
+                        (owner_key,),
+                    )
+                )
+            checks = self._retained_check_ids.get(owner_key)
+            if not checks:
+                issues.append(
+                    PlanIssue(
+                        "RETAINED_CHECKS_MISSING",
+                        f"retained_check_ids.{owner_key}",
+                        "Every retained Gate owner must keep a non-empty frozen Check group",
+                        (owner_key,),
+                    )
+                )
+        for owner_key in owner_keys - bound_keys:
+            if owner_key not in self._nodes:
+                issues.append(
+                    PlanIssue(
+                        "RETAINED_CHECK_UNKNOWN_NODE",
+                        f"retained_check_ids.{owner_key}",
+                        f"Retained Check owner {owner_key!r} is unknown",
+                        (owner_key,),
+                    )
+                )
         return issues
 
     def _validate_cycle(self) -> list[PlanIssue]:
@@ -858,6 +1419,163 @@ class PlanGraphToolRuntime:
             if edge.target == node_key and edge.edge_type is EdgeType.DEPENDENCY
         )
 
+    def _validate_phases(self) -> list[PlanIssue]:
+        if not self._phases:
+            return [
+                PlanIssue(
+                    "PHASES_REQUIRED",
+                    "phases",
+                    "The approved execution graph must define at least one Phase",
+                )
+            ]
+        issues: list[PlanIssue] = []
+        memberships: dict[str, int] = {}
+        phase_index: dict[str, int] = {}
+        for index, phase in enumerate(self._phases.values()):
+            location = f"phases.{phase.key}"
+            missing = tuple(key for key in phase.nodes if key not in self._nodes)
+            if missing:
+                issues.append(
+                    PlanIssue(
+                        "PHASE_UNKNOWN_NODE",
+                        location,
+                        f"Phase references unknown node(s) {missing}",
+                        missing,
+                    )
+                )
+                continue
+            for node_key in phase.nodes:
+                if node_key in memberships:
+                    issues.append(
+                        PlanIssue(
+                            "PHASE_NODE_OVERLAP",
+                            location,
+                            f"Node {node_key!r} belongs to multiple Phases",
+                            (node_key,),
+                        )
+                    )
+                memberships[node_key] = index
+                phase_index[node_key] = index
+            reviewer = self._nodes.get(phase.reviewer)
+            if reviewer is None or reviewer.kind is not PlanNodeKind.REVIEWER:
+                issues.append(
+                    PlanIssue(
+                        "PHASE_REVIEWER_INVALID",
+                        location,
+                        "Phase reviewer_node_key must identify a reviewer node",
+                        (phase.reviewer,),
+                    )
+                )
+                continue
+            invalid_rework = tuple(
+                key
+                for key in phase.rework_nodes
+                if key not in phase.nodes
+                or key not in self._nodes
+                or self._nodes[key].kind not in {PlanNodeKind.WORK, PlanNodeKind.MERGE}
+            )
+            if not phase.rework_nodes or invalid_rework:
+                issues.append(
+                    PlanIssue(
+                        "PHASE_REWORK_INVALID",
+                        location,
+                        "Phase rework targets must be existing in-Phase work or merge nodes",
+                        invalid_rework,
+                    )
+                )
+            reachable = self._phase_reverse_reachable(phase.reviewer, set(phase.nodes))
+            if reachable != set(phase.nodes):
+                issues.append(
+                    PlanIssue(
+                        "PHASE_REVIEW_INCOMPLETE",
+                        location,
+                        "Every node in a Phase must feed its Reviewer Gate",
+                        tuple(key for key in phase.nodes if key not in reachable),
+                    )
+                )
+        omitted = tuple(key for key in self._nodes if key not in memberships)
+        if omitted:
+            issues.append(
+                PlanIssue(
+                    "PHASE_PARTITION_INCOMPLETE",
+                    "phases",
+                    f"Phases do not include nodes {omitted}",
+                    omitted,
+                )
+            )
+        for edge in self._edges.values():
+            source_phase = phase_index.get(edge.source)
+            target_phase = phase_index.get(edge.target)
+            if (
+                source_phase is not None
+                and target_phase is not None
+                and source_phase > target_phase
+            ):
+                issues.append(
+                    PlanIssue(
+                        "PHASE_BACK_EDGE",
+                        f"edges.{edge.source}-to-{edge.target}",
+                        "An edge cannot point back to an earlier Phase",
+                        (edge.source, edge.target),
+                    )
+                )
+            if (
+                source_phase is not None
+                and target_phase is not None
+                and source_phase < target_phase
+            ):
+                source = tuple(self._phases.values())[source_phase]
+                if edge.source != source.gate:
+                    issues.append(
+                        PlanIssue(
+                            "PHASE_GATE_BYPASSED",
+                            f"edges.{edge.source}-to-{edge.target}",
+                            "Cross-Phase edges must originate at the source Phase Gate",
+                            (edge.source, source.gate, edge.target),
+                        )
+                    )
+        ordered = tuple(self._phases.values())
+        for index, phase in enumerate(ordered[1:], start=1):
+            phase_nodes = set(phase.nodes)
+            internal_targets = {
+                edge.target
+                for edge in self._edges.values()
+                if edge.source in phase_nodes and edge.target in phase_nodes
+            }
+            roots = phase_nodes - internal_targets
+            previous_gate = ordered[index - 1].gate
+            for root in roots:
+                if not any(
+                    edge.source == previous_gate
+                    and edge.target == root
+                    and edge.edge_type is EdgeType.DEPENDENCY
+                    for edge in self._edges.values()
+                ):
+                    issues.append(
+                        PlanIssue(
+                            "PHASE_GATE_DEPENDENCY_REQUIRED",
+                            f"phases.{phase.key}",
+                            f"Phase root {root!r} must depend on the previous Phase Gate",
+                            (previous_gate, root),
+                        )
+                    )
+        return issues
+
+    def _phase_reverse_reachable(self, target: str, allowed: set[str]) -> set[str]:
+        incoming: dict[str, list[str]] = {key: [] for key in allowed}
+        for edge in self._edges.values():
+            if edge.source in allowed and edge.target in allowed:
+                incoming[edge.target].append(edge.source)
+        reached: set[str] = set()
+        pending = [target]
+        while pending:
+            key = pending.pop()
+            if key in reached:
+                continue
+            reached.add(key)
+            pending.extend(incoming[key])
+        return reached
+
     def _terminal_node_keys(self) -> tuple[str, ...]:
         sources = {edge.source for edge in self._edges.values()}
         return tuple(key for key in self._nodes if key not in sources)
@@ -883,8 +1601,12 @@ class PlanGraphToolRuntime:
                 title=node.title,
                 instruction=node.instruction,
                 kind=node.kind,
-                require_completion_checks=node.key == final_node_key,
+                require_completion_checks=(
+                    False if self._process_mode else node.key == final_node_key
+                ),
                 required_dependency_keys=tuple(dependencies.get(node.key, ())),
+                required_capabilities=node.required_capabilities,
+                session_policy=node.session_policy,
             )
             for node in self._nodes.values()
         )
@@ -908,24 +1630,44 @@ class PlanGraphToolRuntime:
             )
             for branch in self._branches.values()
         )
+        phases = tuple(
+            PhaseTemplate(
+                key=phase.key,
+                title=phase.title,
+                node_keys=phase.nodes,
+                reviewer_node_key=phase.reviewer,
+                gate_node_key=phase.gate,
+                rework_node_keys=phase.rework_nodes,
+            )
+            for phase in self._phases.values()
+        )
         usage = self._usage()
         return PlanTemplate(
             nodes=nodes,
             edges=edges,
             branches=branches,
-            node_gates=tuple(
-                NodeGateTemplate(
-                    node_key=gate.node_key,
-                    name=gate.name,
-                    command_argv=gate.command_argv,
+            phases=phases,
+            node_gates=(
+                ()
+                if self._process_mode
+                else tuple(
+                    NodeGateTemplate(
+                        node_key=gate.node_key,
+                        name=gate.name,
+                        command_argv=gate.command_argv,
+                        human_question=gate.human_question,
+                    )
+                    for gate in self._node_gates.values()
                 )
-                for gate in self._node_gates.values()
             ),
             budget=self._budget,
             usage=usage,
             planner_event_types=self._planner_event_types,
             final_node_key=final_node_key,
-            final_gate_argv=self._final_gate_argv,
+            final_gate_argv=() if self._process_mode else self._final_gate_argv,
+            final_human_question=(None if self._process_mode else self._final_human_question),
+            retained_check_ids=self._retained_check_ids,
+            retained_gate_owners=self._retained_gate_owners,
         )
 
 
@@ -939,6 +1681,10 @@ def _node_document(node: _DraftNode) -> dict[str, JsonValue]:
         "title": node.title,
         "instruction": node.instruction,
         "kind": node.kind.value,
+        "required_capabilities": cast(
+            JsonValue, sorted(item.name for item in node.required_capabilities)
+        ),
+        "session_policy": node.session_policy.value,
     }
 
 
@@ -962,11 +1708,23 @@ def _branch_document(branch: _DraftBranch) -> dict[str, JsonValue]:
     }
 
 
+def _phase_document(phase: _DraftPhase) -> dict[str, JsonValue]:
+    return {
+        "phase_key": phase.key,
+        "title": phase.title,
+        "node_keys": list(phase.nodes),
+        "reviewer_node_key": phase.reviewer,
+        "gate_node_key": phase.gate,
+        "rework_node_keys": list(phase.rework_nodes),
+    }
+
+
 def _node_gate_document(gate: _DraftNodeGate) -> dict[str, JsonValue]:
     return {
         "node_key": gate.node_key,
         "name": gate.name,
         "command_argv": list(gate.command_argv),
+        "human_question": gate.human_question,
     }
 
 
@@ -1009,17 +1767,96 @@ def _required_text(
     return value.strip()
 
 
+def _optional_capabilities(
+    arguments: Mapping[str, JsonValue],
+    name: str,
+    location: str,
+    *,
+    default: frozenset[WorkerCapability] = frozenset(),
+) -> frozenset[WorkerCapability]:
+    if name not in arguments or arguments[name] is None:
+        return default
+    value = arguments.get(name, [])
+    if not isinstance(value, list):
+        raise _ToolRejection(
+            PlanIssue(
+                "INVALID_ARGUMENT",
+                f"{location}.{name}",
+                f"{name} must be an array of capability names",
+            )
+        )
+    if len(value) > 32:
+        raise _ToolRejection(
+            PlanIssue(
+                "INVALID_ARGUMENT",
+                f"{location}.{name}",
+                f"{name} must contain at most 32 capability names",
+            )
+        )
+    capabilities: list[WorkerCapability] = []
+    for index, item in enumerate(value):
+        if not isinstance(item, str) or not item.strip() or len(item.strip()) > 128:
+            raise _ToolRejection(
+                PlanIssue(
+                    "INVALID_CAPABILITY",
+                    f"{location}.{name}[{index}]",
+                    "capability names must be non-blank strings of at most 128 characters",
+                )
+            )
+        try:
+            capabilities.append(WorkerCapability(item.strip()))
+        except ValueError as error:
+            raise _ToolRejection(
+                PlanIssue(
+                    "INVALID_CAPABILITY",
+                    f"{location}.{name}[{index}]",
+                    str(error),
+                )
+            ) from error
+    if len(set(capabilities)) != len(capabilities):
+        raise _ToolRejection(
+            PlanIssue(
+                "DUPLICATE_CAPABILITY",
+                f"{location}.{name}",
+                "capability names must be unique",
+            )
+        )
+    return frozenset(capabilities)
+
+
+def _optional_session_policy(
+    arguments: Mapping[str, JsonValue],
+    name: str,
+    location: str,
+    *,
+    default: SessionPolicy = SessionPolicy.NEW,
+) -> SessionPolicy:
+    if name not in arguments or arguments[name] is None:
+        return default
+    value = arguments.get(name, SessionPolicy.NEW.value)
+    if not isinstance(value, str) or value not in _SESSION_POLICIES:
+        raise _ToolRejection(
+            PlanIssue(
+                "INVALID_SESSION_POLICY",
+                f"{location}.{name}",
+                f"{name} must be one of {list(_SESSION_POLICIES)}; use 'new' unless "
+                "the selected Worker preset explicitly supports another policy",
+            )
+        )
+    return SessionPolicy(value)
+
+
 def _required_gate_argv(
     arguments: Mapping[str, JsonValue],
     location: str,
 ) -> tuple[str, ...]:
     value = arguments.get("argv")
-    if not isinstance(value, list) or not value:
+    if not isinstance(value, list):
         raise _ToolRejection(
             PlanIssue(
                 "INVALID_ARGUMENT",
                 location,
-                "argv must be a non-empty array of command arguments",
+                "argv must be an array of command arguments",
             )
         )
     if len(value) > 128:
@@ -1130,12 +1967,29 @@ _GATE_ARG_PROPERTY: dict[str, JsonValue] = {
     "minLength": 1,
     "maxLength": 4096,
 }
+_HUMAN_QUESTION_PROPERTY: dict[str, JsonValue] = {
+    "type": ["string", "null"],
+    "minLength": 1,
+    "maxLength": 4000,
+}
+_CAPABILITY_PROPERTY: dict[str, JsonValue] = {
+    "type": "string",
+    "minLength": 1,
+    "maxLength": 128,
+}
 
 _NODE_PARAMETERS: dict[str, JsonValue] = {
     "key": _KEY_PROPERTY,
     "title": _LABEL_PROPERTY,
     "instruction": _INSTRUCTION_PROPERTY,
     "kind": _NODE_KIND_PROPERTY,
+    "required_capabilities": {
+        "type": ["array", "null"],
+        "items": _CAPABILITY_PROPERTY,
+        "maxItems": 32,
+        "uniqueItems": True,
+    },
+    "session_policy": {"type": ["string", "null"], "enum": [*_SESSION_POLICIES, None]},
 }
 
 _TOOL_ORDER = (
@@ -1145,30 +1999,56 @@ _TOOL_ORDER = (
     "add_plan_edge",
     "remove_plan_edge",
     "set_plan_branch",
+    "set_plan_phase",
     "set_node_gate",
     "set_final_gate",
     "inspect_plan",
     "finish_plan",
 )
+_PROCESS_TOOL_ORDER = (*_TOOL_ORDER[:-2], "move_process_gate", *_TOOL_ORDER[-2:])
 
 _TOOL_DEFINITIONS: dict[str, ToolDefinition] = {
     "add_plan_node": ToolDefinition(
         "add_plan_node",
-        "Add one plan node with a stable local key, title, instruction, and kind.",
+        "Add one plan node with a stable local key, title, instruction, kind, optional "
+        "required capabilities, and optional Session policy. Omitted values mean no required "
+        "capabilities and 'new'; send null for these defaults. Capabilities are routing "
+        "requirements, not new Tool "
+        "permissions; Session policy must match a selected Worker preset and does not itself "
+        "create shared Phase Session behavior.",
         {
             "type": "object",
             "additionalProperties": False,
-            "required": ["key", "title", "instruction", "kind"],
+            "required": [
+                "key",
+                "title",
+                "instruction",
+                "kind",
+                "required_capabilities",
+                "session_policy",
+            ],
             "properties": _NODE_PARAMETERS,
         },
     ),
     "update_plan_node": ToolDefinition(
         "update_plan_node",
-        "Replace the title, instruction, and kind of an existing plan node.",
+        "Replace the title, instruction, kind, and any supplied required capabilities or "
+        "Session policy of an existing plan node. Omitted optional values preserve the existing "
+        "node settings; send null to preserve them, or [] to clear capabilities. "
+        "Capabilities are routing requirements, not new Tool permissions; "
+        "Session policy must match a selected Worker preset and does not itself create shared "
+        "Phase Session behavior.",
         {
             "type": "object",
             "additionalProperties": False,
-            "required": ["key", "title", "instruction", "kind"],
+            "required": [
+                "key",
+                "title",
+                "instruction",
+                "kind",
+                "required_capabilities",
+                "session_policy",
+            ],
             "properties": _NODE_PARAMETERS,
         },
     ),
@@ -1242,39 +2122,98 @@ _TOOL_DEFINITIONS: dict[str, ToolDefinition] = {
             },
         },
     ),
-    "set_final_gate": ToolDefinition(
-        "set_final_gate",
-        "Set the final behavioral Command Check as an argv array, never shell text.",
+    "set_plan_phase": ToolDefinition(
+        "set_plan_phase",
+        "Create, replace, or remove one ordered execution Phase ending in a Reviewer Gate.",
         {
             "type": "object",
             "additionalProperties": False,
-            "required": ["argv"],
+            "required": [
+                "phase_key",
+                "title",
+                "node_keys",
+                "reviewer_node_key",
+                "gate_node_key",
+                "rework_node_keys",
+                "remove",
+            ],
+            "properties": {
+                "phase_key": _KEY_PROPERTY,
+                "title": {**_LABEL_PROPERTY, "type": ["string", "null"]},
+                "node_keys": {
+                    "type": ["array", "null"],
+                    "items": _KEY_PROPERTY,
+                    "minItems": 1,
+                    "uniqueItems": True,
+                },
+                "reviewer_node_key": {**_KEY_PROPERTY, "type": ["string", "null"]},
+                "gate_node_key": {**_KEY_PROPERTY, "type": ["string", "null"]},
+                "rework_node_keys": {
+                    "type": ["array", "null"],
+                    "items": _KEY_PROPERTY,
+                    "minItems": 1,
+                    "uniqueItems": True,
+                },
+                "remove": {"type": "boolean"},
+            },
+        },
+    ),
+    "set_final_gate": ToolDefinition(
+        "set_final_gate",
+        "Set the final Gate with command argv, a human question, or both.",
+        {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["argv", "human_question"],
             "properties": {
                 "argv": {
                     "type": "array",
-                    "minItems": 1,
+                    "minItems": 0,
                     "maxItems": 128,
                     "items": _GATE_ARG_PROPERTY,
-                }
+                },
+                "human_question": _HUMAN_QUESTION_PROPERTY,
             },
         },
     ),
     "set_node_gate": ToolDefinition(
         "set_node_gate",
-        "Set or replace one automatic behavioral Gate on an existing non-final work or merge node.",
+        "Set or replace one Gate on a non-final work, merge, or reviewer node.",
         {
             "type": "object",
             "additionalProperties": False,
-            "required": ["node_key", "name", "argv"],
+            "required": ["node_key", "name", "argv", "human_question"],
             "properties": {
                 "node_key": _KEY_PROPERTY,
                 "name": _LABEL_PROPERTY,
                 "argv": {
                     "type": "array",
-                    "minItems": 1,
+                    "minItems": 0,
                     "maxItems": 128,
                     "items": _GATE_ARG_PROPERTY,
                 },
+                "human_question": _HUMAN_QUESTION_PROPERTY,
+            },
+        },
+    ),
+    "move_process_gate": ToolDefinition(
+        "move_process_gate",
+        "Move one retained approved Gate as a whole to an existing ungated work, merge, or "
+        "reviewer node. The approved Gate ID and its Check IDs remain unchanged; this does not "
+        "create, delete, or edit Checks.",
+        {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["approved_gate_id", "node_key"],
+            "properties": {
+                "approved_gate_id": {
+                    "type": "string",
+                    "pattern": (
+                        r"^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-"
+                        r"[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$"
+                    ),
+                },
+                "node_key": _KEY_PROPERTY,
             },
         },
     ),

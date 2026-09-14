@@ -343,6 +343,210 @@
         }
       }
     },
+    "/api/v1/commands/propose-process": {
+      "post": {
+        "summary": "Propose Process",
+        "operationId": "proposeProcess",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProposeProcessRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Process draft request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "commands.schema.json#/$defs/ProcessDraftAcceptedResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Unprocessable Entity",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/commands/review-process": {
+      "post": {
+        "summary": "Review Process",
+        "operationId": "reviewProcess",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReviewProcessRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Process review",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "commands.schema.json#/$defs/ProcessReviewAcceptedResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Unprocessable Entity",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/commands/apply-process": {
+      "post": {
+        "summary": "Apply Process",
+        "operationId": "applyProcess",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ApplyProcessRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Applied ProcessRevision",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "queries.schema.json#/$defs/ProcessRevisionResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Unprocessable Entity",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/plans/approve": {
       "post": {
         "summary": "Approve Plan",
@@ -475,6 +679,226 @@
                 }
               }
             }
+          }
+        }
+      }
+    },
+    "/api/v1/check-runs/{check_run_id}/decision": {
+      "post": {
+        "summary": "Decide Human Check",
+        "operationId": "decideHumanCheck",
+        "parameters": [
+          {
+            "name": "check_run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$",
+              "title": "Check Run Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DecideHumanCheckRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Run state",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "commands.schema.json#/$defs/RunResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/api/v1/runs/{run_id}/interventions": {
+      "get": {
+        "summary": "Get Run Interventions",
+        "operationId": "get_run_interventions_api_v1_runs__run_id__interventions_get",
+        "parameters": [
+          {
+            "name": "run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$",
+              "title": "Run Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Run interventions",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "queries.schema.json#/$defs/InterventionListResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/api/v1/interventions/{intervention_id}/reply": {
+      "post": {
+        "summary": "Reply Intervention",
+        "operationId": "replyIntervention",
+        "parameters": [
+          {
+            "name": "intervention_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$",
+              "title": "Intervention Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReplyInterventionRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Run state",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "commands.schema.json#/$defs/RunResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
           }
         }
       }
@@ -1393,6 +1817,366 @@
         }
       }
     },
+    "/api/v1/runs/{run_id}/plan": {
+      "get": {
+        "summary": "Get Run Execution Plan",
+        "operationId": "getRunPlan",
+        "parameters": [
+          {
+            "name": "run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$",
+              "title": "Run Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Current Run execution PlanGraph",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "queries.schema.json#/$defs/PlanGraphResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/api/v1/process-revisions/{process_revision_id}": {
+      "get": {
+        "summary": "Get Process Revision",
+        "operationId": "getProcessRevision",
+        "parameters": [
+          {
+            "name": "process_revision_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$",
+              "title": "Process Revision Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "ProcessRevision",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "queries.schema.json#/$defs/ProcessRevisionResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/api/v1/process-drafts/{draft_id}": {
+      "get": {
+        "summary": "Get Process Draft",
+        "operationId": "getProcessDraft",
+        "parameters": [
+          {
+            "name": "draft_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$",
+              "title": "Draft Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Process draft",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "queries.schema.json#/$defs/ProcessDraftResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/api/v1/process-reviews/{review_id}": {
+      "get": {
+        "summary": "Get Process Review",
+        "operationId": "getProcessReview",
+        "parameters": [
+          {
+            "name": "review_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$",
+              "title": "Review Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Process review",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "queries.schema.json#/$defs/ProcessReviewResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/api/v1/process-drafts/{draft_id}/reviews": {
+      "get": {
+        "summary": "Get Process Draft Reviews",
+        "operationId": "getProcessDraftReviews",
+        "parameters": [
+          {
+            "name": "draft_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$",
+              "title": "Draft Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Process draft reviews",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "queries.schema.json#/$defs/ProcessDraftReviewsResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/api/v1/runs/{run_id}/process-drafts": {
+      "get": {
+        "summary": "Get Run Process Drafts",
+        "operationId": "getRunProcessDrafts",
+        "parameters": [
+          {
+            "name": "run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$",
+              "title": "Run Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Run process drafts",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "queries.schema.json#/$defs/RunProcessDraftsResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
     "/api/v1/runs/{run_id}/trace": {
       "get": {
         "summary": "Get Execution Trace",
@@ -1509,6 +2293,40 @@
               }
             },
             "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/api/v1/runs/{run_id}/adoptions": {
+      "get": {
+        "summary": "List Result Adoptions",
+        "operationId": "list_result_adoptions_api_v1_runs__run_id__adoptions_get",
+        "parameters": [{
+          "name": "run_id", "in": "path", "required": true,
+          "schema": {
+            "type": "string",
+            "pattern": "^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$",
+            "title": "Run Id"
+          }
+        }],
+        "responses": {
+          "200": {
+            "description": "Run result adoptions",
+            "content": {"application/json": {"schema": {
+              "$ref": "queries.schema.json#/$defs/ResultAdoptionListResponse"
+            }}}
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ErrorResponse"}}}
+          },
+          "422": {
+            "description": "Unprocessable Entity",
+            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ErrorResponse"}}}
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ErrorResponse"}}}
           }
         }
       }
@@ -1927,9 +2745,45 @@
       }
     }
   },
-  "components": {
+    "components": {
     "schemas": {
       "DiscussPlanRequest": {"$ref": "commands.schema.json#/$defs/DiscussPlanRequest"},
+      "ReviewProcessRequest": {
+        "properties": {
+          "idempotency_key": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Idempotency Key"
+          },
+          "draft_id": {
+            "type": "string",
+            "pattern": "^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$",
+            "title": "Draft Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": ["idempotency_key", "draft_id"],
+        "title": "ReviewProcessRequest"
+      },
+      "ApplyProcessRequest": {
+        "properties": {
+          "idempotency_key": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Idempotency Key"
+          },
+          "review_id": {
+            "type": "string",
+            "pattern": "^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$",
+            "title": "Review Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": ["idempotency_key", "review_id"],
+        "title": "ApplyProcessRequest"
+      },
       "ApprovePlanRequest": {
         "properties": {
           "idempotency_key": {
@@ -1983,6 +2837,85 @@
           "idempotency_key"
         ],
         "title": "CancelRunRequest"
+      },
+      "DecideHumanCheckRequest": {
+        "properties": {
+          "idempotency_key": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Idempotency Key"
+          },
+          "request_token": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 64,
+            "pattern": "^[0-9a-fA-F]{64}$",
+            "title": "Request Token"
+          },
+          "passed": {
+            "type": "boolean",
+            "title": "Passed"
+          },
+          "actor": {
+            "type": "string",
+            "maxLength": 8000,
+            "minLength": 1,
+            "title": "Actor"
+          },
+          "comment": {
+            "type": "string",
+            "maxLength": 8000,
+            "minLength": 1,
+            "title": "Comment"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "idempotency_key",
+          "request_token",
+          "passed",
+          "actor",
+          "comment"
+        ],
+        "title": "DecideHumanCheckRequest"
+      },
+      "ReplyInterventionRequest": {
+        "properties": {
+          "idempotency_key": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Idempotency Key"
+          },
+          "request_token": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 64,
+            "pattern": "^[0-9a-fA-F]{64}$",
+            "title": "Request Token"
+          },
+          "actor": {
+            "type": "string",
+            "maxLength": 8000,
+            "minLength": 1,
+            "title": "Actor"
+          },
+          "message": {
+            "type": "string",
+            "maxLength": 8000,
+            "minLength": 1,
+            "title": "Message"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "idempotency_key",
+          "request_token",
+          "actor",
+          "message"
+        ],
+        "title": "ReplyInterventionRequest"
       },
       "CreateGoalRequest": {
         "properties": {
@@ -2166,11 +3099,21 @@
           },
           "criteria": {
             "items": {
-              "type": "string",
-              "enum": [
-                "artifact:non-empty",
-                "command:exit-zero",
-                "semantic:required-terms"
+              "anyOf": [
+                {
+                  "type": "string",
+                  "enum": [
+                    "artifact:non-empty",
+                    "command:exit-zero",
+                    "semantic:required-terms"
+                  ]
+                },
+                {
+                  "type": "string",
+                  "maxLength": 8000,
+                  "minLength": 7,
+                  "pattern": "^human:\\s*\\S.*$"
+                }
               ]
             },
             "type": "array",
@@ -2187,6 +3130,34 @@
           "criteria"
         ],
         "title": "ProposePlanRequest"
+      },
+      "ProposeProcessRequest": {
+        "properties": {
+          "idempotency_key": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Idempotency Key"
+          },
+          "run_id": {
+            "type": "string",
+            "pattern": "^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$",
+            "title": "Run Id"
+          },
+          "reason": {
+            "type": "string",
+            "maxLength": 16000,
+            "minLength": 1,
+            "title": "Reason"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "idempotency_key",
+          "run_id",
+          "reason"
+        ],
+        "title": "ProposeProcessRequest"
       },
       "ReplanPlanRequest": {
         "properties": {
@@ -2214,11 +3185,21 @@
           },
           "criteria": {
             "items": {
-              "type": "string",
-              "enum": [
-                "artifact:non-empty",
-                "command:exit-zero",
-                "semantic:required-terms"
+              "anyOf": [
+                {
+                  "type": "string",
+                  "enum": [
+                    "artifact:non-empty",
+                    "command:exit-zero",
+                    "semantic:required-terms"
+                  ]
+                },
+                {
+                  "type": "string",
+                  "maxLength": 8000,
+                  "minLength": 7,
+                  "pattern": "^human:\\s*\\S.*$"
+                }
               ]
             },
             "type": "array",
@@ -2274,26 +3255,305 @@
         ],
         "title": "RunActionRequest"
       },
-      "StartRunRequest": {
+      "ExecutionCodexServerRequest": {
+        "additionalProperties": false,
         "properties": {
-          "idempotency_key": {
-            "type": "string",
-            "minLength": 1,
-            "title": "Idempotency Key"
+          "executable": {
+            "items": {
+              "minLength": 1,
+              "pattern": "^[^\\x00]*[^\\s\\x00][^\\x00]*$",
+              "type": "string"
+            },
+            "minItems": 1,
+            "title": "Executable",
+            "type": "array"
           },
-          "plan_revision_id": {
-            "type": "string",
-            "pattern": "^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$",
-            "title": "Plan Revision Id"
+          "approval_policy": {
+            "enum": [
+              "untrusted",
+              "on-request",
+              "never"
+            ],
+            "title": "Approval Policy",
+            "type": "string"
+          },
+          "sandbox": {
+            "enum": [
+              "read-only",
+              "workspace-write",
+              "danger-full-access"
+            ],
+            "title": "Sandbox",
+            "type": "string"
           }
         },
+        "required": [
+          "executable",
+          "approval_policy",
+          "sandbox"
+        ],
+        "title": "ExecutionCodexServerRequest",
+        "type": "object"
+      },
+      "GoalWorkerBudgetRequest": {
         "additionalProperties": false,
-        "type": "object",
+        "properties": {
+          "max_worker_attempts": {
+            "minimum": 1,
+            "title": "Max Worker Attempts",
+            "type": "integer"
+          }
+        },
+        "required": ["max_worker_attempts"],
+        "title": "GoalWorkerBudgetRequest",
+        "type": "object"
+      },
+      "ExecutionConfigRequest": {
+        "additionalProperties": false,
+        "description": "Explicit confirmation of the host's credential-free execution settings.",
+        "properties": {
+          "config_version": {
+            "maximum": 1,
+            "minimum": 1,
+            "title": "Config Version",
+            "type": "integer"
+          },
+          "worker_kind": {
+            "enum": [
+              "builtin",
+              "codex-server"
+            ],
+            "title": "Worker Kind",
+            "type": "string"
+          },
+          "model": {
+            "minLength": 1,
+            "pattern": "^[^\\x00]*[^\\s\\x00][^\\x00]*$",
+            "title": "Model",
+            "type": "string"
+          },
+          "reasoning_effort": {
+            "anyOf": [
+              {
+                "minLength": 1,
+                "pattern": "^[^\\x00]*[^\\s\\x00][^\\x00]*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reasoning Effort"
+          },
+          "capacity": {
+            "minimum": 1,
+            "title": "Capacity",
+            "type": "integer"
+          },
+          "workspace": {
+            "minLength": 1,
+            "pattern": "^[^\\x00]*[^\\s\\x00][^\\x00]*$",
+            "title": "Workspace",
+            "type": "string"
+          },
+          "allowed_commands": {
+            "description": "Distinct argv arrays; duplicates are checked after text normalization.",
+            "items": {
+              "items": {
+                "minLength": 1,
+                "pattern": "^[^\\x00]*[^\\s\\x00][^\\x00]*$",
+                "type": "string"
+              },
+              "minItems": 1,
+              "type": "array"
+            },
+            "title": "Allowed Commands",
+            "type": "array",
+            "uniqueItems": true
+          },
+          "available_shells": {
+            "description": "Distinct shell names; duplicates are checked after text normalization.",
+            "items": {
+              "minLength": 1,
+              "pattern": "^[^\\x00]*[^\\s\\x00][^\\x00]*$",
+              "type": "string"
+            },
+            "title": "Available Shells",
+            "type": "array",
+            "uniqueItems": true
+          },
+          "git_permissions": {
+            "items": {
+              "enum": [
+                "git.read",
+                "git.local_write",
+                "git.remote_write",
+                "git.dangerous"
+              ],
+              "type": "string"
+            },
+            "title": "Git Permissions",
+            "type": "array"
+          },
+          "endpoint_capabilities": {
+            "$ref": "#/components/schemas/ExecutionEndpointCapabilitiesRequest"
+          },
+          "command_timeout_seconds": {
+            "exclusiveMinimum": 0,
+            "title": "Command Timeout Seconds",
+            "type": "number"
+          },
+          "codex_server": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ExecutionCodexServerRequest"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "goal_worker_budget": {
+            "anyOf": [{"$ref": "#/components/schemas/GoalWorkerBudgetRequest"}, {"type": "null"}],
+            "default": null
+          },
+          "process_adjustment": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ProcessAdjustmentPolicyRequest"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "required": [
+          "config_version",
+          "worker_kind",
+          "model",
+          "reasoning_effort",
+          "capacity",
+          "workspace",
+          "allowed_commands",
+          "available_shells",
+          "git_permissions",
+          "endpoint_capabilities",
+          "command_timeout_seconds"
+        ],
+        "title": "ExecutionConfigRequest",
+        "type": "object"
+      },
+      "ExecutionEndpointCapabilitiesRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "supports_background": {
+            "title": "Supports Background",
+            "type": "boolean"
+          },
+          "supports_unique_items": {
+            "title": "Supports Unique Items",
+            "type": "boolean"
+          },
+          "supports_idempotent_create": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Supports Idempotent Create"
+          },
+          "supports_previous_response_id": {
+            "title": "Supports Previous Response Id",
+            "type": "boolean"
+          },
+          "supports_response_retrieval": {
+            "title": "Supports Response Retrieval",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "supports_background",
+          "supports_unique_items",
+          "supports_idempotent_create",
+          "supports_previous_response_id",
+          "supports_response_retrieval"
+        ],
+        "title": "ExecutionEndpointCapabilitiesRequest",
+        "type": "object"
+      },
+      "ProcessAdjustmentPolicyRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "max_per_goal": {
+            "minimum": 1,
+            "title": "Max Per Goal",
+            "type": "integer"
+          },
+          "model": {
+            "minLength": 1,
+            "pattern": "^[^\\x00]*[^\\s\\x00][^\\x00]*$",
+            "title": "Model",
+            "type": "string"
+          },
+          "reasoning_effort": {
+            "anyOf": [
+              {
+                "minLength": 1,
+                "pattern": "^[^\\x00]*[^\\s\\x00][^\\x00]*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reasoning Effort"
+          }
+        },
+        "required": [
+          "max_per_goal",
+          "model",
+          "reasoning_effort"
+        ],
+        "title": "ProcessAdjustmentPolicyRequest",
+        "type": "object"
+      },
+      "StartRunRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "idempotency_key": {
+            "minLength": 1,
+            "title": "Idempotency Key",
+            "type": "string"
+          },
+          "plan_revision_id": {
+            "pattern": "^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$",
+            "title": "Plan Revision Id",
+            "type": "string"
+          },
+          "execution_config": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ExecutionConfigRequest"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
         "required": [
           "idempotency_key",
           "plan_revision_id"
         ],
-        "title": "StartRunRequest"
+        "title": "StartRunRequest",
+        "type": "object"
       }
     }
   }

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Protocol
@@ -13,9 +13,12 @@ from ehai.application.builtin_agent import (
     BuiltinSessionEvent,
     BuiltinSessionEventType,
 )
+from ehai.application.goal_budgets import goal_worker_attempts_used, goal_worker_budget
+from ehai.application.interventions import list_interventions
 from ehai.application.planning_dialogue import PlanningConversationView, planning_conversation
 from ehai.application.ports import ReadSession, StoredEvent
-from ehai.application.sanitization import sanitize_json_object
+from ehai.application.process_reviews import ProcessReviewView, process_review_history
+from ehai.application.sanitization import redact_sensitive_text, sanitize_json_object
 from ehai.domain.artifacts import Artifact, ArtifactKind
 from ehai.domain.checking import (
     CheckKind,
@@ -25,6 +28,9 @@ from ehai.domain.checking import (
     CheckRunStatus,
     CheckSpec,
     GateDecision,
+    HumanCheckDecision,
+    HumanCheckEvidence,
+    HumanCheckRequest,
 )
 from ehai.domain.execution import Attempt, AttemptStatus, Run, RunStatus
 from ehai.domain.planning import (
@@ -35,9 +41,12 @@ from ehai.domain.planning import (
     PlanNode,
     PlanNodeKind,
     PlanNodeStatus,
+    PlanPhase,
     PlanRevision,
     PlanRevisionStatus,
 )
+from ehai.domain.process import ProcessRevision, ProcessRevisionSource
+from ehai.domain.process_drafts import ProcessDraft, ProcessDraftStatus
 from ehai.domain.workers import (
     AttemptActivity,
     AttemptExecutionKind,
@@ -80,6 +89,13 @@ class QueryNotFoundError(LookupError):
 
 
 @dataclass(frozen=True, slots=True)
+class GoalWorkerBudgetView:
+    max_worker_attempts: int
+    used: int
+    remaining: int
+
+
+@dataclass(frozen=True, slots=True)
 class RunView:
     """Public current-state view of one Run."""
 
@@ -91,6 +107,8 @@ class RunView:
     started_at: datetime | None
     ended_at: datetime | None
     status_reason: str | None
+    predecessor_run_id: ID | None = None
+    goal_worker_budget: GoalWorkerBudgetView | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -104,6 +122,8 @@ class PlanNodeView:
     required_dependency_ids: tuple[ID, ...]
     required_check_ids: tuple[ID, ...]
     status: PlanNodeStatus
+    required_capabilities: tuple[str, ...]
+    session_policy: SessionPolicy
 
 
 @dataclass(frozen=True, slots=True)
@@ -131,10 +151,23 @@ class BranchView:
 
 
 @dataclass(frozen=True, slots=True)
+class PlanPhaseView:
+    """One immutable phase and its Reviewer-owned Gate boundary."""
+
+    phase_id: ID
+    title: str
+    node_ids: tuple[ID, ...]
+    reviewer_node_id: ID
+    gate_node_id: ID
+    rework_node_ids: tuple[ID, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class PlanGraphView:
     """Plan metadata and graph structure, deliberately excluding execution trace data."""
 
     plan_revision_id: ID
+    process_revision_id: ID | None
     goal_id: ID
     version: int
     completion_contract_id: ID
@@ -146,7 +179,57 @@ class PlanGraphView:
     nodes: tuple[PlanNodeView, ...]
     edges: tuple[EdgeView, ...]
     branches: tuple[BranchView, ...]
+    phases: tuple[PlanPhaseView, ...]
     design_document: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ProcessRevisionView:
+    """Public immutable identity and graph snapshot for one process revision."""
+
+    process_revision_id: ID
+    run_id: ID
+    version: int
+    parent_process_revision_id: ID | None
+    source: ProcessRevisionSource
+    reason: str
+    created_at: datetime
+    graph: PlanGraphView
+    gate_owners: Mapping[ID, ID]
+
+
+@dataclass(frozen=True, slots=True)
+class ProcessDraftView:
+    """Public status and retained graph baseline for one process draft."""
+
+    draft_id: ID
+    run_id: ID
+    parent_process_revision_id: ID
+    planner_session_ref_id: ID
+    status: ProcessDraftStatus
+    reason: str
+    created_at: datetime
+    completed_at: datetime | None
+    error: str | None
+    base_is_current: bool
+    base_execution_plan: PlanGraphView
+    candidate: ProcessRevisionView | None
+
+
+@dataclass(frozen=True, slots=True)
+class RunProcessDraftsView:
+    """Public process drafts belonging to one Run."""
+
+    run_id: ID
+    drafts: tuple[ProcessDraftView, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class ProcessDraftReviewsView:
+    """Append-only independent process reviews belonging to one draft."""
+
+    draft_id: ID
+    reviews: tuple[ProcessReviewView, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -155,6 +238,7 @@ class AttemptView:
 
     attempt_id: ID
     run_id: ID
+    process_revision_id: ID | None
     plan_node_id: ID
     sequence: int
     status: AttemptStatus
@@ -208,6 +292,7 @@ class CheckResultView:
     evidence_artifact_ids: tuple[ID, ...]
     output: str | None
     failure_reason: str | None
+    adoption_id: ID | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -225,6 +310,38 @@ class CheckRunView:
     ended_at: datetime | None
     result: CheckResultView | None
     failure_reason: str | None
+    human_request: HumanCheckRequestView | None
+    human_decision: HumanCheckDecisionView | None
+    adoption_id: ID | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class HumanCheckEvidenceView:
+    """Public artifact version presented for a human Check."""
+
+    artifact_id: ID
+    sha256: str
+
+
+@dataclass(frozen=True, slots=True)
+class HumanCheckRequestView:
+    """Public immutable request snapshot awaiting human judgment."""
+
+    plan_revision_id: ID
+    completion_contract_id: ID
+    completion_contract_version: int
+    question: str
+    evidence: tuple[HumanCheckEvidenceView, ...]
+    request_token: str
+
+
+@dataclass(frozen=True, slots=True)
+class HumanCheckDecisionView:
+    """Public audit fields recorded for a human Check decision."""
+
+    actor: str
+    comment: str
+    decided_at: datetime
 
 
 @dataclass(frozen=True, slots=True)
@@ -241,6 +358,7 @@ class GateDecisionView:
     failed_check_ids: tuple[ID, ...]
     evidence_artifact_ids: tuple[ID, ...]
     reason: str | None
+    adoption_id: ID | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -257,6 +375,7 @@ class CheckpointSummary:
 
     checkpoint_id: ID
     plan_revision_id: ID
+    process_revision_id: ID | None
     run_id: ID
     event_offset: int
     gate_decision: GateDecisionView
@@ -372,7 +491,7 @@ class QueryService:
         normalized_id = normalize_id(run_id)
         with self._read_session_factory() as session:
             run = _required_run(session.states.get_run(normalized_id), normalized_id)
-            return _run_view(run)
+            return _run_view(run, session)
 
     def get_planning_conversation(self, conversation_id: ID) -> PlanningConversationView:
         normalized_id = normalize_id(conversation_id)
@@ -464,6 +583,93 @@ class QueryService:
             plan = _required_plan(session.states.get_plan_revision(normalized_id), normalized_id)
             return _plan_graph_view(plan)
 
+    def get_run_plan(self, run_id: ID) -> PlanGraphView:
+        """Return the current Run-owned execution graph, including live node state."""
+        normalized_id = normalize_id(run_id)
+        with self._read_session_factory() as session:
+            _required_run(session.states.get_run(normalized_id), normalized_id)
+            plan = session.states.get_execution_plan(normalized_id)
+            if plan is None:
+                raise QueryNotFoundError("ExecutionPlan", normalized_id)
+            process = session.states.get_active_process_revision(normalized_id)
+            if process is None:
+                raise QueryNotFoundError("ProcessRevision", normalized_id)
+            return _plan_graph_view(plan, process_revision_id=process.process_revision_id)
+
+    def get_process_revision(self, process_revision_id: ID) -> ProcessRevisionView:
+        """Return one immutable process graph snapshot and its historical identity."""
+        normalized_id = normalize_id(process_revision_id)
+        with self._read_session_factory() as session:
+            process = session.states.get_process_revision(normalized_id)
+            if process is None:
+                raise QueryNotFoundError("ProcessRevision", normalized_id)
+            return _process_revision_view(process)
+
+    def get_process_draft(self, draft_id: ID) -> ProcessDraftView:
+        """Return one Planner process draft with its current-base freshness flag."""
+        normalized_id = normalize_id(draft_id)
+        with self._read_session_factory() as session:
+            draft = session.states.get_process_draft(normalized_id)
+            if draft is None:
+                raise QueryNotFoundError("ProcessDraft", normalized_id)
+            run = _required_run(session.states.get_run(draft.run_id), draft.run_id)
+            active_process = session.states.get_active_process_revision(draft.run_id)
+            current_plan = session.states.get_execution_plan(draft.run_id)
+            if active_process is None:
+                raise QueryNotFoundError("ProcessRevision", draft.parent_process_revision_id)
+            if current_plan is None:
+                raise QueryNotFoundError("ExecutionPlan", draft.run_id)
+            return _process_draft_view(draft, run, active_process, current_plan)
+
+    def get_run_process_drafts(self, run_id: ID) -> RunProcessDraftsView:
+        """Return all retained Planner process drafts for one Run."""
+        normalized_id = normalize_id(run_id)
+        with self._read_session_factory() as session:
+            run = _required_run(session.states.get_run(normalized_id), normalized_id)
+            stored_drafts = session.states.list_process_drafts(normalized_id)
+            if not stored_drafts:
+                return RunProcessDraftsView(run_id=normalized_id, drafts=())
+            active_process = session.states.get_active_process_revision(normalized_id)
+            current_plan = session.states.get_execution_plan(normalized_id)
+            if active_process is None:
+                raise QueryNotFoundError("ProcessRevision", normalized_id)
+            if current_plan is None:
+                raise QueryNotFoundError("ExecutionPlan", normalized_id)
+            drafts = tuple(
+                _process_draft_view(draft, run, active_process, current_plan)
+                for draft in stored_drafts
+            )
+            return RunProcessDraftsView(run_id=normalized_id, drafts=drafts)
+
+    def get_process_review(self, review_id: ID) -> ProcessReviewView:
+        """Return one append-only independent process review from durable Events."""
+        normalized_id = normalize_id(review_id)
+        with self._read_session_factory() as session:
+            review = next(
+                (
+                    item
+                    for item in process_review_history(session.events.list_events())
+                    if item.review_id == normalized_id
+                ),
+                None,
+            )
+            if review is None:
+                raise QueryNotFoundError("ProcessReview", normalized_id)
+            return review
+
+    def get_process_draft_reviews(self, draft_id: ID) -> ProcessDraftReviewsView:
+        """Return all independent review history for one retained process draft."""
+        normalized_id = normalize_id(draft_id)
+        with self._read_session_factory() as session:
+            if session.states.get_process_draft(normalized_id) is None:
+                raise QueryNotFoundError("ProcessDraft", normalized_id)
+            reviews = tuple(
+                item
+                for item in process_review_history(session.events.list_events())
+                if item.draft_id == normalized_id
+            )
+            return ProcessDraftReviewsView(draft_id=normalized_id, reviews=reviews)
+
     def get_execution_trace(self, run_id: ID) -> ExecutionTraceView:
         """Return immutable execution facts without copying PlanGraph structure."""
         normalized_id = normalize_id(run_id)
@@ -507,7 +713,7 @@ class QueryService:
                 self._builtin_session_reader,
             )
             return ExecutionTraceView(
-                run=_run_view(run),
+                run=_run_view(run, session),
                 attempts=attempts,
                 artifacts=artifacts,
                 check_runs=check_runs,
@@ -539,6 +745,23 @@ class QueryService:
                     key=lambda item: (item.created_at, item.check_run_id),
                 )
             )
+
+    def list_result_adoptions(self, run_id: ID) -> tuple[dict[str, JsonValue], ...]:
+        """Read immutable result provenance accepted by an existing target Run."""
+        normalized_id = normalize_id(run_id)
+        with self._read_session_factory() as session:
+            _required_run(session.states.get_run(normalized_id), normalized_id)
+            return tuple(
+                {**record.to_dict(), "reason": redact_sensitive_text(record.reason)}
+                for record in session.states.list_result_adoptions(normalized_id)
+            )
+
+    def list_interventions(self, run_id: ID) -> tuple[dict[str, JsonValue], ...]:
+        """Return durable Worker interventions without opening a write transaction."""
+        normalized_id = normalize_id(run_id)
+        with self._read_session_factory() as session:
+            _required_run(session.states.get_run(normalized_id), normalized_id)
+            return list_interventions(session.events, normalized_id)
 
     def list_checkpoints(self, run_id: ID) -> tuple[CheckpointSummary, ...]:
         """List recovery summaries for an existing Run in Event order."""
@@ -618,8 +841,18 @@ def _required_plan(plan: PlanRevision | None, plan_revision_id: ID) -> PlanRevis
     return plan
 
 
-def _run_view(run: Run) -> RunView:
+def _run_view(run: Run, session: ReadSession) -> RunView:
+    budget = goal_worker_budget(session, run.goal_id)
+    used = 0 if budget is None else goal_worker_attempts_used(session, run.goal_id)
     return RunView(
+        goal_worker_budget=(
+            None
+            if budget is None
+            else GoalWorkerBudgetView(
+                budget.max_worker_attempts, used, max(0, budget.max_worker_attempts - used)
+            )
+        ),
+        predecessor_run_id=run.predecessor_run_id,
         run_id=run.run_id,
         goal_id=run.goal_id,
         plan_revision_id=run.plan_revision_id,
@@ -631,9 +864,14 @@ def _run_view(run: Run) -> RunView:
     )
 
 
-def _plan_graph_view(plan: PlanRevision) -> PlanGraphView:
+def _plan_graph_view(
+    plan: PlanRevision,
+    *,
+    process_revision_id: ID | None = None,
+) -> PlanGraphView:
     return PlanGraphView(
         plan_revision_id=plan.plan_revision_id,
+        process_revision_id=process_revision_id,
         goal_id=plan.goal_id,
         version=plan.version,
         completion_contract_id=plan.completion_contract_id,
@@ -645,7 +883,55 @@ def _plan_graph_view(plan: PlanRevision) -> PlanGraphView:
         nodes=tuple(_plan_node_view(node) for node in plan.nodes),
         edges=tuple(_edge_view(edge) for edge in plan.edges),
         branches=tuple(_branch_view(branch) for branch in plan.branches),
+        phases=tuple(_plan_phase_view(phase) for phase in plan.phases),
         design_document=plan.design_document,
+    )
+
+
+def _process_revision_view(process: ProcessRevision) -> ProcessRevisionView:
+    return ProcessRevisionView(
+        process_revision_id=process.process_revision_id,
+        run_id=process.run_id,
+        version=process.version,
+        parent_process_revision_id=process.parent_process_revision_id,
+        source=process.source,
+        gate_owners=process.gate_owners,
+        reason=process.reason,
+        created_at=process.created_at,
+        graph=_plan_graph_view(
+            process.graph,
+            process_revision_id=process.process_revision_id,
+        ),
+    )
+
+
+def _process_draft_view(
+    draft: ProcessDraft,
+    run: Run,
+    active_process: ProcessRevision,
+    current_plan: PlanRevision,
+) -> ProcessDraftView:
+    base_is_current = (
+        run.status in {RunStatus.RUNNING, RunStatus.PAUSED}
+        and active_process.process_revision_id == draft.parent_process_revision_id
+        and current_plan == draft.base_execution_plan
+    )
+    return ProcessDraftView(
+        draft_id=draft.draft_id,
+        run_id=draft.run_id,
+        parent_process_revision_id=draft.parent_process_revision_id,
+        planner_session_ref_id=draft.planner_session_ref_id,
+        status=draft.status,
+        reason=draft.reason,
+        created_at=draft.created_at,
+        completed_at=draft.completed_at,
+        error=draft.error,
+        base_is_current=base_is_current,
+        base_execution_plan=_plan_graph_view(
+            draft.base_execution_plan,
+            process_revision_id=draft.parent_process_revision_id,
+        ),
+        candidate=(None if draft.candidate is None else _process_revision_view(draft.candidate)),
     )
 
 
@@ -658,6 +944,8 @@ def _plan_node_view(node: PlanNode) -> PlanNodeView:
         required_dependency_ids=node.required_dependency_ids,
         required_check_ids=node.required_check_ids,
         status=node.status,
+        required_capabilities=tuple(sorted(item.name for item in node.required_capabilities)),
+        session_policy=node.session_policy,
     )
 
 
@@ -683,10 +971,22 @@ def _branch_view(branch: Branch) -> BranchView:
     )
 
 
+def _plan_phase_view(phase: PlanPhase) -> PlanPhaseView:
+    return PlanPhaseView(
+        phase_id=phase.phase_id,
+        title=phase.title,
+        node_ids=phase.node_ids,
+        reviewer_node_id=phase.reviewer_node_id,
+        gate_node_id=phase.gate_node_id,
+        rework_node_ids=phase.rework_node_ids,
+    )
+
+
 def _attempt_view(attempt: Attempt) -> AttemptView:
     return AttemptView(
         attempt_id=attempt.attempt_id,
         run_id=attempt.run_id,
+        process_revision_id=attempt.process_revision_id,
         plan_node_id=attempt.plan_node_id,
         sequence=attempt.sequence,
         status=attempt.status,
@@ -779,6 +1079,7 @@ def _builtin_session_event_views(
 
 def _check_result_view(result: CheckResult) -> CheckResultView:
     return CheckResultView(
+        adoption_id=result.adoption_id,
         check_id=result.check_id,
         check_run_id=result.check_run_id,
         run_id=result.run_id,
@@ -794,6 +1095,7 @@ def _check_result_view(result: CheckResult) -> CheckResultView:
 
 def _check_run_view(check_run: CheckRun) -> CheckRunView:
     return CheckRunView(
+        adoption_id=check_run.adoption_id,
         check_run_id=check_run.check_run_id,
         run_id=check_run.run_id,
         plan_node_id=check_run.plan_node_id,
@@ -805,11 +1107,48 @@ def _check_run_view(check_run: CheckRun) -> CheckRunView:
         ended_at=check_run.ended_at,
         result=(None if check_run.result is None else _check_result_view(check_run.result)),
         failure_reason=check_run.failure_reason,
+        human_request=(
+            None
+            if check_run.human_request is None
+            else _human_check_request_view(check_run.human_request)
+        ),
+        human_decision=(
+            None
+            if check_run.human_decision is None
+            else _human_check_decision_view(check_run.human_decision)
+        ),
+    )
+
+
+def _human_check_evidence_view(evidence: HumanCheckEvidence) -> HumanCheckEvidenceView:
+    return HumanCheckEvidenceView(
+        artifact_id=evidence.artifact_id,
+        sha256=evidence.sha256,
+    )
+
+
+def _human_check_request_view(request: HumanCheckRequest) -> HumanCheckRequestView:
+    return HumanCheckRequestView(
+        plan_revision_id=request.plan_revision_id,
+        completion_contract_id=request.completion_contract_id,
+        completion_contract_version=request.completion_contract_version,
+        question=request.question,
+        evidence=tuple(_human_check_evidence_view(item) for item in request.evidence),
+        request_token=request.request_token,
+    )
+
+
+def _human_check_decision_view(decision: HumanCheckDecision) -> HumanCheckDecisionView:
+    return HumanCheckDecisionView(
+        actor=decision.actor,
+        comment=decision.comment,
+        decided_at=decision.decided_at,
     )
 
 
 def _gate_decision_view(decision: GateDecision) -> GateDecisionView:
     return GateDecisionView(
+        adoption_id=decision.adoption_id,
         gate_id=decision.gate_id,
         run_id=decision.run_id,
         plan_node_id=decision.plan_node_id,
@@ -827,6 +1166,7 @@ def _checkpoint_summary(checkpoint: Checkpoint) -> CheckpointSummary:
     return CheckpointSummary(
         checkpoint_id=checkpoint.checkpoint_id,
         plan_revision_id=checkpoint.plan_revision_id,
+        process_revision_id=checkpoint.process_revision_id,
         run_id=checkpoint.run_id,
         event_offset=checkpoint.event_offset,
         gate_decision=_gate_decision_view(checkpoint.gate_decision),

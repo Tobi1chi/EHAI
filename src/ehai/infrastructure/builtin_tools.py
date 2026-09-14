@@ -23,6 +23,7 @@ from ehai.application.builtin_agent import (
     ToolSet,
 )
 from ehai.application.builtin_runtime import ToolRegistry
+from ehai.application.phase_session_tools import PhaseSessionToolProvider
 from ehai.application.ports import ArtifactStore
 from ehai.application.session_mailbox import SessionMailboxToolProvider
 from ehai.infrastructure.codex_transport import redact_codex_bytes
@@ -64,6 +65,7 @@ _SENSITIVE_ENVIRONMENT_NAME = re.compile(
     r"(?i)(?:AUTH|BEARER|COOKIE|CREDENTIAL|KEY|PASSWORD|SECRET|TOKEN)"
 )
 SubmitCandidateValidator = Callable[[Mapping[str, JsonValue]], None]
+SubmitHandoff = Callable[[Mapping[str, JsonValue]], dict[str, JsonValue]]
 
 
 class _CommandOutputBudget:
@@ -97,7 +99,9 @@ class BuiltinToolRuntime:
         mcp_providers: tuple[MCPToolProvider, ...] = (),
         skill_provider: SkillToolProvider | None = None,
         session_provider: SessionMailboxToolProvider | None = None,
+        phase_session_provider: PhaseSessionToolProvider | None = None,
         submit_candidate_validator: SubmitCandidateValidator | None = None,
+        submit_handoff: SubmitHandoff | None = None,
     ) -> None:
         self.artifact_store = artifact_store
         self.workspace = workspace.resolve()
@@ -127,6 +131,7 @@ class BuiltinToolRuntime:
         self._shell_processes: dict[ID, tuple[asyncio.subprocess.Process, Mapping[str, str]]] = {}
         self._mcp_providers = tuple(mcp_providers)
         self._submit_candidate_validator = submit_candidate_validator
+        self._submit_handoff = submit_handoff
         if command_timeout_seconds <= 0:
             raise ValueError("command_timeout_seconds must be positive")
         self.command_timeout_seconds = command_timeout_seconds
@@ -182,7 +187,13 @@ class BuiltinToolRuntime:
             handlers["git"] = self._git
         for provider in tuple(
             item
-            for item in (web_provider, *self._mcp_providers, skill_provider, session_provider)
+            for item in (
+                web_provider,
+                *self._mcp_providers,
+                skill_provider,
+                session_provider,
+                phase_session_provider,
+            )
             if item is not None
         ):
             for definition in provider.definitions:
@@ -190,6 +201,26 @@ class BuiltinToolRuntime:
                     raise ValueError(f"duplicate Tool provider name {definition.name!r}")
                 definitions.append(definition)
                 handlers[definition.name] = provider.handlers[definition.name]
+        if submit_handoff is not None:
+            definitions.append(
+                ToolDefinition(
+                    "submit_handoff",
+                    "Ask the host to persist the current code and continuation context. "
+                    "This does not finish the task or pass a Gate. Stop background shell work "
+                    "first. Reuse the same key only to retry the same submission.",
+                    {
+                        "type": "object",
+                        "properties": {
+                            name: {"type": "string"}
+                            for name in ("key", "completed", "context", "remaining", "known_issues")
+                        },
+                        "required": ["key", "completed", "context", "remaining", "known_issues"],
+                        "additionalProperties": False,
+                    },
+                    writes_workspace=True,
+                )
+            )
+            handlers["submit_handoff"] = self._handoff
         definitions.append(
             _definition(
                 "submit_candidate",
@@ -572,9 +603,9 @@ class BuiltinToolRuntime:
         if executable is None:
             raise RecoverableToolError("shell_not_allowed", "Shell is not enabled by the Endpoint")
         argv = _shell_argv(executable, command)
+        environment = _shell_environment(executable, self.workspace)
         if wait:
-            return await self._execute_argv(argv, cancellation)
-        environment = _command_environment((executable,))
+            return await self._execute_argv(argv, cancellation, environment=environment)
         options = _process_options(self.workspace, environment, stdin=asyncio.subprocess.PIPE)
         process = await asyncio.create_subprocess_exec(*argv, **options)  # type: ignore[arg-type]
         process_id = new_id()
@@ -632,8 +663,11 @@ class BuiltinToolRuntime:
         cancellation: CancellationToken,
         *,
         stdin: bytes | None = None,
+        environment: Mapping[str, str] | None = None,
     ) -> dict[str, JsonValue]:
-        environment = _command_environment((Path(argv[0]),))
+        environment = (
+            _command_environment((Path(argv[0]),)) if environment is None else dict(environment)
+        )
         secret_values = _sensitive_environment_values()
         options = _process_options(
             self.workspace,
@@ -700,6 +734,35 @@ class BuiltinToolRuntime:
             "stdout": redact_codex_bytes(stdout, secret_values).decode(errors="replace"),
             "stderr": redact_codex_bytes(stderr, secret_values).decode(errors="replace"),
         }
+
+    async def _handoff(
+        self, arguments: dict[str, JsonValue], cancellation: CancellationToken
+    ) -> JsonValue:
+        cancellation.raise_if_cancelled()
+        if any(process.returncode is None for process, _ in self._shell_processes.values()):
+            raise RecoverableToolError(
+                "handoff_busy", "Stop all background shell processes before submitting handoff"
+            )
+        if self._submit_handoff is None:
+            raise RecoverableToolError("handoff_unavailable", "No host code handoff is configured")
+        capture = asyncio.create_task(asyncio.to_thread(self._submit_handoff, arguments))
+        try:
+            # Keep this lane quiescent without blocking other Workers. A cancellation
+            # must drain host capture before the Runtime releases this workspace.
+            return await asyncio.shield(capture)
+        except asyncio.CancelledError:
+            while not capture.done():
+                try:
+                    await asyncio.shield(capture)
+                except asyncio.CancelledError:
+                    continue
+                except Exception:
+                    break
+            if not capture.cancelled():
+                capture.exception()
+            raise
+        except Exception as error:
+            raise RecoverableToolError("handoff_not_confirmed", str(error)) from error
 
     async def _submit_candidate(
         self,
@@ -1216,21 +1279,35 @@ def _sensitive_environment_values() -> tuple[str, ...]:
     return tuple(sorted(values, key=len, reverse=True))
 
 
-def _resolve_trusted_executable(name: str, workspace: Path) -> Path:
-    candidates = _executable_candidates(name)
+def _shell_environment(executable: Path, workspace: Path) -> dict[str, str]:
+    """An explicitly enabled shell needs installed tools, not only its own binary."""
+    environment = _command_environment((executable,))
+    entries = [*environment["PATH"].split(os.pathsep), *_trusted_path_directories(workspace)]
+    environment["PATH"] = os.pathsep.join(dict.fromkeys(str(entry) for entry in entries))
+    return environment
+
+
+def _trusted_path_directories(workspace: Path) -> tuple[Path, ...]:
+    directories: list[Path] = []
     for value in os.environ.get("PATH", "").split(os.pathsep):
         path_value = value.strip().strip('"')
         if not path_value:
             continue
-        configured_directory = Path(path_value).expanduser()
-        if not configured_directory.is_absolute():
+        configured = Path(path_value).expanduser()
+        if not configured.is_absolute():
             continue
         try:
-            directory = configured_directory.resolve(strict=True)
+            directory = configured.resolve(strict=True)
         except OSError:
             continue
-        if directory == workspace or directory.is_relative_to(workspace):
-            continue
+        if directory.is_dir() and not directory.is_relative_to(workspace):
+            directories.append(directory)
+    return tuple(dict.fromkeys(directories))
+
+
+def _resolve_trusted_executable(name: str, workspace: Path) -> Path:
+    candidates = _executable_candidates(name)
+    for directory in _trusted_path_directories(workspace):
         for candidate_name in candidates:
             try:
                 candidate = (directory / candidate_name).resolve(strict=True)

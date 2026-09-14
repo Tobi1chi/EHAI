@@ -7,11 +7,13 @@ from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
 from ehai import ID, normalize_id
+from ehai.domain.adoptions import ResultAdoption
 from ehai.domain.artifacts import Artifact, ArtifactKind
 from ehai.domain.execution import Attempt, AttemptStatus, Run, RunStatus
 from ehai.domain.planning import (
     Branch,
     BranchStatus,
+    PlanNodeKind,
     PlanNodeStatus,
     PlanRevision,
     PlanRevisionStatus,
@@ -34,6 +36,7 @@ class BranchEvaluationContext:
     run: Run
     attempts: tuple[Attempt, ...]
     artifacts: tuple[Artifact, ...]
+    adoptions: tuple[ResultAdoption, ...] = ()
 
     def __post_init__(self) -> None:
         if not isinstance(self.plan, PlanRevision):
@@ -42,10 +45,15 @@ class BranchEvaluationContext:
             raise TypeError("BranchEvaluationContext run must be a Run")
         attempts = tuple(self.attempts)
         artifacts = tuple(self.artifacts)
+        adoptions = tuple(self.adoptions)
         if not all(isinstance(attempt, Attempt) for attempt in attempts):
             raise TypeError("BranchEvaluationContext attempts must contain Attempts")
         if not all(isinstance(artifact, Artifact) for artifact in artifacts):
             raise TypeError("BranchEvaluationContext artifacts must contain Artifacts")
+        if not all(isinstance(adoption, ResultAdoption) for adoption in adoptions):
+            raise TypeError("BranchEvaluationContext adoptions must contain ResultAdoption values")
+        if len({adoption.adoption_id for adoption in adoptions}) != len(adoptions):
+            raise ValueError("BranchEvaluationContext contains duplicate ResultAdoption IDs")
         if self.plan.status is not PlanRevisionStatus.APPROVED:
             raise ValueError("BranchEvaluationContext requires an approved PlanRevision")
         if not self.plan.branches:
@@ -59,13 +67,20 @@ class BranchEvaluationContext:
             raise ValueError("BranchEvaluationContext Run belongs to another PlanRevision")
 
         branch_node_ids = {node_id for branch in self.plan.branches for node_id in branch.node_ids}
+        node_by_id = {node.plan_node_id: node for node in self.plan.nodes}
+        adoption_source_attempt_ids = {adoption.source_attempt_id for adoption in adoptions}
+        adoption_artifact_ids = {
+            evidence.artifact_id for adoption in adoptions for evidence in adoption.evidence
+        }
         if len({attempt.attempt_id for attempt in attempts}) != len(attempts):
             raise ValueError("BranchEvaluationContext contains duplicate Attempt IDs")
         attempt_by_id = {attempt.attempt_id: attempt for attempt in attempts}
         for attempt in attempts:
-            if attempt.run_id != self.run.run_id:
+            if attempt.run_id != self.run.run_id and attempt.attempt_id not in (
+                adoption_source_attempt_ids
+            ):
                 raise ValueError(f"Attempt {attempt.attempt_id} belongs to another Run")
-            if attempt.plan_node_id not in branch_node_ids:
+            if attempt.run_id == self.run.run_id and attempt.plan_node_id not in branch_node_ids:
                 raise ValueError(
                     f"Attempt {attempt.attempt_id} is outside the PlanRevision Branches"
                 )
@@ -74,9 +89,11 @@ class BranchEvaluationContext:
             raise ValueError("BranchEvaluationContext contains duplicate Artifact IDs")
         artifact_ids = {artifact.artifact_id for artifact in artifacts}
         for artifact in artifacts:
-            if artifact.run_id != self.run.run_id:
+            if artifact.run_id != self.run.run_id and artifact.artifact_id not in (
+                adoption_artifact_ids
+            ):
                 raise ValueError(f"Artifact {artifact.artifact_id} belongs to another Run")
-            if artifact.plan_node_id not in branch_node_ids:
+            if artifact.run_id == self.run.run_id and artifact.plan_node_id not in branch_node_ids:
                 raise ValueError(
                     f"Artifact {artifact.artifact_id} is outside the PlanRevision Branches"
                 )
@@ -91,6 +108,10 @@ class BranchEvaluationContext:
                 raise ValueError(
                     f"Artifact {artifact.artifact_id} is absent from its Attempt snapshot"
                 )
+            if attempt.run_id != artifact.run_id:
+                raise ValueError(
+                    f"Artifact {artifact.artifact_id} belongs to another Attempt scope"
+                )
         missing_artifacts = {
             artifact_id
             for attempt in attempts
@@ -102,8 +123,129 @@ class BranchEvaluationContext:
                 "BranchEvaluationContext omits Attempt Artifacts: "
                 + ", ".join(sorted(missing_artifacts))
             )
+
+        adoption_by_artifact: dict[ID, ResultAdoption] = {}
+        adoption_target_nodes: set[ID] = set()
+        adoption_source_attempts: set[ID] = set()
+        for adoption in adoptions:
+            if (
+                adoption.target_run_id != self.run.run_id
+                or adoption.target_plan_revision_id != self.plan.plan_revision_id
+                or self.run.predecessor_run_id != adoption.source_run_id
+            ):
+                raise ValueError(
+                    f"ResultAdoption {adoption.adoption_id} does not belong to this target Run"
+                )
+            target_node = node_by_id.get(adoption.target_plan_node_id)
+            if target_node is None or adoption.target_plan_node_id not in branch_node_ids:
+                raise ValueError(
+                    f"ResultAdoption {adoption.adoption_id} targets a node outside the Branches"
+                )
+            if target_node.kind not in {PlanNodeKind.WORK, PlanNodeKind.MERGE}:
+                raise ValueError(
+                    f"ResultAdoption {adoption.adoption_id} targets a non-implementation node"
+                )
+            if target_node.status is not PlanNodeStatus.COMPLETED:
+                raise ValueError(
+                    f"ResultAdoption {adoption.adoption_id} targets an incomplete node"
+                )
+            if adoption.target_plan_node_id in adoption_target_nodes:
+                raise ValueError(
+                    f"BranchEvaluationContext has multiple adoptions for target node "
+                    f"{adoption.target_plan_node_id}"
+                )
+            adoption_target_nodes.add(adoption.target_plan_node_id)
+
+            source_attempt = attempt_by_id.get(adoption.source_attempt_id)
+            if source_attempt is None:
+                raise ValueError(
+                    f"ResultAdoption {adoption.adoption_id} references an unknown source Attempt"
+                )
+            if (
+                source_attempt.run_id != adoption.source_run_id
+                or source_attempt.plan_node_id != adoption.source_plan_node_id
+                or source_attempt.attempt_id != adoption.source_attempt_id
+                or source_attempt.status is not AttemptStatus.SUCCEEDED
+            ):
+                raise ValueError(
+                    f"ResultAdoption {adoption.adoption_id} has no matching successful "
+                    "source Attempt"
+                )
+            if adoption.source_attempt_id in adoption_source_attempts:
+                raise ValueError(
+                    f"BranchEvaluationContext has multiple adoptions for source Attempt "
+                    f"{adoption.source_attempt_id}"
+                )
+            adoption_source_attempts.add(adoption.source_attempt_id)
+
+            evidence_by_id = {item.artifact_id: item.sha256 for item in adoption.evidence}
+            evidence_ids = tuple(evidence_by_id)
+            if len(evidence_ids) != len(source_attempt.artifact_ids) or set(evidence_ids) != set(
+                source_attempt.artifact_ids
+            ):
+                raise ValueError(
+                    f"ResultAdoption {adoption.adoption_id} evidence does not match "
+                    "its source Attempt"
+                )
+            for evidence in adoption.evidence:
+                if evidence.artifact_id in adoption_by_artifact:
+                    raise ValueError(
+                        f"Artifact {evidence.artifact_id} is adopted by multiple target nodes"
+                    )
+                retained_artifact = next(
+                    (item for item in artifacts if item.artifact_id == evidence.artifact_id),
+                    None,
+                )
+                if retained_artifact is None:
+                    raise ValueError(
+                        f"ResultAdoption {adoption.adoption_id} references an unknown Artifact"
+                    )
+                if (
+                    retained_artifact.run_id != adoption.source_run_id
+                    or retained_artifact.plan_node_id != adoption.source_plan_node_id
+                    or retained_artifact.attempt_id != adoption.source_attempt_id
+                    or retained_artifact.kind not in {ArtifactKind.CANDIDATE, ArtifactKind.PATCH}
+                    or retained_artifact.sha256 != evidence.sha256
+                ):
+                    raise ValueError(
+                        f"ResultAdoption {adoption.adoption_id} evidence is inconsistent"
+                    )
+                adoption_by_artifact[evidence.artifact_id] = adoption
+
+        for attempt in attempts:
+            if attempt.run_id == self.run.run_id and attempt.plan_node_id in adoption_target_nodes:
+                raise ValueError(
+                    f"ResultAdoption target node {attempt.plan_node_id} has an existing Attempt"
+                )
+            if (
+                attempt.run_id != self.run.run_id
+                and attempt.attempt_id not in adoption_source_attempts
+            ):
+                raise ValueError(
+                    f"Attempt {attempt.attempt_id} is a foreign unadopted source Attempt"
+                )
+        for artifact in artifacts:
+            if (
+                artifact.run_id != self.run.run_id
+                and artifact.artifact_id not in adoption_by_artifact
+            ):
+                raise ValueError(
+                    f"Artifact {artifact.artifact_id} is a foreign unadopted source Artifact"
+                )
         object.__setattr__(self, "attempts", attempts)
         object.__setattr__(self, "artifacts", artifacts)
+        object.__setattr__(self, "adoptions", adoptions)
+
+    def effective_plan_node_id(self, artifact: Artifact) -> ID:
+        """Return the target node identity used to place an Artifact in a Branch."""
+        if not isinstance(artifact, Artifact):
+            raise TypeError("artifact must be an Artifact")
+        if artifact.plan_node_id is None:
+            raise ValueError(f"Artifact {artifact.artifact_id} has no PlanNode identity")
+        for adoption in self.adoptions:
+            if any(item.artifact_id == artifact.artifact_id for item in adoption.evidence):
+                return adoption.target_plan_node_id
+        return artifact.plan_node_id
 
 
 @dataclass(frozen=True, slots=True)
@@ -234,7 +376,7 @@ def validate_branch_selection(
     for branch in active_sibling_group:
         ids: set[ID] = set()
         for artifact in context.artifacts:
-            if artifact.plan_node_id not in branch.node_ids:
+            if context.effective_plan_node_id(artifact) not in branch.node_ids:
                 continue
             if artifact.kind not in {ArtifactKind.CANDIDATE, ArtifactKind.PATCH}:
                 continue
@@ -363,7 +505,7 @@ class DeterministicBranchEvaluator:
             selected_artifact_ids = tuple(
                 artifact.artifact_id
                 for artifact in context.artifacts
-                if artifact.plan_node_id in branch.node_ids
+                if context.effective_plan_node_id(artifact) in branch.node_ids
                 and artifact.kind in {ArtifactKind.CANDIDATE, ArtifactKind.PATCH}
                 and artifact.attempt_id is not None
                 and attempt_by_id[artifact.attempt_id].status is AttemptStatus.SUCCEEDED
@@ -381,7 +523,7 @@ class DeterministicBranchEvaluator:
             compared_artifact_ids = tuple(
                 artifact.artifact_id
                 for artifact in context.artifacts
-                if artifact.plan_node_id in sibling_node_ids
+                if context.effective_plan_node_id(artifact) in sibling_node_ids
                 and artifact.kind in {ArtifactKind.CANDIDATE, ArtifactKind.PATCH}
                 and artifact.attempt_id is not None
                 and attempt_by_id[artifact.attempt_id].status is AttemptStatus.SUCCEEDED

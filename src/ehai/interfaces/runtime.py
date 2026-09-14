@@ -7,7 +7,7 @@ import asyncio
 import inspect
 from collections.abc import Callable, Sequence
 from contextlib import suppress
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import timedelta
 from pathlib import Path
 from typing import cast
@@ -26,12 +26,20 @@ from ehai.application.builtin_agent import (
 )
 from ehai.application.execution_contracts import OPENAI_CREDENTIAL_REF
 from ehai.application.execution_policy import ExecutionPolicy
+from ehai.application.ports import StateConflictError
+from ehai.application.process_adjustments import ProcessAdjustments
 from ehai.application.queries import QueryService
 from ehai.application.runtime_control import RuntimeControlService
-from ehai.application.scheduler import CapacityPolicy, ConcurrentRuntime, Dispatcher
+from ehai.application.scheduler import (
+    CapacityPolicy,
+    ConcurrentRuntime,
+    Dispatcher,
+    RuntimeQuiescenceError,
+)
 from ehai.application.service import ExecutionService
 from ehai.application.session_mailbox import SessionMailbox
 from ehai.application.workers import WorkerRequest
+from ehai.domain.execution import RunStatus
 from ehai.domain.workers import (
     WorkerCapability,
     WorkerEndpoint,
@@ -53,6 +61,7 @@ from ehai.infrastructure.workers.code import CodeRuntimeConnector
 from ehai.infrastructure.workspaces import WorkspaceManager
 from ehai.interfaces.api import create_app
 from ehai.interfaces.cli import add_responses_arguments, build_service, responses_capabilities
+from ehai.interfaces.session_host import ExecutionConfig
 
 _MAX_RUNTIME_RESTARTS = 2
 _RUNTIME_RESTART_BASE_SECONDS = 0.05
@@ -74,6 +83,8 @@ class LocalRuntimeComposition:
     connector: RuntimeConnector
     base_connector: RuntimeConnector
     workspace_manager: WorkspaceManager | None
+    process_adjustments: ProcessAdjustments | None = None
+    execution_config: ExecutionConfig | None = None
 
 
 def create_local_app(
@@ -110,6 +121,65 @@ def create_local_app(
     endpoint_capabilities: ResponsesEndpointCapabilities | None = None,
 ) -> FastAPI:
     """Construct one Command service and, optionally, its local P2 Runtime."""
+    host_execution_config = None
+    configured_kind = _canonical_runtime_worker_kind(worker_kind)
+    if p2_runtime and configured_kind in {"builtin", "codex-server"}:
+        host_execution_config = ExecutionConfig(
+            worker_kind=configured_kind,
+            model=(builtin_model if configured_kind == "builtin" else codex_model) or "",
+            reasoning_effort=(
+                builtin_reasoning_effort if configured_kind == "builtin" else codex_reasoning_effort
+            ),
+            capacity=builtin_capacity,
+            allowed_commands=_normalize_allowed_command_argv(builtin_allowed_commands),
+            available_shells=tuple(available_shells),
+            git_permissions=frozenset(git_permissions),
+            workspace=worker_workspace or Path.cwd(),
+            endpoint_capabilities=endpoint_capabilities or ResponsesEndpointCapabilities(),
+            command_timeout_seconds=command_check_timeout_seconds,
+            codex_server_executable=(
+                (codex_server_executable,)
+                if isinstance(codex_server_executable, str)
+                else tuple(codex_server_executable)
+            ),
+            codex_server_approval_policy=codex_server_approval_policy,
+            codex_server_sandbox=codex_server_sandbox,
+        )
+        # Use the same canonical values for execution and later authorization.
+        worker_kind = host_execution_config.worker_kind
+        worker_workspace = host_execution_config.workspace
+        if worker_kind == "builtin":
+            builtin_model = host_execution_config.model
+            builtin_reasoning_effort = host_execution_config.reasoning_effort
+        else:
+            codex_model = host_execution_config.model
+            codex_reasoning_effort = host_execution_config.reasoning_effort
+        builtin_allowed_commands = host_execution_config.allowed_commands
+        available_shells = host_execution_config.available_shells
+        git_permissions = tuple(sorted(host_execution_config.git_permissions))
+        endpoint_capabilities = host_execution_config.endpoint_capabilities
+        command_check_timeout_seconds = host_execution_config.command_timeout_seconds
+        codex_server_executable = host_execution_config.codex_server_executable
+        codex_server_approval_policy = host_execution_config.codex_server_approval_policy
+        codex_server_sandbox = host_execution_config.codex_server_sandbox
+    if builtin_planner_model is not None:
+        builtin_planner_model = builtin_planner_model.strip()
+    if builtin_planner_reasoning_effort is not None:
+        builtin_planner_reasoning_effort = builtin_planner_reasoning_effort.strip()
+    resolved_planner_model = (
+        builtin_planner_model
+        if builtin_planner_model is not None
+        else (builtin_model if planner_kind == "builtin" else None)
+    )
+    resolved_planner_effort = (
+        builtin_planner_reasoning_effort
+        if builtin_planner_reasoning_effort is not None
+        else (
+            builtin_reasoning_effort
+            if planner_kind == "builtin" and builtin_planner_model is None
+            else None
+        )
+    )
     execution_service = build_service(
         database_path,
         artifact_root,
@@ -117,16 +187,8 @@ def create_local_app(
         worker_workspace=worker_workspace,
         planner_kind=planner_kind,
         planner_timeout_seconds=planner_timeout_seconds,
-        builtin_planner_model=(
-            builtin_planner_model
-            if builtin_planner_model is not None
-            else (builtin_model if planner_kind == "builtin" else None)
-        ),
-        builtin_planner_reasoning_effort=(
-            builtin_planner_reasoning_effort
-            if builtin_planner_reasoning_effort is not None
-            else (builtin_reasoning_effort if planner_kind == "builtin" else None)
-        ),
+        builtin_planner_model=resolved_planner_model,
+        builtin_planner_reasoning_effort=resolved_planner_effort,
         command_check_argv=command_check_argv,
         semantic_required_terms=semantic_required_terms,
         command_check_timeout_seconds=command_check_timeout_seconds,
@@ -329,6 +391,11 @@ def create_local_app(
             connector,
             database=query_database,
             workspace_manager=workspace_manager,
+            artifact_store=artifact_store,
+        )
+        execution_service.orchestrator.enable_adoption_execution(
+            connector.prepare_adoption_verification,
+            connector.adoption_inputs_are_applicable,
         )
     if worker_kind in {"builtin", "codex-server"}:
         capacity = CapacityPolicy(
@@ -373,6 +440,32 @@ def create_local_app(
         orchestrator=execution_service.orchestrator,
         runtimes={endpoint.worker_endpoint_id: runtime},
     )
+    process_adjustments = (
+        ProcessAdjustments(
+            uow_factory=query_database.unit_of_work,
+            service=execution_service,
+            planner_model=resolved_planner_model,
+            planner_reasoning_effort=resolved_planner_effort,
+        )
+        if planner_kind == "builtin" and resolved_planner_model is not None
+        else None
+    )
+
+    def validate_execution_config(config: ExecutionConfig) -> None:
+        if host_execution_config is None:
+            raise StateConflictError("This Worker host has no full execution configuration")
+        if replace(config, process_adjustment=None).to_document() != (
+            host_execution_config.to_document()
+        ):
+            raise StateConflictError("Execution configuration does not match this host")
+        adjustment_policy = config.process_adjustment
+        if adjustment_policy is not None and (
+            process_adjustments is None
+            or adjustment_policy.model != resolved_planner_model
+            or adjustment_policy.reasoning_effort != resolved_planner_effort
+        ):
+            raise StateConflictError("Process adjustment policy does not match this host's Planner")
+
     composition = LocalRuntimeComposition(
         database=query_database,
         artifact_root=artifact_root.resolve(),
@@ -383,8 +476,16 @@ def create_local_app(
         connector=connector,
         base_connector=base_connector,
         workspace_manager=workspace_manager,
+        process_adjustments=process_adjustments,
+        execution_config=host_execution_config,
     )
-    app = create_app(execution_service, query_service, runtime_control)
+    app = create_app(
+        execution_service,
+        query_service,
+        runtime_control,
+        process_adjustments=process_adjustments,
+        execution_config_validator=validate_execution_config,
+    )
     app.state.database = query_database
     app.state.artifact_root = artifact_root.resolve()
     app.state.execution_service = execution_service
@@ -394,13 +495,32 @@ def create_local_app(
     app.state.connector = connector
     app.state.runtime_composition = composition
     task: asyncio.Task[None] | None = None
+    adjustment_tasks: dict[ID, asyncio.Task[None]] = {}
 
-    async def runtime_loop() -> None:
+    async def adjust_run(run_id: ID) -> None:
+        if not isinstance(runtime, ConcurrentRuntime) or process_adjustments is None:
+            return
+        if execution_service.get_run(run_id).status is not RunStatus.PAUSED:
+            return
+        await runtime.quiesce_run(run_id)
+        if execution_service.get_run(run_id).status is RunStatus.RUNNING:
+            runtime.resume_run_scheduling(run_id)
+            return
+        runtime.release_run_dispatch(run_id)
+        adjustment = await process_adjustments.advance(run_id)
+        if adjustment.resumed and execution_service.get_run(run_id).status is RunStatus.RUNNING:
+            runtime.resume_run_scheduling(run_id)
+
+    async def runtime_iterations() -> None:
         consecutive_failures = 0
         needs_recovery = True
         runtime_control.mark_runtime_starting()
         while True:
             try:
+                for run_id, adjustment_task in tuple(adjustment_tasks.items()):
+                    if adjustment_task.done():
+                        del adjustment_tasks[run_id]
+                        adjustment_task.result()
                 if needs_recovery:
                     await runtime.recover_startup()
                     needs_recovery = False
@@ -409,8 +529,21 @@ def create_local_app(
                 else:
                     result = await runtime.run_once()
                     completed = () if result is None else (result,)
+                if isinstance(runtime, ConcurrentRuntime) and process_adjustments is not None:
+                    for run_id in process_adjustments.pending_run_ids():
+                        if run_id in adjustment_tasks:
+                            continue
+                        current = execution_service.get_run(run_id)
+                        if current.status is not RunStatus.PAUSED:
+                            continue
+                        adjustment_tasks[run_id] = asyncio.create_task(
+                            adjust_run(run_id), name=f"ehai-process-host-{run_id}"
+                        )
             except asyncio.CancelledError:
                 raise
+            except RuntimeQuiescenceError as error:
+                runtime_control.mark_runtime_failure(error, terminal=True)
+                return
             except Exception as error:
                 terminal = consecutive_failures >= _MAX_RUNTIME_RESTARTS
                 runtime_control.mark_runtime_failure(error, terminal=terminal)
@@ -425,6 +558,17 @@ def create_local_app(
             runtime_control.mark_runtime_healthy()
             if not completed:
                 await asyncio.sleep(0.05)
+
+    async def runtime_loop() -> None:
+        try:
+            await runtime_iterations()
+        finally:
+            # Drain host wrappers before closing connectors. Each wrapper's
+            # advance call also cancels and drains its model child on shutdown.
+            for adjustment_task in adjustment_tasks.values():
+                adjustment_task.cancel()
+            await asyncio.gather(*adjustment_tasks.values(), return_exceptions=True)
+            adjustment_tasks.clear()
 
     async def start_runtime() -> None:
         nonlocal task

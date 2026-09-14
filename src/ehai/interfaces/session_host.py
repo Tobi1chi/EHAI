@@ -14,6 +14,9 @@ from typing import TYPE_CHECKING, cast
 from ehai import ID, JsonValue, json_dumps, json_loads, new_id, normalize_id, utc_now
 from ehai.application.builtin_agent import BuiltinSessionEventType
 from ehai.application.commands import PauseRun, ResumeRun, StartRun
+from ehai.application.goal_budgets import GoalWorkerBudget, validate_goal_worker_budget
+from ehai.application.pause_causes import PauseCause
+from ehai.application.process_adjustments import ProcessAdjustmentPolicy
 from ehai.application.queries import QueryService
 from ehai.application.scheduler import ConcurrentRuntime
 from ehai.application.service import ExecutionService
@@ -27,6 +30,7 @@ from ehai.infrastructure.sqlite import SQLiteDatabase
 from ehai.interfaces.public_documents import public_json_value
 
 if TYPE_CHECKING:
+    from ehai.application.process_adjustments import ProcessAdjustments
     from ehai.interfaces.runtime import LocalRuntimeComposition
 
 
@@ -49,6 +53,15 @@ _SENSITIVE_KEY_MARKERS = (
     "secret",
     "token",
     "access_key",
+)
+_CODE_DELIVERY_FIELDS = (
+    "workspace",
+    "base_commit",
+    "commit",
+    "diff_path",
+    "attempt_id",
+    "run_id",
+    "diff_artifact_ids",
 )
 
 
@@ -73,6 +86,8 @@ class ExecutionConfig:
     codex_server_executable: tuple[str, ...] = ("codex",)
     codex_server_approval_policy: str = "on-request"
     codex_server_sandbox: str = "workspace-write"
+    process_adjustment: ProcessAdjustmentPolicy | None = None
+    goal_worker_budget: GoalWorkerBudget | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "worker_kind", _worker_kind(self.worker_kind))
@@ -127,6 +142,14 @@ class ExecutionConfig:
             raise ValueError("unsupported Codex App Server approval policy")
         if self.codex_server_sandbox not in _SANDBOX_MODES:
             raise ValueError("unsupported Codex App Server sandbox mode")
+        if self.process_adjustment is not None and not isinstance(
+            self.process_adjustment, ProcessAdjustmentPolicy
+        ):
+            raise TypeError("process_adjustment must be a ProcessAdjustmentPolicy or None")
+        if self.goal_worker_budget is not None and not isinstance(
+            self.goal_worker_budget, GoalWorkerBudget
+        ):
+            raise TypeError("goal_worker_budget must be a GoalWorkerBudget or None")
 
     @classmethod
     def from_path(cls, path: Path) -> ExecutionConfig:
@@ -153,6 +176,8 @@ class ExecutionConfig:
             "endpoint_capabilities",
             "command_timeout_seconds",
             "codex_server",
+            "process_adjustment",
+            "goal_worker_budget",
         }
         unknown = sorted(set(document) - allowed)
         if unknown:
@@ -187,6 +212,12 @@ class ExecutionConfig:
         sandbox = server.get("sandbox", "workspace-write")
         if not isinstance(approval_policy, str) or not isinstance(sandbox, str):
             raise ValueError("codex_server policy fields must be text")
+        adjustment = document.get("process_adjustment")
+        if adjustment is not None and not isinstance(adjustment, dict):
+            raise ValueError("process_adjustment must be an object or null")
+        goal_budget = document.get("goal_worker_budget")
+        if goal_budget is not None and not isinstance(goal_budget, dict):
+            raise ValueError("goal_worker_budget must be an object or null")
         return cls(
             worker_kind=worker_kind,
             model=model,
@@ -208,10 +239,16 @@ class ExecutionConfig:
             codex_server_executable=tuple(executable),
             codex_server_approval_policy=approval_policy,
             codex_server_sandbox=sandbox,
+            process_adjustment=(
+                None if adjustment is None else ProcessAdjustmentPolicy.from_document(adjustment)
+            ),
+            goal_worker_budget=(
+                None if goal_budget is None else GoalWorkerBudget.from_document(goal_budget)
+            ),
         )
 
     def to_document(self) -> dict[str, JsonValue]:
-        return {
+        document: dict[str, JsonValue] = {
             "config_version": _CONFIG_VERSION,
             "worker_kind": self.worker_kind,
             "model": self.model,
@@ -239,6 +276,13 @@ class ExecutionConfig:
                 "sandbox": self.codex_server_sandbox,
             },
         }
+        # Preserve the canonical document/fingerprint of previously authorized
+        # configurations. Omitted policy never silently enables model calls.
+        if self.process_adjustment is not None:
+            document["process_adjustment"] = self.process_adjustment.to_document()
+        if self.goal_worker_budget is not None:
+            document["goal_worker_budget"] = self.goal_worker_budget.to_document()
+        return document
 
     @property
     def fingerprint(self) -> str:
@@ -264,6 +308,11 @@ def authorize_run(database: SQLiteDatabase, run_id: ID, config: ExecutionConfig)
         events = uow.events.list_events()
         stored = _stored_config(events, normalized_id)
         expected = config.to_document()
+        validate_goal_worker_budget(
+            uow,
+            run.goal_id,
+            None if config.goal_worker_budget is None else config.goal_worker_budget.to_document(),
+        )
         if stored is not None and ExecutionConfig.from_document(stored).to_document() != expected:
             raise SessionHostError(f"Run {normalized_id} already has another execution config")
         if stored is not None and not _authorized(events, normalized_id):
@@ -315,20 +364,35 @@ def prepare_execute_run(
     idempotency_key: str,
     config: ExecutionConfig,
 ) -> Run:
-    run = service.start_run(StartRun(idempotency_key, normalize_id(plan_revision_id)))
-    return authorize_run(database, run.run_id, config)
+    del database
+    return service.start_run(
+        StartRun(
+            idempotency_key,
+            normalize_id(plan_revision_id),
+            authorized_execution_config_json=json_dumps(config.to_document()),
+        )
+    )
 
 
 def prepare_resume_run(
     service: ExecutionService,
     database: SQLiteDatabase,
     run_id: ID,
+    *,
+    process_adjustments: ProcessAdjustments | None = None,
 ) -> tuple[Run, ExecutionConfig]:
     normalized_id = normalize_id(run_id)
     config = load_execution_config(database, normalized_id)
     run = service.get_run(normalized_id)
     if run.status is RunStatus.PAUSED:
-        run = service.resume_run(ResumeRun(str(new_id()), normalized_id))
+        # A rejected Reviewer needs a scoped process adjustment, not a retry
+        # of its succeeded Attempt. Preserve the pause and failed Gate until
+        # the foreground coordinator applies and reviews the repair process.
+        if (
+            process_adjustments is None
+            or normalized_id not in process_adjustments.pending_run_ids()
+        ):
+            run = service.resume_run(ResumeRun(str(new_id()), normalized_id))
     elif run.status is RunStatus.PENDING:
         run = authorize_run(database, normalized_id, config)
     ensure_dispatch_work(database, run)
@@ -371,16 +435,32 @@ class ForegroundSessionHost:
             raise SessionHostError("foreground execution requires the concurrent P2 Runtime")
         self._assert_exclusive(normalized_id)
         runtime_task: asyncio.Task[tuple[Run, ...]] | None = None
+        adjustment_notice: _SessionNotice | None = None
         self._composition.runtime_control.mark_runtime_starting()
         try:
 
             async def execute_runtime() -> tuple[Run, ...]:
+                nonlocal adjustment_notice
                 await runtime.recover_startup()
-                current = self._read_run(normalized_id)
-                if current.status in _TERMINAL_RUN_STATUSES:
-                    return (current,)
-                self._composition.runtime_control.mark_runtime_healthy()
-                return await runtime.run_until_idle()
+                while True:
+                    current = self._read_run(normalized_id)
+                    if current.status in _TERMINAL_RUN_STATUSES:
+                        return (current,)
+                    self._composition.runtime_control.mark_runtime_healthy()
+                    completed = await runtime.run_until_idle()
+                    current = self._read_run(normalized_id)
+                    coordinator = self._composition.process_adjustments
+                    if current.status is RunStatus.PAUSED and coordinator is not None:
+                        await runtime.quiesce_run(normalized_id)
+                        runtime.release_run_dispatch(normalized_id)
+                        adjustment = await coordinator.advance(normalized_id)
+                        if adjustment.resumed:
+                            runtime.resume_run_scheduling(normalized_id)
+                            continue
+                        adjustment_notice = _SessionNotice(
+                            "process_adjustment_stopped", adjustment.reason
+                        )
+                    return completed
 
             runtime_task = asyncio.create_task(execute_runtime())
             last_progress: str | None = None
@@ -389,16 +469,51 @@ class ForegroundSessionHost:
                 current = self._read_run(normalized_id)
                 waiting = self._waiting_notice(normalized_id)
                 if waiting is not None:
-                    await self._quiesce_and_pause(normalized_id)
+                    await self._quiesce_and_pause(
+                        normalized_id,
+                        pause_cause=(
+                            PauseCause.UNKNOWN_EXECUTION
+                            if waiting.kind == "provider_outcome_unknown"
+                            else PauseCause.WORKER_WAITING
+                        ),
+                    )
                     return await self._document(normalized_id, waiting)
                 if done:
                     runtime_task.result()
                     if current.status in _TERMINAL_RUN_STATUSES:
                         return await self._document(normalized_id)
-                    await self._quiesce_and_pause(normalized_id)
+                    if self._composition.execution_service.orchestrator.waiting_for_intervention(
+                        normalized_id, only_if_idle=True
+                    ):
+                        runtime.release_waiting_run(normalized_id)
+                        return await self._document(
+                            normalized_id,
+                            _SessionNotice(
+                                "intervention_waiting",
+                                "A retained path needs a version-bound user reply; use "
+                                "get-run-interventions and reply-intervention, then resume-session",
+                            ),
+                        )
+                    if self._composition.execution_service.orchestrator.waiting_for_human(
+                        normalized_id, only_if_idle=True
+                    ):
+                        runtime.release_waiting_run(normalized_id)
+                        return await self._document(
+                            normalized_id,
+                            _SessionNotice(
+                                "human_gate_waiting",
+                                "Required human Checks are awaiting a version-bound decision; "
+                                "use get-run-checks and decide-human-check, then resume-session",
+                            ),
+                        )
+                    await self._quiesce_and_pause(
+                        normalized_id,
+                        pause_cause=PauseCause.RUNTIME_IDLE,
+                    )
                     return await self._document(
                         normalized_id,
-                        _SessionNotice(
+                        adjustment_notice
+                        or _SessionNotice(
                             "runtime_idle",
                             f"Runtime became idle while Run remained {current.status.value}",
                         ),
@@ -408,10 +523,16 @@ class ForegroundSessionHost:
                     _write_line(self._stderr, progress)
                     last_progress = progress
         except asyncio.CancelledError:
-            await self._quiesce_and_pause(normalized_id)
+            await self._quiesce_and_pause(
+                normalized_id,
+                pause_cause=PauseCause.OPERATOR,
+            )
             raise
         except Exception as error:
-            await self._quiesce_and_pause(normalized_id)
+            await self._quiesce_and_pause(
+                normalized_id,
+                pause_cause=PauseCause.RUNTIME_ERROR,
+            )
             return await self._document(
                 normalized_id, _SessionNotice("runtime_error", _error(error))
             )
@@ -485,7 +606,12 @@ class ForegroundSessionHost:
             )
         )
 
-    async def _quiesce_and_pause(self, run_id: ID) -> None:
+    async def _quiesce_and_pause(
+        self,
+        run_id: ID,
+        *,
+        pause_cause: PauseCause = PauseCause.RUNTIME_IDLE,
+    ) -> None:
         runtime = self._composition.runtime
         if not isinstance(runtime, ConcurrentRuntime):
             return
@@ -493,9 +619,15 @@ class ForegroundSessionHost:
             await runtime.quiesce_run(run_id)
             self._quiesced = True
         current = self._read_run(run_id)
-        if current.status in {RunStatus.PENDING, RunStatus.RUNNING}:
-            self._composition.execution_service.pause_run(
-                PauseRun(str(new_id()), normalize_id(run_id))
+        if pause_cause is PauseCause.OPERATOR:
+            if current.status in {RunStatus.PENDING, RunStatus.RUNNING, RunStatus.PAUSED}:
+                self._composition.execution_service.pause_run(
+                    PauseRun(str(new_id()), normalize_id(run_id))
+                )
+        elif current.status in {RunStatus.PENDING, RunStatus.RUNNING}:
+            self._composition.execution_service.pause_run_internal(
+                normalize_id(run_id),
+                pause_cause=pause_cause,
             )
         runtime.release_run_dispatch(run_id)
 
@@ -537,7 +669,8 @@ async def get_live_result_document(
     run_id: ID,
     connector: object,
 ) -> dict[str, JsonValue]:
-    document = _result_document(database, artifact_root, normalize_id(run_id))
+    normalized_run_id = normalize_id(run_id)
+    document = _result_document(database, artifact_root, normalized_run_id)
     result_method = getattr(connector, "result", None)
     if not callable(result_method):
         return document
@@ -552,7 +685,7 @@ async def get_live_result_document(
         delivery = value.get("code_delivery")
         result = document.get("result")
         if isinstance(delivery, Mapping) and isinstance(result, dict):
-            result.update(dict(delivery))
+            _merge_live_delivery(result, delivery, normalized_run_id)
     return document
 
 
@@ -596,6 +729,7 @@ def _result_document(
                 code_delivery["diff_artifact_ids"] = cast(JsonValue, diff_ids)
     public_attempts = public_trace.get("attempts")
     public_checks = public_trace.get("check_runs")
+    delivery_attempt_id = code_delivery.get("attempt_id")
     if isinstance(public_checks, list):
         checks_by_attempt: dict[str, list[JsonValue]] = {}
         for item in public_checks:
@@ -604,25 +738,33 @@ def _result_document(
             attempt_id = item.get("attempt_id")
             if isinstance(attempt_id, str):
                 checks_by_attempt.setdefault(attempt_id, []).append(item)
-        latest_attempt_id = _latest_attempt_with_checks(public_attempts, checks_by_attempt)
-        checks = (
-            checks_by_attempt.get(latest_attempt_id, []) if latest_attempt_id is not None else []
-        )
-        check_run_ids: list[JsonValue] = []
-        for check in checks:
-            if not isinstance(check, dict):
-                continue
-            check_run_id = check.get("check_run_id")
-            if isinstance(check_run_id, str):
-                check_run_ids.append(check_run_id)
-        code_delivery["check_result"] = cast(
-            JsonValue,
-            {
-                "passed": _checks_passed(checks),
-                "check_run_ids": check_run_ids,
-                "checks": checks,
-            },
-        )
+        if isinstance(delivery_attempt_id, str):
+            checks = checks_by_attempt.get(delivery_attempt_id, [])
+            has_corresponding_delivery_checks = bool(checks)
+        else:
+            latest_attempt_id = _latest_attempt_with_checks(public_attempts, checks_by_attempt)
+            checks = (
+                checks_by_attempt.get(latest_attempt_id, [])
+                if latest_attempt_id is not None
+                else []
+            )
+            has_corresponding_delivery_checks = True
+        if has_corresponding_delivery_checks:
+            check_run_ids: list[JsonValue] = []
+            for check in checks:
+                if not isinstance(check, dict):
+                    continue
+                check_run_id = check.get("check_run_id")
+                if isinstance(check_run_id, str):
+                    check_run_ids.append(check_run_id)
+            code_delivery["check_result"] = cast(
+                JsonValue,
+                {
+                    "passed": _checks_passed(checks),
+                    "check_run_ids": check_run_ids,
+                    "checks": checks,
+                },
+            )
     trace_ids: dict[str, JsonValue] = {
         "attempt_ids": _ids(public_attempts, "attempt_id"),
         "artifact_ids": _ids(public_trace.get("artifacts"), "artifact_id"),
@@ -653,6 +795,39 @@ def _latest_attempt_with_checks(
         if isinstance(attempt_id, str) and attempt_id in checks_by_attempt:
             return attempt_id
     return None
+
+
+def _merge_live_delivery(
+    result: dict[str, JsonValue], delivery: Mapping[str, object], run_id: ID
+) -> None:
+    """Use a live snapshot only when it cannot replace durable result evidence."""
+    if delivery.get("run_id") != run_id:
+        return
+    live_attempt_id = delivery.get("attempt_id")
+    if not isinstance(live_attempt_id, str):
+        return
+    durable_attempt_id = result.get("attempt_id")
+    if not isinstance(durable_attempt_id, str) or live_attempt_id != durable_attempt_id:
+        return
+    durable_commit = result.get("commit")
+    live_commit = delivery.get("commit")
+    if not isinstance(durable_commit, str) or live_commit != durable_commit:
+        return
+    _copy_delivery_fields(result, delivery, only_missing=True)
+
+
+def _copy_delivery_fields(
+    target: dict[str, JsonValue], source: Mapping[str, object], *, only_missing: bool
+) -> None:
+    for key in _CODE_DELIVERY_FIELDS:
+        if only_missing and target.get(key) is not None:
+            continue
+        value = source.get(key)
+        if key == "diff_artifact_ids":
+            if isinstance(value, list) and all(isinstance(item, str) for item in value):
+                target[key] = cast(JsonValue, list(value))
+        elif isinstance(value, str):
+            target[key] = value
 
 
 def _stored_config(events: Sequence[object], run_id: ID) -> dict[str, JsonValue] | None:
@@ -693,15 +868,18 @@ def _authorized(events: Sequence[object], run_id: ID) -> bool:
 def _checks_passed(checks: Sequence[JsonValue]) -> bool | None:
     if not checks:
         return None
-    outcomes: list[bool] = []
+    has_unknown = False
     for check in checks:
         if not isinstance(check, dict):
+            has_unknown = True
             continue
         result = check.get("result")
         passed = result.get("passed") if isinstance(result, dict) else None
-        if isinstance(passed, bool):
-            outcomes.append(passed)
-    return all(outcomes) if outcomes else None
+        if passed is False:
+            return False
+        if passed is not True:
+            has_unknown = True
+    return None if has_unknown else True
 
 
 def _ids(value: JsonValue | None, key: str) -> list[JsonValue]:

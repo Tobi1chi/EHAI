@@ -25,7 +25,7 @@
     },
     "PlanNodeKind": {
       "type": "string",
-      "enum": ["work", "fork", "evaluator", "merge"]
+      "enum": ["work", "fork", "evaluator", "merge", "reviewer"]
     },
     "PlanNodeStatus": {
       "type": "string",
@@ -35,6 +35,7 @@
         "running",
         "candidate",
         "verifying",
+        "blocked",
         "completed",
         "failed",
         "pruned"
@@ -54,7 +55,7 @@
     },
     "CheckKind": {
       "type": "string",
-      "enum": ["command", "artifact", "semantic"]
+      "enum": ["command", "artifact", "semantic", "human"]
     },
     "CheckRunStatus": {
       "type": "string",
@@ -87,6 +88,16 @@
       "type": "array",
       "items": {"$ref": "common.schema.json#/$defs/Id"}
     },
+    "GoalWorkerBudgetView": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["max_worker_attempts", "used", "remaining"],
+      "properties": {
+        "max_worker_attempts": {"type": "integer", "minimum": 1},
+        "used": {"type": "integer", "minimum": 0},
+        "remaining": {"type": "integer", "minimum": 0}
+      }
+    },
     "Run": {
       "type": "object",
       "additionalProperties": false,
@@ -105,6 +116,10 @@
         "goal_id": {"$ref": "common.schema.json#/$defs/Id"},
         "plan_revision_id": {"$ref": "common.schema.json#/$defs/Id"},
         "status": {"$ref": "#/$defs/RunStatus"},
+        "predecessor_run_id": {"$ref": "#/$defs/NullableId"},
+        "goal_worker_budget": {
+          "oneOf": [{"$ref": "#/$defs/GoalWorkerBudgetView"}, {"type": "null"}]
+        },
         "created_at": {"$ref": "common.schema.json#/$defs/UtcDateTime"},
         "started_at": {"$ref": "#/$defs/NullableUtcDateTime"},
         "ended_at": {"$ref": "#/$defs/NullableUtcDateTime"},
@@ -121,7 +136,9 @@
         "kind",
         "required_dependency_ids",
         "required_check_ids",
-        "status"
+        "status",
+        "required_capabilities",
+        "session_policy"
       ],
       "properties": {
         "plan_node_id": {"$ref": "common.schema.json#/$defs/Id"},
@@ -130,7 +147,9 @@
         "kind": {"$ref": "#/$defs/PlanNodeKind"},
         "required_dependency_ids": {"$ref": "#/$defs/IdList"},
         "required_check_ids": {"$ref": "#/$defs/IdList"},
-        "status": {"$ref": "#/$defs/PlanNodeStatus"}
+        "status": {"$ref": "#/$defs/PlanNodeStatus"},
+        "required_capabilities": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+        "session_policy": {"type": "string", "enum": ["new", "reuse", "fork"]}
       }
     },
     "Edge": {
@@ -173,11 +192,32 @@
         "status": {"$ref": "#/$defs/BranchStatus"}
       }
     },
+    "PlanPhase": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "phase_id",
+        "title",
+        "node_ids",
+        "reviewer_node_id",
+        "gate_node_id",
+        "rework_node_ids"
+      ],
+      "properties": {
+        "phase_id": {"$ref": "common.schema.json#/$defs/Id"},
+        "title": {"type": "string", "minLength": 1},
+        "node_ids": {"$ref": "#/$defs/IdList"},
+        "reviewer_node_id": {"$ref": "common.schema.json#/$defs/Id"},
+        "gate_node_id": {"$ref": "common.schema.json#/$defs/Id"},
+        "rework_node_ids": {"$ref": "#/$defs/IdList"}
+      }
+    },
     "PlanGraph": {
       "type": "object",
       "additionalProperties": false,
       "required": [
         "plan_revision_id",
+        "process_revision_id",
         "goal_id",
         "version",
         "completion_contract_id",
@@ -188,10 +228,12 @@
         "supersedes_plan_revision_id",
         "nodes",
         "edges",
-        "branches"
+        "branches",
+        "phases"
       ],
       "properties": {
         "plan_revision_id": {"$ref": "common.schema.json#/$defs/Id"},
+        "process_revision_id": {"$ref": "#/$defs/NullableId"},
         "goal_id": {"$ref": "common.schema.json#/$defs/Id"},
         "version": {"type": "integer", "minimum": 1},
         "completion_contract_id": {"$ref": "common.schema.json#/$defs/Id"},
@@ -212,6 +254,274 @@
         "branches": {
           "type": "array",
           "items": {"$ref": "#/$defs/Branch"}
+        },
+        "phases": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/PlanPhase"}
+        }
+      }
+    },
+    "ProcessRevisionSource": {
+      "type": "string",
+      "enum": ["run_started", "legacy_snapshot", "planner_adjustment"]
+    },
+    "ProcessRevision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "process_revision_id",
+        "run_id",
+        "version",
+        "parent_process_revision_id",
+        "gate_owners",
+        "source",
+        "reason",
+        "created_at",
+        "graph"
+      ],
+      "properties": {
+        "process_revision_id": {"$ref": "common.schema.json#/$defs/Id"},
+        "run_id": {"$ref": "common.schema.json#/$defs/Id"},
+        "version": {"type": "integer", "minimum": 1},
+        "parent_process_revision_id": {"$ref": "#/$defs/NullableId"},
+        "gate_owners": {
+          "type": "object",
+          "propertyNames": {"$ref": "common.schema.json#/$defs/Id"},
+          "additionalProperties": {"$ref": "common.schema.json#/$defs/Id"}
+        },
+        "source": {"$ref": "#/$defs/ProcessRevisionSource"},
+        "reason": {"type": "string", "minLength": 1, "maxLength": 16000},
+        "created_at": {"$ref": "common.schema.json#/$defs/UtcDateTime"},
+        "graph": {"$ref": "#/$defs/PlanGraph"}
+      }
+    },
+    "ProcessDraftStatus": {
+      "type": "string",
+      "enum": ["planning", "ready", "failed"]
+    },
+    "ProcessDraft": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "draft_id",
+        "run_id",
+        "parent_process_revision_id",
+        "planner_session_ref_id",
+        "status",
+        "reason",
+        "created_at",
+        "completed_at",
+        "error",
+        "base_is_current",
+        "base_execution_plan",
+        "candidate"
+      ],
+      "properties": {
+        "draft_id": {"$ref": "common.schema.json#/$defs/Id"},
+        "run_id": {"$ref": "common.schema.json#/$defs/Id"},
+        "parent_process_revision_id": {"$ref": "common.schema.json#/$defs/Id"},
+        "planner_session_ref_id": {"$ref": "common.schema.json#/$defs/Id"},
+        "status": {"$ref": "#/$defs/ProcessDraftStatus"},
+        "reason": {"type": "string", "minLength": 1, "maxLength": 16000},
+        "created_at": {"$ref": "common.schema.json#/$defs/UtcDateTime"},
+        "completed_at": {"$ref": "#/$defs/NullableUtcDateTime"},
+        "error": {"$ref": "#/$defs/NullableString"},
+        "base_is_current": {"type": "boolean"},
+        "base_execution_plan": {"$ref": "#/$defs/PlanGraph"},
+        "candidate": {
+          "oneOf": [
+            {"$ref": "#/$defs/ProcessRevision"},
+            {"type": "null"}
+          ]
+        }
+      }
+    },
+    "RunProcessDrafts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["run_id", "drafts"],
+      "properties": {
+        "run_id": {"$ref": "common.schema.json#/$defs/Id"},
+        "drafts": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/ProcessDraft"}
+        }
+      }
+    },
+    "ProcessBoundarySourceRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source_key", "quote"],
+      "properties": {
+        "source_key": {"type": "string", "minLength": 1},
+        "quote": {"type": "string", "minLength": 1, "maxLength": 16000}
+      }
+    },
+    "ProcessBoundaryAssessment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "aspect",
+        "judgment",
+        "explanation",
+        "source_refs",
+        "candidate_node_ids"
+      ],
+      "properties": {
+        "aspect": {
+          "type": "string",
+          "enum": ["requirements", "interfaces", "permissions", "gate_scope", "result_reuse"]
+        },
+        "judgment": {
+          "type": "string",
+          "enum": ["preserved", "not_preserved", "uncertain"]
+        },
+        "explanation": {"type": "string", "minLength": 1, "maxLength": 16000},
+        "source_refs": {
+          "type": "array",
+          "maxItems": 256,
+          "items": {"$ref": "#/$defs/ProcessBoundarySourceRef"}
+        },
+        "candidate_node_ids": {
+          "type": "array",
+          "maxItems": 256,
+          "items": {"$ref": "common.schema.json#/$defs/Id"}
+        }
+      }
+    },
+    "ProcessBoundaryObligation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["key", "description", "source_refs"],
+      "properties": {
+        "key": {"type": "string", "minLength": 1, "maxLength": 16000},
+        "description": {"type": "string", "minLength": 1, "maxLength": 16000},
+        "source_refs": {
+          "type": "array",
+          "maxItems": 256,
+          "items": {"$ref": "#/$defs/ProcessBoundarySourceRef"}
+        }
+      }
+    },
+    "ProcessBoundaryImplementation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["obligation_key", "alternatives"],
+      "properties": {
+        "obligation_key": {"type": "string", "minLength": 1, "maxLength": 16000},
+        "alternatives": {
+          "type": "array",
+          "maxItems": 256,
+          "items": {
+            "type": "array",
+            "maxItems": 256,
+            "items": {"$ref": "common.schema.json#/$defs/Id"}
+          }
+        }
+      }
+    },
+    "ProcessBoundaryGateScope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["original_gate_id", "obligation_keys"],
+      "properties": {
+        "original_gate_id": {"$ref": "common.schema.json#/$defs/Id"},
+        "obligation_keys": {
+          "type": "array",
+          "maxItems": 256,
+          "items": {"type": "string", "minLength": 1, "maxLength": 16000}
+        }
+      }
+    },
+    "ProcessBoundaryObligationMapping": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["obligations", "implementations", "gate_scopes"],
+      "properties": {
+        "obligations": {
+          "type": "array",
+          "maxItems": 256,
+          "items": {"$ref": "#/$defs/ProcessBoundaryObligation"}
+        },
+        "implementations": {
+          "type": "array",
+          "maxItems": 256,
+          "items": {"$ref": "#/$defs/ProcessBoundaryImplementation"}
+        },
+        "gate_scopes": {
+          "type": "array",
+          "maxItems": 256,
+          "items": {"$ref": "#/$defs/ProcessBoundaryGateScope"}
+        }
+      }
+    },
+    "ProcessBoundaryReport": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["summary", "assessments", "obligation_mapping", "evidence_artifact_ids"],
+      "properties": {
+        "summary": {"type": "string", "minLength": 1, "maxLength": 16000},
+        "assessments": {
+          "type": "array",
+          "minItems": 5,
+          "maxItems": 5,
+          "items": {"$ref": "#/$defs/ProcessBoundaryAssessment"}
+        },
+        "obligation_mapping": {
+          "oneOf": [
+            {"$ref": "#/$defs/ProcessBoundaryObligationMapping"},
+            {"type": "null"}
+          ]
+        },
+        "evidence_artifact_ids": {"$ref": "#/$defs/IdList"}
+      }
+    },
+    "ProcessReviewStatus": {
+      "type": "string",
+      "enum": ["reviewing", "completed", "failed"]
+    },
+    "ProcessReview": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "review_id",
+        "draft_id",
+        "run_id",
+        "reviewer_session_ref_id",
+        "status",
+        "created_at",
+        "completed_at",
+        "preserves_boundary",
+        "report",
+        "error"
+      ],
+      "properties": {
+        "review_id": {"$ref": "common.schema.json#/$defs/Id"},
+        "draft_id": {"$ref": "common.schema.json#/$defs/Id"},
+        "run_id": {"$ref": "common.schema.json#/$defs/Id"},
+        "reviewer_session_ref_id": {"$ref": "common.schema.json#/$defs/Id"},
+        "status": {"$ref": "#/$defs/ProcessReviewStatus"},
+        "created_at": {"$ref": "common.schema.json#/$defs/UtcDateTime"},
+        "completed_at": {"$ref": "#/$defs/NullableUtcDateTime"},
+        "preserves_boundary": {"type": ["boolean", "null"]},
+        "report": {
+          "oneOf": [
+            {"$ref": "#/$defs/ProcessBoundaryReport"},
+            {"type": "null"}
+          ]
+        },
+        "error": {"$ref": "#/$defs/NullableString"}
+      }
+    },
+    "ProcessDraftReviews": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["draft_id", "reviews"],
+      "properties": {
+        "draft_id": {"$ref": "common.schema.json#/$defs/Id"},
+        "reviews": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/ProcessReview"}
         }
       }
     },
@@ -239,6 +549,9 @@
         "conversation_id": {"$ref": "common.schema.json#/$defs/Id"},
         "goal_id": {"$ref": "common.schema.json#/$defs/Id"},
         "workspace": {"type": ["string", "null"]},
+        "source_run_id": {
+          "oneOf": [{"$ref": "common.schema.json#/$defs/Id"}, {"type": "null"}]
+        },
         "turns": {"type": "array", "items": {"$ref": "#/$defs/PlanningTurn"}}
       }
     },
@@ -254,6 +567,7 @@
       "required": [
         "attempt_id",
         "run_id",
+        "process_revision_id",
         "plan_node_id",
         "sequence",
         "status",
@@ -266,6 +580,7 @@
       "properties": {
         "attempt_id": {"$ref": "common.schema.json#/$defs/Id"},
         "run_id": {"$ref": "common.schema.json#/$defs/Id"},
+        "process_revision_id": {"$ref": "#/$defs/NullableId"},
         "plan_node_id": {"$ref": "common.schema.json#/$defs/Id"},
         "sequence": {"type": "integer", "minimum": 1},
         "status": {"$ref": "#/$defs/AttemptStatus"},
@@ -350,6 +665,7 @@
       "properties": {
         "check_id": {"$ref": "common.schema.json#/$defs/Id"},
         "check_run_id": {"$ref": "common.schema.json#/$defs/Id"},
+        "adoption_id": {"$ref": "#/$defs/NullableId"},
         "run_id": {"$ref": "common.schema.json#/$defs/Id"},
         "plan_node_id": {"$ref": "common.schema.json#/$defs/Id"},
         "attempt_id": {"$ref": "common.schema.json#/$defs/Id"},
@@ -358,6 +674,85 @@
         "evidence_artifact_ids": {"$ref": "#/$defs/IdList"},
         "output": {"$ref": "#/$defs/NullableString"},
         "failure_reason": {"$ref": "#/$defs/NullableString"}
+      }
+    },
+    "HumanCheckEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["artifact_id", "sha256"],
+      "properties": {
+        "artifact_id": {"$ref": "common.schema.json#/$defs/Id"},
+        "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+      }
+    },
+    "ResultAdoption": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "adoption_id",
+        "target_run_id",
+        "target_plan_revision_id",
+        "target_plan_node_id",
+        "source_run_id",
+        "source_plan_revision_id",
+        "source_process_revision_id",
+        "source_plan_node_id",
+        "source_attempt_id",
+        "evidence",
+        "reason",
+        "created_at"
+      ],
+      "properties": {
+        "adoption_id": {"$ref": "common.schema.json#/$defs/Id"},
+        "target_run_id": {"$ref": "common.schema.json#/$defs/Id"},
+        "target_plan_revision_id": {"$ref": "common.schema.json#/$defs/Id"},
+        "target_plan_node_id": {"$ref": "common.schema.json#/$defs/Id"},
+        "source_run_id": {"$ref": "common.schema.json#/$defs/Id"},
+        "source_plan_revision_id": {"$ref": "common.schema.json#/$defs/Id"},
+        "source_process_revision_id": {"$ref": "common.schema.json#/$defs/Id"},
+        "source_plan_node_id": {"$ref": "common.schema.json#/$defs/Id"},
+        "source_attempt_id": {"$ref": "common.schema.json#/$defs/Id"},
+        "evidence": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"$ref": "#/$defs/HumanCheckEvidence"}
+        },
+        "reason": {"type": "string", "minLength": 1, "pattern": "\\S"},
+        "created_at": {"$ref": "common.schema.json#/$defs/UtcDateTime"}
+      }
+    },
+    "HumanCheckRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "plan_revision_id",
+        "completion_contract_id",
+        "completion_contract_version",
+        "question",
+        "evidence",
+        "request_token"
+      ],
+      "properties": {
+        "plan_revision_id": {"$ref": "common.schema.json#/$defs/Id"},
+        "completion_contract_id": {"$ref": "common.schema.json#/$defs/Id"},
+        "completion_contract_version": {"type": "integer", "minimum": 1},
+        "question": {"type": "string", "minLength": 1, "pattern": "\\S"},
+        "evidence": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"$ref": "#/$defs/HumanCheckEvidence"}
+        },
+        "request_token": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+      }
+    },
+    "HumanCheckDecision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["actor", "comment", "decided_at"],
+      "properties": {
+        "actor": {"type": "string", "minLength": 1, "pattern": "\\S"},
+        "comment": {"type": "string", "minLength": 1, "pattern": "\\S"},
+        "decided_at": {"$ref": "common.schema.json#/$defs/UtcDateTime"}
       }
     },
     "CheckRun": {
@@ -374,11 +769,14 @@
         "started_at",
         "ended_at",
         "result",
-        "failure_reason"
+        "failure_reason",
+        "human_request",
+        "human_decision"
       ],
       "properties": {
         "check_run_id": {"$ref": "common.schema.json#/$defs/Id"},
         "run_id": {"$ref": "common.schema.json#/$defs/Id"},
+        "adoption_id": {"$ref": "#/$defs/NullableId"},
         "plan_node_id": {"$ref": "common.schema.json#/$defs/Id"},
         "attempt_id": {"$ref": "common.schema.json#/$defs/Id"},
         "check_id": {"$ref": "common.schema.json#/$defs/Id"},
@@ -392,7 +790,19 @@
             {"type": "null"}
           ]
         },
-        "failure_reason": {"$ref": "#/$defs/NullableString"}
+        "failure_reason": {"$ref": "#/$defs/NullableString"},
+        "human_request": {
+          "oneOf": [
+            {"$ref": "#/$defs/HumanCheckRequest"},
+            {"type": "null"}
+          ]
+        },
+        "human_decision": {
+          "oneOf": [
+            {"$ref": "#/$defs/HumanCheckDecision"},
+            {"type": "null"}
+          ]
+        }
       }
     },
     "GateDecision": {
@@ -413,6 +823,7 @@
       "properties": {
         "gate_id": {"$ref": "common.schema.json#/$defs/Id"},
         "run_id": {"$ref": "common.schema.json#/$defs/Id"},
+        "adoption_id": {"$ref": "#/$defs/NullableId"},
         "plan_node_id": {"$ref": "common.schema.json#/$defs/Id"},
         "attempt_id": {"$ref": "common.schema.json#/$defs/Id"},
         "passed": {"type": "boolean"},
@@ -438,6 +849,7 @@
       "required": [
         "checkpoint_id",
         "plan_revision_id",
+        "process_revision_id",
         "run_id",
         "event_offset",
         "gate_decision",
@@ -448,6 +860,7 @@
       "properties": {
         "checkpoint_id": {"$ref": "common.schema.json#/$defs/Id"},
         "plan_revision_id": {"$ref": "common.schema.json#/$defs/Id"},
+        "process_revision_id": {"$ref": "#/$defs/NullableId"},
         "run_id": {"$ref": "common.schema.json#/$defs/Id"},
         "event_offset": {"type": "integer", "minimum": 1},
         "gate_decision": {"$ref": "#/$defs/GateDecision"},
@@ -650,6 +1063,143 @@
         "status": {"enum": ["pending", "resolved", "declined"]}
       }
     },
+    "InterventionBaseline": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "run_id",
+        "plan_revision_id",
+        "plan_revision_version",
+        "plan_node_id",
+        "phase_id",
+        "branch_id",
+        "agent_session_ref_id",
+        "phase_session_id",
+        "handoff_ids",
+        "artifact_ids"
+      ],
+      "properties": {
+        "run_id": {"$ref": "common.schema.json#/$defs/Id"},
+        "plan_revision_id": {"$ref": "common.schema.json#/$defs/Id"},
+        "plan_revision_version": {"type": "integer", "minimum": 1},
+        "plan_node_id": {"$ref": "common.schema.json#/$defs/Id"},
+        "phase_id": {"$ref": "#/$defs/NullableId"},
+        "branch_id": {"$ref": "#/$defs/NullableId"},
+        "agent_session_ref_id": {"$ref": "common.schema.json#/$defs/Id"},
+        "phase_session_id": {"$ref": "#/$defs/NullableId"},
+        "handoff_ids": {"$ref": "#/$defs/IdList"},
+        "artifact_ids": {"$ref": "#/$defs/IdList"}
+      }
+    },
+    "InterventionReply": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "offset",
+        "event_id",
+        "occurred_at",
+        "intervention_id",
+        "run_id",
+        "plan_revision_id",
+        "plan_node_id",
+        "attempt_id",
+        "request_token",
+        "actor",
+        "message",
+        "meaning"
+      ],
+      "properties": {
+        "offset": {"type": "integer", "minimum": 1},
+        "event_id": {"$ref": "common.schema.json#/$defs/Id"},
+        "occurred_at": {"$ref": "common.schema.json#/$defs/UtcDateTime"},
+        "intervention_id": {"$ref": "common.schema.json#/$defs/Id"},
+        "run_id": {"$ref": "common.schema.json#/$defs/Id"},
+        "plan_revision_id": {"$ref": "common.schema.json#/$defs/Id"},
+        "plan_node_id": {"$ref": "common.schema.json#/$defs/Id"},
+        "attempt_id": {"$ref": "common.schema.json#/$defs/Id"},
+        "request_token": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "actor": {"type": "string", "minLength": 1, "pattern": "\\S"},
+        "message": {"type": "string", "minLength": 1, "pattern": "\\S"},
+        "meaning": {"type": "string", "minLength": 1, "pattern": "\\S"}
+      }
+    },
+    "Intervention": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "offset",
+        "event_id",
+        "occurred_at",
+        "intervention_id",
+        "run_id",
+        "plan_revision_id",
+        "plan_revision_version",
+        "plan_node_id",
+        "attempt_id",
+        "phase_id",
+        "branch_id",
+        "agent_session_ref_id",
+        "phase_session_id",
+        "handoff_ids",
+        "artifact_ids",
+        "baseline",
+        "reason",
+        "evidence",
+        "needed",
+        "kind",
+        "request_token",
+        "status",
+        "reply",
+        "key",
+        "completed",
+        "context",
+        "remaining",
+        "known_issues"
+      ],
+      "properties": {
+        "offset": {"type": "integer", "minimum": 1},
+        "event_id": {"$ref": "common.schema.json#/$defs/Id"},
+        "occurred_at": {"$ref": "common.schema.json#/$defs/UtcDateTime"},
+        "intervention_id": {"$ref": "common.schema.json#/$defs/Id"},
+        "run_id": {"$ref": "common.schema.json#/$defs/Id"},
+        "plan_revision_id": {"$ref": "common.schema.json#/$defs/Id"},
+        "plan_revision_version": {"type": "integer", "minimum": 1},
+        "plan_node_id": {"$ref": "common.schema.json#/$defs/Id"},
+        "attempt_id": {"$ref": "common.schema.json#/$defs/Id"},
+        "phase_id": {"$ref": "#/$defs/NullableId"},
+        "branch_id": {"$ref": "#/$defs/NullableId"},
+        "agent_session_ref_id": {"$ref": "common.schema.json#/$defs/Id"},
+        "phase_session_id": {"$ref": "#/$defs/NullableId"},
+        "handoff_ids": {"$ref": "#/$defs/IdList"},
+        "artifact_ids": {"$ref": "#/$defs/IdList"},
+        "baseline": {"$ref": "#/$defs/InterventionBaseline"},
+        "reason": {"type": "string", "minLength": 1, "pattern": "\\S"},
+        "evidence": {"type": "string", "minLength": 1, "pattern": "\\S"},
+        "needed": {"type": "string", "minLength": 1, "pattern": "\\S"},
+        "kind": {"type": "string", "enum": ["worker_blocked", "external_effects"]},
+        "request_token": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "status": {"type": "string", "enum": ["open", "replied"]},
+        "reply": {
+          "oneOf": [
+            {"$ref": "#/$defs/InterventionReply"},
+            {"type": "null"}
+          ]
+        },
+        "key": {"type": "string", "minLength": 1},
+        "completed": {"type": "string", "minLength": 1, "pattern": "\\S"},
+        "context": {"type": "string"},
+        "remaining": {"type": "string"},
+        "known_issues": {"type": "string"}
+      }
+    },
+    "InterventionList": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/Intervention"}
+    },
+    "ResultAdoptionList": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/ResultAdoption"}
+    },
     "WorkerProfileList": {
       "type": "array",
       "items": {"$ref": "#/$defs/WorkerProfile"}
@@ -689,6 +1239,36 @@
       "additionalProperties": false,
       "required": ["data"],
       "properties": {"data": {"$ref": "#/$defs/PlanGraph"}}
+    },
+    "ProcessRevisionResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["data"],
+      "properties": {"data": {"$ref": "#/$defs/ProcessRevision"}}
+    },
+    "ProcessDraftResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["data"],
+      "properties": {"data": {"$ref": "#/$defs/ProcessDraft"}}
+    },
+    "RunProcessDraftsResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["data"],
+      "properties": {"data": {"$ref": "#/$defs/RunProcessDrafts"}}
+    },
+    "ProcessReviewResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["data"],
+      "properties": {"data": {"$ref": "#/$defs/ProcessReview"}}
+    },
+    "ProcessDraftReviewsResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["data"],
+      "properties": {"data": {"$ref": "#/$defs/ProcessDraftReviews"}}
     },
     "ExecutionTraceResponse": {
       "type": "object",
@@ -767,6 +1347,18 @@
       "additionalProperties": false,
       "required": ["data"],
       "properties": {"data": {"$ref": "#/$defs/WorkerRequest"}}
+    },
+    "InterventionListResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["data"],
+      "properties": {"data": {"$ref": "#/$defs/InterventionList"}}
+    },
+    "ResultAdoptionListResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["data"],
+      "properties": {"data": {"$ref": "#/$defs/ResultAdoptionList"}}
     }
   }
 }

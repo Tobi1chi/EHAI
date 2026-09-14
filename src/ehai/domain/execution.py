@@ -120,6 +120,7 @@ class Run:
     started_at: datetime | None = None
     ended_at: datetime | None = None
     status_reason: str | None = None
+    predecessor_run_id: ID | None = None
     _rehydrate_token: InitVar[object | None] = None
 
     def __post_init__(self, _rehydrate_token: object | None) -> None:
@@ -130,6 +131,11 @@ class Run:
             _validated_id(self.plan_revision_id, "plan_revision_id"),
         )
         object.__setattr__(self, "run_id", _validated_id(self.run_id, "run_id"))
+        if self.predecessor_run_id is not None:
+            predecessor = _validated_id(self.predecessor_run_id, "predecessor_run_id")
+            if predecessor == self.run_id:
+                raise ValueError("Run cannot be its own predecessor")
+            object.__setattr__(self, "predecessor_run_id", predecessor)
         object.__setattr__(self, "created_at", _utc(self.created_at, "created_at"))
         object.__setattr__(self, "started_at", _optional_utc(self.started_at, "started_at"))
         object.__setattr__(self, "ended_at", _optional_utc(self.ended_at, "ended_at"))
@@ -152,6 +158,7 @@ class Run:
         started_at: datetime | None,
         ended_at: datetime | None,
         status_reason: str | None = None,
+        predecessor_run_id: ID | None = None,
     ) -> Self:
         """Restore a persisted Run snapshot through an explicit validation boundary."""
         return cls(
@@ -163,6 +170,7 @@ class Run:
             started_at=started_at,
             ended_at=ended_at,
             status_reason=status_reason,
+            predecessor_run_id=predecessor_run_id,
             _rehydrate_token=_REHYDRATE,
         )
 
@@ -296,12 +304,18 @@ class Attempt:
     deadline_at: datetime | None = None
     lease_expires_at: datetime | None = None
     queue_reason: str | None = None
+    process_revision_id: ID | None = None
     _rehydrate_token: InitVar[object | None] = None
 
     def __post_init__(self, _rehydrate_token: object | None) -> None:
         object.__setattr__(self, "run_id", _validated_id(self.run_id, "run_id"))
         object.__setattr__(self, "plan_node_id", _validated_id(self.plan_node_id, "plan_node_id"))
         object.__setattr__(self, "attempt_id", _validated_id(self.attempt_id, "attempt_id"))
+        object.__setattr__(
+            self,
+            "process_revision_id",
+            _optional_validated_id(self.process_revision_id, "process_revision_id"),
+        )
         object.__setattr__(
             self,
             "worker_profile_id",
@@ -379,6 +393,7 @@ class Attempt:
         deadline_at: datetime | None = None,
         lease_expires_at: datetime | None = None,
         queue_reason: str | None = None,
+        process_revision_id: ID | None = None,
     ) -> Self:
         """Restore a persisted Attempt snapshot through an explicit validation boundary."""
         return cls(
@@ -403,6 +418,7 @@ class Attempt:
             deadline_at=deadline_at,
             lease_expires_at=lease_expires_at,
             queue_reason=queue_reason,
+            process_revision_id=process_revision_id,
             _rehydrate_token=_REHYDRATE,
         )
 

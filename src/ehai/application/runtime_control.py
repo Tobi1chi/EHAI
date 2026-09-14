@@ -104,6 +104,11 @@ class QuiescibleRuntime(Protocol):
     def resume_run_scheduling(self, run_id: ID) -> None: ...
 
 
+@runtime_checkable
+class DispatchReleasingRuntime(Protocol):
+    def release_run_dispatch(self, run_id: ID) -> None: ...
+
+
 class RuntimeControlService:
     """Coordinate explicit P2 commands with one single-process Runtime registry."""
 
@@ -186,6 +191,16 @@ class RuntimeControlService:
             seen.add(identity)
             if isinstance(runtime, QuiescibleRuntime):
                 runtime.resume_run_scheduling(run_id)
+
+    def release_run_dispatch(self, run_id: ID) -> None:
+        """Release this host's claim after a persisted, quiesced pause or cancel."""
+        seen: set[int] = set()
+        for runtime in self._runtimes.values():
+            if id(runtime) in seen:
+                continue
+            seen.add(id(runtime))
+            if isinstance(runtime, DispatchReleasingRuntime):
+                runtime.release_run_dispatch(run_id)
 
     def list_waiting_requests(self, attempt_id: ID) -> tuple[WaitingWorkerRequestView, ...]:
         attempt = self._attempt(attempt_id)

@@ -7,8 +7,10 @@ from dataclasses import dataclass
 from datetime import datetime
 
 from ehai import ID, JsonValue, utc_now
+from ehai.application.interventions import list_interventions
+from ehai.application.pause_causes import PauseCause, pause_event_payload
 from ehai.application.ports import UnitOfWork
-from ehai.domain.checking import Checkpoint, CheckRunStatus
+from ehai.domain.checking import CheckKind, Checkpoint, CheckRunStatus
 from ehai.domain.events import Event, EventType
 from ehai.domain.execution import AttemptStatus, Run, RunStatus
 from ehai.domain.planning import PlanNode, PlanNodeStatus, PlanRevision
@@ -71,16 +73,52 @@ class RecoveryService:
                     for run in uow.states.list_runs(goal.goal_id):
                         if run.status is not RunStatus.RUNNING:
                             continue
-                        plan = _required_plan(uow, run.plan_revision_id)
+                        plan = _required_plan(uow, run.run_id)
+                        failures_before_run = len(failed_plan_node_ids)
                         running_attempts = tuple(
                             attempt
                             for attempt in uow.states.list_attempts(run.run_id)
                             if attempt.status is AttemptStatus.RUNNING
                         )
+                        specs = {
+                            spec.check_id: spec
+                            for spec in uow.states.list_check_specs(plan.plan_revision_id)
+                        }
+                        checks = uow.states.list_check_runs(run.run_id)
+                        durable_verification = {
+                            node.plan_node_id
+                            for node in plan.nodes
+                            if node.status is PlanNodeStatus.VERIFYING
+                            and any(
+                                attempt.plan_node_id == node.plan_node_id
+                                and attempt.status is AttemptStatus.SUCCEEDED
+                                and {
+                                    check.check_id
+                                    for check in checks
+                                    if check.attempt_id == attempt.attempt_id
+                                }
+                                == set(node.required_check_ids)
+                                and all(
+                                    check.status is CheckRunStatus.COMPLETED
+                                    or (
+                                        check.check_id in specs
+                                        and specs[check.check_id].kind is CheckKind.HUMAN
+                                        and check.status is CheckRunStatus.RUNNING
+                                    )
+                                    for check in checks
+                                    if check.attempt_id == attempt.attempt_id
+                                )
+                                for attempt in uow.states.list_attempts(run.run_id)
+                            )
+                        }
                         running_check_runs = tuple(
                             check_run
-                            for check_run in uow.states.list_check_runs(run.run_id)
+                            for check_run in checks
                             if check_run.status is CheckRunStatus.RUNNING
+                            and not (
+                                check_run.check_id in specs
+                                and specs[check_run.check_id].kind is CheckKind.HUMAN
+                            )
                         )
                         updated_nodes = {node.plan_node_id: node for node in plan.nodes}
                         for attempt in running_attempts:
@@ -161,6 +199,7 @@ class RecoveryService:
                         for node in tuple(updated_nodes.values()):
                             if (
                                 node.status in {PlanNodeStatus.CANDIDATE, PlanNodeStatus.VERIFYING}
+                                and node.plan_node_id not in durable_verification
                                 and node.plan_node_id not in active_attempt_node_ids
                                 and node.plan_node_id not in running_check_node_ids
                             ):
@@ -175,8 +214,18 @@ class RecoveryService:
 
                         if updated_nodes != {node.plan_node_id: node for node in plan.nodes}:
                             plan = _replace_nodes(plan, updated_nodes)
-                            uow.states.put_plan_revision(plan)
+                            uow.states.put_execution_plan(run.run_id, plan)
 
+                        if (
+                            (
+                                durable_verification
+                                or any(node.status is PlanNodeStatus.BLOCKED for node in plan.nodes)
+                            )
+                            and not running_attempts
+                            and not running_check_runs
+                            and len(failed_plan_node_ids) == failures_before_run
+                        ):
+                            continue
                         paused = run.pause()
                         uow.states.put_run(paused)
                         paused_run_ids.append(run.run_id)
@@ -185,14 +234,15 @@ class RecoveryService:
                                 EventType.RUN_PAUSED,
                                 paused,
                                 run.run_id,
-                                {
-                                    "run_id": run.run_id,
-                                    "reason": (
+                                pause_event_payload(
+                                    run.run_id,
+                                    PauseCause.STARTUP_RECOVERY,
+                                    reason=(
                                         STARTUP_ACTIVE_EXECUTION_PAUSE_REASON
                                         if running_attempts or running_check_runs
                                         else STARTUP_IDLE_RUN_PAUSE_REASON
                                     ),
-                                },
+                                ),
                             )
                         )
             uow.commit()
@@ -234,6 +284,11 @@ class RecoveryService:
             if current_run.status in {RunStatus.COMPLETED, RunStatus.CANCELLED}:
                 raise InvalidRecoveryStateError(
                     f"run {run_id} in {current_run.status.value} state cannot be restored"
+                )
+            if any(item.get("status") == "open" for item in list_interventions(uow.events, run_id)):
+                raise InvalidRecoveryStateError(
+                    "Resolve the version-bound intervention before restoring a Checkpoint; "
+                    "restoration cannot discard unresolved external effects or user decisions"
                 )
             checkpoints = uow.states.list_checkpoints(run_id)
             if not checkpoints:
@@ -365,6 +420,7 @@ def _replace_nodes(plan: PlanRevision, replacements: dict[ID, PlanNode]) -> Plan
         nodes=nodes,
         edges=plan.edges,
         branches=plan.branches,
+        phases=plan.phases,
         created_at=plan.created_at,
         status=plan.status,
         approved_at=plan.approved_at,
@@ -380,8 +436,8 @@ def _required_run(uow: UnitOfWork, run_id: ID) -> Run:
     return run
 
 
-def _required_plan(uow: UnitOfWork, plan_revision_id: ID) -> PlanRevision:
-    plan = uow.states.get_plan_revision(plan_revision_id)
+def _required_plan(uow: UnitOfWork, run_id: ID) -> PlanRevision:
+    plan = uow.states.get_execution_plan(run_id)
     if plan is None:
-        raise RecoveryError(f"PlanRevision {plan_revision_id} is not persisted")
+        raise RecoveryError(f"Run {run_id} execution PlanRevision is not persisted")
     return plan

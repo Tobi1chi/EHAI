@@ -29,6 +29,7 @@ class RetrySafety(StrEnum):
     NO_EXECUTION_HANDLE = "no_execution_handle"
     SAFE_FAILURE = "safe_failure"
     EXECUTION_NOT_FOUND = "execution_not_found"
+    LOCAL_ROLLBACK = "local_rollback"
     UNKNOWN = "unknown"
 
     @property

@@ -6,7 +6,7 @@ import sqlite3
 from collections.abc import Sequence
 
 P1_SCHEMA_VERSION = 2
-LATEST_SCHEMA_VERSION = 11
+LATEST_SCHEMA_VERSION = 16
 
 
 class SchemaVersionError(RuntimeError):
@@ -489,6 +489,145 @@ _MIGRATION_11: tuple[str, ...] = (
     """,
 )
 
+_MIGRATION_12: tuple[str, ...] = (
+    """
+    CREATE TABLE run_execution_plans (
+        run_id TEXT PRIMARY KEY REFERENCES runs(run_id),
+        plan_revision_id TEXT NOT NULL REFERENCES plan_revisions(plan_revision_id),
+        snapshot_json TEXT NOT NULL CHECK (json_valid(snapshot_json))
+    )
+    """,
+    """
+    INSERT INTO run_execution_plans(run_id, plan_revision_id, snapshot_json)
+    SELECT r.run_id, p.plan_revision_id,
+        json_set(p.snapshot_json,
+            '$.nodes', json((
+                SELECT json_group_array(json(snapshot_json)) FROM (
+                    SELECT snapshot_json FROM plan_nodes
+                    WHERE plan_revision_id = p.plan_revision_id ORDER BY sort_index
+                )
+            )),
+            '$.edges', json((
+                SELECT json_group_array(json(snapshot_json)) FROM (
+                    SELECT snapshot_json FROM edges
+                    WHERE plan_revision_id = p.plan_revision_id ORDER BY sort_index
+                )
+            )),
+            '$.branches', json((
+                SELECT json_group_array(json(snapshot_json)) FROM (
+                    SELECT snapshot_json FROM branches
+                    WHERE plan_revision_id = p.plan_revision_id ORDER BY sort_index
+                )
+            ))
+        )
+    FROM runs r JOIN plan_revisions p ON p.plan_revision_id = r.plan_revision_id
+    """,
+)
+
+_MIGRATION_13: tuple[str, ...] = (
+    """
+    CREATE TABLE process_revisions (
+        process_revision_id TEXT PRIMARY KEY,
+        run_id TEXT NOT NULL REFERENCES runs(run_id),
+        version INTEGER NOT NULL CHECK (version > 0),
+        parent_process_revision_id TEXT REFERENCES process_revisions(process_revision_id),
+        snapshot_json TEXT NOT NULL CHECK (json_valid(snapshot_json)),
+        UNIQUE (run_id, version)
+    )
+    """,
+    """
+    ALTER TABLE run_execution_plans ADD COLUMN active_process_revision_id TEXT
+        REFERENCES process_revisions(process_revision_id) DEFERRABLE INITIALLY DEFERRED
+    """,
+    """
+    UPDATE run_execution_plans SET active_process_revision_id =
+        lower(hex(randomblob(4))) || '-' || lower(hex(randomblob(2))) || '-' ||
+        lower(hex(randomblob(2))) || '-' || lower(hex(randomblob(2))) || '-' ||
+        lower(hex(randomblob(6)))
+    """,
+    """
+    INSERT INTO process_revisions(process_revision_id, run_id, version, snapshot_json)
+    SELECT active_process_revision_id, run_id, 1,
+        json_object(
+            'process_revision_id', active_process_revision_id,
+            'run_id', run_id, 'version', 1, 'parent_process_revision_id', NULL,
+            'graph', json(snapshot_json),
+            'created_at', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
+            'source', 'legacy_snapshot',
+            'reason', 'Retained execution graph at process-version migration; ' ||
+                'earlier Attempts remain unversioned'
+        )
+    FROM run_execution_plans
+    """,
+)
+
+_MIGRATION_14: tuple[str, ...] = (
+    """
+    UPDATE plan_revisions AS p SET snapshot_json = json_set(p.snapshot_json,
+        '$.nodes', json((
+            SELECT json_group_array(json(snapshot_json)) FROM (
+                SELECT snapshot_json FROM plan_nodes
+                WHERE plan_revision_id = p.plan_revision_id ORDER BY sort_index
+            )
+        )),
+        '$.edges', json((
+            SELECT json_group_array(json(snapshot_json)) FROM (
+                SELECT snapshot_json FROM edges
+                WHERE plan_revision_id = p.plan_revision_id ORDER BY sort_index
+            )
+        )),
+        '$.branches', json((
+            SELECT json_group_array(json(snapshot_json)) FROM (
+                SELECT snapshot_json FROM branches
+                WHERE plan_revision_id = p.plan_revision_id ORDER BY sort_index
+            )
+        ))
+    )
+    """,
+)
+
+_MIGRATION_15: tuple[str, ...] = (
+    """
+    CREATE TABLE process_drafts (
+        draft_id TEXT PRIMARY KEY,
+        run_id TEXT NOT NULL REFERENCES runs(run_id),
+        parent_process_revision_id TEXT NOT NULL
+            REFERENCES process_revisions(process_revision_id),
+        created_at TEXT NOT NULL,
+        status TEXT NOT NULL CHECK (status IN ('planning', 'ready', 'failed')),
+        snapshot_json TEXT NOT NULL CHECK (json_valid(snapshot_json))
+    )
+    """,
+    """
+    CREATE INDEX process_drafts_run_idx
+        ON process_drafts(run_id, created_at, draft_id)
+    """,
+)
+
+_MIGRATION_16: tuple[str, ...] = (
+    """
+    CREATE TABLE result_adoptions (
+        adoption_id TEXT PRIMARY KEY,
+        target_run_id TEXT NOT NULL REFERENCES runs(run_id),
+        target_plan_revision_id TEXT NOT NULL REFERENCES plan_revisions(plan_revision_id),
+        target_plan_node_id TEXT NOT NULL REFERENCES plan_nodes(plan_node_id),
+        source_run_id TEXT NOT NULL REFERENCES runs(run_id),
+        source_plan_revision_id TEXT NOT NULL REFERENCES plan_revisions(plan_revision_id),
+        source_process_revision_id TEXT NOT NULL
+            REFERENCES process_revisions(process_revision_id),
+        source_plan_node_id TEXT NOT NULL REFERENCES plan_nodes(plan_node_id),
+        source_attempt_id TEXT NOT NULL REFERENCES attempts(attempt_id),
+        created_at TEXT NOT NULL,
+        snapshot_json TEXT NOT NULL CHECK (json_valid(snapshot_json)),
+        UNIQUE (target_run_id, target_plan_node_id)
+    )
+    """,
+    """
+    CREATE INDEX result_adoptions_target_idx
+        ON result_adoptions(target_run_id, created_at, adoption_id)
+    """,
+)
+
 _MIGRATIONS: dict[int, Sequence[str]] = {
     1: _MIGRATION_1,
     2: _MIGRATION_2,
@@ -501,6 +640,11 @@ _MIGRATIONS: dict[int, Sequence[str]] = {
     9: _MIGRATION_9,
     10: _MIGRATION_10,
     11: _MIGRATION_11,
+    12: _MIGRATION_12,
+    13: _MIGRATION_13,
+    14: _MIGRATION_14,
+    15: _MIGRATION_15,
+    16: _MIGRATION_16,
 }
 
 

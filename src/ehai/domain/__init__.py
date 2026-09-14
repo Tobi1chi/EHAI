@@ -38,10 +38,12 @@ from ehai.domain.planning import (
     PlanNode,
     PlanNodeKind,
     PlanNodeStatus,
+    PlanPhase,
     PlanRevision,
     PlanRevisionStatus,
     PlanTransitionError,
 )
+from ehai.domain.process import ProcessRevision, ProcessRevisionSource
 from ehai.domain.runtime import DispatchWork, DispatchWorkStatus
 from ehai.domain.workers import (
     AgentSessionRef,
@@ -105,9 +107,12 @@ __all__ = [
     "PlanNode",
     "PlanNodeKind",
     "PlanNodeStatus",
+    "PlanPhase",
     "PlanRevision",
     "PlanRevisionStatus",
     "PlanTransitionError",
+    "ProcessRevision",
+    "ProcessRevisionSource",
     "Project",
     "Run",
     "RunStatus",

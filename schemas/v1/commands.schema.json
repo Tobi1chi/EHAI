@@ -26,11 +26,21 @@
       ]
     },
     "P1CompletionCriterion": {
-      "type": "string",
-      "enum": [
-        "artifact:non-empty",
-        "command:exit-zero",
-        "semantic:required-terms"
+      "anyOf": [
+        {
+          "type": "string",
+          "enum": [
+            "artifact:non-empty",
+            "command:exit-zero",
+            "semantic:required-terms"
+          ]
+        },
+        {
+          "type": "string",
+          "minLength": 7,
+          "maxLength": 8000,
+          "pattern": "^human:\\s*\\S.*$"
+        }
       ]
     },
     "Project": {
@@ -180,21 +190,52 @@
         }
       }
     },
+    "ProposeProcessRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["idempotency_key", "run_id", "reason"],
+      "properties": {
+        "idempotency_key": {"$ref": "common.schema.json#/$defs/IdempotencyKey"},
+        "run_id": {"$ref": "common.schema.json#/$defs/IdInput"},
+        "reason": {"type": "string", "minLength": 1, "maxLength": 16000, "pattern": "\\S"}
+      }
+    },
+    "ReviewProcessRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["idempotency_key", "draft_id"],
+      "properties": {
+        "idempotency_key": {"$ref": "common.schema.json#/$defs/IdempotencyKey"},
+        "draft_id": {"$ref": "common.schema.json#/$defs/IdInput"}
+      }
+    },
+    "ApplyProcessRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["idempotency_key", "review_id"],
+      "properties": {
+        "idempotency_key": {"$ref": "common.schema.json#/$defs/IdempotencyKey"},
+        "review_id": {"$ref": "common.schema.json#/$defs/IdInput"}
+      }
+    },
     "DiscussPlanRequest": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["idempotency_key", "goal_id", "message", "criteria"],
+      "required": ["idempotency_key", "goal_id", "message"],
       "properties": {
         "idempotency_key": {"$ref": "common.schema.json#/$defs/IdempotencyKey"},
         "goal_id": {"$ref": "common.schema.json#/$defs/IdInput"},
         "message": {"type": "string", "minLength": 1, "maxLength": 8000, "pattern": "\\S"},
         "criteria": {
           "type": "array",
-          "minItems": 1,
           "maxItems": 3,
+          "default": [],
           "items": {"$ref": "#/$defs/P1CompletionCriterion"}
         },
         "conversation_id": {
+          "oneOf": [{"$ref": "common.schema.json#/$defs/IdInput"}, {"type": "null"}]
+        },
+        "source_run_id": {
           "oneOf": [{"$ref": "common.schema.json#/$defs/IdInput"}, {"type": "null"}]
         }
       }
@@ -213,13 +254,329 @@
         "completion_contract_id": {"$ref": "common.schema.json#/$defs/IdInput"}
       }
     },
+    "ExecutionCodexServerRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "executable": {
+          "items": {
+            "minLength": 1,
+            "pattern": "^[^\\x00]*[^\\s\\x00][^\\x00]*$",
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Executable",
+          "type": "array"
+        },
+        "approval_policy": {
+          "enum": [
+            "untrusted",
+            "on-request",
+            "never"
+          ],
+          "title": "Approval Policy",
+          "type": "string"
+        },
+        "sandbox": {
+          "enum": [
+            "read-only",
+            "workspace-write",
+            "danger-full-access"
+          ],
+          "title": "Sandbox",
+          "type": "string"
+        }
+      },
+      "required": [
+        "executable",
+        "approval_policy",
+        "sandbox"
+      ],
+      "title": "ExecutionCodexServerRequest",
+      "type": "object"
+    },
+    "GoalWorkerBudgetRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "max_worker_attempts": {
+          "minimum": 1,
+          "title": "Max Worker Attempts",
+          "type": "integer"
+        }
+      },
+      "required": ["max_worker_attempts"],
+      "title": "GoalWorkerBudgetRequest",
+      "type": "object"
+    },
+    "ExecutionConfigRequest": {
+      "additionalProperties": false,
+      "description": "Explicit confirmation of the host's credential-free execution settings.",
+      "properties": {
+        "config_version": {
+          "maximum": 1,
+          "minimum": 1,
+          "title": "Config Version",
+          "type": "integer"
+        },
+        "worker_kind": {
+          "enum": [
+            "builtin",
+            "codex-server"
+          ],
+          "title": "Worker Kind",
+          "type": "string"
+        },
+        "model": {
+          "minLength": 1,
+          "pattern": "^[^\\x00]*[^\\s\\x00][^\\x00]*$",
+          "title": "Model",
+          "type": "string"
+        },
+        "reasoning_effort": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "pattern": "^[^\\x00]*[^\\s\\x00][^\\x00]*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Reasoning Effort"
+        },
+        "capacity": {
+          "minimum": 1,
+          "title": "Capacity",
+          "type": "integer"
+        },
+        "workspace": {
+          "minLength": 1,
+          "pattern": "^[^\\x00]*[^\\s\\x00][^\\x00]*$",
+          "title": "Workspace",
+          "type": "string"
+        },
+        "allowed_commands": {
+          "description": "Distinct argv arrays; duplicates are checked after text normalization.",
+          "items": {
+            "items": {
+              "minLength": 1,
+              "pattern": "^[^\\x00]*[^\\s\\x00][^\\x00]*$",
+              "type": "string"
+            },
+            "minItems": 1,
+            "type": "array"
+          },
+          "title": "Allowed Commands",
+          "type": "array",
+          "uniqueItems": true
+        },
+        "available_shells": {
+          "description": "Distinct shell names; duplicates are checked after text normalization.",
+          "items": {
+            "minLength": 1,
+            "pattern": "^[^\\x00]*[^\\s\\x00][^\\x00]*$",
+            "type": "string"
+          },
+          "title": "Available Shells",
+          "type": "array",
+          "uniqueItems": true
+        },
+        "git_permissions": {
+          "items": {
+            "enum": [
+              "git.read",
+              "git.local_write",
+              "git.remote_write",
+              "git.dangerous"
+            ],
+            "type": "string"
+          },
+          "title": "Git Permissions",
+          "type": "array"
+        },
+        "endpoint_capabilities": {
+          "$ref": "#/$defs/ExecutionEndpointCapabilitiesRequest"
+        },
+        "command_timeout_seconds": {
+          "exclusiveMinimum": 0,
+          "title": "Command Timeout Seconds",
+          "type": "number"
+        },
+        "codex_server": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ExecutionCodexServerRequest"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "goal_worker_budget": {
+          "anyOf": [{"$ref": "#/$defs/GoalWorkerBudgetRequest"}, {"type": "null"}],
+          "default": null
+        },
+        "process_adjustment": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ProcessAdjustmentPolicyRequest"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "config_version",
+        "worker_kind",
+        "model",
+        "reasoning_effort",
+        "capacity",
+        "workspace",
+        "allowed_commands",
+        "available_shells",
+        "git_permissions",
+        "endpoint_capabilities",
+        "command_timeout_seconds"
+      ],
+      "title": "ExecutionConfigRequest",
+      "type": "object"
+    },
+    "ExecutionEndpointCapabilitiesRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "supports_background": {
+          "title": "Supports Background",
+          "type": "boolean"
+        },
+        "supports_unique_items": {
+          "title": "Supports Unique Items",
+          "type": "boolean"
+        },
+        "supports_idempotent_create": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Supports Idempotent Create"
+        },
+        "supports_previous_response_id": {
+          "title": "Supports Previous Response Id",
+          "type": "boolean"
+        },
+        "supports_response_retrieval": {
+          "title": "Supports Response Retrieval",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "supports_background",
+        "supports_unique_items",
+        "supports_idempotent_create",
+        "supports_previous_response_id",
+        "supports_response_retrieval"
+      ],
+      "title": "ExecutionEndpointCapabilitiesRequest",
+      "type": "object"
+    },
+    "ProcessAdjustmentPolicyRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "max_per_goal": {
+          "minimum": 1,
+          "title": "Max Per Goal",
+          "type": "integer"
+        },
+        "model": {
+          "minLength": 1,
+          "pattern": "^[^\\x00]*[^\\s\\x00][^\\x00]*$",
+          "title": "Model",
+          "type": "string"
+        },
+        "reasoning_effort": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "pattern": "^[^\\x00]*[^\\s\\x00][^\\x00]*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Reasoning Effort"
+        }
+      },
+      "required": [
+        "max_per_goal",
+        "model",
+        "reasoning_effort"
+      ],
+      "title": "ProcessAdjustmentPolicyRequest",
+      "type": "object"
+    },
     "StartRunRequest": {
       "type": "object",
       "additionalProperties": false,
       "required": ["idempotency_key", "plan_revision_id"],
       "properties": {
         "idempotency_key": {"$ref": "common.schema.json#/$defs/IdempotencyKey"},
-        "plan_revision_id": {"$ref": "common.schema.json#/$defs/IdInput"}
+        "plan_revision_id": {"$ref": "common.schema.json#/$defs/IdInput"},
+        "execution_config": {
+          "anyOf": [{"$ref": "#/$defs/ExecutionConfigRequest"}, {"type": "null"}],
+          "default": null
+        }
+      }
+    },
+    "DecideHumanCheckRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "idempotency_key",
+        "request_token",
+        "passed",
+        "actor",
+        "comment"
+      ],
+      "properties": {
+        "idempotency_key": {"$ref": "common.schema.json#/$defs/IdempotencyKey"},
+        "request_token": {
+          "type": "string",
+          "minLength": 64,
+          "maxLength": 64,
+          "pattern": "^[0-9A-Fa-f]{64}$"
+        },
+        "passed": {"type": "boolean"},
+        "actor": {"type": "string", "minLength": 1, "maxLength": 8000, "pattern": "\\S"},
+        "comment": {"type": "string", "minLength": 1, "maxLength": 8000, "pattern": "\\S"}
+      }
+    },
+    "ReplyInterventionRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "idempotency_key",
+        "request_token",
+        "actor",
+        "message"
+      ],
+      "properties": {
+        "idempotency_key": {"$ref": "common.schema.json#/$defs/IdempotencyKey"},
+        "request_token": {
+          "type": "string",
+          "minLength": 64,
+          "maxLength": 64,
+          "pattern": "^[0-9A-Fa-f]{64}$"
+        },
+        "actor": {"type": "string", "minLength": 1, "maxLength": 8000, "pattern": "\\S"},
+        "message": {"type": "string", "minLength": 1, "maxLength": 8000, "pattern": "\\S"}
       }
     },
     "RunActionRequest": {
@@ -295,6 +652,39 @@
     },
     "RunResponse": {
       "$ref": "queries.schema.json#/$defs/RunResponse"
+    },
+    "ProcessDraftAcceptedResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["data"],
+      "properties": {
+        "data": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["draft_id", "status"],
+          "properties": {
+            "draft_id": {"$ref": "common.schema.json#/$defs/Id"},
+            "status": {"type": "string", "enum": ["planning", "ready", "failed"]}
+          }
+        }
+      }
+    },
+    "ProcessReviewAcceptedResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["data"],
+      "properties": {
+        "data": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["review_id", "status", "preserves_boundary"],
+          "properties": {
+            "review_id": {"$ref": "common.schema.json#/$defs/Id"},
+            "status": {"$ref": "queries.schema.json#/$defs/ProcessReviewStatus"},
+            "preserves_boundary": {"type": ["boolean", "null"]}
+          }
+        }
+      }
     }
   }
 }

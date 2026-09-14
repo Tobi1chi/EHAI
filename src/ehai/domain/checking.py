@@ -2,18 +2,21 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Iterable, Mapping
 from dataclasses import InitVar, dataclass, field, replace
 from datetime import UTC, datetime
 from enum import StrEnum
+from hashlib import sha256
 from types import MappingProxyType
 from typing import Self
 
-from ehai import ID, new_id, normalize_id, utc_now
+from ehai import ID, JsonValue, json_dumps, new_id, normalize_id, utc_now
 from ehai.domain.execution import Run, RunStatus
 from ehai.domain.planning import BranchStatus, PlanNodeKind, PlanRevision, PlanRevisionStatus
 
 _REHYDRATE = object()
+_SHA256_PATTERN = re.compile(r"[0-9a-f]{64}")
 
 
 class CheckKind(StrEnum):
@@ -22,6 +25,7 @@ class CheckKind(StrEnum):
     COMMAND = "command"
     ARTIFACT = "artifact"
     SEMANTIC = "semantic"
+    HUMAN = "human"
 
 
 class CheckRunStatus(StrEnum):
@@ -134,6 +138,94 @@ class CheckSpec:
 
 
 @dataclass(frozen=True, slots=True)
+class HumanCheckEvidence:
+    """One immutable artifact version presented for a human Check."""
+
+    artifact_id: ID
+    sha256: str
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "artifact_id", _validated_id(self.artifact_id, "artifact_id"))
+        if not isinstance(self.sha256, str):
+            raise ValueError("sha256 must be a string")
+        canonical_hash = self.sha256.lower()
+        if _SHA256_PATTERN.fullmatch(canonical_hash) is None:
+            raise ValueError("sha256 must be 64 hexadecimal digits")
+        object.__setattr__(self, "sha256", canonical_hash)
+
+
+@dataclass(frozen=True, slots=True)
+class HumanCheckRequest:
+    """The approved-version and artifact snapshot awaiting human judgment."""
+
+    plan_revision_id: ID
+    completion_contract_id: ID
+    completion_contract_version: int
+    question: str
+    evidence: tuple[HumanCheckEvidence, ...]
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "plan_revision_id",
+            _validated_id(self.plan_revision_id, "plan_revision_id"),
+        )
+        object.__setattr__(
+            self,
+            "completion_contract_id",
+            _validated_id(self.completion_contract_id, "completion_contract_id"),
+        )
+        if (
+            type(self.completion_contract_version) is not int
+            or self.completion_contract_version < 1
+        ):
+            raise ValueError("completion_contract_version must be a positive integer")
+        if not isinstance(self.question, str) or not self.question.strip():
+            raise ValueError("question must not be blank")
+        object.__setattr__(self, "question", self.question.strip())
+        evidence = tuple(self.evidence)
+        if not evidence:
+            raise ValueError("evidence must not be empty")
+        if any(not isinstance(item, HumanCheckEvidence) for item in evidence):
+            raise TypeError("evidence must contain HumanCheckEvidence values")
+        if len({item.artifact_id for item in evidence}) != len(evidence):
+            raise ValueError("evidence must not contain duplicate artifact IDs")
+        object.__setattr__(self, "evidence", evidence)
+
+    @property
+    def request_token(self) -> str:
+        """Return a stable token for the normalized request snapshot."""
+        document: dict[str, JsonValue] = {
+            "plan_revision_id": self.plan_revision_id,
+            "completion_contract_id": self.completion_contract_id,
+            "completion_contract_version": self.completion_contract_version,
+            "question": self.question,
+            "evidence": [
+                {"artifact_id": item.artifact_id, "sha256": item.sha256} for item in self.evidence
+            ],
+        }
+        return sha256(json_dumps(document).encode("utf-8")).hexdigest()
+
+
+@dataclass(frozen=True, slots=True)
+class HumanCheckDecision:
+    """Auditable actor and rationale recorded when a human Check is decided."""
+
+    actor: str
+    comment: str
+    decided_at: datetime
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.actor, str) or not self.actor.strip():
+            raise ValueError("actor must not be blank")
+        if not isinstance(self.comment, str) or not self.comment.strip():
+            raise ValueError("comment must not be blank")
+        object.__setattr__(self, "actor", self.actor.strip())
+        object.__setattr__(self, "comment", self.comment.strip())
+        object.__setattr__(self, "decided_at", _utc(self.decided_at, "decided_at"))
+
+
+@dataclass(frozen=True, slots=True)
 class CheckResult:
     """A Checker's verdict plus the evidence supporting that verdict."""
 
@@ -147,6 +239,7 @@ class CheckResult:
     evidence_artifact_ids: tuple[ID, ...] = ()
     output: str | None = None
     failure_reason: str | None = None
+    adoption_id: ID | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "check_id", _validated_id(self.check_id, "check_id"))
@@ -154,6 +247,8 @@ class CheckResult:
         object.__setattr__(self, "run_id", _validated_id(self.run_id, "run_id"))
         object.__setattr__(self, "plan_node_id", _validated_id(self.plan_node_id, "plan_node_id"))
         object.__setattr__(self, "attempt_id", _validated_id(self.attempt_id, "attempt_id"))
+        if self.adoption_id is not None:
+            object.__setattr__(self, "adoption_id", _validated_id(self.adoption_id, "adoption_id"))
         object.__setattr__(self, "evaluated_at", _utc(self.evaluated_at, "evaluated_at"))
         object.__setattr__(
             self,
@@ -187,9 +282,14 @@ class CheckRun:
     ended_at: datetime | None = None
     result: CheckResult | None = None
     failure_reason: str | None = None
+    human_request: HumanCheckRequest | None = None
+    human_decision: HumanCheckDecision | None = None
+    adoption_id: ID | None = None
     _rehydrate_token: InitVar[object | None] = None
 
     def __post_init__(self, _rehydrate_token: object | None) -> None:
+        if self.adoption_id is not None:
+            object.__setattr__(self, "adoption_id", _validated_id(self.adoption_id, "adoption_id"))
         for field_name in ("run_id", "plan_node_id", "attempt_id", "check_id", "check_run_id"):
             object.__setattr__(
                 self,
@@ -200,6 +300,14 @@ class CheckRun:
         object.__setattr__(self, "started_at", _optional_utc(self.started_at, "started_at"))
         object.__setattr__(self, "ended_at", _optional_utc(self.ended_at, "ended_at"))
         _validate_optional_text(self.failure_reason, "failure_reason")
+        if self.human_request is not None and not isinstance(self.human_request, HumanCheckRequest):
+            raise TypeError("human_request must be a HumanCheckRequest or None")
+        if self.human_decision is not None and not isinstance(
+            self.human_decision, HumanCheckDecision
+        ):
+            raise TypeError("human_decision must be a HumanCheckDecision or None")
+        if self.human_decision is not None and self.human_request is None:
+            raise ValueError("human_decision requires a human_request")
         if self.status is not CheckRunStatus.PENDING and _rehydrate_token is not _REHYDRATE:
             raise ValueError(
                 f"check run {self.check_run_id}: non-pending state must use a transition or "
@@ -222,6 +330,9 @@ class CheckRun:
         ended_at: datetime | None,
         result: CheckResult | None = None,
         failure_reason: str | None = None,
+        human_request: HumanCheckRequest | None = None,
+        human_decision: HumanCheckDecision | None = None,
+        adoption_id: ID | None = None,
     ) -> Self:
         """Restore a persisted CheckRun through an explicit validation boundary."""
         return cls(
@@ -236,6 +347,9 @@ class CheckRun:
             ended_at=ended_at,
             result=result,
             failure_reason=failure_reason,
+            human_request=human_request,
+            human_decision=human_decision,
+            adoption_id=adoption_id,
             _rehydrate_token=_REHYDRATE,
         )
 
@@ -253,12 +367,74 @@ class CheckRun:
 
     def complete(self, result: CheckResult, *, at: datetime | None = None) -> Self:
         """Record a successfully executed Checker and its pass/fail verdict."""
+        if self.human_request is not None and self.human_decision is None:
+            raise ValueError(f"check run {self.check_run_id}: human Check requires decide_human()")
+        return self._complete(result, at=at)
+
+    def request_human(self, request: HumanCheckRequest) -> Self:
+        """Attach an immutable human-review snapshot to an open CheckRun."""
+        if not isinstance(request, HumanCheckRequest):
+            raise TypeError("request must be a HumanCheckRequest")
+        if self.status is not CheckRunStatus.RUNNING:
+            raise InvalidCheckRunTransition(
+                self.check_run_id,
+                self.run_id,
+                self.plan_node_id,
+                self.status,
+                CheckRunStatus.RUNNING,
+            )
+        if self.human_request is None:
+            if self.human_decision is not None:
+                raise ValueError(
+                    f"check run {self.check_run_id}: human decision exists without request"
+                )
+            return replace(
+                self,
+                human_request=request,
+                _rehydrate_token=_REHYDRATE,
+            )
+        if self.human_request != request:
+            raise ValueError(f"check run {self.check_run_id}: human request snapshot changed")
+        return self
+
+    def decide_human(
+        self,
+        result: CheckResult,
+        *,
+        actor: str,
+        comment: str,
+        at: datetime | None = None,
+    ) -> Self:
+        """Complete one open human CheckRun and record its auditable decision."""
+        if self.human_request is None:
+            raise ValueError(f"check run {self.check_run_id}: no human request is open")
+        if self.status is not CheckRunStatus.RUNNING or self.human_decision is not None:
+            raise ValueError(f"check run {self.check_run_id}: human request is not open")
+        if not set(result.evidence_artifact_ids).issubset(
+            {item.artifact_id for item in self.human_request.evidence}
+        ):
+            raise ValueError(
+                f"check run {self.check_run_id}: decision evidence is outside the human request"
+            )
+        decided_at = _utc(at or utc_now(), "at")
+        decision = HumanCheckDecision(actor, comment, decided_at)
+        return self._complete(result, at=decided_at, human_decision=decision)
+
+    def _complete(
+        self,
+        result: CheckResult,
+        *,
+        at: datetime | None = None,
+        human_decision: HumanCheckDecision | None = None,
+    ) -> Self:
+        """Complete a CheckRun after its human guard, when present, is satisfied."""
         expected_owner = (
             self.check_id,
             self.check_run_id,
             self.run_id,
             self.plan_node_id,
             self.attempt_id,
+            self.adoption_id,
         )
         actual_owner = (
             result.check_id,
@@ -266,6 +442,7 @@ class CheckRun:
             result.run_id,
             result.plan_node_id,
             result.attempt_id,
+            result.adoption_id,
         )
         if actual_owner != expected_owner:
             raise ValueError(
@@ -279,6 +456,9 @@ class CheckRun:
             result=result,
             ended_at=_utc(at or utc_now(), "at"),
             failure_reason=None,
+            human_decision=(
+                self.human_decision if self.human_decision is not None else human_decision
+            ),
             _rehydrate_token=_REHYDRATE,
         )
 
@@ -299,6 +479,7 @@ class CheckRun:
             status=CheckRunStatus.CANCELLED,
             ended_at=_utc(at or utc_now(), "at"),
             failure_reason=reason,
+            human_decision=None,
             _rehydrate_token=_REHYDRATE,
         )
 
@@ -319,6 +500,7 @@ class CheckRun:
             status=status,
             ended_at=_utc(at or utc_now(), "at"),
             failure_reason=reason,
+            human_decision=None,
             _rehydrate_token=_REHYDRATE,
         )
 
@@ -371,6 +553,7 @@ class CheckRun:
                 or self.result.run_id != self.run_id
                 or self.result.plan_node_id != self.plan_node_id
                 or self.result.attempt_id != self.attempt_id
+                or self.result.adoption_id != self.adoption_id
             ):
                 raise ValueError(
                     f"check run {self.check_run_id}: persisted result ownership does not match"
@@ -381,8 +564,17 @@ class CheckRun:
                 raise ValueError(
                     f"check run {self.check_run_id}: result timestamp is outside its execution"
                 )
+            if self.human_request is not None and self.human_decision is None:
+                raise ValueError(
+                    f"check run {self.check_run_id}: completed human Check lacks a decision"
+                )
         elif self.result is not None:
             raise ValueError(f"check run {self.check_run_id}: only completed run can have a result")
+
+        if self.human_decision is not None and self.status is not CheckRunStatus.COMPLETED:
+            raise ValueError(
+                f"check run {self.check_run_id}: human decision requires a completed CheckRun"
+            )
 
         failure_statuses = {
             CheckRunStatus.FAILED,
@@ -411,8 +603,11 @@ class GateDecision:
     failed_check_ids: tuple[ID, ...]
     evidence_artifact_ids: tuple[ID, ...]
     reason: str | None = None
+    adoption_id: ID | None = None
 
     def __post_init__(self) -> None:
+        if self.adoption_id is not None:
+            object.__setattr__(self, "adoption_id", _validated_id(self.adoption_id, "adoption_id"))
         object.__setattr__(self, "gate_id", _validated_id(self.gate_id, "gate_id"))
         object.__setattr__(self, "run_id", _validated_id(self.run_id, "run_id"))
         object.__setattr__(self, "plan_node_id", _validated_id(self.plan_node_id, "plan_node_id"))
@@ -481,11 +676,15 @@ class Gate:
         plan_node_id: ID,
         attempt_id: ID,
         at: datetime | None = None,
+        adoption_id: ID | None = None,
     ) -> GateDecision:
         """Evaluate all required checks and fail closed on missing or weak evidence."""
         evaluated_run_id = _validated_id(run_id, "run_id")
         evaluated_node_id = _validated_id(plan_node_id, "plan_node_id")
         evaluated_attempt_id = _validated_id(attempt_id, "attempt_id")
+        evaluated_adoption_id = (
+            None if adoption_id is None else _validated_id(adoption_id, "adoption_id")
+        )
         grouped: dict[ID, list[CheckResult]] = {}
         for result in results:
             if result.check_id in self.required_check_ids:
@@ -510,6 +709,7 @@ class Gate:
                 result.run_id != evaluated_run_id
                 or result.plan_node_id != evaluated_node_id
                 or result.attempt_id != evaluated_attempt_id
+                or result.adoption_id != evaluated_adoption_id
             ):
                 failed.append(check_id)
                 problems.append(f"check {check_id} result belongs to another execution scope")
@@ -532,6 +732,7 @@ class Gate:
                 run_id=evaluated_run_id,
                 plan_node_id=evaluated_node_id,
                 attempt_id=evaluated_attempt_id,
+                adoption_id=evaluated_adoption_id,
                 passed=False,
                 evaluated_at=at or utc_now(),
                 required_check_ids=self.required_check_ids,
@@ -544,6 +745,7 @@ class Gate:
             run_id=evaluated_run_id,
             plan_node_id=evaluated_node_id,
             attempt_id=evaluated_attempt_id,
+            adoption_id=evaluated_adoption_id,
             passed=True,
             evaluated_at=at or utc_now(),
             required_check_ids=self.required_check_ids,
@@ -564,12 +766,19 @@ class Checkpoint:
     artifact_refs: tuple[ID, ...] = ()
     checkpoint_id: ID = field(default_factory=new_id)
     created_at: datetime = field(default_factory=utc_now)
+    process_revision_id: ID | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(
             self, "checkpoint_id", _validated_id(self.checkpoint_id, "checkpoint_id")
         )
         object.__setattr__(self, "created_at", _utc(self.created_at, "created_at"))
+        if self.process_revision_id is not None:
+            object.__setattr__(
+                self,
+                "process_revision_id",
+                _validated_id(self.process_revision_id, "process_revision_id"),
+            )
         if self.event_offset < 1:
             raise ValueError(f"checkpoint {self.checkpoint_id}: event_offset must be positive")
         if self.plan_revision.status is not PlanRevisionStatus.APPROVED:

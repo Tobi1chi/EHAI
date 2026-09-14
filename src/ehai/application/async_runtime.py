@@ -21,6 +21,7 @@ from ehai.application.execution_policy import (
     RetrySafety,
     TimeoutDecision,
 )
+from ehai.application.interventions import WorkerBlocker
 from ehai.application.orchestrator import Orchestrator, WorkerEventReceipt
 from ehai.application.ports import UnitOfWork
 from ehai.application.workers import WorkerRequest, WorkerResult
@@ -41,6 +42,10 @@ from ehai.domain.workers import (
 UnitOfWorkFactory = Callable[[], UnitOfWork]
 
 
+class LocalExecutionRestartRequired(RuntimeError):
+    """A stopped local lane must restart from confirmed code, not dirty state."""
+
+
 class WorkerEventType(StrEnum):
     """Normalized live Connector events consumed by the Runtime."""
 
@@ -50,6 +55,7 @@ class WorkerEventType(StrEnum):
     CANDIDATE = "candidate"
     COMPLETED = "completed"
     FAILED = "failed"
+    BLOCKED = "blocked"
 
 
 @dataclass(frozen=True, slots=True)
@@ -61,6 +67,7 @@ class WorkerEvent:
     type: WorkerEventType
     cursor: str
     result: WorkerResult | None = None
+    blocker: WorkerBlocker | None = None
     reason: str | None = None
     retry_safety: RetrySafety = RetrySafety.UNKNOWN
     provider_cost: float | None = None
@@ -79,6 +86,8 @@ class WorkerEvent:
         object.__setattr__(self, "occurred_at", self.occurred_at.astimezone(UTC))
         if self.type is WorkerEventType.CANDIDATE and self.result is None:
             raise ValueError("candidate WorkerEvent requires WorkerResult")
+        if self.type is WorkerEventType.BLOCKED and self.blocker is None:
+            raise ValueError("blocked WorkerEvent requires structured blocker evidence")
         if self.type is WorkerEventType.FAILED and not self.reason:
             raise ValueError("failed WorkerEvent requires a reason")
         if self.provider_cost is not None and (
@@ -158,6 +167,13 @@ class RuntimeConnector(Protocol):
         self,
         request: ConnectorRecoveryRequest,
     ) -> ConnectorExecution | None: ...
+
+
+@runtime_checkable
+class HostWorkDrainingConnector(Protocol):
+    """Optional local hook that settles host-owned work before cleanup."""
+
+    async def wait_for_host_work(self, execution: ConnectorExecution) -> None: ...
 
 
 @runtime_checkable
@@ -302,14 +318,34 @@ class SingleSlotRuntime:
                 attempt for attempt in attempts if attempt.status is AttemptStatus.RUNNING
             )
         if not running:
+            if stored_run.status is RunStatus.RUNNING:
+                self._orchestrator.recover_candidate_results(work.run_id)
+                with self._uow_factory() as uow:
+                    refreshed_run = uow.states.get_run(work.run_id)
+                if refreshed_run is None:
+                    raise RuntimeError(f"Run {work.run_id} is not persisted")
+                stored_run = refreshed_run
             if stored_run.status not in {RunStatus.PENDING, RunStatus.RUNNING}:
                 self._complete_work(work)
                 return stored_run
-            return await self._process_work(work)
+            run = await self._process_work(work)
+            if run.status is RunStatus.RUNNING and self._orchestrator.waiting_for_input(
+                run.run_id, only_if_idle=True
+            ):
+                # A human Gate is a durable wait, not an active dispatch lease. Mark
+                # this scheduling turn settled so a later human decision can requeue
+                # it explicitly without repeatedly claiming the same Run.
+                self._complete_work(work)
+            return run
         attempt = running[-1]
         run = await self.recover_attempt(attempt)
         if run.status is RunStatus.RUNNING:
-            return await self._process_work(work)
+            run = await self._process_work(work)
+        if run.status is RunStatus.RUNNING and self._orchestrator.waiting_for_input(
+            run.run_id, only_if_idle=True
+        ):
+            self._complete_work(work)
+            return run
         self._complete_work(work)
         return run
 
@@ -324,6 +360,10 @@ class SingleSlotRuntime:
                     execution.provider_execution_id,
                     attempt.event_cursor,
                 )
+            )
+        except LocalExecutionRestartRequired as error:
+            return self._orchestrator.retry_attempt(
+                attempt.attempt_id, str(error), retry_safety=RetrySafety.LOCAL_ROLLBACK
             )
         except Exception as error:
             await self._set_endpoint_health(
@@ -352,7 +392,10 @@ class SingleSlotRuntime:
     async def cancel_attempt(self, attempt_id: ID) -> Run:
         """Let a completed provider result win a cancel/completed race."""
         attempt, execution = await self.request_cancel(attempt_id)
-        run = await self._consume_events(attempt, execution)
+        try:
+            run = await self._consume_events(attempt, execution)
+        finally:
+            await self._wait_for_host_work(execution)
         if run.status is not RunStatus.RUNNING:
             with self._uow_factory() as uow:
                 works = tuple(
@@ -372,7 +415,10 @@ class SingleSlotRuntime:
         with self._uow_factory() as uow:
             attempt = _required_attempt(uow, normalize_id(attempt_id))
         execution = self._execution_from_attempt(attempt)
-        await self._connector.cancel(execution)
+        try:
+            await self._connector.cancel(execution)
+        finally:
+            await self._wait_for_host_work(execution)
         return attempt, execution
 
     async def execute_started_request(self, request: WorkerRequest) -> Run:
@@ -394,12 +440,29 @@ class SingleSlotRuntime:
         *,
         recovered: tuple[Attempt, ConnectorExecution] | None = None,
     ) -> Run:
+        with self._uow_factory() as uow:
+            current = uow.states.get_run(work.run_id)
+        if current is None:
+            raise RuntimeError(f"Run {work.run_id} is not persisted")
+        if current.status is RunStatus.RUNNING and self._orchestrator.waiting_for_input(
+            current.run_id, only_if_idle=True
+        ):
+            return current
         if recovered is not None:
             run = await self._consume_events(*recovered)
             if run.status is not RunStatus.RUNNING:
                 self._complete_work(work)
                 return run
+            if self._orchestrator.waiting_for_input(run.run_id, only_if_idle=True):
+                return run
         while True:
+            adopted = self._orchestrator.advance_ready_adoptions(work.run_id)
+            if adopted is not None:
+                if adopted.status is not RunStatus.RUNNING:
+                    self._complete_work(work)
+                    return adopted
+                if self._orchestrator.waiting_for_input(work.run_id, only_if_idle=True):
+                    return adopted
             request = self._orchestrator.prepare_worker_request(work.run_id)
             started = await self._start_request(request)
             if isinstance(started, Run):
@@ -412,6 +475,8 @@ class SingleSlotRuntime:
             run = await self._consume_events(bound_attempt, execution)
             if run.status is not RunStatus.RUNNING:
                 self._complete_work(work)
+                return run
+            if self._orchestrator.waiting_for_input(run.run_id, only_if_idle=True):
                 return run
 
     async def _start_request(self, request: WorkerRequest) -> ConnectorExecution | Run:
@@ -726,6 +791,14 @@ class SingleSlotRuntime:
                 worker_event_receipts=_event_receipts((*pending_events, event)),
             )
             return terminal, candidate
+        if event.type is WorkerEventType.BLOCKED:
+            assert event.blocker is not None
+            terminal = self._orchestrator.block_attempt(
+                attempt_id,
+                event.blocker,
+                worker_event_receipts=_event_receipts((*pending_events, event)),
+            )
+            return terminal, candidate
         if event.type is WorkerEventType.FAILED:
             reason = event.reason or "Worker failed"
             if event.retry_safety.allows_retry:
@@ -798,7 +871,16 @@ class SingleSlotRuntime:
                         candidate,
                         worker_event_receipts=_event_receipts((*pending_events, event)),
                     )
+                    await self._wait_for_host_work(execution)
                     return terminal
+                elif event.type is WorkerEventType.BLOCKED:
+                    await self._wait_for_host_work(execution)
+                    assert event.blocker is not None
+                    return self._orchestrator.block_attempt(
+                        attempt.attempt_id,
+                        event.blocker,
+                        worker_event_receipts=_event_receipts((*pending_events, event)),
+                    )
                 elif event.type is WorkerEventType.FAILED:
                     pending_events.append(event)
                     break
@@ -808,6 +890,7 @@ class SingleSlotRuntime:
                 else:
                     self._record_event(attempt.attempt_id, event)
                 next_event = asyncio.create_task(_next_worker_event(iterator))
+            await self._wait_for_host_work(execution)
             reason = f"{decision.reason}; cancellation grace expired"
             return self._orchestrator.time_out_attempt(
                 attempt.attempt_id,
@@ -817,12 +900,18 @@ class SingleSlotRuntime:
         finally:
             if not next_event.done():
                 next_event.cancel()
+            await self._wait_for_host_work(execution)
+
+    async def _wait_for_host_work(self, execution: ConnectorExecution) -> None:
+        if isinstance(self._connector, HostWorkDrainingConnector):
+            await self._connector.wait_for_host_work(execution)
 
     def _record_event(self, attempt_id: ID, event: WorkerEvent) -> bool:
         if event.type in {
             WorkerEventType.CANDIDATE,
             WorkerEventType.COMPLETED,
             WorkerEventType.FAILED,
+            WorkerEventType.BLOCKED,
         }:
             raise ValueError("candidate and terminal WorkerEvents require deferred recording")
         with self._uow_factory() as uow:

@@ -18,15 +18,20 @@ from ehai import JsonValue, json_dumps, json_loads, normalize_id
 from ehai.application.checkpointing import RecoveryError, RecoveryService
 from ehai.application.checks import CheckAdapter, CheckRunner
 from ehai.application.commands import (
+    ApplyProcess,
     ApprovePlan,
     CancelRun,
     CreateGoal,
     CreateProject,
+    DecideHumanCheck,
     DiscussPlan,
     PauseRun,
     ProposePlan,
+    ProposeProcess,
     ReplanPlan,
+    ReplyIntervention,
     ResumeRun,
+    ReviewProcess,
     StartRun,
 )
 from ehai.application.orchestrator import OrchestrationError, Orchestrator
@@ -43,6 +48,7 @@ from ehai.application.planner import (
     PlanProposal,
     ReplanContext,
 )
+from ehai.application.ports import StateConflictError
 from ehai.application.queries import QueryNotFoundError, QueryService
 from ehai.application.run_control import BackgroundRunController, RunControlError, RunController
 from ehai.application.service import ApplicationError, ExecutionService
@@ -314,7 +320,10 @@ def create_parser() -> argparse.ArgumentParser:
         "--criterion",
         action="append",
         required=True,
-        help="repeat for executable checks: " + ", ".join(sorted(P1_COMPLETION_CRITERIA)),
+        help=(
+            "repeat for executable checks or human:<question>: "
+            + ", ".join(sorted(P1_COMPLETION_CRITERIA))
+        ),
     )
 
     replan = commands.add_parser("replan-plan", help="create a new draft from an approved plan")
@@ -325,8 +334,33 @@ def create_parser() -> argparse.ArgumentParser:
         "--criterion",
         action="append",
         required=True,
-        help="repeat for executable checks: " + ", ".join(sorted(P1_COMPLETION_CRITERIA)),
+        help=(
+            "repeat for executable checks or human:<question>: "
+            + ", ".join(sorted(P1_COMPLETION_CRITERIA))
+        ),
     )
+
+    propose_process = commands.add_parser(
+        "propose-process",
+        help="generate a retained process draft for a running or paused Run",
+    )
+    propose_process.add_argument("--idempotency-key", required=True)
+    propose_process.add_argument("--run-id", required=True)
+    propose_process.add_argument("--reason", required=True)
+
+    review_process = commands.add_parser(
+        "review-process",
+        help="independently review a retained process draft",
+    )
+    review_process.add_argument("--idempotency-key", required=True)
+    review_process.add_argument("--draft-id", required=True)
+
+    apply_process = commands.add_parser(
+        "apply-process",
+        help="apply a process draft covered by a preserving review",
+    )
+    apply_process.add_argument("--idempotency-key", required=True)
+    apply_process.add_argument("--review-id", required=True)
 
     approve = commands.add_parser("approve-plan", help="confirm and approve a proposal")
     approve.add_argument("--idempotency-key", required=True)
@@ -336,6 +370,29 @@ def create_parser() -> argparse.ArgumentParser:
     start = commands.add_parser("start-run", help="execute an approved plan")
     start.add_argument("--idempotency-key", required=True)
     start.add_argument("--plan-revision-id", required=True)
+
+    decide_check = commands.add_parser(
+        "decide-human-check",
+        help="record an explicit human verdict for an open CheckRun",
+    )
+    decide_check.add_argument("--idempotency-key", required=True)
+    decide_check.add_argument("--check-run-id", required=True)
+    decide_check.add_argument("--request-token", required=True)
+    verdict = decide_check.add_mutually_exclusive_group(required=True)
+    verdict.add_argument("--passed", action="store_true", help="approve the human Check")
+    verdict.add_argument("--rejected", action="store_true", help="reject the human Check")
+    decide_check.add_argument("--actor", required=True)
+    decide_check.add_argument("--comment", required=True)
+
+    reply_intervention = commands.add_parser(
+        "reply-intervention",
+        help="confirm that a Worker blocker is resolved within the approved boundary",
+    )
+    reply_intervention.add_argument("--idempotency-key", required=True)
+    reply_intervention.add_argument("--intervention-id", required=True)
+    reply_intervention.add_argument("--request-token", required=True)
+    reply_intervention.add_argument("--actor", required=True)
+    reply_intervention.add_argument("--message", required=True)
 
     pause = commands.add_parser("pause-run", help="pause a running Run")
     pause.add_argument("--idempotency-key", required=True)
@@ -358,10 +415,53 @@ def create_parser() -> argparse.ArgumentParser:
     query = commands.add_parser("get-run", help="query one Run")
     query.add_argument("--run-id", required=True)
 
+    run_plan_query = commands.add_parser(
+        "get-run-plan", help="query the current execution graph for one Run"
+    )
+    run_plan_query.add_argument("--run-id", required=True)
+
+    checks_query = commands.add_parser("get-run-checks", help="read a Run's CheckRuns")
+    checks_query.add_argument("--run-id", required=True)
+
+    adoptions_query = commands.add_parser(
+        "get-run-adoptions", help="read a Run's accepted cross-Run result provenance"
+    )
+    adoptions_query.add_argument("--run-id", required=True)
+
+    interventions_query = commands.add_parser(
+        "get-run-interventions", help="read a Run's durable Worker interventions"
+    )
+    interventions_query.add_argument("--run-id", required=True)
+
     plan_query = commands.add_parser(
         "get-plan", help="read a stored plan without invoking a Planner"
     )
     plan_query.add_argument("--plan-revision-id", required=True)
+
+    process_query = commands.add_parser(
+        "get-process-revision", help="read one immutable process graph revision"
+    )
+    process_query.add_argument("--process-revision-id", required=True)
+
+    process_draft_query = commands.add_parser(
+        "get-process-draft", help="read one retained process Planner draft"
+    )
+    process_draft_query.add_argument("--draft-id", required=True)
+
+    run_process_drafts_query = commands.add_parser(
+        "get-run-process-drafts", help="read retained process Planner drafts for one Run"
+    )
+    run_process_drafts_query.add_argument("--run-id", required=True)
+
+    process_review_query = commands.add_parser(
+        "get-process-review", help="read one independent process review"
+    )
+    process_review_query.add_argument("--review-id", required=True)
+
+    process_draft_reviews_query = commands.add_parser(
+        "get-process-draft-reviews", help="read independent reviews for one process draft"
+    )
+    process_draft_reviews_query.add_argument("--draft-id", required=True)
 
     checks_query = commands.add_parser("get-plan-checks", help="read the plan's completion checks")
     checks_query.add_argument("--plan-revision-id", required=True)
@@ -399,10 +499,14 @@ def create_parser() -> argparse.ArgumentParser:
     discuss.add_argument("--idempotency-key", required=True)
     discuss.add_argument("--goal-id", required=True)
     discuss.add_argument("--conversation-id")
+    discuss.add_argument("--source-run-id")
     discuss.add_argument(
         "--criterion",
         action="append",
-        help="completion criterion; defaults to command:exit-zero for coding discussions",
+        help=(
+            "explicit completion criterion; omit to let the Planner propose a command or "
+            "human final Gate"
+        ),
     )
     message = discuss.add_mutually_exclusive_group(required=True)
     message.add_argument("--message")
@@ -424,6 +528,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.command in {
             "get-plan",
             "get-plan-checks",
+            "get-run-plan",
+            "get-run-checks",
+            "get-run-adoptions",
+            "get-run-interventions",
+            "get-process-revision",
+            "get-process-draft",
+            "get-run-process-drafts",
+            "get-process-review",
+            "get-process-draft-reviews",
             "get-trace",
             "get-result",
             "get-discussion",
@@ -461,10 +574,13 @@ def main(argv: Sequence[str] | None = None) -> int:
                         args.idempotency_key,
                         normalize_id(args.goal_id),
                         message,
-                        tuple(args.criterion or (COMMAND_EXIT_ZERO_CRITERION,)),
+                        tuple(args.criterion or ()),
                         None
                         if args.conversation_id is None
                         else normalize_id(args.conversation_id),
+                        source_run_id=(
+                            None if args.source_run_id is None else normalize_id(args.source_run_id)
+                        ),
                     )
                 )
             )
@@ -472,6 +588,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             output = _dispatch(service, args)
     except (
         ApplicationError,
+        StateConflictError,
         BuiltinPlannerError,
         CodexPlannerError,
         OrchestrationError,
@@ -514,6 +631,7 @@ def _run_foreground(args: argparse.Namespace) -> int:
             composition.execution_service,
             database,
             normalize_id(args.run_id),
+            process_adjustments=composition.process_adjustments,
         )
     composition = app.state.runtime_composition
     host = ForegroundSessionHost(composition, stderr=sys.stderr)
@@ -553,7 +671,15 @@ def _build_foreground_app(
         args.artifacts,
         worker_kind=config.worker_kind,
         worker_workspace=config.workspace,
-        planner_kind="single",
+        planner_kind="single" if config.process_adjustment is None else "builtin",
+        builtin_planner_model=(
+            None if config.process_adjustment is None else config.process_adjustment.model
+        ),
+        builtin_planner_reasoning_effort=(
+            None
+            if config.process_adjustment is None
+            else config.process_adjustment.reasoning_effort
+        ),
         command_check_timeout_seconds=config.command_timeout_seconds,
         builtin_model=config.model if config.worker_kind == "builtin" else None,
         builtin_reasoning_effort=(
@@ -587,8 +713,28 @@ def _dispatch_query(args: argparse.Namespace) -> JsonValue:
     )
     if args.command == "get-plan":
         return public_json_value(queries.get_plan_graph(normalize_id(args.plan_revision_id)))
+    if args.command == "get-run-plan":
+        return public_json_value(queries.get_run_plan(normalize_id(args.run_id)))
+    if args.command == "get-process-revision":
+        return public_json_value(
+            queries.get_process_revision(normalize_id(args.process_revision_id))
+        )
+    if args.command == "get-process-draft":
+        return public_json_value(queries.get_process_draft(normalize_id(args.draft_id)))
+    if args.command == "get-run-process-drafts":
+        return public_json_value(queries.get_run_process_drafts(normalize_id(args.run_id)))
+    if args.command == "get-process-review":
+        return public_json_value(queries.get_process_review(normalize_id(args.review_id)))
+    if args.command == "get-process-draft-reviews":
+        return public_json_value(queries.get_process_draft_reviews(normalize_id(args.draft_id)))
     if args.command == "get-plan-checks":
         return public_json_value(queries.list_check_specs(normalize_id(args.plan_revision_id)))
+    if args.command == "get-run-checks":
+        return public_json_value(queries.list_check_runs(normalize_id(args.run_id)))
+    if args.command == "get-run-adoptions":
+        return public_json_value(queries.list_result_adoptions(normalize_id(args.run_id)))
+    if args.command == "get-run-interventions":
+        return public_json_value(queries.list_interventions(normalize_id(args.run_id)))
     if args.command == "get-discussion":
         return public_json_value(
             queries.get_planning_conversation(normalize_id(args.conversation_id))
@@ -649,6 +795,42 @@ def _dispatch(service: ExecutionService, args: argparse.Namespace) -> dict[str, 
             "supersedes_plan_revision_id": plan.supersedes_plan_revision_id,
             "version": plan.version,
         }
+    if command == "propose-process":
+        draft = service.propose_process(
+            ProposeProcess(
+                args.idempotency_key,
+                normalize_id(args.run_id),
+                args.reason,
+            )
+        )
+        return {
+            "draft_id": draft.draft_id,
+            "status": draft.status.value,
+        }
+    if command == "review-process":
+        review = service.review_process(
+            ReviewProcess(
+                args.idempotency_key,
+                normalize_id(args.draft_id),
+            )
+        )
+        return {
+            "review_id": review.review_id,
+            "status": review.status.value,
+            "preserves_boundary": review.preserves_boundary,
+        }
+    if command == "apply-process":
+        process = service.apply_process(
+            ApplyProcess(
+                args.idempotency_key,
+                normalize_id(args.review_id),
+            )
+        )
+        return {
+            "process_revision_id": process.process_revision_id,
+            "version": process.version,
+            "run_id": process.run_id,
+        }
     if command == "approve-plan":
         plan = service.approve_plan(
             ApprovePlan(
@@ -666,6 +848,29 @@ def _dispatch(service: ExecutionService, args: argparse.Namespace) -> dict[str, 
             "run_id": run.run_id,
             "status": run.status.value,
         }
+    if command == "decide-human-check":
+        run = service.decide_human_check(
+            DecideHumanCheck(
+                args.idempotency_key,
+                normalize_id(args.check_run_id),
+                args.request_token,
+                args.passed,
+                args.actor,
+                args.comment,
+            )
+        )
+        return {"run_id": run.run_id, "status": run.status.value}
+    if command == "reply-intervention":
+        run = service.reply_intervention(
+            ReplyIntervention(
+                args.idempotency_key,
+                normalize_id(args.intervention_id),
+                args.request_token,
+                args.actor,
+                args.message,
+            )
+        )
+        return {"run_id": run.run_id, "status": run.status.value}
     if command == "pause-run":
         run = service.pause_run(PauseRun(args.idempotency_key, normalize_id(args.run_id)))
         return {"run_id": run.run_id, "status": run.status.value}
