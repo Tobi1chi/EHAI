@@ -1,0 +1,12 @@
+{
+  "name": "@ehai/pi-backend",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Pinned upstream Pi runtime; EHAI talks to its public RPC protocol",
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "dependencies": {
+    "@earendil-works/pi-coding-agent": "0.85.1"
+  }
+}
