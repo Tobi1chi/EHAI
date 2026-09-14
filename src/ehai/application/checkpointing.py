@@ -219,7 +219,11 @@ class RecoveryService:
                         if (
                             (
                                 durable_verification
-                                or any(node.status is PlanNodeStatus.BLOCKED for node in plan.nodes)
+                                or any(
+                                    node.status
+                                    in {PlanNodeStatus.STALLED, PlanNodeStatus.SUSPENDED}
+                                    for node in plan.nodes
+                                )
                             )
                             and not running_attempts
                             and not running_check_runs

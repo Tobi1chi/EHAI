@@ -469,6 +469,8 @@ class SingleSlotRuntime:
                 if started.status is not RunStatus.RUNNING:
                     self._complete_work(work)
                     return started
+                if self._orchestrator.waiting_for_input(work.run_id, only_if_idle=True):
+                    return started
                 continue
             execution = started
             bound_attempt = self._bind_execution(request.attempt, execution)

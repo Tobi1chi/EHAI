@@ -1471,7 +1471,9 @@ class ExecutionService:
             if any(attempt.status is AttemptStatus.RUNNING for attempt in attempts):
                 return False
             plan = _required_execution_plan(uow, run.run_id)
-            return any(node.status is PlanNodeStatus.READY for node in plan.nodes)
+            return any(
+                node.status in {PlanNodeStatus.READY, PlanNodeStatus.STALLED} for node in plan.nodes
+            )
 
     def _was_paused_by_startup(self, run_id: ID) -> bool:
         with self._uow_factory() as uow:
@@ -1974,8 +1976,11 @@ def _build_replan_context(
         for item in uow.states.list_check_runs(source_run.run_id)
     ):
         raise ApplicationError("Stop active automatic Checks before replanning")
-    blocked_node_ids = tuple(
-        node.plan_node_id for node in base.nodes if node.status is PlanNodeStatus.BLOCKED
+    suspended_node_ids = tuple(
+        node.plan_node_id for node in base.nodes if node.status is PlanNodeStatus.SUSPENDED
+    )
+    stalled_node_ids = tuple(
+        node.plan_node_id for node in base.nodes if node.status is PlanNodeStatus.STALLED
     )
     notices = list_interventions(uow.events, source_run.run_id)
     attempts_by_id = {attempt.attempt_id: attempt for attempt in all_attempts}
@@ -2051,7 +2056,7 @@ def _build_replan_context(
         }
     )
     failed_node_ids.update(check_run.plan_node_id for check_run in failed_check_runs)
-    failed_node_ids.difference_update(blocked_node_ids)
+    failed_node_ids.difference_update((*suspended_node_ids, *stalled_node_ids))
     ordered_failed_node_ids = tuple(
         node.plan_node_id for node in base.nodes if node.plan_node_id in failed_node_ids
     )
@@ -2075,7 +2080,8 @@ def _build_replan_context(
         failed_checks=failed_checks,
         consumed_attempt_count=len(all_attempts),
         latest_checkpoint=checkpoint,
-        blocked_plan_node_ids=blocked_node_ids,
+        stalled_plan_node_ids=stalled_node_ids,
+        suspended_plan_node_ids=suspended_node_ids,
         interventions=tuple(intervention_summaries),
         intervention_count=len(notices),
         approved_checks=approved_checks,

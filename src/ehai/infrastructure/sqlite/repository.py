@@ -144,10 +144,14 @@ _PLAN_NODE_STATUS_TRANSITIONS = {
             PlanNodeStatus.RUNNING,
             PlanNodeStatus.CANDIDATE,
             PlanNodeStatus.FAILED,
-            PlanNodeStatus.BLOCKED,
+            PlanNodeStatus.SUSPENDED,
+            PlanNodeStatus.STALLED,
         }
     ),
-    PlanNodeStatus.BLOCKED: frozenset({PlanNodeStatus.BLOCKED, PlanNodeStatus.PENDING}),
+    PlanNodeStatus.SUSPENDED: frozenset({PlanNodeStatus.SUSPENDED, PlanNodeStatus.PENDING}),
+    PlanNodeStatus.STALLED: frozenset(
+        {PlanNodeStatus.STALLED, PlanNodeStatus.PENDING, PlanNodeStatus.SUSPENDED}
+    ),
     PlanNodeStatus.CANDIDATE: frozenset(
         {
             PlanNodeStatus.PENDING,
@@ -780,7 +784,7 @@ class SQLiteCurrentStateRepository:
             if (
                 node.status
                 in {
-                    PlanNodeStatus.BLOCKED,
+                    PlanNodeStatus.SUSPENDED,
                     PlanNodeStatus.CANDIDATE,
                     PlanNodeStatus.VERIFYING,
                 }

@@ -1,5 +1,69 @@
 # R2：获批方案到代码
 
+## 2026-09-14：受阻节点按自主恢复与人工介入拆分
+
+用户确认 `stalled` 表示允许系统自主恢复，`suspended` 表示必须人工介入。
+本节更新当前实现语义；下文历史试跑中的 blocked 等状态保留当时事实，不改写历史证据。
+
+- 用户结果：区分暂时自主受阻与等待人的节点，不把单节点重试耗尽扩散为整 Run 暂停。
+- 输入/输出：宿主 RetrySafety、真实终止事件和预算决定 stalled 或 suspended；
+  节点状态通过现有 plan/trace 查询公开，人工挂起复用 intervention 查询和显式 reply。
+- 所有权：Orchestrator 转换状态，Scheduler 重新检查依赖/容量后派发；Pi 不决定节点状态。
+  安全重试依据与节点状态一同持久化，调度前核对最近 Attempt 已结束；不新增模型轮询。
+- 人工回复只释放对应 suspended 节点；Run resume 不释放它，过程调整不得丢弃未处理的挂起。
+  尝试/Goal 预算不重置，未知副作用不得自动重放。正常依赖等待仍为 pending。
+- SQLite 读取旧 blocked 节点时映射 suspended；不批量改写已有数据库、事件或批准快照。
+  新公开枚举、Planner 上下文及 Client 使用新名字。原 report_blocked/WorkerEvent 协议保留。
+- 启动失败可以在 Session 创建前耗尽预算，因此 intervention 及 baseline 的 Session ID 允许 null；
+  已绑定 Session 的身份核对仍保留。Attempt 的真实 failed/timed_out/interrupted 结果不改名。
+
+正常入口试跑：隔离目录 `C:/Users/28262/AppData/Local/Temp/ehai-node-states-20260914`，
+生产 HTTP create/propose/approve/start，单节点确定性 Planner，Codex Server 连接器配置缺失的本地
+可执行文件，触发真实 FileNotFoundError；没有模型调用、mock 或直接改状态。
+Run `20b44227-721b-4fc3-90b7-be775b46ce78` 在五次启动失败后节点 suspended，Run 仍 running，
+介入记录保留原因和 null Session；HTTP pause/resume 没有解除节点挂起。
+通过原 Run 的 trace 重读确认四次 PlanNodeStalled、四次自主 PlanNodeRecovered、一次
+PlanNodeSuspended，没有将这些节点写为 PlanNodeFailed。停止宿主后通过 HTTP reply 解除挂起，
+节点变为 pending；同键重放没有重复恢复事件，Attempt 总数仍为五，没有执行后续模型任务。
+Ruff、format、mypy（107 个源文件）、Schema/Client 生成和 TypeScript typecheck/build 通过。
+该试跑验证共享调度层，不证明 Pi 模型行为、真实写入中断、同图并发或唯一产品 E2E 已通过。
+通用外部条件监听、新的 Planner 自动纠偏和真实模型恢复不在上述无模型试跑的证明范围内。
+
+### 2026-09-14：真实 Luna 规划、同图并行挂起与恢复验收
+
+在隔离目录 `C:/Users/28262/AppData/Local/Temp/ehai-luna-e2e-20260914`，通过生产 API 装配与
+正常 create/propose/approve/start、interventions/reply、plan/trace/result 入口运行。Planner、
+Worker、阶段 Reviewer 均使用完整 Pi 后端并配置 `gpt-5.6-luna/high`；原生 Session 核对模型全部为 Luna。
+没有 mock、直接写领域状态或修改交付代码；临时驱动和验收夹具不进入常驻测试目录。
+
+任务是在独立仓库实现 greeting.py 的 greet 函数并编写 README：Unicode 首尾空白修剪、精确问候
+输出、空白输入 ValueError、非字符串 TypeError。冻结 verify.py 作为已批准的行为 Gate。
+需求明确实施前需要测试操作员的执行期交接确认，文档不依赖这项挂起。Luna Planner 自主创建
+两个无相互依赖的 Work 和一个依赖二者的最终 Phase Reviewer；核对实际图及 Check argv 后批准。
+
+- Run `956d9ada-ccbc-411e-950c-f5ba41194182`；Plan `2e942d89-3fc0-4435-8549-19abfb22e718`。
+  最终 completed，四个 Attempt：实施首次 interrupted，文档、实施续跑和 Reviewer 各 succeeded。
+- 两个初始 Work 的执行区间真实重叠约 7.04 秒。代码 Worker 唯一工具调用是 report_blocked，
+  未写文件或提交假候选；宿主持久化一次 PlanNodeSuspended 与 intervention
+  `97e20924-afc7-5c48-ba37-15c01bcbde85`。代码 suspended 时文档独立完成，Reviewer 保持 pending，
+  Run 一直 running，没有 RunPaused。这里验证的是同图独立任务，不是探索 Branch 选择。
+- 操作员通过正常 HTTP reply 确认原批准范围内继续，形成一次 PlanNodeRecovered；代码 Worker
+  使用回复完成实现，没有重复请求挂起。文档只执行一次，没有因代码恢复而重跑。
+- 四次执行均加入逻辑 Phase Session `6387ac06-b3c8-45b7-af1a-819b4ea91513`；物理 Pi Session
+  按 Attempt 隔离。阶段 Reviewer 返回有效 review.json；宿主运行原 argv
+  `uv run --no-project python verify.py`，退出 0、Gate passed，形成一个 Checkpoint。
+- 最终 commit `bf85a1ecd7f0eab2f3e1fad5ba5f9f8f9a3f857f` 相对夹具基线仅修改 README.md 和
+  新增 greeting.py；SPEC.md、verify.py、.gitignore 的 Git blob 均未改变，原仓库 HEAD 和工作区
+  保持不变。运行在隔离 worktree；没有把结果并入 EHAI 或用户其他项目。
+- 后端报告 token：Planner 48,546，三个 Worker Attempt 合计 46,859，阶段 Reviewer 30,765，
+  总计 **126,170**，其中 cacheRead **43,008**。这是原生 usage 统计，不是账单金额。
+  证据见该目录 audit-summary.json、result.json、held-plan.json、held-trace.json、latest-trace.json。
+
+该真实场景通过悬挂/回复/同图独立推进/完整模型续跑与行为验收。未触发 stalled，不将正常模型成功
+冒充故障重试证据；stalled 仍引用上面的无模型启动故障试跑。本轮未启用周期轨迹审查，也未测试
+基于审查的 suspend API、真实写入中断、handoff 接手、探索分支选择或崩溃竞态；不因此宣布唯一
+产品 E2E 的所有场景或 P2 全部通过。本轮无需修改生产代码。
+
 ## 依据与边界
 
 依据 2026-09-05 的实现记录，并按 2026-09-06 用户确认的

@@ -164,7 +164,8 @@ class ReplanContext:
     failed_checks: tuple[ReplanCheckSummary, ...]
     consumed_attempt_count: int
     latest_checkpoint: ReplanCheckpointSummary | None = None
-    blocked_plan_node_ids: tuple[ID, ...] = ()
+    stalled_plan_node_ids: tuple[ID, ...] = ()
+    suspended_plan_node_ids: tuple[ID, ...] = ()
     interventions: tuple[ReplanInterventionSummary, ...] = ()
     intervention_count: int = 0
     approved_checks: tuple[CheckSpec, ...] = ()
@@ -179,7 +180,8 @@ class ReplanContext:
             "attempts": [attempt.to_dict() for attempt in self.attempts],
             "failed_checks": [check.to_dict() for check in self.failed_checks],
             "consumed_attempt_count": self.consumed_attempt_count,
-            "blocked_plan_node_ids": list(self.blocked_plan_node_ids),
+            "stalled_plan_node_ids": list(self.stalled_plan_node_ids),
+            "suspended_plan_node_ids": list(self.suspended_plan_node_ids),
             "interventions": [item.to_dict() for item in self.interventions],
             "intervention_count": self.intervention_count,
             "approved_checks": [check_spec_document(item) for item in self.approved_checks],

@@ -53,7 +53,8 @@ class PlanNodeStatus(StrEnum):
     PENDING = "pending"
     READY = "ready"
     RUNNING = "running"
-    BLOCKED = "blocked"
+    STALLED = "stalled"
+    SUSPENDED = "suspended"
     CANDIDATE = "candidate"
     VERIFYING = "verifying"
     COMPLETED = "completed"
@@ -226,13 +227,24 @@ class PlanNode:
         """Return a failed node to ready for another Attempt."""
         return self._transition(PlanNodeStatus.READY, allowed_from=(PlanNodeStatus.FAILED,))
 
-    def block(self) -> Self:
-        """Wait for a durable intervention, without treating the route as failed."""
-        return self._transition(PlanNodeStatus.BLOCKED, allowed_from=(PlanNodeStatus.RUNNING,))
+    def stall(self) -> Self:
+        """Stop progress while the host prepares an authorized, safe recovery."""
+        return self._transition(PlanNodeStatus.STALLED, allowed_from=(PlanNodeStatus.RUNNING,))
 
-    def unblock(self) -> Self:
+    def recover(self) -> Self:
+        """Recheck dependencies once the host confirms autonomous recovery is safe."""
+        return self._transition(PlanNodeStatus.PENDING, allowed_from=(PlanNodeStatus.STALLED,))
+
+    def suspend(self) -> Self:
+        """Wait for a durable intervention, without treating the route as failed."""
+        return self._transition(
+            PlanNodeStatus.SUSPENDED,
+            allowed_from=(PlanNodeStatus.RUNNING, PlanNodeStatus.STALLED),
+        )
+
+    def resume(self) -> Self:
         """Recheck dependencies after the user resolves the corresponding intervention."""
-        return self._transition(PlanNodeStatus.PENDING, allowed_from=(PlanNodeStatus.BLOCKED,))
+        return self._transition(PlanNodeStatus.PENDING, allowed_from=(PlanNodeStatus.SUSPENDED,))
 
     def reopen_for_rework(self) -> Self:
         """Reopen a node for an approved-boundary rework without changing its structure."""

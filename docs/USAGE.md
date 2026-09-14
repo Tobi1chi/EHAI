@@ -160,7 +160,7 @@ Planner 提示要求在节点 instruction 中说明交付物、局部自主范�
 这是提示约定，不新增必填 Schema 或强制每一步工具操作。
 
 发现必须超出节点目标或已批准边界时，Worker 应调用现有 `report_blocked(reason, evidence, needed)`。
-这会结束该次 Pi 执行；宿主中断 Attempt、将节点置为 `blocked` 并持久化介入请求。
+这会结束该次 Pi 执行；宿主中断 Attempt、将节点置为 `suspended` 并持久化介入请求。
 独立就绪任务仍按原调度规则执行；前台等待介入时可返回
 `intervention_waiting`，不保证 Run 必须显示 paused。使用 `get-run-interventions` 查询，
 `reply-intervention` 回复后再 `resume-session`；回复本身不批准扩大需求或修改 Gate。
@@ -171,6 +171,31 @@ Planner 提示要求在节点 instruction 中说明交付物、局部自主范�
 详见 R2 实施记录。已有 Reviewer/Gate 也不能由 artifact:non-empty 代替需求验收。
 
 ## API 宿主与查询
+
+### 节点受阻与恢复权限
+
+当前节点状态以 `stalled` / `suspended` 取代原 `blocked`：
+
+- `stalled` 是宿主确认可安全重试的执行受阻。当前用于既有 RetrySafety 认可的停止结果；
+  持久化安全重试依据，下次调度核对最近 Attempt 已结束后恢复为 `pending`，重新检查依赖。
+  不新增模型轮询；仍受原 Attempt 和 Goal 预算、容量及隔离限制。
+- `suspended` 必须等人工回复。现有 `report_blocked`
+  以及安全重试预算耗尽都会进入该状态。后者只挂起相关节点，不再因此暂停整个 Run。
+- `get-run-interventions` / HTTP interventions 给出原因、证据和所需决定；
+  `reply-intervention` / HTTP reply 解除对应挂起，回到 `pending`。整 Run resume 不解除它，
+  回复不重置已消耗的预算。启动前即失败时介入的 `agent_session_ref_id` 可为 `null`。
+- 正常等待上游仍是 `pending`。`stalled` 和 `suspended` 均不是终态，也不直接参与
+  Worker 派发、分支失败判定或 Gate 完成。
+
+旧持久节点 `blocked` 在读取时归一化为 `suspended`，不原地改写历史事件或批准快照；
+旧事件文本可以保留 blocked。公开节点枚举和新 Planner 上下文使用新名字，Client 需重新生成。
+工具 `report_blocked`、内部 WorkerEvent blocked、介入种类 worker_blocked 保留协议名字，
+它们不是节点状态。Run 的 paused 与 Attempt 的 interrupted/failed 等状态不改名。
+
+当前 `stalled` 接通的是确定性安全重试，不表示已交付通用外部条件监听或新的 Planner 自动纠偏链路。
+未知副作用不能通过标记 stalled 自动重放。
+
+### 启动宿主
 
 ```powershell
 uv run ehai-api --database .ehai/state.sqlite --artifacts .ehai/artifacts `

@@ -190,7 +190,10 @@ def _branch_containing(plan: PlanRevision, plan_node_id: ID) -> Branch | None:
 
 
 def _branch_is_terminal(branch: Branch, node_by_id: dict[ID, PlanNode]) -> bool:
-    if any(node_by_id[node_id].status is PlanNodeStatus.BLOCKED for node_id in branch.node_ids):
+    if any(
+        node_by_id[node_id].status in {PlanNodeStatus.STALLED, PlanNodeStatus.SUSPENDED}
+        for node_id in branch.node_ids
+    ):
         return False
     return _branch_has_failed(branch, node_by_id) or node_by_id[branch.node_ids[-1]].status in {
         PlanNodeStatus.COMPLETED,
@@ -199,7 +202,10 @@ def _branch_is_terminal(branch: Branch, node_by_id: dict[ID, PlanNode]) -> bool:
 
 
 def _branch_has_failed(branch: Branch, node_by_id: dict[ID, PlanNode]) -> bool:
-    if any(node_by_id[node_id].status is PlanNodeStatus.BLOCKED for node_id in branch.node_ids):
+    if any(
+        node_by_id[node_id].status in {PlanNodeStatus.STALLED, PlanNodeStatus.SUSPENDED}
+        for node_id in branch.node_ids
+    ):
         return False
     return any(node_by_id[node_id].status is PlanNodeStatus.FAILED for node_id in branch.node_ids)
 
@@ -487,6 +493,7 @@ class Orchestrator:
                 )
             if run.status is not RunStatus.RUNNING:
                 return ()
+            plan = self._recover_stalled_nodes(uow, run, plan)
             if _review_rework_uses_planner(uow, run.run_id):
                 attempts = uow.states.list_attempts(run.run_id)
                 submitted_nodes = {
@@ -1088,7 +1095,20 @@ class Orchestrator:
                 worker_event_receipts,
             )
             uow.states.put_attempt(interrupted)
-            uow.states.put_execution_plan(run.run_id, _replace_node(plan, node.block()))
+            uow.states.put_execution_plan(run.run_id, _replace_node(plan, node.suspend()))
+            uow.events.append(
+                self._event(
+                    EventType.PLAN_NODE_SUSPENDED,
+                    run,
+                    node.plan_node_id,
+                    {
+                        "plan_node_id": node.plan_node_id,
+                        "attempt_id": attempt_id,
+                        "reason": blocker.reason,
+                        "intervention_id": intervention["intervention_id"],
+                    },
+                )
+            )
             uow.events.append(
                 self._event(
                     EventType.ATTEMPT_INTERRUPTED,
@@ -1121,7 +1141,7 @@ class Orchestrator:
         run = _required_run(uow, normalize_id(run_id))
         plan = _required_plan(uow, run.run_id)
         node = _required_node(plan, normalize_id(node_id))
-        if node.status is PlanNodeStatus.BLOCKED:
+        if node.status is PlanNodeStatus.SUSPENDED:
             attempts = [
                 item
                 for item in uow.states.list_attempts(run.run_id)
@@ -1134,7 +1154,19 @@ class Orchestrator:
                 for item in list_interventions(uow.events, run.run_id)
             ):
                 raise OrchestrationError("The node still has an unanswered intervention")
-            uow.states.put_execution_plan(run.run_id, _replace_node(plan, node.unblock()))
+            uow.states.put_execution_plan(run.run_id, _replace_node(plan, node.resume()))
+            uow.events.append(
+                self._event(
+                    EventType.PLAN_NODE_RECOVERED,
+                    run,
+                    node.plan_node_id,
+                    {
+                        "plan_node_id": node.plan_node_id,
+                        "intervention_id": intervention_id,
+                        "recovery": "human_reply",
+                    },
+                )
+            )
         return run
 
     def waiting_for_intervention(self, run_id: ID, *, only_if_idle: bool = False) -> bool:
@@ -1144,10 +1176,14 @@ class Orchestrator:
                 return False
             plan = _required_plan(uow, run.run_id)
             if only_if_idle and (
-                ready_nodes(plan) or any(node.status is PlanNodeStatus.READY for node in plan.nodes)
+                ready_nodes(plan)
+                or any(
+                    node.status in {PlanNodeStatus.READY, PlanNodeStatus.STALLED}
+                    for node in plan.nodes
+                )
             ):
                 return False
-            return any(node.status is PlanNodeStatus.BLOCKED for node in plan.nodes)
+            return any(node.status is PlanNodeStatus.SUSPENDED for node in plan.nodes)
 
     def waiting_for_input(self, run_id: ID, *, only_if_idle: bool = False) -> bool:
         return self.waiting_for_intervention(
@@ -1248,10 +1284,32 @@ class Orchestrator:
                 terminal_attempt,
                 worker_event_receipts,
             )
-            failed_node = node.fail()
+            retry_count = (
+                sum(item.plan_node_id == node.plan_node_id for item in attempts)
+                if self._execution_workspace is not None
+                else len(attempts)
+            )
+            intervention = None
+            if retry_count >= self._attempt_budget:
+                intervention = open_intervention(
+                    uow,
+                    attempt_id,
+                    WorkerBlocker(
+                        reason="Autonomous recovery Attempt budget exhausted",
+                        evidence=(
+                            f"consumed={retry_count}, limit={self._attempt_budget}; "
+                            f"retry_safety={safety.value}; {reason}"
+                        ),
+                        needed=(
+                            "Resolve the failure or adjust the process within the approved "
+                            "boundary, then explicitly confirm continuation. Replying does "
+                            "not reset the consumed Attempt or Goal budgets."
+                        ),
+                    ),
+                )
+            stopped_node = node.suspend() if intervention is not None else node.stall()
             uow.states.put_attempt(terminal_attempt)
-            failed_plan = _replace_node(plan, failed_node)
-            uow.states.put_execution_plan(run.run_id, failed_plan)
+            uow.states.put_execution_plan(run.run_id, _replace_node(plan, stopped_node))
             uow.events.append(
                 self._event(
                     terminal_event,
@@ -1266,68 +1324,27 @@ class Orchestrator:
             )
             uow.events.append(
                 self._event(
-                    EventType.PLAN_NODE_FAILED,
+                    EventType.PLAN_NODE_SUSPENDED
+                    if intervention is not None
+                    else EventType.PLAN_NODE_STALLED,
                     run,
                     node.plan_node_id,
-                    {"plan_node_id": node.plan_node_id, "reason": reason},
+                    {
+                        "plan_node_id": node.plan_node_id,
+                        "attempt_id": attempt_id,
+                        "reason": reason,
+                        "retry_safety": safety.value,
+                        "budget_consumed": retry_count,
+                        "budget_limit": self._attempt_budget,
+                        "intervention_id": None
+                        if intervention is None
+                        else intervention["intervention_id"],
+                    },
                 )
             )
-            retry_count = (
-                sum(item.plan_node_id == node.plan_node_id for item in attempts)
-                if self._execution_workspace is not None
-                else len(attempts)
-            )
-            if retry_count >= self._attempt_budget:
-                exhausted_reason = (
-                    f"safe retry exhausted Attempt budget: consumed={retry_count}, "
-                    f"limit={self._attempt_budget}; {reason}"
-                )
-                failed_run = (
-                    run.pause()
-                    if self._execution_workspace is not None
-                    else run.fail(exhausted_reason, at=self._clock())
-                )
-                uow.states.put_run(failed_run)
-                uow.events.append(
-                    self._event(
-                        (
-                            EventType.RUN_PAUSED
-                            if self._execution_workspace is not None
-                            else EventType.RUN_FAILED
-                        ),
-                        failed_run,
-                        run.run_id,
-                        (
-                            pause_event_payload(
-                                run.run_id,
-                                PauseCause.RETRY_EXHAUSTED,
-                                reason=exhausted_reason,
-                                attempt_id=attempt.attempt_id,
-                                plan_node_id=node.plan_node_id,
-                                retry_safety=safety.value,
-                                budget_consumed=retry_count,
-                                budget_limit=self._attempt_budget,
-                                budget_scope=(
-                                    "plan_node" if self._execution_workspace is not None else "run"
-                                ),
-                            )
-                            if self._execution_workspace is not None
-                            else {"run_id": run.run_id, "reason": exhausted_reason}
-                        ),
-                    )
-                )
+            if intervention is not None:
                 uow.commit()
-                return failed_run
-            ready_node = failed_node.retry()
-            uow.states.put_execution_plan(run.run_id, _replace_node(failed_plan, ready_node))
-            uow.events.append(
-                self._event(
-                    EventType.PLAN_NODE_READIED,
-                    run,
-                    node.plan_node_id,
-                    {"plan_node_id": node.plan_node_id, "reason": "safe retry"},
-                )
-            )
+                return run
             uow.events.append(
                 self._event(
                     EventType.ATTEMPT_RETRY_SCHEDULED,
@@ -1343,6 +1360,49 @@ class Orchestrator:
             )
             uow.commit()
             return run
+
+    def _recover_stalled_nodes(self, uow: UnitOfWork, run: Run, plan: PlanRevision) -> PlanRevision:
+        """Release stopped safe retries on admission, never human suspensions."""
+        stalled = tuple(node for node in plan.nodes if node.status is PlanNodeStatus.STALLED)
+        if not stalled:
+            return plan
+        attempts = uow.states.list_attempts(run.run_id)
+        retry_events = {
+            stored.event.payload.get("attempt_id"): stored.event.payload
+            for stored in uow.events.list_events()
+            if stored.event.run_id == run.run_id
+            and stored.event.type is EventType.ATTEMPT_RETRY_SCHEDULED
+        }
+        for node in stalled:
+            node_attempts = tuple(
+                item for item in attempts if item.plan_node_id == node.plan_node_id
+            )
+            latest = max(node_attempts, key=lambda item: item.sequence, default=None)
+            fact = None if latest is None else retry_events.get(latest.attempt_id)
+            if (
+                latest is None
+                or latest.status
+                not in {AttemptStatus.FAILED, AttemptStatus.INTERRUPTED, AttemptStatus.TIMED_OUT}
+                or fact is None
+                or fact.get("plan_node_id") != node.plan_node_id
+                or not RetrySafety(str(fact.get("retry_safety"))).allows_retry
+            ):
+                raise OrchestrationError("Stalled node lacks a settled, host-approved safe retry")
+            plan = _replace_node(plan, node.recover())
+            uow.events.append(
+                self._event(
+                    EventType.PLAN_NODE_RECOVERED,
+                    run,
+                    node.plan_node_id,
+                    {
+                        "plan_node_id": node.plan_node_id,
+                        "attempt_id": latest.attempt_id,
+                        "recovery": "safe_retry",
+                    },
+                )
+            )
+        uow.states.put_execution_plan(run.run_id, plan)
+        return plan
 
     def time_out_attempt(
         self,
@@ -1485,6 +1545,7 @@ class Orchestrator:
                     f"run {run.run_id} must be pending or running, not {run.status.value}"
                 )
 
+            plan = self._recover_stalled_nodes(uow, run, plan)
             exhausted_reason = _exhausted_branch_reason(plan)
             if exhausted_reason is not None:
                 failed_run = run.fail(exhausted_reason, at=self._clock())
@@ -2567,7 +2628,11 @@ class Orchestrator:
                 return False
             plan = _required_plan(uow, run.run_id)
             if only_if_idle and (
-                ready_nodes(plan) or any(node.status is PlanNodeStatus.READY for node in plan.nodes)
+                ready_nodes(plan)
+                or any(
+                    node.status in {PlanNodeStatus.READY, PlanNodeStatus.STALLED}
+                    for node in plan.nodes
+                )
             ):
                 return False
             verifying = {

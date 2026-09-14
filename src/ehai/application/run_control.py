@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from datetime import datetime
 
 from ehai import ID, JsonValue, normalize_id, utc_now
+from ehai.application.interventions import list_interventions
 from ehai.application.pause_causes import (
     PauseCause,
     pause_event_payload,
@@ -171,7 +172,11 @@ class RunController:
             retry_attempt = _last_retryable_attempt(current_attempts)
             if retry_attempt is not None:
                 node = _required_node(plan, retry_attempt.plan_node_id)
-                if node.status is PlanNodeStatus.FAILED:
+                if node.status in {PlanNodeStatus.STALLED, PlanNodeStatus.SUSPENDED}:
+                    # Whole-Run resume cannot release a human hold; safe stalls
+                    # are admitted separately by the Orchestrator.
+                    pass
+                elif node.status is PlanNodeStatus.FAILED:
                     ready_node = node.retry()
                     plan = _replace_node(plan, ready_node)
                     uow.states.put_execution_plan(resumed.run_id, plan)
@@ -186,8 +191,15 @@ class RunController:
                     )
                 # Restore rewinds PlanGraph state but retains post-Checkpoint Attempts.
                 elif not (
-                    retry_attempt.status is AttemptStatus.INTERRUPTED
-                    and node.status is PlanNodeStatus.PENDING
+                    node.status is PlanNodeStatus.PENDING
+                    and (
+                        retry_attempt.status is AttemptStatus.INTERRUPTED
+                        or any(
+                            item.get("attempt_id") == retry_attempt.attempt_id
+                            and item.get("status") == "replied"
+                            for item in list_interventions(uow.events, run_id)
+                        )
+                    )
                 ):
                     raise RunControlError(
                         f"run {snapshot.run.run_id} cannot resume Attempt "

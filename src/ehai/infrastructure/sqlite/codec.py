@@ -777,7 +777,11 @@ def _decode_plan_node_document(document: Mapping[str, JsonValue]) -> PlanNode:
         session_policy=(
             SessionPolicy.NEW if session_policy is None else SessionPolicy(session_policy)
         ),
-        status=PlanNodeStatus(_string(document, "status")),
+        # Legacy blocked nodes always required an explicit intervention reply.
+        # Normalize on read; never rewrite historical snapshots or event payloads.
+        status=PlanNodeStatus(
+            "suspended" if document.get("status") == "blocked" else _string(document, "status")
+        ),
     )
 
 

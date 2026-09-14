@@ -15,7 +15,7 @@ export type ErrorResponse = {
 };
 };
 
-export type EventType = "ProjectCreated" | "GoalCreated" | "CompletionContractConfirmed" | "PlanRevisionProposed" | "PlanRevisionApproved" | "PlanningTurnStarted" | "PlanningTurnCompleted" | "PlanningTurnFailed" | "ProcessDraftStarted" | "ProcessDraftCompleted" | "ProcessDraftFailed" | "ProcessReviewStarted" | "ProcessReviewCompleted" | "ProcessReviewFailed" | "ProcessRevisionApplied" | "ProcessAdjustmentStarted" | "ProcessAdjustmentFinished" | "ProcessAdjustmentSkipped" | "PlanNodeReadied" | "PlanNodeStarted" | "PlanNodeCandidateSubmitted" | "PlanNodeCompleted" | "PlanNodeFailed" | "PlanNodeReopened" | "PlanNodePruned" | "BranchSelected" | "BranchPruned" | "BranchSelectionInvalidated" | "RunStarted" | "RunPaused" | "RunResumed" | "RunCompleted" | "RunFailed" | "RunCancelled" | "AttemptQueued" | "AttemptDispatched" | "AttemptBound" | "AttemptHeartbeatObserved" | "AttemptWaiting" | "AttemptDeadlineExtended" | "AttemptRetryScheduled" | "AttemptStarted" | "AttemptSucceeded" | "AttemptFailed" | "AttemptTimedOut" | "AttemptCancelled" | "AttemptInterrupted" | "DispatchWorkClaimed" | "EndpointHealthChanged" | "ProviderUsageRecorded" | "ArtifactCreated" | "CheckStarted" | "CheckPassed" | "CheckFailed" | "CheckInterrupted" | "GatePassed" | "GateFailed" | "CheckpointCreated" | "CheckpointRestored" | "WorkspacePreserved" | "PhaseSessionOpened" | "PhaseSessionJoined" | "PhaseContextPublished" | "AttemptHandoffConfirmed" | "InterventionOpened" | "InterventionReplied";
+export type EventType = "ProjectCreated" | "GoalCreated" | "CompletionContractConfirmed" | "PlanRevisionProposed" | "PlanRevisionApproved" | "PlanningTurnStarted" | "PlanningTurnCompleted" | "PlanningTurnFailed" | "ProcessDraftStarted" | "ProcessDraftCompleted" | "ProcessDraftFailed" | "ProcessReviewStarted" | "ProcessReviewCompleted" | "ProcessReviewFailed" | "ProcessRevisionApplied" | "ProcessAdjustmentStarted" | "ProcessAdjustmentFinished" | "ProcessAdjustmentSkipped" | "PlanNodeReadied" | "PlanNodeStalled" | "PlanNodeSuspended" | "PlanNodeRecovered" | "PlanNodeStarted" | "PlanNodeCandidateSubmitted" | "PlanNodeCompleted" | "PlanNodeFailed" | "PlanNodeReopened" | "PlanNodePruned" | "BranchSelected" | "BranchPruned" | "BranchSelectionInvalidated" | "RunStarted" | "RunPaused" | "RunResumed" | "RunCompleted" | "RunFailed" | "RunCancelled" | "AttemptQueued" | "AttemptDispatched" | "AttemptBound" | "AttemptHeartbeatObserved" | "AttemptWaiting" | "AttemptDeadlineExtended" | "AttemptRetryScheduled" | "AttemptStarted" | "AttemptSucceeded" | "AttemptFailed" | "AttemptTimedOut" | "AttemptCancelled" | "AttemptInterrupted" | "DispatchWorkClaimed" | "EndpointHealthChanged" | "ProviderUsageRecorded" | "ArtifactCreated" | "CheckStarted" | "CheckPassed" | "CheckFailed" | "CheckInterrupted" | "GatePassed" | "GateFailed" | "CheckpointCreated" | "CheckpointRestored" | "WorkspacePreserved" | "PhaseSessionOpened" | "PhaseSessionJoined" | "PhaseContextPublished" | "AttemptHandoffConfirmed" | "InterventionOpened" | "InterventionReplied";
 
 export type EventEnvelope = {
   readonly id: Id;
@@ -40,7 +40,7 @@ export type PlanRevisionStatus = "draft" | "approved";
 
 export type PlanNodeKind = "work" | "fork" | "evaluator" | "merge" | "reviewer";
 
-export type PlanNodeStatus = "pending" | "ready" | "running" | "candidate" | "verifying" | "blocked" | "completed" | "failed" | "pruned";
+export type PlanNodeStatus = "pending" | "ready" | "running" | "candidate" | "verifying" | "stalled" | "suspended" | "completed" | "failed" | "pruned";
 
 export type EdgeType = "dependency" | "exploration" | "conditional" | "merge";
 
@@ -520,7 +520,7 @@ export type InterventionBaseline = {
   readonly plan_node_id: Id;
   readonly phase_id: NullableId;
   readonly branch_id: NullableId;
-  readonly agent_session_ref_id: Id;
+  readonly agent_session_ref_id: NullableId;
   readonly phase_session_id: NullableId;
   readonly handoff_ids: IdList;
   readonly artifact_ids: IdList;
@@ -553,7 +553,7 @@ export type Intervention = {
   readonly attempt_id: Id;
   readonly phase_id: NullableId;
   readonly branch_id: NullableId;
-  readonly agent_session_ref_id: Id;
+  readonly agent_session_ref_id: NullableId;
   readonly phase_session_id: NullableId;
   readonly handoff_ids: IdList;
   readonly artifact_ids: IdList;

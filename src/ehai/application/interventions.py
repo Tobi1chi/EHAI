@@ -66,7 +66,7 @@ class _ExecutionContext:
     plan_node_id: ID
     phase_id: ID | None
     branch_id: ID | None
-    agent_session_ref_id: ID
+    agent_session_ref_id: ID | None
     phase_session_id: ID | None
     handoff_ids: tuple[ID, ...]
     artifact_ids: tuple[ID, ...]
@@ -353,20 +353,21 @@ def _open_context(uow: UnitOfWork, attempt_id: ID) -> _ExecutionContext | None:
             f"{node.status.value}"
         )
     session_ref_id = attempt.agent_session_ref_id
-    if session_ref_id is None:
-        raise ValueError(f"Attempt {attempt_id} has no bound Agent Session")
-    session = uow.states.get_agent_session_ref(session_ref_id)
-    if session is None:
+    # Startup failures can exhaust recovery before a Session/handle was bound.
+    session = None if session_ref_id is None else uow.states.get_agent_session_ref(session_ref_id)
+    if session_ref_id is not None and session is None:
         raise ValueError(f"Agent Session {session_ref_id} is not persisted")
-    if session.run_id != run.run_id:
+    if session is not None and session.run_id != run.run_id:
         raise ValueError(f"Agent Session {session_ref_id} belongs to another Run")
     if (
-        attempt.worker_profile_id is not None
+        session is not None
+        and attempt.worker_profile_id is not None
         and session.worker_profile_id != attempt.worker_profile_id
     ):
         raise ValueError(f"Agent Session {session_ref_id} does not match the Attempt profile")
     if (
-        attempt.worker_endpoint_id is not None
+        session is not None
+        and attempt.worker_endpoint_id is not None
         and session.worker_endpoint_id != attempt.worker_endpoint_id
     ):
         raise ValueError(f"Agent Session {session_ref_id} does not match the Attempt endpoint")
@@ -414,15 +415,13 @@ def _validate_reply_context(uow: UnitOfWork, opened: Mapping[str, JsonValue]) ->
             "The intervention's approval baseline is no longer the Goal's current contract"
         )
     node = _node(plan, plan_node_id)
-    if node.status is not PlanNodeStatus.BLOCKED:
-        raise ValueError(f"PlanNode {plan_node_id} is not blocked by the intervention request")
+    if node.status is not PlanNodeStatus.SUSPENDED:
+        raise ValueError(f"PlanNode {plan_node_id} is not suspended by the intervention request")
     if any(
         attempt.plan_node_id == plan_node_id and attempt.status is AttemptStatus.RUNNING
         for attempt in uow.states.list_attempts(run_id)
     ):
         raise ValueError(f"PlanNode {plan_node_id} still has a running Attempt")
-    # The Orchestrator owns the BLOCKED state check.  Keeping this helper on
-    # identity/absence-of-live-work facts avoids coupling it to that enum.
 
 
 def _find_intervention(events: EventReader, intervention_id: ID) -> dict[str, JsonValue] | None:
@@ -484,7 +483,7 @@ def _intervention_document(stored: StoredEvent) -> dict[str, JsonValue]:
     artifact_ids = _payload_ids(payload, "artifact_ids", event.type)
     phase_id = _optional_payload_id(payload, "phase_id", event.type)
     branch_id = _optional_payload_id(payload, "branch_id", event.type)
-    session_id = _payload_id(payload, "agent_session_ref_id", event.type)
+    session_id = _optional_payload_id(payload, "agent_session_ref_id", event.type)
     phase_session_id = _optional_payload_id(payload, "phase_session_id", event.type)
     baseline = payload.get("baseline")
     if not isinstance(baseline, dict):

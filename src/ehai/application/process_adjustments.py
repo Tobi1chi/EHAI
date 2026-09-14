@@ -858,11 +858,11 @@ def _safety_hold_reason(
         attempt.status in {AttemptStatus.PENDING, AttemptStatus.RUNNING} for attempt in attempts
     ):
         return "Attempts have not converged; automatic process adjustment is held"
-    blocked = tuple(
-        node.plan_node_id for node in plan.nodes if node.status is PlanNodeStatus.BLOCKED
+    suspended = tuple(
+        node.plan_node_id for node in plan.nodes if node.status is PlanNodeStatus.SUSPENDED
     )
-    if blocked:
-        return f"blocked PlanNodes require intervention before automatic adjustment: {blocked}"
+    if suspended:
+        return f"suspended PlanNodes require intervention before automatic adjustment: {suspended}"
     pending_checks = tuple(
         check.check_run_id
         for check in checks

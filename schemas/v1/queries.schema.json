@@ -35,7 +35,8 @@
         "running",
         "candidate",
         "verifying",
-        "blocked",
+        "stalled",
+        "suspended",
         "completed",
         "failed",
         "pruned"
@@ -1226,7 +1227,7 @@
         "plan_node_id": {"$ref": "common.schema.json#/$defs/Id"},
         "phase_id": {"$ref": "#/$defs/NullableId"},
         "branch_id": {"$ref": "#/$defs/NullableId"},
-        "agent_session_ref_id": {"$ref": "common.schema.json#/$defs/Id"},
+        "agent_session_ref_id": {"$ref": "#/$defs/NullableId"},
         "phase_session_id": {"$ref": "#/$defs/NullableId"},
         "handoff_ids": {"$ref": "#/$defs/IdList"},
         "artifact_ids": {"$ref": "#/$defs/IdList"}
@@ -1309,7 +1310,7 @@
         "attempt_id": {"$ref": "common.schema.json#/$defs/Id"},
         "phase_id": {"$ref": "#/$defs/NullableId"},
         "branch_id": {"$ref": "#/$defs/NullableId"},
-        "agent_session_ref_id": {"$ref": "common.schema.json#/$defs/Id"},
+        "agent_session_ref_id": {"$ref": "#/$defs/NullableId"},
         "phase_session_id": {"$ref": "#/$defs/NullableId"},
         "handoff_ids": {"$ref": "#/$defs/IdList"},
         "artifact_ids": {"$ref": "#/$defs/IdList"},
