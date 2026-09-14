@@ -80,6 +80,47 @@ commands Schema、OpenAPI 和 TypeScript Client 已同步；模型端工具契�
 
 ## 尚需真实入口证据
 
+### 2026-09-14 简化 Responses 工具 Schema
+
+用户确认：面向 Responses 的工具/输出 Schema 统一不使用 `uniqueItems`，不再为这个关键字
+增加 Provider 能力开关或兼容回退。这是项目采用的兼容策略，不断言所有服务实现的能力完全相同。
+低价值的细节约束优先简化，不因此扩建校验机制；授权、数据完整性与获批验收边界仍保留。
+
+此前正常 Pi Planner 讨论在工具执行前返回 HTTP 400 `upstream_error`；同一模型请求的诊断对照
+仅移除五处 `uniqueItems`、保留 strict 后返回 HTTP 200 和 completed，但没有实际执行工具。
+迁移时旧 Responses 适配器的关键词移除处理被删除，新 Pi 桥接原样注册了这些工具 Schema。
+
+本次直接删除 `plan_graph_tools.py` 的四处声明，展开后覆盖 add/update_plan_node 的
+required_capabilities、set_plan_branch 的 node_keys，以及 set_plan_phase 的 node_keys/rework_node_keys。
+Planner 与过程 Planner 复用这些定义；角色权限、参数名称、null/空数组/更新保留语义、Handler、
+返回值与持久化不变，不修改严格模式。现有重复引用/能力的本地检查保留，没有新增约束或测试套件。
+HTTP 数据 Schema、历史请求和旧 Session 不改写。
+
+本轮仅做静态检查与实际工具定义的离线核对，不发起付费模型请求。此前的请求对照不是本次
+正常入口复测：当前修改后的工具执行和持久化效果仍未重新验证，不宣称产品 E2E 通过。
+
+### 2026-09-14 Luna 正常入口复测：Schema 通过，工具事件桥接阻塞
+
+用户授权后，以当前工作树的正常 `discuss-plan` 入口在原隔离测试讨论新增一轮，使用
+`gpt-5.6-luna/high`，只要求 `ask_user` 一次，不读文件、不生成计划。原生工具清单含 16 个工具，
+没有 `uniqueItems`；strict 未关闭。Luna 返回一次 `ask_user` 调用，参数 message 为询问 E2E
+任务与验收条件的简短问题，原生 rawStopReason=completed。报告 input=3475、output=76、
+totalTokens=3551；Pi 成本估算不是代理账单。
+
+原生 Session `38bbaff0-fd8c-4b8b-9288-b34a3c1c9467` 记录了 assistant toolCall，
+宿主 trace 只有 turn/start、agent_start 和 usage，没有 tool/call 或 tool/result。
+原因定位：Pi 0.85.1 的 rpc-mode 调用 takeOverStdout，将普通 process.stdout.write 转发到 stderr；
+EHAI 扩展使用该方法发送 ehai_tool_call，而宿主仅从 stdout 消费事件、丢弃 stderr 内容。
+因此模型等待工具结果，宿主等待收不到的工具事件；这与 Schema 400 是两个独立问题。
+
+模型生成已结束后，仅停止经 PID、父进程及 Session 参数核对的本次 Pi 子进程。
+CLI 随后退出 1，正常 get-discussion 确认 turn `24abf835-a6fb-4e65-a0fb-9d388ef799e3`
+持久化为 failed、reply/plan_revision_id 为 null；确认没有残留本次 Pi 进程。
+本次仅一次模型请求，没有自动重试、没有执行工具 Handler、没有批准或执行代码。
+测试证据保留在 Git 外的本机 EHAI/testing/aws-sub2 配置目录及 validation.sqlite。
+本轮记录发现但未修改桥接：已验证 Schema 接受与模型生成工具参数，尚未验证宿主工具执行、
+finish 收敛或产品 E2E。下一步需要修复工具事件传输通道，再回到正常入口验证。
+
 ### 2026-09-14 角色入口收口
 
 正常 CLI 发现：仅提供 --planner-model 而省略 --planner，会忽略模型选择并用 single Planner
