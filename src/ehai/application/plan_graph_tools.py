@@ -1,4 +1,4 @@
-"""In-memory PlanGraph construction Tools called directly by the Built-in Planner."""
+"""Shared draft graph construction and validation for Planner tools and external imports."""
 
 from __future__ import annotations
 
@@ -47,6 +47,8 @@ _MUTATION_TOOLS = (
     "set_plan_phase",
     "set_node_gate",
     "set_final_gate",
+    "remove_node_gate",
+    "remove_final_gate",
     "move_process_gate",
 )
 
@@ -703,7 +705,8 @@ class PlanGraphToolRuntime:
                 PlanIssue(
                     "INVALID_ARGUMENT",
                     "final_gate",
-                    "final gate requires command argv or human_question",
+                    "final Gate requires command argv or human_question; an empty definition "
+                    "does not delete it. Use remove_final_gate to clear the draft Gate",
                 )
             )
         self._final_gate_argv = argv
@@ -751,7 +754,8 @@ class PlanGraphToolRuntime:
                 PlanIssue(
                     "INVALID_ARGUMENT",
                     location,
-                    "node Gate requires command argv or human_question",
+                    "node Gate requires command argv or human_question; an empty definition "
+                    "does not delete it. Use remove_node_gate with this node_key",
                     (node_key,),
                 )
             )
@@ -761,6 +765,39 @@ class PlanGraphToolRuntime:
             command_argv=command_argv,
             human_question=human_question,
         )
+
+    def _tool_remove_node_gate(self, arguments: Mapping[str, JsonValue]) -> None:
+        if self._process_mode:
+            raise _ToolRejection(
+                PlanIssue(
+                    "PROCESS_GATE_FROZEN",
+                    "node_gates",
+                    "Approved Gates cannot be removed in process mode",
+                )
+            )
+        node_key = _required_key(arguments, "node_key", "node_gates")
+        if node_key not in self._nodes:
+            raise _ToolRejection(
+                PlanIssue(
+                    "UNKNOWN_NODE",
+                    f"node_gates.{node_key}",
+                    f"Node {node_key!r} does not exist",
+                    (node_key,),
+                )
+            )
+        self._node_gates.pop(node_key, None)
+
+    def _tool_remove_final_gate(self, arguments: Mapping[str, JsonValue]) -> None:
+        if self._process_mode:
+            raise _ToolRejection(
+                PlanIssue(
+                    "PROCESS_GATE_FROZEN",
+                    "final_gate",
+                    "Approved Gates cannot be removed in process mode",
+                )
+            )
+        self._final_gate_argv = ()
+        self._final_human_question = None
 
     def _tool_move_process_gate(self, arguments: Mapping[str, JsonValue]) -> None:
         if not self._process_mode:
@@ -1009,7 +1046,10 @@ class PlanGraphToolRuntime:
                         PlanIssue(
                             "NODE_GATE_FINAL_CONFLICT",
                             f"node_gates.{final_gate.node_key}",
-                            "The final node uses the final Gate; it cannot also have a node Gate",
+                            "The final node uses the final Gate; it cannot also have a node Gate. "
+                            f"Call remove_node_gate with node_key={final_gate.node_key!r}; "
+                            "preserve the required conditions in set_final_gate. "
+                            "No node, edge, or Phase needs to be removed",
                             (final_gate.node_key,),
                         )
                     )
@@ -2001,10 +2041,20 @@ _TOOL_ORDER = (
     "set_plan_phase",
     "set_node_gate",
     "set_final_gate",
+    "remove_node_gate",
+    "remove_final_gate",
     "inspect_plan",
     "finish_plan",
 )
-_PROCESS_TOOL_ORDER = (*_TOOL_ORDER[:-2], "move_process_gate", *_TOOL_ORDER[-2:])
+_PROCESS_TOOL_ORDER = (
+    *(
+        name
+        for name in _TOOL_ORDER[:-2]
+        if name not in {"set_node_gate", "set_final_gate", "remove_node_gate", "remove_final_gate"}
+    ),
+    "move_process_gate",
+    *_TOOL_ORDER[-2:],
+)
 
 _TOOL_DEFINITIONS: dict[str, ToolDefinition] = {
     "add_plan_node": ToolDefinition(
@@ -2156,7 +2206,10 @@ _TOOL_DEFINITIONS: dict[str, ToolDefinition] = {
     ),
     "set_final_gate": ToolDefinition(
         "set_final_gate",
-        "Set the final Gate with command argv, a human question, or both.",
+        "Set or replace the draft final Gate with command argv, a human question, or both. "
+        "Both fields replace their previous values: [] clears the command and null clears "
+        "the human question, but at least one condition must remain. To delete the whole "
+        "draft Gate use remove_final_gate. Unavailable in process mode.",
         {
             "type": "object",
             "additionalProperties": False,
@@ -2174,7 +2227,10 @@ _TOOL_DEFINITIONS: dict[str, ToolDefinition] = {
     ),
     "set_node_gate": ToolDefinition(
         "set_node_gate",
-        "Set or replace one Gate on a non-final work, merge, or reviewer node.",
+        "Set or replace one draft Gate on a non-final work, merge, or reviewer node. "
+        "Both condition fields replace their previous values: [] clears the command and null "
+        "clears the human question, but at least one condition must remain. To delete this "
+        "Gate without changing the graph use remove_node_gate. Unavailable in process mode.",
         {
             "type": "object",
             "additionalProperties": False,
@@ -2190,6 +2246,32 @@ _TOOL_DEFINITIONS: dict[str, ToolDefinition] = {
                 },
                 "human_question": _HUMAN_QUESTION_PROPERTY,
             },
+        },
+    ),
+    "remove_node_gate": ToolDefinition(
+        "remove_node_gate",
+        "Remove the whole draft node Gate (command and human question) from an existing node. "
+        "Preserves the node, edges, Phases and final Gate; succeeds if this node has no Gate. "
+        "Unknown nodes are rejected. A required Phase Gate must be restored before finish_plan. "
+        "Use this to repair NODE_GATE_FINAL_CONFLICT. Unavailable in process mode.",
+        {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["node_key"],
+            "properties": {"node_key": _KEY_PROPERTY},
+        },
+    ),
+    "remove_final_gate": ToolDefinition(
+        "remove_final_gate",
+        "Remove both command and human question from the draft final Gate; succeeds if unset. "
+        "Preserves all nodes, edges, Phases and node Gates. If the final Gate is required, "
+        "set_final_gate must restore it before finish_plan. Does not remove host-configured "
+        "completion criteria. Unavailable in process mode.",
+        {
+            "type": "object",
+            "additionalProperties": False,
+            "required": [],
+            "properties": {},
         },
     ),
     "move_process_gate": ToolDefinition(

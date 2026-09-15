@@ -10,6 +10,7 @@ from typing import Protocol, runtime_checkable
 
 from ehai import ID, JsonValue, format_utc_datetime, new_id, normalize_id, utc_now
 from ehai.application.async_runtime import ConnectorExecution, RuntimeConnector
+from ehai.application.interventions import WorkerBlocker
 from ehai.application.orchestrator import Orchestrator
 from ehai.application.ports import UnitOfWork
 from ehai.domain.events import Event, EventType
@@ -107,6 +108,11 @@ class QuiescibleRuntime(Protocol):
 @runtime_checkable
 class DispatchReleasingRuntime(Protocol):
     def release_run_dispatch(self, run_id: ID) -> None: ...
+
+
+@runtime_checkable
+class SuspendibleRuntime(Protocol):
+    async def suspend_attempt(self, attempt_id: ID, blocker: WorkerBlocker) -> Run: ...
 
 
 class RuntimeControlService:
@@ -341,6 +347,18 @@ class RuntimeControlService:
         result = await runtime.cancel_attempt(attempt.attempt_id)
         self._remember(idempotency_key, "CancelAttempt", result)
         return result
+
+    async def suspend_attempt(self, attempt_id: ID, blocker: WorkerBlocker) -> Run:
+        attempt = self._attempt(attempt_id)
+        if attempt.status is not AttemptStatus.RUNNING or attempt.worker_endpoint_id is None:
+            raise RuntimeControlError("Only a running, assigned Attempt can be suspended")
+        runtime = self._runtimes.get(attempt.worker_endpoint_id)
+        if not isinstance(runtime, SuspendibleRuntime):
+            raise RuntimeControlError("This execution host does not support targeted suspension")
+        try:
+            return await runtime.suspend_attempt(attempt.attempt_id, blocker)
+        except RuntimeError as error:
+            raise RuntimeControlError(str(error)) from error
 
     def _attempt(self, attempt_id: ID) -> Attempt:
         normalized_id = normalize_id(attempt_id)

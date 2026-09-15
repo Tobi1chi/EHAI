@@ -214,6 +214,7 @@ class SingleSlotRuntime:
         self._clock = clock
         self._id_factory = id_factory
         self._claim_owner = f"runtime:{self._id_factory()}"
+        self._requested_suspensions: dict[ID, WorkerBlocker] = {}
         self._endpoint_health = EndpointHealth(
             endpoint.worker_endpoint_id,
             EndpointHealthStatus.UNKNOWN,
@@ -420,6 +421,16 @@ class SingleSlotRuntime:
         finally:
             await self._wait_for_host_work(execution)
         return attempt, execution
+
+    async def request_suspend(self, attempt_id: ID, blocker: WorkerBlocker) -> None:
+        """Stop one Pi execution and suspend its node for an explicit human reply."""
+        normalized = normalize_id(attempt_id)
+        if self._profile.kind is not WorkerKind.PI:
+            raise RuntimeError("Targeted suspension currently requires a Pi Worker")
+        if normalized in self._requested_suspensions:
+            raise RuntimeError("This Attempt already has a suspension in progress")
+        self._requested_suspensions[normalized] = blocker
+        await self.request_cancel(normalized)
 
     async def execute_started_request(self, request: WorkerRequest) -> Run:
         """Execute one already-started queued Attempt through this Endpoint."""
@@ -779,6 +790,17 @@ class SingleSlotRuntime:
     ) -> tuple[Run | None, WorkerResult | None]:
         if event.attempt_id != attempt_id:
             raise RuntimeError("Connector emitted a WorkerEvent for another Attempt")
+        suspension = self._requested_suspensions.get(attempt_id)
+        if suspension is not None and event.type in {
+            WorkerEventType.FAILED,
+            WorkerEventType.BLOCKED,
+        }:
+            terminal = self._orchestrator.block_attempt(
+                attempt_id,
+                suspension,
+                worker_event_receipts=_event_receipts((*pending_events, event)),
+            )
+            return terminal, candidate
         if event.type is WorkerEventType.CANDIDATE:
             if not any(item.worker_event_id == event.worker_event_id for item in pending_events):
                 pending_events.append(event)

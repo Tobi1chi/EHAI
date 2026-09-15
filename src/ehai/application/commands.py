@@ -146,6 +146,29 @@ class CreateGoal:
 
 
 @dataclass(frozen=True, slots=True)
+class ImportPlan:
+    """Submit an external graph definition, never execution or approval state."""
+
+    idempotency_key: str
+    goal_id: ID
+    plan_json: str
+
+    def __post_init__(self) -> None:
+        _require_idempotency_key(self.idempotency_key, type(self).__name__)
+        object.__setattr__(self, "goal_id", normalize_id(self.goal_id))
+        if len(self.plan_json.encode("utf-8")) > 1_000_000:
+            raise ValueError("External plan exceeds 1000000 UTF-8 bytes")
+        value = json_loads(self.plan_json)
+        if not isinstance(value, dict):
+            raise ValueError("External plan must be a JSON object")
+        object.__setattr__(self, "plan_json", json_dumps(value))
+
+    @property
+    def fingerprint(self) -> str:
+        return _fingerprint(type(self).__name__, {"goal_id": self.goal_id, "plan": self.plan_json})
+
+
+@dataclass(frozen=True, slots=True)
 class ProposePlan:
     """Request a draft PlanRevision and CompletionContract proposal."""
 

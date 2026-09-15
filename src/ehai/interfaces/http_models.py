@@ -12,11 +12,13 @@ from pydantic import (
     Field,
     StrictBool,
     StringConstraints,
+    WithJsonSchema,
     field_serializer,
     field_validator,
 )
 
 from ehai import JsonValue, format_utc_datetime, normalize_id
+from ehai.application.plan_imports import plan_import_schema
 
 NonBlank = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
 HumanCompletionCriterion = Annotated[
@@ -67,6 +69,12 @@ class ProposePlanRequest(_StrictRequest):
     idempotency_key: NonBlank
     goal_id: UuidInput
     criteria: list[P1CompletionCriterion] = Field(min_length=1, max_length=3)
+
+
+class ImportPlanRequest(_StrictRequest):
+    idempotency_key: NonBlank
+    goal_id: UuidInput
+    plan: Annotated[dict[str, JsonValue], WithJsonSchema(plan_import_schema())]
 
 
 class ReplanPlanRequest(_StrictRequest):
@@ -131,6 +139,12 @@ class ProcessAdjustmentPolicyRequest(_StrictRequest):
     reasoning_effort: ExecutionText | None
 
 
+class TrajectoryReviewPolicyRequest(_StrictRequest):
+    interval_seconds: Annotated[int, Field(strict=True, ge=1)] = 600
+    step_count: Annotated[int, Field(strict=True, ge=1)] = 30
+    model: ExecutionText = "gpt-5.6-luna"
+
+
 class GoalWorkerBudgetRequest(_StrictRequest):
     max_worker_attempts: Annotated[int, Field(strict=True, ge=1)]
 
@@ -169,6 +183,7 @@ class ExecutionConfigRequest(_StrictRequest):
     codex_server: ExecutionCodexServerRequest | None = None
     process_adjustment: ProcessAdjustmentPolicyRequest | None = None
     goal_worker_budget: GoalWorkerBudgetRequest | None = None
+    trajectory_review: TrajectoryReviewPolicyRequest | None = None
     pi: PiBackendConfigRequest | None = None
 
 
@@ -180,6 +195,13 @@ class StartRunRequest(_StrictRequest):
 
 class RunActionRequest(_StrictRequest):
     idempotency_key: NonBlank
+
+
+class SuspendAttemptRequest(RunActionRequest):
+    review_id: UuidInput
+    through_sequence: Annotated[int, Field(strict=True, ge=1)]
+    actor: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=1000)]
+    reason: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=4000)]
 
 
 class CancelRunRequest(RunActionRequest):

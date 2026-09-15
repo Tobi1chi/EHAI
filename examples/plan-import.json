@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "design_document": "Create hello.txt containing Hello EHAI and one LF newline. Only hello.txt may change. A read-only Reviewer checks the delivered file; the host runs the existing, immutable verify.py. No network, package installation or Git writes by Agents. On missing prerequisites, request human intervention without changing acceptance.",
+  "nodes": [
+    {"key":"write","title":"Write hello.txt","instruction":"Create hello.txt containing exactly Hello EHAI followed by one LF. Modify no other files. Do not change verify.py. Submit the actual code artifact using the host finish tool.","kind":"work","required_capabilities":null,"session_policy":null},
+    {"key":"review","title":"Review hello.txt","instruction":"Read the prepared upstream artifact and verify hello.txt contains exactly Hello EHAI plus LF. Do not modify files. Return the host review format and evidence for every supplied artifact; the host owns the Gate decision.","kind":"reviewer","required_capabilities":null,"session_policy":null}
+  ],
+  "edges": [{"source":"write","target":"review","edge_type":"dependency","branch_key":null,"condition":null}],
+  "branches": [],
+  "phases": [{"phase_key":"delivery","title":"Delivery","node_keys":["write","review"],"reviewer_node_key":"review","gate_node_key":"review","rework_node_keys":["write"]}],
+  "node_gates": [],
+  "final_gate": {"argv":["uv","run","--no-project","python","verify.py"],"human_question":null}
+}

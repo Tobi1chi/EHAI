@@ -1496,6 +1496,17 @@
       "required": ["data"],
       "properties": {"data": {"$ref": "#/$defs/InterventionList"}}
     },
+    "TrajectoryReviewListResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["data"],
+      "properties": {
+        "data": {
+          "type": "array",
+          "items": {"type": "object", "additionalProperties": true}
+        }
+      }
+    },
     "ResultAdoptionListResponse": {
       "type": "object",
       "additionalProperties": false,

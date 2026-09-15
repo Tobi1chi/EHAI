@@ -32,6 +32,8 @@ from ehai.application.scheduler import (
 )
 from ehai.application.service import ExecutionService
 from ehai.application.session_mailbox import SessionMailbox
+from ehai.application.trajectory_reviews import TrajectoryReviewPolicy
+from ehai.application.trajectory_suspensions import TrajectorySuspensions
 from ehai.domain.execution import RunStatus
 from ehai.domain.workers import (
     WorkerCapability,
@@ -104,6 +106,7 @@ def create_local_app(
     available_shells: Sequence[str] = (),
     git_permissions: Sequence[str] = (),
     worker_capacity: int = 1,
+    trajectory_review: TrajectoryReviewPolicy | None = None,
     codex_server_executable: str | Sequence[str] = "codex",
     codex_server_approval_policy: str = "on-request",
     codex_server_sandbox: str = "workspace-write",
@@ -125,6 +128,8 @@ def create_local_app(
         raise ValueError("Pi execution requires an explicit --pi-config")
     host_execution_config = None
     configured_kind = _canonical_runtime_worker_kind(worker_kind)
+    if trajectory_review is not None and (not p2_runtime or configured_kind != "pi"):
+        raise ValueError("trajectory review requires a Pi Worker with --p2-runtime")
     if p2_runtime and configured_kind in {"pi", "codex-server"}:
         host_execution_config = ExecutionConfig(
             worker_kind=configured_kind,
@@ -140,6 +145,7 @@ def create_local_app(
             endpoint_capabilities=endpoint_capabilities or ResponsesEndpointCapabilities(),
             command_timeout_seconds=command_check_timeout_seconds,
             pi_backend=pi_backend,
+            trajectory_review=trajectory_review,
             codex_server_executable=(
                 (codex_server_executable,)
                 if isinstance(codex_server_executable, str)
@@ -353,6 +359,7 @@ def create_local_app(
             reasoning_effort=agent_reasoning_effort,
             workspace_resolver=workspace_resolver,
             mailbox=session_mailbox,
+            trajectory_review=trajectory_review,
         )
         base_connector = connector
     elif worker_kind == "codex-server":
@@ -471,11 +478,15 @@ def create_local_app(
         process_adjustments=process_adjustments,
         execution_config=host_execution_config,
     )
+    trajectory_suspensions = TrajectorySuspensions(
+        query_database.unit_of_work, query_service, runtime_control
+    )
     app = create_app(
         execution_service,
         query_service,
         runtime_control,
         process_adjustments=process_adjustments,
+        trajectory_suspensions=trajectory_suspensions,
         execution_config_validator=validate_execution_config,
         artifact_root=str(artifact_root),
     )
@@ -574,6 +585,7 @@ def create_local_app(
                 await task
         runtime_control.mark_runtime_stopped()
         await _close_runtime_connectors(composition)
+        await trajectory_suspensions.close()
 
     if runtime_autostart:
         app.router.add_event_handler("startup", start_runtime)
@@ -666,6 +678,13 @@ def create_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--agent-model")
     parser.add_argument(
+        "--trajectory-review",
+        action="store_true",
+        help="enable advisory Luna trajectory review for new Pi Runs",
+    )
+    parser.add_argument("--trajectory-review-seconds", type=int, default=600)
+    parser.add_argument("--trajectory-review-steps", type=int, default=30)
+    parser.add_argument(
         "--agent-reasoning-effort",
         choices=("off", "minimal", "low", "medium", "high", "xhigh", "max"),
     )
@@ -727,6 +746,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         codex_model=args.codex_model,
         codex_reasoning_effort=args.codex_reasoning_effort,
         agent_model=args.agent_model,
+        trajectory_review=(
+            TrajectoryReviewPolicy(args.trajectory_review_seconds, args.trajectory_review_steps)
+            if args.trajectory_review
+            else None
+        ),
         agent_reasoning_effort=args.agent_reasoning_effort,
         agent_allowed_commands=_parse_allowed_command_argv(args.agent_allowed_command),
         available_shells=tuple(args.agent_available_shell),

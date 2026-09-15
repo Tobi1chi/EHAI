@@ -19,6 +19,7 @@ from ehai.application.execution_policy import (
     EndpointHealthStatus,
     ExecutionPolicy,
 )
+from ehai.application.interventions import WorkerBlocker
 from ehai.application.orchestrator import Orchestrator
 from ehai.application.ports import UnitOfWork
 from ehai.domain.events import Event, EventType
@@ -236,6 +237,15 @@ class ConcurrentRuntime:
         if helper is None or task is None:
             raise RuntimeError(f"Attempt {normalized_id} is not active in this Runtime")
         await helper.request_cancel(normalized_id)
+        return await asyncio.shield(task)
+
+    async def suspend_attempt(self, attempt_id: ID, blocker: WorkerBlocker) -> Run:
+        normalized = normalize_id(attempt_id)
+        helper = self._active_helpers.get(normalized)
+        task = self._active_tasks.get(normalized)
+        if helper is None or task is None or task.done():
+            raise RuntimeError("Attempt is no longer active in this Runtime")
+        await helper.request_suspend(normalized, blocker)
         return await asyncio.shield(task)
 
     async def quiesce_run(self, run_id: ID) -> None:

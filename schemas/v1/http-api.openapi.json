@@ -131,6 +131,92 @@
         }
       }
     },
+    "/api/v1/plans/import-schema": {
+      "get": {
+        "summary": "Get Plan Import Schema",
+        "operationId": "getPlanImportSchema",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DataResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/plans/import": {
+      "post": {
+        "summary": "Import Plan",
+        "operationId": "importPlan",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ImportPlanRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Draft PlanRevision",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "commands.schema.json#/$defs/PlanGraphResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Invalid external plan definition",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "commands.schema.json#/$defs/ImportPlanErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/plans/propose": {
       "post": {
         "summary": "Propose Plan",
@@ -1869,6 +1955,86 @@
         }
       }
     },
+    "/api/v1/attempts/{attempt_id}/suspend": {
+      "post": {
+        "summary": "Suspend Attempt",
+        "operationId": "suspendAttemptFromReview",
+        "parameters": [
+          {
+            "name": "attempt_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$",
+              "title": "Attempt Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SuspendAttemptRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Explicit review adoption and targeted suspension",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "commands.schema.json#/$defs/SuspendAttemptResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
     "/api/v1/plans/{plan_revision_id}": {
       "get": {
         "summary": "Get Plan Graph",
@@ -2252,6 +2418,66 @@
               "application/json": {
                 "schema": {
                   "$ref": "queries.schema.json#/$defs/RunProcessDraftsResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/api/v1/runs/{run_id}/trajectory-reviews": {
+      "get": {
+        "summary": "Get Trajectory Reviews",
+        "operationId": "getRunTrajectoryReviews",
+        "parameters": [
+          {
+            "name": "run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$",
+              "title": "Run Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Advisory trajectory reviews",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "queries.schema.json#/$defs/TrajectoryReviewListResponse"
                 }
               }
             }
@@ -3330,6 +3556,16 @@
               }
             ]
           },
+          "trajectory_review": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TrajectoryReviewPolicyRequest"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "pi": {
             "anyOf": [
               {
@@ -3435,6 +3671,347 @@
           "max_worker_attempts"
         ],
         "title": "GoalWorkerBudgetRequest"
+      },
+      "ImportPlanRequest": {
+        "properties": {
+          "idempotency_key": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Idempotency Key"
+          },
+          "goal_id": {
+            "type": "string",
+            "pattern": "^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$",
+            "title": "Goal Id"
+          },
+          "plan": {
+            "properties": {
+              "schema_version": {
+                "type": "integer",
+                "const": 1
+              },
+              "design_document": {
+                "type": "string",
+                "maxLength": 60000,
+                "minLength": 1
+              },
+              "final_gate": {
+                "properties": {
+                  "argv": {
+                    "items": {
+                      "type": "string",
+                      "maxLength": 4096,
+                      "minLength": 1
+                    },
+                    "type": "array",
+                    "maxItems": 128,
+                    "minItems": 0
+                  },
+                  "human_question": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "maxLength": 4000,
+                    "minLength": 1
+                  }
+                },
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "argv",
+                  "human_question"
+                ]
+              },
+              "nodes": {
+                "items": {
+                  "properties": {
+                    "instruction": {
+                      "type": "string",
+                      "maxLength": 4000,
+                      "minLength": 1
+                    },
+                    "key": {
+                      "type": "string",
+                      "maxLength": 128,
+                      "minLength": 1
+                    },
+                    "kind": {
+                      "type": "string",
+                      "enum": [
+                        "work",
+                        "fork",
+                        "evaluator",
+                        "merge",
+                        "reviewer"
+                      ]
+                    },
+                    "required_capabilities": {
+                      "items": {
+                        "type": "string",
+                        "maxLength": 128,
+                        "minLength": 1
+                      },
+                      "type": [
+                        "array",
+                        "null"
+                      ],
+                      "maxItems": 32
+                    },
+                    "session_policy": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "enum": [
+                        "new",
+                        "reuse",
+                        "fork",
+                        null
+                      ]
+                    },
+                    "title": {
+                      "type": "string",
+                      "maxLength": 200,
+                      "minLength": 1
+                    }
+                  },
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "key",
+                    "title",
+                    "instruction",
+                    "kind",
+                    "required_capabilities",
+                    "session_policy"
+                  ]
+                },
+                "type": "array",
+                "maxItems": 128
+              },
+              "branches": {
+                "items": {
+                  "properties": {
+                    "branch_key": {
+                      "type": "string",
+                      "maxLength": 128,
+                      "minLength": 1
+                    },
+                    "fork_node_key": {
+                      "type": "string",
+                      "maxLength": 128,
+                      "minLength": 1
+                    },
+                    "label": {
+                      "type": "string",
+                      "maxLength": 200,
+                      "minLength": 1
+                    },
+                    "merge_node_key": {
+                      "type": "string",
+                      "maxLength": 128,
+                      "minLength": 1
+                    },
+                    "node_keys": {
+                      "items": {
+                        "type": "string",
+                        "maxLength": 128,
+                        "minLength": 1
+                      },
+                      "type": "array",
+                      "minItems": 1
+                    }
+                  },
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "branch_key",
+                    "label",
+                    "fork_node_key",
+                    "node_keys",
+                    "merge_node_key"
+                  ]
+                },
+                "type": "array",
+                "maxItems": 128
+              },
+              "edges": {
+                "items": {
+                  "properties": {
+                    "branch_key": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "maxLength": 128,
+                      "minLength": 1
+                    },
+                    "condition": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "maxLength": 200,
+                      "minLength": 1
+                    },
+                    "edge_type": {
+                      "type": "string",
+                      "enum": [
+                        "dependency",
+                        "exploration",
+                        "conditional",
+                        "merge"
+                      ]
+                    },
+                    "source": {
+                      "type": "string",
+                      "maxLength": 128,
+                      "minLength": 1
+                    },
+                    "target": {
+                      "type": "string",
+                      "maxLength": 128,
+                      "minLength": 1
+                    }
+                  },
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "source",
+                    "target",
+                    "edge_type",
+                    "branch_key",
+                    "condition"
+                  ]
+                },
+                "type": "array",
+                "maxItems": 128
+              },
+              "phases": {
+                "items": {
+                  "properties": {
+                    "gate_node_key": {
+                      "type": "string",
+                      "maxLength": 128,
+                      "minLength": 1
+                    },
+                    "node_keys": {
+                      "items": {
+                        "type": "string",
+                        "maxLength": 128,
+                        "minLength": 1
+                      },
+                      "type": "array",
+                      "minItems": 1
+                    },
+                    "phase_key": {
+                      "type": "string",
+                      "maxLength": 128,
+                      "minLength": 1
+                    },
+                    "reviewer_node_key": {
+                      "type": "string",
+                      "maxLength": 128,
+                      "minLength": 1
+                    },
+                    "rework_node_keys": {
+                      "items": {
+                        "type": "string",
+                        "maxLength": 128,
+                        "minLength": 1
+                      },
+                      "type": "array",
+                      "minItems": 1
+                    },
+                    "title": {
+                      "type": "string",
+                      "maxLength": 200,
+                      "minLength": 1
+                    }
+                  },
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "phase_key",
+                    "title",
+                    "node_keys",
+                    "reviewer_node_key",
+                    "gate_node_key",
+                    "rework_node_keys"
+                  ]
+                },
+                "type": "array",
+                "maxItems": 128
+              },
+              "node_gates": {
+                "items": {
+                  "properties": {
+                    "argv": {
+                      "items": {
+                        "type": "string",
+                        "maxLength": 4096,
+                        "minLength": 1
+                      },
+                      "type": "array",
+                      "maxItems": 128,
+                      "minItems": 0
+                    },
+                    "human_question": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "maxLength": 4000,
+                      "minLength": 1
+                    },
+                    "name": {
+                      "type": "string",
+                      "maxLength": 200,
+                      "minLength": 1
+                    },
+                    "node_key": {
+                      "type": "string",
+                      "maxLength": 128,
+                      "minLength": 1
+                    }
+                  },
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "node_key",
+                    "name",
+                    "argv",
+                    "human_question"
+                  ]
+                },
+                "type": "array",
+                "maxItems": 128
+              }
+            },
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "schema_version",
+              "design_document",
+              "final_gate",
+              "nodes",
+              "branches",
+              "edges",
+              "phases",
+              "node_gates"
+            ],
+            "title": "Plan"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "idempotency_key",
+          "goal_id",
+          "plan"
+        ],
+        "title": "ImportPlanRequest"
       },
       "JsonScalar": {
         "anyOf": [
@@ -3847,6 +4424,73 @@
           "plan_revision_id"
         ],
         "title": "StartRunRequest"
+      },
+      "SuspendAttemptRequest": {
+        "properties": {
+          "idempotency_key": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Idempotency Key"
+          },
+          "review_id": {
+            "type": "string",
+            "pattern": "^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$",
+            "title": "Review Id"
+          },
+          "through_sequence": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Through Sequence"
+          },
+          "actor": {
+            "type": "string",
+            "maxLength": 1000,
+            "minLength": 1,
+            "title": "Actor"
+          },
+          "reason": {
+            "type": "string",
+            "maxLength": 4000,
+            "minLength": 1,
+            "title": "Reason"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "idempotency_key",
+          "review_id",
+          "through_sequence",
+          "actor",
+          "reason"
+        ],
+        "title": "SuspendAttemptRequest"
+      },
+      "TrajectoryReviewPolicyRequest": {
+        "properties": {
+          "interval_seconds": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Interval Seconds",
+            "default": 600
+          },
+          "step_count": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Step Count",
+            "default": 30
+          },
+          "model": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^[^\\x00]*[^\\s\\x00][^\\x00]*$",
+            "title": "Model",
+            "default": "gpt-5.6-luna"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "TrajectoryReviewPolicyRequest"
       }
     }
   }

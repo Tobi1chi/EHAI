@@ -22,6 +22,7 @@ from ehai.application.queries import QueryService
 from ehai.application.run_results import ConflictingExecutionConfigError
 from ehai.application.scheduler import ConcurrentRuntime
 from ehai.application.service import ExecutionService
+from ehai.application.trajectory_reviews import TrajectoryReviewPolicy
 from ehai.domain.events import Event, EventType
 from ehai.domain.execution import AttemptStatus, Run, RunStatus
 from ehai.domain.runtime import DispatchWork, DispatchWorkStatus
@@ -91,6 +92,7 @@ class ExecutionConfig:
     process_adjustment: ProcessAdjustmentPolicy | None = None
     goal_worker_budget: GoalWorkerBudget | None = None
     pi_backend: PiBackendConfig | None = None
+    trajectory_review: TrajectoryReviewPolicy | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "worker_kind", _worker_kind(self.worker_kind))
@@ -103,6 +105,11 @@ class ExecutionConfig:
             )
         if self.worker_kind == "pi" and self.pi_backend is None:
             raise ValueError("Pi execution config requires the pi backend object")
+        if self.trajectory_review is not None and (
+            self.worker_kind != "pi"
+            or not isinstance(self.trajectory_review, TrajectoryReviewPolicy)
+        ):
+            raise ValueError("trajectory_review requires a Pi Worker and a valid policy")
         if type(self.capacity) is not int or self.capacity < 1:
             raise ValueError("capacity must be a positive integer")
         commands = tuple(
@@ -184,6 +191,7 @@ class ExecutionConfig:
             "process_adjustment",
             "goal_worker_budget",
             "pi",
+            "trajectory_review",
         }
         unknown = sorted(set(document) - allowed)
         if unknown:
@@ -225,10 +233,16 @@ class ExecutionConfig:
         if goal_budget is not None and not isinstance(goal_budget, dict):
             raise ValueError("goal_worker_budget must be an object or null")
         pi_document = document.get("pi")
+        trajectory = document.get("trajectory_review")
+        if trajectory is not None and not isinstance(trajectory, dict):
+            raise ValueError("trajectory_review must be an object or null")
         if pi_document is not None and not isinstance(pi_document, dict):
             raise ValueError("pi must be a backend configuration object")
         return cls(
             pi_backend=None if pi_document is None else PiBackendConfig.from_document(pi_document),
+            trajectory_review=(
+                None if trajectory is None else TrajectoryReviewPolicy.from_document(trajectory)
+            ),
             worker_kind=worker_kind,
             model=model,
             reasoning_effort=reasoning,
@@ -294,6 +308,8 @@ class ExecutionConfig:
             document["goal_worker_budget"] = self.goal_worker_budget.to_document()
         if self.pi_backend is not None:
             document["pi"] = self.pi_backend.to_document()
+        if self.trajectory_review is not None:
+            document["trajectory_review"] = self.trajectory_review.to_document()
         return document
 
     @property

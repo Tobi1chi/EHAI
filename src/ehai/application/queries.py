@@ -8,7 +8,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Protocol
 
-from ehai import ID, JsonValue, normalize_id
+from ehai import ID, JsonValue, format_utc_datetime, normalize_id
 from ehai.application.agent_trace import (
     AgentTrace,
     AgentTraceEvent,
@@ -735,6 +735,57 @@ class QueryService:
         with self._read_session_factory() as session:
             _required_run(session.states.get_run(normalized_id), normalized_id)
             return list_interventions(session.events, normalized_id)
+
+    def list_trajectory_reviews(self, run_id: ID) -> tuple[dict[str, JsonValue], ...]:
+        """Return latest advisory states without the generic trace's event-count truncation."""
+        normalized_id = normalize_id(run_id)
+        with self._read_session_factory() as read:
+            _required_run(read.states.get_run(normalized_id), normalized_id)
+            attempts = {a.attempt_id: a for a in read.states.list_attempts(normalized_id)}
+            if self._builtin_session_reader is None:
+                return ()
+            sessions = dict.fromkeys(
+                a.agent_session_ref_id
+                for a in attempts.values()
+                if a.agent_session_ref_id is not None
+            )
+            reviews: dict[str, dict[str, JsonValue]] = {}
+            for session_id in sessions:
+                for event in self._builtin_session_reader.load(session_id).events:
+                    payload = event.payload
+                    if (
+                        event.attempt_id not in attempts
+                        or event.type is not AgentTraceEventType.BACKEND_EVENT
+                        or payload.get("type") != "trajectory_review"
+                    ):
+                        continue
+                    identity = str(payload.get("review_id", f"monitor:{event.attempt_id}"))
+                    safe, truncated = sanitize_json_object(payload, max_bytes=64_000)
+                    reviews[identity] = {
+                        **safe,
+                        "recorded_at": format_utc_datetime(event.occurred_at),
+                        "attempt_id": event.attempt_id,
+                        "payload_truncated": truncated,
+                        "worker_status": attempts[event.attempt_id].status.value,
+                    }
+            for review in reviews.values():
+                reviewer_id = review.get("reviewer_session_id")
+                if not isinstance(reviewer_id, str):
+                    continue
+                usage: dict[str, JsonValue] = {}
+                for event in self._builtin_session_reader.load(normalize_id(reviewer_id)).events:
+                    if event.type is not AgentTraceEventType.BACKEND_EVENT:
+                        continue
+                    payload = event.payload
+                    reported = payload.get("usage")
+                    if payload.get("type") != "usage" or not isinstance(reported, dict):
+                        continue
+                    for key in ("input", "output", "cacheRead", "cacheWrite", "totalTokens"):
+                        value, total = reported.get(key), usage.get(key, 0)
+                        if type(value) is int and type(total) is int:
+                            usage[key] = total + value
+                review["reported_usage"] = usage
+            return tuple(sorted(reviews.values(), key=lambda r: str(r["recorded_at"])))
 
     def list_checkpoints(self, run_id: ID) -> tuple[CheckpointSummary, ...]:
         """List recovery summaries for an existing Run in Event order."""

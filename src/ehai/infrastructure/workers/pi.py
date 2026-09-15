@@ -36,6 +36,7 @@ from ehai.application.phase_sessions import PhaseSessions
 from ehai.application.ports import ArtifactStore, UnitOfWork
 from ehai.application.review import validate_review_submission
 from ehai.application.session_mailbox import SessionMailbox, SessionMailboxToolProvider
+from ehai.application.trajectory_reviews import TrajectoryReviewPolicy
 from ehai.application.workers import CandidateArtifact, WorkerRequest, WorkerResult
 from ehai.domain.artifacts import ArtifactKind
 from ehai.domain.planning import PlanNodeKind
@@ -51,6 +52,7 @@ from ehai.infrastructure.mcp_tools import MCPToolProvider
 from ehai.infrastructure.pi_config import PiBackendConfig
 from ehai.infrastructure.pi_runtime import PiExecutionUnknownError, PiRoleRunner
 from ehai.infrastructure.skill_loader import SkillToolProvider
+from ehai.infrastructure.trajectory_review import TrajectoryReviewer
 from ehai.infrastructure.web_tools import WebToolProvider
 
 UnitOfWorkFactory = Callable[[], UnitOfWork]
@@ -150,6 +152,7 @@ class PiAgentConnector:
         system_prompt: str = _DEFAULT_SYSTEM_PROMPT,
         command_timeout_seconds: float = 120.0,
         id_factory: Callable[[], ID] = new_id,
+        trajectory_review: TrajectoryReviewPolicy | None = None,
     ) -> None:
         if profile.kind is not WorkerKind.PI:
             raise ValueError("PiAgentConnector requires a Pi WorkerProfile")
@@ -184,6 +187,11 @@ class PiAgentConnector:
             state_root=backend.agent_dir / "ehai-sessions",
         )
         self._phase_sessions = PhaseSessions(uow_factory)
+        self._trajectory_reviewer = (
+            None
+            if trajectory_review is None
+            else TrajectoryReviewer(self._runtime, trajectory_review)
+        )
         self._handoff_submitter: HandoffSubmitter | None = None
 
     def set_handoff_submitter(self, submitter: HandoffSubmitter) -> None:
@@ -459,6 +467,14 @@ class PiAgentConnector:
             )
             return (*phase_messages, *mailbox_messages)
 
+        review_task = (
+            None
+            if self._trajectory_reviewer is None
+            else asyncio.create_task(
+                self._trajectory_reviewer.watch(session, execution.attempt_id, context),
+                name=f"ehai-trajectory-{execution.attempt_id}",
+            )
+        )
         try:
             await self._runtime.run(
                 config=_worker_role_config(request, tools, system_prompt=self._system_prompt),
@@ -476,6 +492,9 @@ class PiAgentConnector:
             )
             return _candidate_result(session, execution.attempt_id)
         finally:
+            if review_task is not None:
+                review_task.cancel()
+                await asyncio.gather(review_task, return_exceptions=True)
             self._cancellations.pop(execution.attempt_id, None)
             await tools.aclose()
 

@@ -27,6 +27,7 @@ from ehai.application.agent_trace import (
 from ehai.application.agent_trace import (
     AgentTraceEventType as TraceType,
 )
+from ehai.application.sanitization import redact_sensitive_text
 from ehai.infrastructure.pi_config import PiBackendConfig, check_node_version, validate_pi_cli
 from ehai.infrastructure.pi_rpc import PiRpcError, PiRpcProcess
 
@@ -198,6 +199,7 @@ class PiRoleRunner:
                 await rpc.request("steer", {"message": message.content})
 
         final_text: str | None = None
+        step_pending = False
         try:
             async with PiRpcProcess(command, workspace=workspace, environment=environment) as rpc:
                 state = await rpc.request("get_state")
@@ -287,6 +289,30 @@ class PiRoleRunner:
                                 isinstance(message_data, dict)
                                 and message_data.get("role") == "assistant"
                             ):
+                                step_pending = message_data.get("stopReason") in (
+                                    "stop",
+                                    "length",
+                                    "toolUse",
+                                )
+                                blocks = message_data.get("content")
+                                if isinstance(blocks, list):
+                                    visible = "\n".join(
+                                        str(block["text"])
+                                        for block in blocks
+                                        if isinstance(block, dict)
+                                        and block.get("type") == "text"
+                                        and isinstance(block.get("text"), str)
+                                    )
+                                    if visible:
+                                        safe_text = redact_sensitive_text(visible)
+                                        record(
+                                            TraceType.MODEL_MESSAGE,
+                                            {
+                                                "role": "assistant",
+                                                "text": safe_text[:4000],
+                                                "truncated": len(safe_text) > 4000,
+                                            },
+                                        )
                                 usage = message_data.get("usage")
                                 if isinstance(usage, dict):
                                     safe_usage: dict[str, JsonValue] = {
@@ -412,6 +438,12 @@ class PiRoleRunner:
                             "auto_retry_start",
                             "auto_retry_end",
                         }:
+                            if kind == "turn_end" and step_pending:
+                                record(
+                                    TraceType.BACKEND_EVENT,
+                                    {"backend": "pi", "type": "execution_step"},
+                                )
+                                step_pending = False
                             record(TraceType.BACKEND_EVENT, {"backend": "pi", "type": kind})
                 finally:
                     cancel_wait.cancel()

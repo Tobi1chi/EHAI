@@ -674,6 +674,10 @@ export type InterventionListResponse = {
   readonly data: InterventionList;
 };
 
+export type TrajectoryReviewListResponse = {
+  readonly data: ReadonlyArray<Readonly<Record<string, unknown>>>;
+};
+
 export type ResultAdoptionListResponse = {
   readonly data: ResultAdoptionList;
 };
@@ -792,6 +796,7 @@ export type ExecutionConfigRequest = {
   readonly codex_server?: ExecutionCodexServerRequest | null;
   readonly process_adjustment?: ProcessAdjustmentPolicyRequest | null;
   readonly goal_worker_budget?: GoalWorkerBudgetRequest | null;
+  readonly trajectory_review?: TrajectoryReviewPolicyRequest | null;
   readonly pi?: PiBackendConfigRequest | null;
 };
 
@@ -893,6 +898,96 @@ export type PiBackendConfigRequest = {
   readonly configuration_hash?: string | null;
 };
 
+export type TrajectoryReviewPolicyRequest = {
+  readonly interval_seconds?: number;
+  readonly step_count?: number;
+  readonly model?: string;
+};
+
+export type SuspendAttemptRequest = {
+  readonly idempotency_key: string;
+  readonly review_id: string;
+  readonly through_sequence: number;
+  readonly actor: string;
+  readonly reason: string;
+};
+
+export type SuspendAttemptResponse = {
+  readonly data: AttemptSuspensionResult;
+};
+
+export type AttemptSuspensionResult = {
+  readonly attempt_id: string;
+  readonly run_id: string;
+  readonly review_id: string;
+  readonly status: "requested" | "suspended" | "not_suspended";
+  readonly attempt_status: AttemptStatus;
+  readonly node_status: PlanNodeStatus | null;
+  readonly intervention: Intervention | null;
+};
+
+export type ImportPlanRequest = {
+  readonly idempotency_key: string;
+  readonly goal_id: string;
+  readonly plan: {
+  readonly schema_version: 1;
+  readonly design_document: string;
+  readonly final_gate: {
+  readonly argv: ReadonlyArray<string>;
+  readonly human_question: string | null;
+};
+  readonly nodes: ReadonlyArray<{
+  readonly instruction: string;
+  readonly key: string;
+  readonly kind: "work" | "fork" | "evaluator" | "merge" | "reviewer";
+  readonly required_capabilities: ReadonlyArray<string> | null;
+  readonly session_policy: "new" | "reuse" | "fork" | null;
+  readonly title: string;
+}>;
+  readonly branches: ReadonlyArray<{
+  readonly branch_key: string;
+  readonly fork_node_key: string;
+  readonly label: string;
+  readonly merge_node_key: string;
+  readonly node_keys: ReadonlyArray<string>;
+}>;
+  readonly edges: ReadonlyArray<{
+  readonly branch_key: string | null;
+  readonly condition: string | null;
+  readonly edge_type: "dependency" | "exploration" | "conditional" | "merge";
+  readonly source: string;
+  readonly target: string;
+}>;
+  readonly phases: ReadonlyArray<{
+  readonly gate_node_key: string;
+  readonly node_keys: ReadonlyArray<string>;
+  readonly phase_key: string;
+  readonly reviewer_node_key: string;
+  readonly rework_node_keys: ReadonlyArray<string>;
+  readonly title: string;
+}>;
+  readonly node_gates: ReadonlyArray<{
+  readonly argv: ReadonlyArray<string>;
+  readonly human_question: string | null;
+  readonly name: string;
+  readonly node_key: string;
+}>;
+};
+};
+
+export type ImportPlanErrorResponse = {
+  readonly error: {
+  readonly code: string;
+  readonly message: string;
+  readonly issues?: ReadonlyArray<{
+  readonly code: string;
+  readonly location: string;
+  readonly message: string;
+  readonly related_keys?: ReadonlyArray<string>;
+}>;
+};
+};
+
 export class EhaiApiError extends Error {
   readonly status: number;
   readonly detail: ErrorResponse | null;
@@ -925,6 +1020,14 @@ export class EhaiApiClient {
 
   createGoal(request: CreateGoalRequest): Promise<GoalResponse> {
     return this.request("/goals", "POST", request);
+  }
+
+  importPlan(request: ImportPlanRequest): Promise<PlanGraphResponse> {
+    return this.request("/plans/import", "POST", request);
+  }
+
+  getPlanImportSchema(): Promise<{ data: Record<string, unknown> }> {
+    return this.request("/plans/import-schema", "GET");
   }
 
   proposePlan(request: ProposePlanRequest): Promise<PlanGraphResponse> {
@@ -992,6 +1095,14 @@ export class EhaiApiClient {
 
   getRunInterventions(runId: string): Promise<InterventionListResponse> {
     return this.request(`/runs/${encodeURIComponent(runId)}/interventions`, "GET");
+  }
+
+  getRunTrajectoryReviews(runId: string): Promise<TrajectoryReviewListResponse> {
+    return this.request(`/runs/${encodeURIComponent(runId)}/trajectory-reviews`, "GET");
+  }
+
+  suspendAttemptFromReview(attemptId: string, request: SuspendAttemptRequest): Promise<SuspendAttemptResponse> {
+    return this.request(`/attempts/${encodeURIComponent(attemptId)}/suspend`, "POST", request);
   }
 
   listResultAdoptions(runId: string): Promise<ResultAdoptionListResponse> {

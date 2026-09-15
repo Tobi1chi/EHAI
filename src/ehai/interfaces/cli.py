@@ -1,4 +1,4 @@
-"""Minimal JSON CLI for the P1 execution slice."""
+"""JSON CLI for local EHAI execution and API-hosted project workflows."""
 
 from __future__ import annotations
 
@@ -23,6 +23,7 @@ from ehai.application.commands import (
     CreateProject,
     DecideHumanCheck,
     DiscussPlan,
+    ImportPlan,
     PauseRun,
     ProposePlan,
     ProposeProcess,
@@ -34,6 +35,7 @@ from ehai.application.commands import (
 )
 from ehai.application.legacy_config import ResponsesEndpointCapabilities
 from ehai.application.orchestrator import OrchestrationError, Orchestrator
+from ehai.application.plan_imports import PlanImportError, plan_import_schema
 from ehai.application.planner import (
     COMMAND_EXIT_ZERO_CRITERION,
     P1_COMPLETION_CRITERIA,
@@ -73,6 +75,7 @@ from ehai.infrastructure.planners import (
 )
 from ehai.infrastructure.sqlite import SQLiteDatabase
 from ehai.infrastructure.workers import CodexWorkerAdapter, FakeWorker
+from ehai.interfaces.cli_api import API_ONLY_COMMANDS, ApiCommandError, dispatch_api
 from ehai.interfaces.public_documents import public_json_value
 from ehai.interfaces.session_host import (
     ExecutionConfig,
@@ -242,13 +245,22 @@ def build_service(
 
 def create_parser() -> argparse.ArgumentParser:
     """Create the stable argparse surface used by tests and the console script."""
-    parser = argparse.ArgumentParser(prog="ehai", description="EHAI P1 Execution Plane")
+    parser = argparse.ArgumentParser(
+        prog="ehai",
+        description="EHAI planning, execution and runtime control",
+        epilog="Use --api-url for a running API host; otherwise supply --database and --artifacts.",
+    )
+    parser.add_argument("--api-url", help="running EHAI HTTP API origin (or /api/v1 URL)")
+    parser.add_argument(
+        "--api-timeout-seconds",
+        type=float,
+        help="optional HTTP socket timeout; timeout does not cancel host work or retry it",
+    )
     parser.add_argument("--pi-config", type=Path, help="explicit native Pi backend configuration")
-    parser.add_argument("--database", type=Path, required=True, help="SQLite database path")
+    parser.add_argument("--database", type=Path, help="local SQLite database path")
     parser.add_argument(
         "--artifacts",
         type=Path,
-        required=True,
         help="immutable Artifact store root",
     )
     parser.add_argument(
@@ -260,7 +272,7 @@ def create_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--worker-workspace",
         type=Path,
-        help="Codex working directory (default: current directory)",
+        help="local planning/Worker working directory (default: current directory)",
     )
     parser.add_argument(
         "--planner",
@@ -325,6 +337,14 @@ def create_parser() -> argparse.ArgumentParser:
     goal.add_argument("--project-id", required=True)
     goal.add_argument("--objective", required=True)
 
+    import_plan = commands.add_parser(
+        "import-plan", help="import an external initial draft without a Planner"
+    )
+    import_plan.add_argument("--idempotency-key", required=True)
+    import_plan.add_argument("--goal-id", required=True)
+    import_plan.add_argument("--file", type=Path, required=True, help="declarative plan JSON file")
+    commands.add_parser("get-plan-import-schema", help="read the external plan definition Schema")
+
     propose = commands.add_parser("propose-plan", help="propose a plan")
     propose.add_argument("--idempotency-key", required=True)
     propose.add_argument("--goal-id", required=True)
@@ -379,9 +399,11 @@ def create_parser() -> argparse.ArgumentParser:
     approve.add_argument("--plan-revision-id", required=True)
     approve.add_argument("--completion-contract-id", required=True)
 
-    start = commands.add_parser("start-run", help="execute an approved plan")
+    start = commands.add_parser("start-run", help="execute locally or enqueue on the API host")
     start.add_argument("--idempotency-key", required=True)
     start.add_argument("--plan-revision-id", required=True)
+    start.add_argument("--execution-config", type=Path, help="API mode: exact host execution JSON")
+    start.add_argument("--authorize", action="store_true", help="authorize API execution config")
 
     decide_check = commands.add_parser(
         "decide-human-check",
@@ -444,6 +466,10 @@ def create_parser() -> argparse.ArgumentParser:
         "get-run-interventions", help="read a Run's durable Worker interventions"
     )
     interventions_query.add_argument("--run-id", required=True)
+    trajectory_query = commands.add_parser(
+        "get-run-trajectory-reviews", help="read advisory Worker trajectory reviews"
+    )
+    trajectory_query.add_argument("--run-id", required=True)
 
     plan_query = commands.add_parser(
         "get-plan", help="read a stored plan without invoking a Planner"
@@ -534,6 +560,36 @@ def create_parser() -> argparse.ArgumentParser:
     inspect_agent.add_argument(
         "--pi-cli", type=Path, required=True, help="installed Pi dist/bundle/cli.js"
     )
+    for name, help_text in (
+        ("get-runtime-health", "read the API host scheduler health"),
+        ("get-worker-profiles", "read configured Worker presets"),
+        ("get-worker-endpoints", "read configured Worker endpoints"),
+    ):
+        commands.add_parser(name, help=help_text + " (requires --api-url)")
+    for name, help_text in (
+        ("get-attempt-runtime", "read one Attempt's runtime state"),
+        ("get-worker-requests", "read pending requests for one Attempt"),
+        ("cancel-attempt", "cancel one Attempt on its owning API host"),
+        ("suspend-attempt", "adopt a trajectory review and suspend only its Worker"),
+        ("extend-attempt-deadline", "explicitly extend one Attempt's deadline"),
+    ):
+        item = commands.add_parser(name, help=help_text + " (requires --api-url)")
+        item.add_argument("--attempt-id", required=True)
+        if name in {"cancel-attempt", "suspend-attempt", "extend-attempt-deadline"}:
+            item.add_argument("--idempotency-key", required=True)
+        if name == "suspend-attempt":
+            item.add_argument("--review-id", required=True)
+            item.add_argument("--through-sequence", type=int, required=True)
+            item.add_argument("--actor", required=True)
+            item.add_argument("--reason", required=True)
+        if name == "extend-attempt-deadline":
+            item.add_argument("--deadline-at", required=True, help="ISO 8601 time with timezone")
+    for name in ("resolve-worker-request", "decline-worker-request"):
+        item = commands.add_parser(name, help="answer a Worker request (requires --api-url)")
+        item.add_argument("--worker-request-id", required=True)
+        item.add_argument("--idempotency-key", required=True)
+        if name == "resolve-worker-request":
+            item.add_argument("--resolution-file", type=Path, required=True)
     return parser
 
 
@@ -544,7 +600,46 @@ def main(argv: Sequence[str] | None = None) -> int:
             stream.reconfigure(encoding="utf-8")
     parser = create_parser()
     args = parser.parse_args(argv)
+    if args.api_url is not None:
+        local_options = (
+            args.database,
+            args.artifacts,
+            args.pi_config,
+            args.worker_workspace,
+            args.planner,
+            args.planner_model,
+            args.planner_reasoning_effort,
+            args.codex_model,
+            args.codex_reasoning_effort,
+            args.command_check_argv,
+        )
+        if (
+            any(value is not None for value in local_options)
+            or args.worker != "fake"
+            or args.semantic_required_term
+            or args.planner_timeout_seconds != 120.0
+            or args.worker_timeout_seconds != 300.0
+            or args.command_check_timeout_seconds != 30.0
+        ):
+            parser.error("--api-url cannot be mixed with local storage, model or Worker options")
+    else:
+        if args.command in API_ONLY_COMMANDS or args.api_timeout_seconds is not None:
+            parser.error("this command/option requires --api-url")
+        if args.command not in {"inspect-agent", "get-plan-import-schema"} and (
+            args.database is None or args.artifacts is None
+        ):
+            parser.error("local mode requires --database and --artifacts")
+        if args.command == "start-run" and (args.execution_config is not None or args.authorize):
+            parser.error(
+                "local configured execution uses execute-plan; API execution uses --api-url"
+            )
     try:
+        if args.api_url is not None:
+            print(json_dumps(dispatch_api(args)))
+            return 0
+        if args.command == "get-plan-import-schema":
+            print(json_dumps(plan_import_schema()))
+            return 0
         if args.command == "inspect-agent":
             from ehai.interfaces.agent_backends import inspect_pi_backend
 
@@ -557,6 +652,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             "get-run-checks",
             "get-run-adoptions",
             "get-run-interventions",
+            "get-run-trajectory-reviews",
             "get-process-revision",
             "get-process-draft",
             "get-run-process-drafts",
@@ -575,9 +671,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             args.artifacts,
             worker_kind=args.worker,
             worker_workspace=args.worker_workspace,
-            planner_kind=args.planner,
+            planner_kind="single" if args.command == "import-plan" else args.planner,
             planner_timeout_seconds=args.planner_timeout_seconds,
-            planner_model=args.planner_model,
+            planner_model=None if args.command == "import-plan" else args.planner_model,
             planner_reasoning_effort=args.planner_reasoning_effort,
             command_check_argv=_parse_command_argv(args.command_check_argv),
             semantic_required_terms=tuple(args.semantic_required_term),
@@ -586,7 +682,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             codex_model=args.codex_model,
             codex_reasoning_effort=args.codex_reasoning_effort,
             pi_backend=None
-            if args.pi_config is None
+            if args.pi_config is None or args.command == "import-plan"
             else PiBackendConfig.from_path(args.pi_config),
         )
         if args.command == "discuss-plan":
@@ -613,6 +709,30 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
         else:
             output = _dispatch(service, args)
+    except PlanImportError as error:
+        print(
+            json_dumps(
+                {"error": str(error), "error_type": type(error).__name__, "issues": error.issues}
+            ),
+            file=sys.stderr,
+        )
+        return 2
+    except ApiCommandError as error:
+        print(json_dumps(error.document), file=sys.stderr)
+        return 2
+    except KeyboardInterrupt:
+        if args.api_url is None:
+            raise
+        print(
+            json_dumps(
+                {
+                    "error": "CLI request interrupted; host work may still be running. "
+                    "Query the host before retrying; no cancellation was sent."
+                }
+            ),
+            file=sys.stderr,
+        )
+        return 130
     except (
         ApplicationError,
         StateConflictError,
@@ -710,6 +830,7 @@ def _build_foreground_app(
         ),
         command_check_timeout_seconds=config.command_timeout_seconds,
         agent_model=config.model if config.worker_kind == "pi" else None,
+        trajectory_review=config.trajectory_review,
         agent_reasoning_effort=(config.reasoning_effort if config.worker_kind == "pi" else None),
         agent_allowed_commands=config.allowed_commands,
         available_shells=config.available_shells,
@@ -762,6 +883,8 @@ def _dispatch_query(args: argparse.Namespace) -> JsonValue:
         return public_json_value(queries.list_result_adoptions(normalize_id(args.run_id)))
     if args.command == "get-run-interventions":
         return public_json_value(queries.list_interventions(normalize_id(args.run_id)))
+    if args.command == "get-run-trajectory-reviews":
+        return public_json_value(queries.list_trajectory_reviews(normalize_id(args.run_id)))
     if args.command == "get-discussion":
         return public_json_value(
             queries.get_planning_conversation(normalize_id(args.conversation_id))
@@ -777,6 +900,18 @@ def _dispatch_query(args: argparse.Namespace) -> JsonValue:
 
 def _dispatch(service: ExecutionService, args: argparse.Namespace) -> dict[str, JsonValue]:
     command = str(args.command)
+    if command == "import-plan":
+        document = public_json_value(
+            service.import_plan(
+                ImportPlan(
+                    args.idempotency_key,
+                    normalize_id(args.goal_id),
+                    args.file.read_text(encoding="utf-8-sig"),
+                )
+            )
+        )
+        assert isinstance(document, dict)
+        return document
     if command == "create-project":
         project = service.create_project(CreateProject(args.idempotency_key, args.name))
         return {"name": project.name, "project_id": project.project_id}

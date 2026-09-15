@@ -27,6 +27,10 @@ from ehai.application.agent_trace import (
     AgentTrace,
     AgentTraceStore,
 )
+from ehai.application.plan_graph_tools import (
+    MAX_VALIDATION_RETRIES,
+    PlanGraphToolRuntime,
+)
 from ehai.application.planner import (
     COMMAND_EXIT_ZERO_CRITERION,
     HUMAN_CRITERION_PREFIX,
@@ -60,10 +64,6 @@ from ehai.infrastructure.host_tools import HostToolRuntime
 from ehai.infrastructure.pi_config import PiBackendConfig
 from ehai.infrastructure.pi_runtime import PiRoleRunner
 from ehai.infrastructure.planners.codex_protocol import build_codex_planner_input
-from ehai.infrastructure.planners.plan_graph_tools import (
-    MAX_VALIDATION_RETRIES,
-    PlanGraphToolRuntime,
-)
 
 _DEFAULT_PLANNER_BUDGET = ExplorationBudget(max_attempts=24, max_width=3, max_depth=4)
 

@@ -1,0 +1,319 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "design_document",
+    "final_gate",
+    "nodes",
+    "branches",
+    "edges",
+    "phases",
+    "node_gates"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "const": 1
+    },
+    "design_document": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 60000
+    },
+    "final_gate": {
+      "additionalProperties": false,
+      "properties": {
+        "argv": {
+          "items": {
+            "maxLength": 4096,
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 128,
+          "minItems": 0,
+          "type": "array"
+        },
+        "human_question": {
+          "maxLength": 4000,
+          "minLength": 1,
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "argv",
+        "human_question"
+      ],
+      "type": "object"
+    },
+    "nodes": {
+      "type": "array",
+      "items": {
+        "additionalProperties": false,
+        "properties": {
+          "instruction": {
+            "maxLength": 4000,
+            "minLength": 1,
+            "type": "string"
+          },
+          "key": {
+            "maxLength": 128,
+            "minLength": 1,
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "work",
+              "fork",
+              "evaluator",
+              "merge",
+              "reviewer"
+            ],
+            "type": "string"
+          },
+          "required_capabilities": {
+            "items": {
+              "maxLength": 128,
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 32,
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "session_policy": {
+            "enum": [
+              "new",
+              "reuse",
+              "fork",
+              null
+            ],
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "title": {
+            "maxLength": 200,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "title",
+          "instruction",
+          "kind",
+          "required_capabilities",
+          "session_policy"
+        ],
+        "type": "object"
+      },
+      "maxItems": 128
+    },
+    "branches": {
+      "type": "array",
+      "items": {
+        "additionalProperties": false,
+        "properties": {
+          "branch_key": {
+            "maxLength": 128,
+            "minLength": 1,
+            "type": "string"
+          },
+          "fork_node_key": {
+            "maxLength": 128,
+            "minLength": 1,
+            "type": "string"
+          },
+          "label": {
+            "maxLength": 200,
+            "minLength": 1,
+            "type": "string"
+          },
+          "merge_node_key": {
+            "maxLength": 128,
+            "minLength": 1,
+            "type": "string"
+          },
+          "node_keys": {
+            "items": {
+              "maxLength": 128,
+              "minLength": 1,
+              "type": "string"
+            },
+            "minItems": 1,
+            "type": "array"
+          }
+        },
+        "required": [
+          "branch_key",
+          "label",
+          "fork_node_key",
+          "node_keys",
+          "merge_node_key"
+        ],
+        "type": "object"
+      },
+      "maxItems": 128
+    },
+    "edges": {
+      "type": "array",
+      "items": {
+        "additionalProperties": false,
+        "properties": {
+          "branch_key": {
+            "maxLength": 128,
+            "minLength": 1,
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "condition": {
+            "maxLength": 200,
+            "minLength": 1,
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "edge_type": {
+            "enum": [
+              "dependency",
+              "exploration",
+              "conditional",
+              "merge"
+            ],
+            "type": "string"
+          },
+          "source": {
+            "maxLength": 128,
+            "minLength": 1,
+            "type": "string"
+          },
+          "target": {
+            "maxLength": 128,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "source",
+          "target",
+          "edge_type",
+          "branch_key",
+          "condition"
+        ],
+        "type": "object"
+      },
+      "maxItems": 128
+    },
+    "phases": {
+      "type": "array",
+      "items": {
+        "additionalProperties": false,
+        "properties": {
+          "gate_node_key": {
+            "maxLength": 128,
+            "minLength": 1,
+            "type": "string"
+          },
+          "node_keys": {
+            "items": {
+              "maxLength": 128,
+              "minLength": 1,
+              "type": "string"
+            },
+            "minItems": 1,
+            "type": "array"
+          },
+          "phase_key": {
+            "maxLength": 128,
+            "minLength": 1,
+            "type": "string"
+          },
+          "reviewer_node_key": {
+            "maxLength": 128,
+            "minLength": 1,
+            "type": "string"
+          },
+          "rework_node_keys": {
+            "items": {
+              "maxLength": 128,
+              "minLength": 1,
+              "type": "string"
+            },
+            "minItems": 1,
+            "type": "array"
+          },
+          "title": {
+            "maxLength": 200,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "phase_key",
+          "title",
+          "node_keys",
+          "reviewer_node_key",
+          "gate_node_key",
+          "rework_node_keys"
+        ],
+        "type": "object"
+      },
+      "maxItems": 128
+    },
+    "node_gates": {
+      "type": "array",
+      "items": {
+        "additionalProperties": false,
+        "properties": {
+          "argv": {
+            "items": {
+              "maxLength": 4096,
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 128,
+            "minItems": 0,
+            "type": "array"
+          },
+          "human_question": {
+            "maxLength": 4000,
+            "minLength": 1,
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "name": {
+            "maxLength": 200,
+            "minLength": 1,
+            "type": "string"
+          },
+          "node_key": {
+            "maxLength": 128,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "node_key",
+          "name",
+          "argv",
+          "human_question"
+        ],
+        "type": "object"
+      },
+      "maxItems": 128
+    }
+  }
+}

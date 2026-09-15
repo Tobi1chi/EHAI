@@ -619,6 +619,17 @@
           ],
           "default": null
         },
+        "trajectory_review": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TrajectoryReviewPolicyRequest"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "pi": {
           "anyOf": [
             {
@@ -1069,6 +1080,538 @@
       ],
       "title": "PiBackendConfigRequest",
       "type": "object"
+    },
+    "TrajectoryReviewPolicyRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "interval_seconds": {
+          "default": 600,
+          "minimum": 1,
+          "title": "Interval Seconds",
+          "type": "integer"
+        },
+        "step_count": {
+          "default": 30,
+          "minimum": 1,
+          "title": "Step Count",
+          "type": "integer"
+        },
+        "model": {
+          "default": "gpt-5.6-luna",
+          "minLength": 1,
+          "pattern": "^[^\\x00]*[^\\s\\x00][^\\x00]*$",
+          "title": "Model",
+          "type": "string"
+        }
+      },
+      "title": "TrajectoryReviewPolicyRequest",
+      "type": "object"
+    },
+    "SuspendAttemptRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "idempotency_key": {
+          "minLength": 1,
+          "title": "Idempotency Key",
+          "type": "string"
+        },
+        "review_id": {
+          "pattern": "^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$",
+          "title": "Review Id",
+          "type": "string"
+        },
+        "through_sequence": {
+          "minimum": 1,
+          "title": "Through Sequence",
+          "type": "integer"
+        },
+        "actor": {
+          "maxLength": 1000,
+          "minLength": 1,
+          "title": "Actor",
+          "type": "string"
+        },
+        "reason": {
+          "maxLength": 4000,
+          "minLength": 1,
+          "title": "Reason",
+          "type": "string"
+        }
+      },
+      "required": [
+        "idempotency_key",
+        "review_id",
+        "through_sequence",
+        "actor",
+        "reason"
+      ],
+      "title": "SuspendAttemptRequest",
+      "type": "object"
+    },
+    "SuspendAttemptResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "data"
+      ],
+      "properties": {
+        "data": {
+          "$ref": "#/$defs/AttemptSuspensionResult"
+        }
+      }
+    },
+    "AttemptSuspensionResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "attempt_id",
+        "run_id",
+        "review_id",
+        "status",
+        "attempt_status",
+        "node_status",
+        "intervention"
+      ],
+      "properties": {
+        "attempt_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "run_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "review_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "requested",
+            "suspended",
+            "not_suspended"
+          ]
+        },
+        "attempt_status": {
+          "$ref": "queries.schema.json#/$defs/AttemptStatus"
+        },
+        "node_status": {
+          "anyOf": [
+            {
+              "$ref": "queries.schema.json#/$defs/PlanNodeStatus"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "intervention": {
+          "anyOf": [
+            {
+              "$ref": "queries.schema.json#/$defs/Intervention"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "ImportPlanRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "idempotency_key": {
+          "minLength": 1,
+          "title": "Idempotency Key",
+          "type": "string"
+        },
+        "goal_id": {
+          "pattern": "^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$",
+          "title": "Goal Id",
+          "type": "string"
+        },
+        "plan": {
+          "additionalProperties": false,
+          "properties": {
+            "schema_version": {
+              "const": 1,
+              "type": "integer"
+            },
+            "design_document": {
+              "maxLength": 60000,
+              "minLength": 1,
+              "type": "string"
+            },
+            "final_gate": {
+              "additionalProperties": false,
+              "properties": {
+                "argv": {
+                  "items": {
+                    "maxLength": 4096,
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "maxItems": 128,
+                  "minItems": 0,
+                  "type": "array"
+                },
+                "human_question": {
+                  "maxLength": 4000,
+                  "minLength": 1,
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              },
+              "required": [
+                "argv",
+                "human_question"
+              ],
+              "type": "object"
+            },
+            "nodes": {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "instruction": {
+                    "maxLength": 4000,
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "key": {
+                    "maxLength": 128,
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "kind": {
+                    "enum": [
+                      "work",
+                      "fork",
+                      "evaluator",
+                      "merge",
+                      "reviewer"
+                    ],
+                    "type": "string"
+                  },
+                  "required_capabilities": {
+                    "items": {
+                      "maxLength": 128,
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "maxItems": 32,
+                    "type": [
+                      "array",
+                      "null"
+                    ]
+                  },
+                  "session_policy": {
+                    "enum": [
+                      "new",
+                      "reuse",
+                      "fork",
+                      null
+                    ],
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "title": {
+                    "maxLength": 200,
+                    "minLength": 1,
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "key",
+                  "title",
+                  "instruction",
+                  "kind",
+                  "required_capabilities",
+                  "session_policy"
+                ],
+                "type": "object"
+              },
+              "maxItems": 128,
+              "type": "array"
+            },
+            "branches": {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "branch_key": {
+                    "maxLength": 128,
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "fork_node_key": {
+                    "maxLength": 128,
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "label": {
+                    "maxLength": 200,
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "merge_node_key": {
+                    "maxLength": 128,
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "node_keys": {
+                    "items": {
+                      "maxLength": 128,
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "minItems": 1,
+                    "type": "array"
+                  }
+                },
+                "required": [
+                  "branch_key",
+                  "label",
+                  "fork_node_key",
+                  "node_keys",
+                  "merge_node_key"
+                ],
+                "type": "object"
+              },
+              "maxItems": 128,
+              "type": "array"
+            },
+            "edges": {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "branch_key": {
+                    "maxLength": 128,
+                    "minLength": 1,
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "condition": {
+                    "maxLength": 200,
+                    "minLength": 1,
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "edge_type": {
+                    "enum": [
+                      "dependency",
+                      "exploration",
+                      "conditional",
+                      "merge"
+                    ],
+                    "type": "string"
+                  },
+                  "source": {
+                    "maxLength": 128,
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "target": {
+                    "maxLength": 128,
+                    "minLength": 1,
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "source",
+                  "target",
+                  "edge_type",
+                  "branch_key",
+                  "condition"
+                ],
+                "type": "object"
+              },
+              "maxItems": 128,
+              "type": "array"
+            },
+            "phases": {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "gate_node_key": {
+                    "maxLength": 128,
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "node_keys": {
+                    "items": {
+                      "maxLength": 128,
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "minItems": 1,
+                    "type": "array"
+                  },
+                  "phase_key": {
+                    "maxLength": 128,
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "reviewer_node_key": {
+                    "maxLength": 128,
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "rework_node_keys": {
+                    "items": {
+                      "maxLength": 128,
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "minItems": 1,
+                    "type": "array"
+                  },
+                  "title": {
+                    "maxLength": 200,
+                    "minLength": 1,
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "phase_key",
+                  "title",
+                  "node_keys",
+                  "reviewer_node_key",
+                  "gate_node_key",
+                  "rework_node_keys"
+                ],
+                "type": "object"
+              },
+              "maxItems": 128,
+              "type": "array"
+            },
+            "node_gates": {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "argv": {
+                    "items": {
+                      "maxLength": 4096,
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "maxItems": 128,
+                    "minItems": 0,
+                    "type": "array"
+                  },
+                  "human_question": {
+                    "maxLength": 4000,
+                    "minLength": 1,
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "name": {
+                    "maxLength": 200,
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "node_key": {
+                    "maxLength": 128,
+                    "minLength": 1,
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "node_key",
+                  "name",
+                  "argv",
+                  "human_question"
+                ],
+                "type": "object"
+              },
+              "maxItems": 128,
+              "type": "array"
+            }
+          },
+          "required": [
+            "schema_version",
+            "design_document",
+            "final_gate",
+            "nodes",
+            "branches",
+            "edges",
+            "phases",
+            "node_gates"
+          ],
+          "title": "Plan",
+          "type": "object"
+        }
+      },
+      "required": [
+        "idempotency_key",
+        "goal_id",
+        "plan"
+      ],
+      "title": "ImportPlanRequest",
+      "type": "object"
+    },
+    "ImportPlanErrorResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "error"
+      ],
+      "properties": {
+        "error": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "code",
+            "message"
+          ],
+          "properties": {
+            "code": {
+              "type": "string"
+            },
+            "message": {
+              "type": "string"
+            },
+            "issues": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "code",
+                  "location",
+                  "message"
+                ],
+                "properties": {
+                  "code": {
+                    "type": "string"
+                  },
+                  "location": {
+                    "type": "string"
+                  },
+                  "message": {
+                    "type": "string"
+                  },
+                  "related_keys": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
     }
   }
 }

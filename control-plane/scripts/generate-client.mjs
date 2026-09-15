@@ -22,6 +22,8 @@ const openapi = JSON.parse(
 );
 
 const requiredOperations = [
+  "importPlan",
+  "getPlanImportSchema",
   "create_project_api_v1_projects_post",
   "create_goal_api_v1_goals_post",
   "propose_plan_api_v1_plans_propose_post",
@@ -44,6 +46,8 @@ const requiredOperations = [
   "getProcessDraftReviews",
   "getRunProcessDrafts",
   "getRunResult",
+  "getRunTrajectoryReviews",
+  "suspendAttemptFromReview",
   "list_worker_profiles_api_v1_workers_profiles_get",
   "list_worker_endpoints_api_v1_workers_endpoints_get",
   "get_attempt_runtime_api_v1_attempts__attempt_id__runtime_get",
@@ -187,6 +191,14 @@ export class EhaiApiClient {
     return this.request("/goals", "POST", request);
   }
 
+  importPlan(request: ImportPlanRequest): Promise<PlanGraphResponse> {
+    return this.request("/plans/import", "POST", request);
+  }
+
+  getPlanImportSchema(): Promise<{ data: Record<string, unknown> }> {
+    return this.request("/plans/import-schema", "GET");
+  }
+
   proposePlan(request: ProposePlanRequest): Promise<PlanGraphResponse> {
     return this.request("/plans/propose", "POST", request);
   }
@@ -252,6 +264,14 @@ export class EhaiApiClient {
 
   getRunInterventions(runId: string): Promise<InterventionListResponse> {
     return this.request(\`/runs/\${encodeURIComponent(runId)}/interventions\`, "GET");
+  }
+
+  getRunTrajectoryReviews(runId: string): Promise<TrajectoryReviewListResponse> {
+    return this.request(\`/runs/\${encodeURIComponent(runId)}/trajectory-reviews\`, "GET");
+  }
+
+  suspendAttemptFromReview(attemptId: string, request: SuspendAttemptRequest): Promise<SuspendAttemptResponse> {
+    return this.request(\`/attempts/\${encodeURIComponent(attemptId)}/suspend\`, "POST", request);
   }
 
   listResultAdoptions(runId: string): Promise<ResultAdoptionListResponse> {

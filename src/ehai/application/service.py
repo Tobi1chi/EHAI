@@ -9,7 +9,7 @@ from datetime import datetime
 from hashlib import sha256
 from threading import Lock
 
-from ehai import ID, JsonValue, json_dumps, new_id, normalize_id, utc_now
+from ehai import ID, JsonValue, json_dumps, json_loads, new_id, normalize_id, utc_now
 from ehai.application.checkpointing import (
     STARTUP_PAUSE_REASONS,
     RecoveryReport,
@@ -23,6 +23,7 @@ from ehai.application.commands import (
     CreateProject,
     DecideHumanCheck,
     DiscussPlan,
+    ImportPlan,
     PauseRun,
     ProposePlan,
     ProposeProcess,
@@ -53,6 +54,8 @@ from ehai.application.planner import (
     ReplanCheckSummary,
     ReplanContext,
     ReplanInterventionSummary,
+    build_plan_proposal,
+    discussion_proposal_criteria,
     require_p1_criteria,
 )
 from ehai.application.planning_dialogue import PlanningConversationView, planning_conversation
@@ -243,6 +246,37 @@ class ExecutionService:
 
     def propose_plan(self, command: ProposePlan) -> PlanRevision:
         """Ask the Planner for an unapproved contract and graph proposal."""
+        return self._create_plan_proposal(
+            command, lambda goal: self._planner.propose(goal, command.criteria)
+        )
+
+    def import_plan(self, command: ImportPlan) -> PlanRevision:
+        """Import an initial draft for an unplanned Goal without invoking a model."""
+        from ehai.application.plan_imports import import_plan_template
+
+        def produce(goal: Goal) -> PlanProposal:
+            if goal.status is not GoalStatus.OPEN or goal.completion_contract is not None:
+                raise ApplicationError(
+                    "Import requires an open, unplanned Goal; "
+                    "use revision workflows for existing plans"
+                )
+            value = json_loads(command.plan_json)
+            assert isinstance(value, dict)
+            template = import_plan_template(value)
+            return build_plan_proposal(
+                goal,
+                discussion_proposal_criteria((), template),
+                template,
+                id_factory=self._id_factory,
+                clock=self._clock,
+            )
+
+        return self._create_plan_proposal(command, produce)
+
+    def _create_plan_proposal(
+        self, command: ProposePlan | ImportPlan, produce: Callable[[Goal], PlanProposal]
+    ) -> PlanRevision:
+        """One idempotent, rechecked persistence path for both proposal sources."""
         with self._uow_factory() as uow:
             existing = self._existing_result(
                 uow,
@@ -255,7 +289,7 @@ class ExecutionService:
             goal = _required_goal(uow, command.goal_id)
             _require_no_active_runs(uow, goal.goal_id)
 
-        proposal = self._planner.propose(goal, command.criteria)
+        proposal = produce(goal)
         aligned_goal = goal.use_completion_contract(proposal.contract)
         with self._uow_factory() as uow:
             existing = self._existing_result(

@@ -19,6 +19,7 @@ from ehai.application.commands import (
     CreateProject,
     DecideHumanCheck,
     DiscussPlan,
+    ImportPlan,
     PauseRun,
     ProposePlan,
     ProposeProcess,
@@ -29,6 +30,7 @@ from ehai.application.commands import (
     StartRun,
 )
 from ehai.application.orchestrator import OrchestrationError
+from ehai.application.plan_imports import PlanImportError, plan_import_schema
 from ehai.application.ports import StateConflictError
 from ehai.application.process_adjustments import ProcessAdjustments
 from ehai.application.queries import QueryNotFoundError, QueryService
@@ -40,6 +42,7 @@ from ehai.application.service import (
     ExecutionService,
     IdempotencyConflictError,
 )
+from ehai.application.trajectory_suspensions import TrajectorySuspensions
 from ehai.domain.checking import InvalidCheckRunTransition
 from ehai.domain.execution import InvalidAttemptTransition, InvalidRunTransition, RunStatus
 from ehai.domain.goal import GoalInvariantError
@@ -56,6 +59,7 @@ from ehai.interfaces.http_models import (
     ErrorDetail,
     ErrorResponse,
     ExtendAttemptDeadlineRequest,
+    ImportPlanRequest,
     ProposePlanRequest,
     ProposeProcessRequest,
     ReplanPlanRequest,
@@ -64,6 +68,7 @@ from ehai.interfaces.http_models import (
     ReviewProcessRequest,
     RunActionRequest,
     StartRunRequest,
+    SuspendAttemptRequest,
     UuidInput,
 )
 from ehai.interfaces.public_documents import public_json_value
@@ -153,6 +158,7 @@ def create_app(
     runtime_control: RuntimeControlService | None = None,
     *,
     process_adjustments: ProcessAdjustments | None = None,
+    trajectory_suspensions: TrajectorySuspensions | None = None,
     execution_config_validator: Callable[[ExecutionConfig], None] | None = None,
     artifact_root: str | None = None,
 ) -> FastAPI:
@@ -192,6 +198,34 @@ def create_app(
                     request.idempotency_key,
                     _id(str(request.project_id)),
                     request.objective,
+                )
+            )
+        )
+
+    @router.get(
+        "/plans/import-schema", response_model=DataResponse, operation_id="getPlanImportSchema"
+    )
+    def get_plan_import_schema() -> DataResponse:
+        return _response(plan_import_schema())
+
+    @router.post(
+        "/plans/import",
+        response_model=DataResponse,
+        responses={
+            **_PLAN_CREATED_RESPONSES,
+            422: _response_contract(
+                "commands.schema.json#/$defs/ImportPlanErrorResponse",
+                "Invalid external plan definition",
+            ),
+        },
+        status_code=201,
+        operation_id="importPlan",
+    )
+    def import_plan(request: ImportPlanRequest) -> DataResponse:
+        return _response(
+            execution_service.import_plan(
+                ImportPlan(
+                    request.idempotency_key, _id(str(request.goal_id)), json_dumps(request.plan)
                 )
             )
         )
@@ -648,6 +682,34 @@ def create_app(
             )
         )
 
+    @router.post(
+        "/attempts/{attempt_id}/suspend",
+        response_model=DataResponse,
+        responses={
+            200: _response_contract(
+                "commands.schema.json#/$defs/SuspendAttemptResponse",
+                "Explicit review adoption and targeted suspension",
+            ),
+            **_WRITE_RESPONSES,
+        },
+        operation_id="suspendAttemptFromReview",
+    )
+    async def suspend_attempt(
+        attempt_id: UuidInput, request: SuspendAttemptRequest
+    ) -> DataResponse:
+        if trajectory_suspensions is None:
+            raise RuntimeControlError("This host has no trajectory suspension service")
+        return _response(
+            await trajectory_suspensions.suspend(
+                _id(str(attempt_id)),
+                review_id=_id(str(request.review_id)),
+                through_sequence=request.through_sequence,
+                idempotency_key=request.idempotency_key,
+                actor=request.actor,
+                reason=request.reason,
+            )
+        )
+
     @router.get(
         "/plans/{plan_revision_id}",
         response_model=DataResponse,
@@ -709,6 +771,15 @@ def create_app(
     )
     def get_run_process_drafts(run_id: UuidInput) -> DataResponse:
         return _response(query_service.get_run_process_drafts(_id(str(run_id))))
+
+    @router.get(
+        "/runs/{run_id}/trajectory-reviews",
+        response_model=DataResponse,
+        responses=_read_responses("TrajectoryReviewListResponse", "Advisory trajectory reviews"),
+        operation_id="getRunTrajectoryReviews",
+    )
+    def get_trajectory_reviews(run_id: UuidInput) -> DataResponse:
+        return _response(query_service.list_trajectory_reviews(_id(str(run_id))))
 
     @router.get(
         "/runs/{run_id}/trace",
@@ -807,6 +878,15 @@ def _id(value: str) -> ID:
 
 
 def _install_error_handlers(app: FastAPI) -> None:
+    @app.exception_handler(PlanImportError)
+    async def plan_import_error(request: Request, error: PlanImportError) -> JSONResponse:
+        return JSONResponse(
+            status_code=422,
+            content={
+                "error": {"code": "invalid_plan", "message": str(error), "issues": error.issues}
+            },
+        )
+
     @app.exception_handler(RequestValidationError)
     async def request_validation_error(
         request: Request,

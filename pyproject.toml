@@ -12,17 +12,20 @@ license = { file = "LICENSE" }
 dependencies = [
     "fastapi>=0.116,<1",
     "uvicorn>=0.35,<1",
+    "jsonschema>=4.25,<5",
+    "mcp>=1.28,<2",
 ]
 
 [project.scripts]
 ehai = "ehai.interfaces.cli:main"
 ehai-api = "ehai.interfaces.runtime:main"
+ehai-mcp = "ehai.interfaces.mcp_server:main"
 
 [dependency-groups]
 dev = [
     "httpx>=0.28,<1",
-    "jsonschema>=4.25,<5",
     "mypy>=1.17,<2",
+    "types-jsonschema>=4.25,<5",
     "pytest>=8.4,<9",
     "ruff>=0.12,<1",
 ]
