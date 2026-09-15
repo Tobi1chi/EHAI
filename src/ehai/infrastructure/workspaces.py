@@ -76,7 +76,17 @@ class WorkspaceManager:
             if path.exists():
                 raise ValueError(f"owned worktree path {path} already exists")
             subprocess.run(
-                ["git", "-C", str(self.base_workspace), "worktree", "add", "--detach", str(path)],
+                [
+                    "git",
+                    "-c",
+                    "core.autocrlf=false",
+                    "-C",
+                    str(self.base_workspace),
+                    "worktree",
+                    "add",
+                    "--detach",
+                    str(path),
+                ],
                 check=True,
                 capture_output=True,
                 text=True,

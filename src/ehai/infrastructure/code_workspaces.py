@@ -573,6 +573,8 @@ class GitCodeWorkspace:
             [
                 "git",
                 "-c",
+                "core.autocrlf=false",
+                "-c",
                 "core.hooksPath=" + str(self.metadata_root / "disabled-hooks"),
                 "-c",
                 "commit.gpgsign=false",
