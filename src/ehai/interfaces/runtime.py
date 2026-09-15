@@ -1,4 +1,4 @@
-"""Local FastAPI/Uvicorn composition root for the P1 Execution Plane."""
+"""Local FastAPI/Uvicorn composition root for EHAI Core."""
 
 from __future__ import annotations
 
@@ -626,7 +626,7 @@ async def _close_runtime_connectors(composition: LocalRuntimeComposition) -> Non
 
 def create_parser() -> argparse.ArgumentParser:
     """Create the local API server command line."""
-    parser = argparse.ArgumentParser(prog="ehai-api", description="EHAI P1 HTTP API")
+    parser = argparse.ArgumentParser(prog="ehai-api", description="EHAI Core HTTP API host")
     parser.add_argument("--pi-config", type=Path)
     parser.add_argument("--database", type=Path, default=Path(".ehai/state.sqlite3"))
     parser.add_argument("--artifacts", type=Path, default=Path(".ehai/artifacts"))
@@ -730,7 +730,7 @@ def create_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    """Run the local P1 API without introducing a second application service."""
+    """Run the local API without introducing a second application service."""
     args = create_parser().parse_args(argv)
     app = create_local_app(
         args.database,

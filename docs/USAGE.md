@@ -1,238 +1,170 @@
 # EHAI 当前用法
 
-2026-09-14：自研 Agent Loop / Responses Adapter 已删除。Planner、Worker、阶段 Reviewer
-与过程边界 Reviewer 已接到完整 Pi 公共 RPC；这是接线状态，尚无真实模型验收证据。
-旧数据库可查询，旧 `builtin` 执行配置不能启动或恢复为 Pi。Codex 后端保留。
-架构和证据见 [迁移记录](PI_BACKEND_MIGRATION.md)。迁移前完整指南及试用事实保留于
-[历史用法](USAGE_PRE_PI.md)，其中已删除的参数不能继续使用。
+更新：2026-09-15。能力成熟度见 [STATUS](STATUS.md)，历史用法不作为当前参数说明。
 
-## 安装与配置
+## 安装与私有 Pi 配置
 
-需要 Python 3.12、uv、Node >=22.19.0；Pi 固定为 0.85.1，不全局安装、不修改上游源码。
+需要 Python 3.12、uv、Node >=22.19.0。运行 uv sync --frozen，
+npm.cmd ci --prefix agent-backends/pi --ignore-scripts --no-audit --no-fund。
 
-```powershell
-uv sync
-npm.cmd ci --prefix agent-backends/pi --ignore-scripts --no-audit --no-fund
-uv run ehai --help
-uv run ehai-api --help
-```
+在仓库外配置 backend.json，参照 [示例](../agent-backends/pi/examples/backend.json)：
+node、cli、agent_dir 都是宿主真实绝对路径；provider 必须与原生 models.json 一致；
+environment_names 是允许传入 Pi 的模型凭证环境变量名。settings/models 放在 agent_dir。
+密钥仅经宿主环境传入，不放计划、命令参数、Git 或日志。原生配置见锁定 Pi 包 docs/models.md。
 
-以 [backend.json](../agent-backends/pi/examples/backend.json) 为模板，在仓库外创建私有配置。
-`node`、`cli`、`agent_dir` 必须改为本机真实绝对路径。将示例
-[settings.json](../agent-backends/pi/examples/settings.json) 和
-[models.json](../agent-backends/pi/examples/models.json) 放入该 `agent_dir`。
+自定义端点由 Pi models.json 配置，EHAI 不读取 OPENAI_BASE_URL 切换端点。
+当前禁用隐式资源发现和自动模型重试；配置指纹随执行授权保存，变更时不能静默恢复旧授权。
+模型 ID/推理等级须精确匹配 Provider。示例占位符必须替换，不保证任意模型可用。
 
-示例选择 Pi 自带 `openai` Provider，使用其原生模型目录和容量元数据。空 `providers` 不是
-没有模型。选择有权限且 Pi 能精确识别的模型 ID；EHAI 核对实际 Provider、模型和 thinking level，
-不接受静默回退。示例不假定某个模型或端点已可用。
+## 本地规划或导入
 
-凭证只通过执行进程环境传入，不写入 EHAI JSON、数据库或命令参数：
+所有本地业务命令需要 --database 和 --artifacts。先 create-project，再 create-goal。
+可选 Planner 用 --pi-config、--planner-model、--worker-workspace 配置，
+discuss-plan --goal-id ... --message ... --idempotency-key ... 进行讨论，
+继续讨论加 --conversation-id；也支持 --message-file UTF-8 文件。
 
-```powershell
-$env:OPENAI_API_KEY = Read-Host -MaskInput "Model API key"
-```
+不需要 Planner 时：
 
-EHAI 只把 `environment_names` 列出的变量传给 Pi。自定义端点放在原生 `models.json` 的
-`providers.<provider>`，使用 `baseUrl`、`api`、`apiKey`、`models`；`apiKey` 必须引用
-`$已列入白名单的变量名`，不允许明文 key 或 `!shell`。`api: openai-responses` 使用 Pi 的
-Responses 实现。按服务端真实资料填写 contextWindow/maxTokens，不把默认容量当成承诺。
-Provider 名称须与 backend.json 相同，具体结构见锁定依赖内 `docs/models.md`。
+~~~powershell
+$Local = @('--database','C:/private/ehai/state.sqlite','--artifacts','C:/private/ehai/artifacts')
+uv run ehai get-plan-import-schema
+uv run ehai @Local import-plan --goal-id '<goal-id>' --file C:/private/plan.json --idempotency-key import-001
+uv run ehai @Local get-plan --plan-revision-id '<plan-id>'
+uv run ehai @Local get-plan-checks --plan-revision-id '<plan-id>'
+~~~
 
-EHAI 不再读取 `OPENAI_BASE_URL` 作为端点开关，也不读取全局 Pi auth.json 或工作区扩展。
-首次载入计算 settings/models 的指纹并随授权保存；恢复遇到文件变化会拒绝，不能悄悄换后端。
-保留私有目录及其 `ehai-sessions/`；后者保存 Pi 原生历史，可能含敏感工作内容。
-初始集成禁用自动重试：`retry.enabled=false`、`retry.provider.maxRetries=0`。
-压缩由 Pi 原生 `compaction` 设置控制，删除旧循环不等于已证明 token 消耗下降。
+[示例计划](../examples/plan-import.json) 和 [生成 Schema](../schemas/v1/plan-import.schema.json)
+使用与 Planner 工具相同的节点/边/阶段/Gate 字段。顶层字段全部显式给出：
+schema_version=1、design_document、nodes、edges、branches、phases、node_gates、final_gate。
 
-## 查询代码交付结果
+空集合用 []；可空项按 Schema 用 null；不接受 remove 操作、节点状态、批准、真实执行 ID、
+retained Gate/Check ID 或任意扩展字段。依赖来自 edges，真实 UUID 由核心分配。
+当前使用共同图预算：最多 128 次构建修改、探索宽度 3/深度 2；导入正文最多 1,000,000 UTF-8 字节。
+最后必须有合法 Phase/Reviewer 和自动或人工最终 Gate，不能空图、绕 Gate 或重复定义同一项。
+导入错误返回 issues，不保存半成品。成功仍是 draft，既不批准也不运行。
 
-`get-result`、HTTP `GET /api/v1/runs/{run_id}/result` 和生成 Client 的
-`getRunResult(runId)` 复用 `QueryService.get_run_result`。它在同一 ReadSession 中物化执行事实，
-不读取 Artifact 正文、不调用模型、不推进运行状态。
+仅导入 open 且尚无计划契约的 Goal。同键同文档重放返回原方案；变更文档复用键会冲突。
+不是已批准计划的覆盖入口；既有版本用讨论/replan 或批准内过程调整。
+本地导入不需要 Pi/模型配置，不触发 Planner 调用。
 
-```powershell
-uv run ehai --database .ehai/state.sqlite3 --artifacts .ehai/artifacts `
-    get-result --run-id $RunId
-```
+## 审查、批准和前台执行
 
-CLI 返回 `{run, result, trace_ids}`；HTTP/Client 返回 `{data: {run, result, trace_ids}}`。
-`result` 包含代码 workspace、base_commit、commit、diff_path、attempt_id、run_id、
-diff_artifact_ids、check_result、configured_workspace 和绝对 artifact_root。
-`trace_ids` 按持久轨迹顺序提供 Attempt、Artifact、CheckRun、Checkpoint、Event 的 ID。
-完整类型和可空性见 `schemas/v1/queries.schema.json` 的 `RunResultDocument`。
+~~~powershell
+uv run ehai @Local approve-plan --idempotency-key approve-001 --plan-revision-id '<plan-id>' --completion-contract-id '<contract-id>'
+uv run ehai @Local execute-plan --idempotency-key execute-001 --plan-revision-id '<plan-id>' --execution-config C:/private/execution.json --authorize
+uv run ehai @Local resume-session --run-id '<run-id>'
+~~~
 
-迁移相对旧 main 修正了检查结果归属：有代码交付时只报告该交付 Attempt 的 CheckRuns，
-没有对应检查则 `check_result=null`，不再拿其他 Attempt 的检查背书。无代码交付时保留最近
-有检查 Attempt 的历史 fallback；无检查时 passed 为 null、checks/check_run_ids 为空数组。
-聚合判定为 false 优先，其次未知 null，全部明确通过才是 true；它不是新增的 Run/Gate 状态机。
-已有调用方必须处理 `check_result=null`，不能假设它始终是对象。
+执行文件指定 worker_kind=pi、model、reasoning_effort、workspace、capacity、allowed_commands、
+available_shells、git_permissions、command_timeout_seconds、pi 后端配置。
+权限不因工作区可读而自动扩为写入、Shell 或 Git 写。前台文件允许解析器提供缺省值。
 
-合法但不存在的 Run：CLI 返回原 not-found 错误，HTTP 返回 404 和 `error.code=not_found`；
-非法 UUID 返回 HTTP 422。存储错误和冲突的 execution_config 不转换为“空结果”。普通本地 API
-和 P2 API 装配都传入 artifact_root；直接调用 `create_app` 的嵌入方需显式提供该参数才能使用新路由。
+execute-plan 是前台宿主；Ctrl+C 尝试收敛后保存恢复事实，不保证强杀或未知副作用可自动重放。
+resume-session 读取原授权，不是用今天的配置替换旧模型/权限。查询用 get-run-plan、
+get-trace、get-result；候选 Artifact、Reviewer 结论和最终 Gate 是不同事实。
 
-当前已合入 Pi 后端和阶段执行能力；M1 单独迁移时的 schema 11 限制是历史记录，
-不能据此删除新阶段/过程字段或手动降低数据库版本。来源见 [成果迁移记录](MIGRATION_STATUS.md)。
+## API 宿主与 CLI 客户端
 
-## 无模型检查
+先运行宿主，按真实模型和私有路径替换以下示例：
 
-```powershell
-uv run ehai --database .ehai/state.sqlite --artifacts .ehai/artifacts `
-  inspect-agent --node node `
-  --pi-cli agent-backends/pi/node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js
-```
+~~~powershell
+$Server = @('--database','C:/private/ehai/state.sqlite','--artifacts','C:/private/ehai/artifacts',
+  '--worker','pi','--planner','pi','--pi-config','C:/private/backend.json',
+  '--planner-model','<model-id>','--agent-model','<model-id>',
+  '--worker-workspace','C:/work/project','--worker-capacity','2','--p2-runtime')
+uv run ehai-api @Server
+~~~
 
-检查不访问给定数据库/产物目录，不读取 key，不发送 prompt。系统 Node 太旧时显式传兼容
-Node 的绝对路径。`control_channel_verified` 和 `worker_integration_available` 不代表模型验收。
+宿主拥有运行和 Pi 子进程。另一个终端的客户端不读取本地数据库、不启动另一套 Scheduler：
 
-## 规划与批准
+~~~powershell
+$Api = @('--api-url','http://127.0.0.1:8000')
+uv run ehai @Api get-runtime-health
+uv run ehai @Api get-worker-profiles
+uv run ehai @Api create-project --name 'My project' --idempotency-key project-001
+uv run ehai @Api create-goal --project-id '<project-id>' --objective '<goal>' --idempotency-key goal-001
+uv run ehai @Api import-plan --goal-id '<goal-id>' --file C:/private/plan.json --idempotency-key import-001
+uv run ehai @Api get-plan --plan-revision-id '<plan-id>'
+uv run ehai @Api approve-plan --plan-revision-id '<plan-id>' --completion-contract-id '<contract-id>' --idempotency-key approve-001
+uv run ehai @Api start-run --plan-revision-id '<plan-id>' --execution-config C:/private/execution-api.json --authorize --idempotency-key start-001
+~~~
 
-提供 `--pi-config` 或 `--planner-model` 时，省略 `--planner` 会自动选择 Pi；缺少配置或模型
-会报错，不回退到固定模板。显式 `--planner single` / `exploration` 仍用于无模型演示。
-没有任何 Pi 配置或模型参数时保留原有无模型默认入口，查询不依赖后端配置。
+API 模式也可用 discuss-plan/propose-plan。每一步先确认退出码和结果，再使用实际返回 ID。
+后台 start-run 要完整 HTTP ExecutionConfigRequest 对象，路径在宿主解析；不是前台简写文件。
+必须与宿主模型、权限、workspace、capacity、Pi 配置等一致，否则 409。格式见
+[OpenAPI](../schemas/v1/http-api.openapi.json)。API 客户端不接受本地 --database/--pi-config/模型参数混用。
+API URL 可为 origin 或 /api/v1；不接受内嵌凭证。成功 stdout 是 data 中的 JSON；
+HTTP 错误 stderr 为 {http_status,response}，退出 2，不重试、不跟随重定向、不回退本地。
+--api-timeout-seconds 是可选 socket 超时，不是任务期限。Ctrl+C 退出 130，不取消宿主任务。
 
-通过 `create-project`、`create-goal` 创建对象后，调用 Pi 讨论；每次新请求用新业务幂等 key：
+## 控制、人工回路与过程调整
 
-```powershell
-uv run ehai --database .ehai/state.sqlite --artifacts .ehai/artifacts `
-  --planner pi --pi-config C:/private/ehai-pi/backend.json `
-  --planner-model "<exact-model-id>" --planner-reasoning-effort high `
-  --worker-workspace C:/work/target `
-  discuss-plan --idempotency-key "<new-key>" --goal-id "<goal-id>" `
-  --message "<requirements and acceptance expectations>"
-```
+- pause-run / resume-run / cancel-run：--run-id、--idempotency-key；由持有执行的 API 宿主收敛。
+- get-run-interventions → reply-intervention：--intervention-id、--request-token、--actor、
+  --message、--idempotency-key。只解除对应人工问题，不批准新需求/权限。
+- get-run-checks → decide-human-check：--check-run-id、--request-token、--passed 或 --rejected、
+  --actor、--comment、--idempotency-key。
+- propose-process --run-id --reason；review-process --draft-id；apply-process --review-id；
+  写入均需幂等键。API 提案/审查为异步受理，get-process-draft/get-process-review 查询真实状态。
+  不改变需求、对外接口、Gate、权限；不等于跨批准后继 Run 已交付。
+- get-attempt-runtime / get-worker-requests：--attempt-id。
+- resolve-worker-request：--worker-request-id、--resolution-file JSON 对象、--idempotency-key；
+  decline-worker-request 使用同目标和幂等键。
+- cancel-attempt：--attempt-id、--idempotency-key。取消不是人工 suspend。
+- extend-attempt-deadline：--attempt-id、--deadline-at（含时区）、--idempotency-key。
 
-继续讨论加 `--conversation-id`。Planner 有只读调查和方案工具，不拥有执行批准。
-用 `get-discussion`、`get-plan`、`get-plan-checks` 查询后，再明确批准：
-`approve-plan --idempotency-key <key> --plan-revision-id <id> --completion-contract-id <id>`。
-这些子命令均须全局 `--database` / `--artifacts`，其余必填字段见各自 `--help`。
+运行中控制新增项要求 --api-url；本地前台执行尚无跨进程控制通道。
+get-run、get-run-plan、get-run-checks、get-run-adoptions、get-trace、get-result 等保留。
+恢复/探查的 execute-plan、resume-session、restore-run、recover、inspect-agent 不映射成远程重置。
 
-## 前台执行
+## 周期轨迹审查和定向挂起
 
-在仓库外创建 execution.json，以下占位路径和模型必须替换，`pi` 使用前述相同真实配置：
+新 Pi execution_config 的 trajectory_review={} 启用默认 600 秒或 30 步先到触发，
+可指定 interval_seconds、step_count、model；默认审查模型 gpt-5.6-luna/high。
+宿主启动加 --trajectory-review 及对应间隔参数，授权配置须匹配；旧 Run 不自动启用。
 
-```json
-{
-  "config_version": 1,
-  "worker_kind": "pi",
-  "model": "<exact-model-id>",
-  "reasoning_effort": "high",
-  "capacity": 1,
-  "workspace": "C:/work/target",
-  "allowed_commands": [],
-  "available_shells": [],
-  "git_permissions": ["git.read"],
-  "command_timeout_seconds": 30,
-  "pi": {
-    "node": "C:/tools/node/node.exe",
-    "cli": "C:/work/EHAI/agent-backends/pi/node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js",
-    "agent_dir": "C:/private/ehai-pi",
-    "provider": "openai",
-    "environment_names": ["OPENAI_API_KEY"]
-  }
-}
-```
+一步是一轮有效模型响应及其工具批次完成，不是流式片段或工具数；无新增轨迹跳过。
+审查只读取授权范围和轨迹快照，不读动态工作区，不自动 steer/挂起/改图。
+get-run-trajectory-reviews 提供意见和覆盖序号。
 
-`allowed_commands` 是完整 argv 数组，不是任意 Shell 授权；Shell/Git 写权限须单独允许。
-实际编码使用 EHAI 工作区、宿主工具和候选校验，禁用 Pi 原生文件/Shell 工具。
-工具 strict 采样由 Pi 请求，不支持时失败，不静默降级。
+显式采纳：suspend-attempt --attempt-id --review-id --through-sequence --actor --reason --idempotency-key。
+序号取实际审查值，不是默认步数。目标/会话/批准或过程版本变化会拒绝。
+控制结果 requested / suspended / not_suspended 不等于 Run 状态；还须看节点、Attempt 与 intervention。
+独立节点可继续；人工回复前不自动恢复。脏工作区只作证据，不伪装成已确认 handoff。
 
-```powershell
-uv run ehai --database .ehai/state.sqlite --artifacts .ehai/artifacts `
-  execute-plan --idempotency-key "<new-key>" --plan-revision-id "<approved-id>" `
-  --execution-config C:/private/ehai-pi/execution.json --authorize
+## 草稿 Gate
 
-uv run ehai --database .ehai/state.sqlite --artifacts .ehai/artifacts `
-  resume-session --run-id "<pi-run-id>"
-```
+set_node_gate/set_final_gate 完整替换条件；[] 清命令、null 清人工条件，两者不能同时为空。
+remove_node_gate/remove_final_gate 是明确删除，保留图结构；必需 Gate 仍由 finish_plan 校验。
+NODE_GATE_FINAL_CONFLICT 返回节点键与修复入口。过程模式不暴露这些删除/设置工具。
+这些是 Planner 工具，不是修改持久批准的 CLI 命令。
 
-Pi 保持长运行模式，不新增隐式模型调用时限；原有 Codex timeout 参数不控制 Pi。
-API 可显式配置 `--attempt-deadline-seconds`，Goal Worker 尝试预算仍属宿主配置。
-超时/取消不是完成或安全恢复证明；关闭队列/进程后保留未知
-结果，按宿主 handoff/有效上游成果规则处理，不盲目重发 prompt。阶段讨论是共享逻辑 Session，
-每个 Worker 有隔离的 Pi 原生执行会话，不强行共用物理历史。
+## 独立 MCP 服务端
 
-## 节点目标边界（基础接入，挂起判定尚未验收）
+先启动同一个 ehai-api，再由外部 Agent 的 MCP 客户端启动：
 
-Pi Worker 的 `context.execution_scope` 由宿主从当前派发节点生成，包含 Run、批准方案、
-过程版本、节点目标、依赖和必需 Check 引用。Worker 自定义提示词也会附加目标边界策略。
-Planner 提示要求在节点 instruction 中说明交付物、局部自主范围与需要反馈的缺口；
-这是提示约定，不新增必填 Schema 或强制每一步工具操作。
+~~~powershell
+uv run ehai-mcp --api-url http://127.0.0.1:8000
+uv run ehai-mcp --api-url http://127.0.0.1:8000 --allow-writes
+~~~
 
-发现必须超出节点目标或已批准边界时，Worker 应调用现有 `report_blocked(reason, evidence, needed)`。
-这会结束该次 Pi 执行；宿主中断 Attempt、将节点置为 `suspended` 并持久化介入请求。
-独立就绪任务仍按原调度规则执行；前台等待介入时可返回
-`intervention_waiting`，不保证 Run 必须显示 paused。使用 `get-run-interventions` 查询，
-`reply-intervention` 回复后再 `resume-session`；回复本身不批准扩大需求或修改 Gate。
+使用官方 Python MCP SDK 1.x，uv.lock 固定实际版本；[上游维护分支](https://github.com/modelcontextprotocol/python-sdk/tree/v1.x)。
+本轮支持 stdio，不另开 MCP HTTP 监听、不启动 EHAI 服务。协议 stdout 专用，诊断在 stderr。
+默认只列出只读工具；--allow-writes 才注册写工具，直接调用未授权工具也拒绝。
+该开关不是对具体目标、方案或执行的批准。
 
-该版本只提供目标上下文、行为提示和已有挂起通路，没有额外的逐步模型裁判、
-语义越界检测器或重复失败次数规则。必要调查/调试不应被当作越界，无关小问题可记录后继续。
-当前两次 Luna 试跑没有触发预期 report_blocked，不能据此宣称自动范围挂起已可可靠使用；
-详见 R2 实施记录。已有 Reviewer/Gate 也不能由 artifact:non-empty 代替需求验收。
+工具名对应 CLI 名称的下划线形式。GET 工具接收路径 ID；写工具接收路径 ID 和 request_json，
+后者是原 HTTP JSON 请求体字符串，不是文件路径。通过 get_request_schema(tool_name)
+按需读取该宿主的请求 Schema，避免在每轮模型输入重复嵌入复杂配置。HTTP 仍做完整业务校验。
+例如 create_project 的 request_json 是 {"idempotency_key":"project-001","name":"My project"} 的 JSON 字符串。
 
-## API 宿主与查询
+启动时检查宿主 OpenAPI 对应路由；不兼容版本拒绝启动。结果有文本和 structuredContent.result，
+失败 isError=true 且保留 HTTP 错误；取消 MCP 等待不保证取消已发送的 HTTP 写入，不自动重发。
+长任务使用受理 ID 后续查询。当前不提供 sampling、资源写入、任意 URL 代理或模型自主批准。
 
-### 节点受阻与恢复权限
+通用 stdio 客户端可配置 command=uv，args 为
+["run","--directory","C:/work/EHAI","ehai-mcp","--api-url","http://127.0.0.1:8000"]；
+需要写工具时明确追加 --allow-writes。各外部产品的配置文件格式遵循其自身文档。
 
-当前节点状态以 `stalled` / `suspended` 取代原 `blocked`：
-
-- `stalled` 是宿主确认可安全重试的执行受阻。当前用于既有 RetrySafety 认可的停止结果；
-  持久化安全重试依据，下次调度核对最近 Attempt 已结束后恢复为 `pending`，重新检查依赖。
-  不新增模型轮询；仍受原 Attempt 和 Goal 预算、容量及隔离限制。
-- `suspended` 必须等人工回复。现有 `report_blocked`
-  以及安全重试预算耗尽都会进入该状态。后者只挂起相关节点，不再因此暂停整个 Run。
-- `get-run-interventions` / HTTP interventions 给出原因、证据和所需决定；
-  `reply-intervention` / HTTP reply 解除对应挂起，回到 `pending`。整 Run resume 不解除它，
-  回复不重置已消耗的预算。启动前即失败时介入的 `agent_session_ref_id` 可为 `null`。
-- 正常等待上游仍是 `pending`。`stalled` 和 `suspended` 均不是终态，也不直接参与
-  Worker 派发、分支失败判定或 Gate 完成。
-
-旧持久节点 `blocked` 在读取时归一化为 `suspended`，不原地改写历史事件或批准快照；
-旧事件文本可以保留 blocked。公开节点枚举和新 Planner 上下文使用新名字，Client 需重新生成。
-工具 `report_blocked`、内部 WorkerEvent blocked、介入种类 worker_blocked 保留协议名字，
-它们不是节点状态。Run 的 paused 与 Attempt 的 interrupted/failed 等状态不改名。
-
-当前 `stalled` 接通的是确定性安全重试，不表示已交付通用外部条件监听或新的 Planner 自动纠偏链路。
-未知副作用不能通过标记 stalled 自动重放。
-
-### 启动宿主
-
-```powershell
-uv run ehai-api --database .ehai/state.sqlite --artifacts .ehai/artifacts `
-  --worker pi --worker-workspace C:/work/target `
-  --pi-config C:/private/ehai-pi/backend.json `
-  --agent-model "<exact-model-id>" --agent-reasoning-effort high `
-  --worker-capacity 1 --p2-runtime
-```
-
-API 提供 `--pi-config` 后默认选择 Pi Planner；用 `--planner-model <id>` 指定独立规划模型，
-未指定时沿用 Pi Worker 的 `--agent-model` 与 thinking 设置。`--p2-runtime` 配合 Pi 配置，
-或提供 `--agent-model`，省略 `--worker` 时默认选择 Pi Worker；缺少必要参数明确失败。
-显式后端选择仍优先。前台自动过程规划/审查仍须 execution.json 的 process_adjustment 授权，
-默认后端选择不会自行启用自动规划或批准执行。
-`--attempt-deadline-seconds` 是可选 Attempt 期限；`--agent-allowed-command`、`--agent-available-shell`、
-`--agent-git-permission` 配置宿主工具权限。HTTP execution_config 必须与宿主匹配，不能临时扩权。
-HTTP 兼容字段 `endpoint_capabilities` 是旧记录词汇，不控制 Pi；真实能力来自 Pi 原生配置。
-
-无需模型凭证的查询：
-
-```powershell
-uv run ehai --database .ehai/state.sqlite --artifacts .ehai/artifacts `
-  get-result --run-id "<run-id>"
-uv run ehai --database .ehai/state.sqlite --artifacts .ehai/artifacts `
-  get-trace --run-id "<run-id>"
-```
-
-get-run-plan、get-run-checks、get-run-adoptions、过程查询及人工介入命令保留，精确参数见 help。
-HTTP 路由以 [OpenAPI](../schemas/v1/http-api.openapi.json) 为准，业务状态语义仍归 EHAI。
-
-## 破坏性变化与验证
-
-- 已删除旧 Agent Loop、Runtime 装配、Responses Adapter、其 Visualizer 实现及 Python OpenAI SDK。
-- 已删除 `--builtin-*` / `--responses-*`；`--worker builtin` / `--planner builtin` 不再接受。
-- Pi 管模型历史/压缩；agent_trace 只存业务审计、投递边界和安全事件，不重建模型上下文。
-- 当前通过静态检查、Client 构建、离线 RPC 及历史副本查询；真实 Pi 工具、候选、取消中写入、
-  压缩、恢复和 Gate 尚未实测，唯一产品 E2E 未运行。
-
-开发使用 uv；Schema 更新运行 `uv run control-plane/scripts/generate-api-schema.py`，再在
-control-plane 运行 `npm.cmd run generate`、`npm.cmd run typecheck`、`npm.cmd run build`。
+当前 API 无新增认证层，默认仅回环使用，不直接暴露公网。模型 key 留在宿主，不传给 MCP 客户端。
+静态检查和正常入口试用范围见 [STATUS](STATUS.md)。

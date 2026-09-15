@@ -1,4 +1,4 @@
-"""Minimal FastAPI Command and Query surface for the P1 execution plane."""
+"""FastAPI Command and Query surface for EHAI Core."""
 
 from __future__ import annotations
 

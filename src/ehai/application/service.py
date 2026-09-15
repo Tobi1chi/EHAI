@@ -1,4 +1,4 @@
-"""Application service shared by the P1 CLI and later HTTP interface."""
+"""Application service shared by the CLI, HTTP API and its MCP adapter."""
 
 from __future__ import annotations
 

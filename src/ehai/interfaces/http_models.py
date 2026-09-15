@@ -1,4 +1,4 @@
-"""Pydantic request and response envelopes for the P1 HTTP API."""
+"""Pydantic request and response envelopes for the EHAI HTTP API."""
 
 from __future__ import annotations
 
