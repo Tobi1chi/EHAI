@@ -1,6 +1,8 @@
 # EHAI 当前用法
 
 更新：2026-09-16。能力成熟度见 [STATUS](STATUS.md)，历史用法不作为当前参数说明。
+首次用 0.1 开发项目，先按 [README 快速开始](../README.md#快速开始) 配置宿主并完成一个任务；
+本页补充控制、恢复、计划变更和成果接续的详细契约。
 
 ## 安装与私有 Pi 配置
 
@@ -15,6 +17,9 @@ environment_names 是允许传入 Pi 的模型凭证环境变量名。settings/m
 自定义端点由 Pi models.json 配置，EHAI 不读取 OPENAI_BASE_URL 切换端点。
 当前禁用隐式资源发现和自动模型重试；配置指纹随执行授权保存，变更时不能静默恢复旧授权。
 模型 ID/推理等级须精确匹配 Provider。示例占位符必须替换，不保证任意模型可用。
+
+旧自研 Runtime 与 --builtin-* / --responses-* 用法已退役；旧执行授权不能直接当作 Pi 授权。
+恢复旧数据时使用当前代码的迁移流程，不按历史文档中的数据库版本号手工降级。
 
 ## 本地规划或导入
 
@@ -91,6 +96,10 @@ uv run ehai @Api start-run --plan-revision-id '<plan-id>' --execution-config C:/
 
 API 模式也可用 discuss-plan/propose-plan。每一步先确认退出码和结果，再使用实际返回 ID。
 后台 start-run 要完整 HTTP ExecutionConfigRequest 对象，路径在宿主解析；不是前台简写文件。
+可复制 [执行配置示例](../examples/execution-api.json)，修改 model、workspace 和 pi 路径/Provider。
+该示例与 README 的宿主启动参数配套；调整命令、并发、推理档位或超时也须同步修改两端。
+endpoint_capabilities 是现有配置契约保留的兼容字段，示例沿用宿主默认值；不代表 Pi
+实际请求支持这些 Responses 特性，也不会使模型工具输出 uniqueItems。Pi 协议由原生配置决定。
 必须与宿主模型、权限、workspace、capacity、Pi 配置等一致，否则 409。格式见
 [OpenAPI](../schemas/v1/http-api.openapi.json)。API 客户端不接受本地 --database/--pi-config/模型参数混用。
 API URL 可为 origin 或 /api/v1；不接受内嵌凭证。成功 stdout 是 data 中的 JSON；

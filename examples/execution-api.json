@@ -1,0 +1,26 @@
+{
+  "config_version": 1,
+  "worker_kind": "pi",
+  "model": "<model-id>",
+  "reasoning_effort": null,
+  "capacity": 2,
+  "workspace": "C:/work/my-project",
+  "allowed_commands": [["uv", "run", "pytest"]],
+  "available_shells": [],
+  "git_permissions": ["git.read"],
+  "endpoint_capabilities": {
+    "supports_background": true,
+    "supports_unique_items": true,
+    "supports_idempotent_create": null,
+    "supports_previous_response_id": true,
+    "supports_response_retrieval": true
+  },
+  "command_timeout_seconds": 60.0,
+  "pi": {
+    "node": "C:/replace-with-node-installation/node.exe",
+    "cli": "C:/work/EHAI/agent-backends/pi/node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js",
+    "agent_dir": "C:/private/ehai/pi",
+    "provider": "openai",
+    "environment_names": ["OPENAI_API_KEY"]
+  }
+}
