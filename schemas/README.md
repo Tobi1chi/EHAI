@@ -1,57 +1,33 @@
 # Cross-Plane Schemas
 
-`schemas/v1` 是 Execution Plane 与 Control Plane 之间经审核、带版本的公开契约。内部 Python 模型可以
-演进，但公开字段、状态值和 route 必须先在这里明确，并与实际接口、生成 Client 保持一致。
-
-本目录描述已实现的公开接口，不是完整产品范围；目标定义见
-[Product Scope](../docs/PRODUCT_SCOPE.md)。R1 已新增规划讨论请求/查询、讨论事件与 PlanGraph 可选的
-`design_document` 字段，并允许组合现有检查。旧计划缺少设计字段时按 null 读取，不改其批准状态。
-执行阻塞的挂起与回复仍需后续迁移；CLI、顶层 Agent、UI 和未来 Routines 复用同一应用语义，
-不能在各自 Client 中弥补执行状态规则。
-
-2026-09-06 的多节点自动 Gate 沿用现有字段：PlanNode.required_check_ids 表示本节点的必需检查，
-CompletionContract.required_check_ids 表示最终成果条件；CheckSpec 查询也可包含仅被中间节点引用的
-局部检查。没有新增公开枚举、Phase 对象或人工 Gate route，不改变旧计划的检查配置。
-
-## 文件
+`schemas/v1` 是核心与调用方之间的版本化公开契约。实际 HTTP 路由、模型工具、
+CLI/MCP 参数和生成 Client 必须按各自调用边界与契约一致，内部模型不直接成为公共格式。
+产品目标见 [范围](../docs/PRODUCT_SCOPE.md)，现有命令见 [Usage](../docs/USAGE.md)。
 
 | 文件 | 内容 |
 | --- | --- |
-| [`common.schema.json`](v1/common.schema.json) | ID、时间戳、错误、Project、Goal、Plan、Run、Attempt、Artifact、Check、Worker 等共享定义。 |
-| [`commands.schema.json`](v1/commands.schema.json) | Create/Propose/Discuss/Approve/Start/Pause/Resume/Cancel 及 Attempt/Worker Request Command。 |
-| [`queries.schema.json`](v1/queries.schema.json) | Run、PlanGraph、ExecutionTrace、Check、Checkpoint、Artifact、Worker 与 Runtime health 查询响应。 |
-| [`events.schema.json`](v1/events.schema.json) | 公开 Event envelope、Event type 与分页结果。 |
-| [`http-api.openapi.json`](v1/http-api.openapi.json) | `/api/v1` HTTP route、operation ID、请求体、响应和 SSE 入口。 |
+| [common.schema.json](v1/common.schema.json) | ID、时间、Project、Goal、计划/阶段、Run、Attempt、Artifact、Check 和 Worker 等共享定义 |
+| [commands.schema.json](v1/commands.schema.json) | 规划、执行控制、人工请求与过程操作等 Command |
+| [queries.schema.json](v1/queries.schema.json) | 计划、过程、运行、轨迹、成果与 Runtime 查询 |
+| [events.schema.json](v1/events.schema.json) | 公开事件类型、envelope 与分页 |
+| [plan-import.schema.json](v1/plan-import.schema.json) | 外部声明式计划导入 |
+| [http-api.openapi.json](v1/http-api.openapi.json) | HTTP 路由、operation ID、请求、响应和 SSE |
 
-## 代码交付查询
+block 变化、Git 整合和后继 Run 的公开字段以这些文件和实际接口为准；
+这里不维护另一份阶段实现清单。Responses-facing Schema 不使用 uniqueItems。
+后续总览和待办的查询契约应先接核心与公开入口，再由 UI 消费，不预先生成未实现接口。
 
-`GET /api/v1/runs/{run_id}/result` 的 operation ID 为 `getRunResult`，响应引用
-`queries.schema.json#/$defs/RunResultResponse`。生成 Client 方法为
-`getRunResult(runId: string): Promise<RunResultResponse>`，保留标准 data envelope、默认 fetch
-和 EhaiApiError。CLI 使用同一投影，但不包 data envelope。
+从仓库根目录更新契约和 Client：
 
-RunResultDocument 定义 run/result/trace_ids；RunResult 定义可空代码交付字段和
-RunResultCheckResult。检查只关联实际交付 Attempt；无相应检查时 check_result 为 null。
-没有交付时才使用历史检查 fallback。迁移修正了旧 CLI 可能串用其他 Attempt 检查的行为，
-调用方应处理 null 及未知 passed；本次没有增加领域状态或改变数据库版本。
-
-## 生成与验证
-
-[`control-plane/scripts/generate-client.mjs`](../control-plane/scripts/generate-client.mjs) 读取四份 JSON Schema
-和 OpenAPI，检查必需 operation ID 与重复定义，然后生成
-[`control-plane/src/generated/ehai-client.ts`](../control-plane/src/generated/ehai-client.ts)。生成文件不手工编辑。
-
-从仓库根目录运行：
-
-```powershell
+~~~powershell
+uv run control-plane/scripts/generate-api-schema.py
 Set-Location control-plane
 npm.cmd ci
 npm.cmd run generate
-git diff --exit-code -- src/generated/ehai-client.ts
 npm.cmd run typecheck
 npm.cmd run build
-```
+~~~
 
-旧常驻契约测试已退役。修改公开接口仍必须核对实际 route、字段与审核 Schema；生成器、严格类型检查
-和构建继续使用，不因此另建测试套件。若正常使用失败，需要的定位测试放在仓库外临时目录。
-破坏性契约变化应新增版本，不能在 `v1` 中静默改变已有调用方语义。
+检查生成差异与预期接口一致；生成 Client 不手工编辑。破坏性契约变化需明确版本和迁移，
+不能静默改变已有调用方语义。文档修改不要求无关地重新生成代码或运行模型。
+实际失败的临时诊断与唯一产品 E2E 边界见 [开发规则](../docs/DEVELOPMENT_GUIDELINES.md)。

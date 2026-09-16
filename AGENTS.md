@@ -6,9 +6,11 @@ EHAI uses Python for Execution Plane and TypeScript for Control Plane. Put imple
 
 ## Product Scope & Implementation Boundaries
 
-Read `docs/PRODUCT_SCOPE.md` before product or architecture work, then `docs/ROADMAP.md` and the current rebaseline section of `docs/P2_IMPLEMENTATION_PLAN.md`. EHAI is the planning/execution core of a general Agent platform; coding is the first end-to-end use case, not its permanent boundary. The top-level Agent is distinct from Planner. Historical increments and passing tests do not override current scope or prove product delivery. Define each module's user outcome, inputs/outputs, ownership, failure behavior, and normal-entry acceptance before restructuring code. Distinguish target design from implemented interfaces; do not invent commands or status values in usage documentation.
+Read `docs/PRODUCT_SCOPE.md` before product or architecture work, then `docs/ROADMAP.md` and, for core closure, `docs/P2_IMPLEMENTATION_PLAN.md`. EHAI is the planning/execution core of a general Agent platform; coding is the first end-to-end use case, not its permanent boundary. The top-level Agent is distinct from Planner. Historical increments and passing tests do not override current scope or prove product delivery. Define each module's user outcome, inputs/outputs, ownership, failure behavior, and normal-entry acceptance before restructuring code. Distinguish target design from implemented interfaces; do not invent commands or status values in usage documentation.
 
-The 2026-09-06 execution model in `docs/EXECUTION_MODEL.md` governs Worker instantiation, phased decision trees, automatic/human Gates, approved-boundary plan adjustments, phase Sessions, handoff recovery, and parallelism. Read it alongside product scope. Keep implementation limitations and historical trial results distinct from these agreed targets.
+The current `docs/EXECUTION_MODEL.md` governs Worker instantiation, phased decision trees, automatic/human Gates, approved-boundary plan adjustments, phase Sessions, handoff recovery, and parallelism. Read it alongside product scope. Keep implementation limitations and historical trial results distinct from these agreed targets.
+
+The 2026-09-16 product direction is core-first, incremental platform delivery. Personal Dashboard is a source of selected product ideas, not an inherited full-scope checklist or domain model. Deliver one usable workflow at a time through normal interfaces, then add a thin UI when those capabilities exist. Keep execution ownership in the current core. Fix observed blockers within the selected workflow and retry it; record unrelated findings separately rather than expanding into an open-ended refactor. Do not require all future backend modules before using the platform. Keep roadmap targets separate from implemented capability evidence.
 
 ## Build, Test, and Development Commands
 
@@ -35,7 +37,7 @@ If actual use or the E2E fails, create only the necessary diagnostic test in an 
 
 ## Model Tool Changes and Runtime Evidence
 
-Treat a model-facing tool change as a change to the whole calling contract, not just its handler. Read the 2026-09-13 tool integration requirements in `docs/R2_IMPLEMENTATION_PLAN.md` when changing tool definitions, parameters, execution behavior, or result handling.
+Treat a model-facing tool change as a change to the whole calling contract, not just its handler. The requirements below govern tool definitions, parameters, execution behavior, and result handling; `docs/R2_IMPLEMENTATION_PLAN.md` records the corresponding runtime evidence.
 
 - Trace the affected path: registered ToolSet and role permissions, provider-facing Schema, prompt/example arguments, handler validation, returned result, and any persistence or downstream consumer. Update affected layers together; do not broaden unrelated interfaces.
 - Validate against the configured provider's tool contract, not only general JSON Schema. For strict tools, check object closure and required/nullable fields, including nested objects. Define omission, `null`, empty collections, defaults, and update/preserve semantics explicitly; descriptions and handlers must agree.

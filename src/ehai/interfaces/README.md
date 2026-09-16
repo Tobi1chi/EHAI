@@ -1,42 +1,26 @@
 # Interfaces Architecture
 
-`ehai.interfaces` 是 Execution Plane 的输入/输出边界。它把 CLI、HTTP 和 SSE 请求转换为 Application
-Command/Query，并把结果转换为公开 JSON；状态规则仍由 Domain/Application 层拥有。
-
-目标交互见 [Product Scope](../../../docs/PRODUCT_SCOPE.md)。CLI、顶层通用 Agent、未来 UI 和
-Routines 都使用同一公开应用语义。R1 已接入多轮规划讨论、设计版本和查询；执行挂起回复及通用 Agent
-交互尚未完成。新能力必须接入正常 Composition Root；不得依赖测试 monkeypatch 或直接构造组件补全
-用户流程。CLI 与后台宿主的生命周期也属于入口验收。
-
-## 文件职责
-
-目标中的阶段决策树、统一人工/自动 Gate、过程调整便签和 handoff 恢复见
-[Execution Model](../../../docs/EXECUTION_MODEL.md)。本页列出的现有 CLI/API 尚未完整承载这些语义，
-不能仅修改展示文案就宣称实现，具体命令仍以 [Usage](../../../docs/USAGE.md) 为准。
+`ehai.interfaces` 将 CLI、HTTP、MCP 和 SSE 交互转换为应用 Command/Query 与公开 JSON。
+状态、批准和调度归核心；具体命令见 [Usage](../../../docs/USAGE.md)，证据见 [STATUS](../../../docs/STATUS.md)。
 
 | 文件 | 职责 |
 | --- | --- |
-| [`cli.py`](cli.py) | `ehai` 命令解析、Adapter 选择和同步本地组合；输出机器可读 JSON。 |
-| [`api.py`](api.py) | FastAPI Command/Query route、错误映射和公开响应组装。 |
-| [`http_models.py`](http_models.py) | 严格 Pydantic 请求/响应 envelope；拒绝未知字段。 |
-| [`public_events.py`](public_events.py) | 领域 Event 到稳定公开 Event 文档的映射。 |
-| [`public_documents.py`](public_documents.py) | CLI/HTTP 共用的公开 DTO 编码，保留字段边界和时间格式。 |
-| [`sse.py`](sse.py) | 可恢复 SSE；支持 Event ID、`Last-Event-ID` 和 `after_event_id` cursor。 |
-| [`runtime.py`](runtime.py) | `ehai-api` Composition Root；装配数据库、Planner、Worker/Connector、Runtime、健康状态和 Uvicorn。 |
+| [cli.py](cli.py) | ehai 命令解析与本地入口 |
+| [cli_api.py](cli_api.py) | 共用查询/命令路由及 HTTP 客户端，不回退直写数据库 |
+| [session_host.py](session_host.py) | execute-plan / resume-session 前台宿主 |
+| [api.py](api.py)、[http_models.py](http_models.py) | HTTP 路由、严格请求、错误与响应 |
+| [mcp_server.py](mcp_server.py) | 独立 stdio MCP，转发已支持的 HTTP 操作 |
+| [public_events.py](public_events.py)、[public_documents.py](public_documents.py) | 公开事件与文档编码 |
+| [sse.py](sse.py) | Event ID 游标与可恢复 SSE |
+| [runtime.py](runtime.py) | ehai-api 的数据库、角色、Runtime 和服务装配 |
 
-## 同步 CLI 与 P2 Runtime
+HTTP 宿主拥有后台任务，start-run 受理不表示完成；客户端退出不取消宿主任务。
+本地 execute-plan 是前台宿主，两者共用核心执行语义。MCP 不启动 API，
+启动时开放全部已支持的查询和写工具；实际业务授权与批准由核心校验。
 
-普通 `ehai` CLI 保留同步执行语义：`StartRun` 可以在调用内推进 Run，适合一次性本地命令。启用
-`ehai-api --p2-runtime` 时，`StartRun` 只创建 `pending` Run 和持久 DispatchWork，然后立即返回；
-后台 `SingleSlotRuntime` 或 `ConcurrentRuntime` 执行 Worker，调用方通过 Query 或 SSE 观察状态。
+规划、导入、人工回复、定向挂起、过程调整、Git 整合和后继 Run 已有入口；
+各传输覆盖范围以实际路由和 Usage 为准，不声明所有 HTTP 端点均有 CLI/MCP 对应项。
+事件分页/SSE 不等于完整外部 Agent 消费信箱。
 
-两种模式共享同一 `ExecutionService`、Orchestrator、领域状态机和持久化契约。HTTP handler 不等待
-Worker 完成，也不复制调度逻辑；Composition Root 负责启动/关闭后台 Runtime 和 Connector，并通过
-`/api/v1/runtime/health` 暴露循环健康状态。
-
-公开跨 Plane 契约位于 [`schemas/v1`](../../../schemas/v1)，不是从内部 dataclass 自动推断的替代品。
-CLI 已开放 `get-plan`、`get-plan-checks`、`get-trace`，直接使用现有 QueryService 和与 HTTP 相同的
-公开编码，不构造模型或 Worker。另有 `discuss-plan`、`get-discussion` 与对应 HTTP 讨论接口；
-讨论可以澄清而不生成计划，也可以创建新草稿版本。执行期间的人工回复仍待后续实现。
-旧 CLI/API/契约测试已退役；实际失败用仓库外临时文件定位，唯一产品 E2E 待能力开放后确认，
-见 [测试策略](../../../tests/README.md)。
+后续总览、统一待办和 Web 工作台按 [路线图](../../../docs/ROADMAP.md) 增量实现，
+只通过公开契约调用；新增能力必须进入生产装配，不能靠外部脚本补业务步骤。

@@ -6,6 +6,10 @@
 
 当前入口从 [Usage](../USAGE.md) 开始，能力看 [STATUS](../STATUS.md)。
 
+2026-09-16 精简当前文档：docs 顶层的 P1_IMPLEMENTATION_PLAN、P2_EXECUTION_CONTRACT、
+PI_BACKEND_MIGRATION、MIGRATION_STATUS、SELF_HOSTING_GOAL、USAGE_PRE_PI 六份重复摘要已移除。
+有效规则并入执行模型/用法/状态，以下历史原件继续保留；被移除摘要可从 Git 历史恢复。
+
 - [原 README](README_PRE_CONSOLIDATION.md)
 - [产品基线](PRODUCT_SCOPE.md) · [执行模型](EXECUTION_MODEL.md) · [路线图](ROADMAP.md)
 - [P1](P1_IMPLEMENTATION_PLAN.md) · [P2](P2_IMPLEMENTATION_PLAN.md) · [R2 详细记录](R2_IMPLEMENTATION_PLAN.md)

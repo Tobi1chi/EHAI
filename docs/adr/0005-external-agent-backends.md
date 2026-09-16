@@ -45,7 +45,7 @@ Pi 不是安全沙箱，工具选择和 Prompt 也不是操作系统权限边界
 ## 实施顺序与正常入口验收
 
 本节保留决策时的迁移顺序，不是当前待办。2026-09-15 的当前接入、运行证据与未完成项见
-[Pi 接入状态](../PI_BACKEND_MIGRATION.md) 和 [STATUS](../STATUS.md)。顶层 Agent 在 EHAI
+[执行模型](../EXECUTION_MODEL.md) 和 [STATUS](../STATUS.md)。顶层 Agent 在 EHAI
 之外、外部计划导入和 MCP 的补充决定见 [ADR 0006](0006-external-plan-import-and-mcp.md)。
 
 2026-09-14 补充决定：用户明确允许直接删除自研 Runtime，因此不再以完成真实模型迁移验收为
