@@ -65,6 +65,8 @@ def run_contract_is_current(uow: UnitOfWork, run: Run, plan: PlanRevision) -> bo
     goal = uow.states.get_goal(run.goal_id)
     if goal is None:
         return False
+    if any(item.predecessor_run_id == run.run_id for item in uow.states.list_runs(run.goal_id)):
+        return False
     contract = goal.completion_contract
     return (
         plan.goal_id == run.goal_id

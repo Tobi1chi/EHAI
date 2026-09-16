@@ -15,7 +15,7 @@ export type ErrorResponse = {
 };
 };
 
-export type EventType = "ProjectCreated" | "GoalCreated" | "CompletionContractConfirmed" | "PlanRevisionProposed" | "PlanRevisionApproved" | "PlanningTurnStarted" | "PlanningTurnCompleted" | "PlanningTurnFailed" | "ProcessDraftStarted" | "ProcessDraftCompleted" | "ProcessDraftFailed" | "ProcessReviewStarted" | "ProcessReviewCompleted" | "ProcessReviewFailed" | "ProcessRevisionApplied" | "ProcessAdjustmentStarted" | "ProcessAdjustmentFinished" | "ProcessAdjustmentSkipped" | "PlanNodeReadied" | "PlanNodeStalled" | "PlanNodeSuspended" | "PlanNodeRecovered" | "PlanNodeStarted" | "PlanNodeCandidateSubmitted" | "PlanNodeCompleted" | "PlanNodeFailed" | "PlanNodeReopened" | "PlanNodePruned" | "BranchSelected" | "BranchPruned" | "BranchSelectionInvalidated" | "RunStarted" | "RunPaused" | "RunResumed" | "RunCompleted" | "RunFailed" | "RunCancelled" | "AttemptQueued" | "AttemptDispatched" | "AttemptBound" | "AttemptHeartbeatObserved" | "AttemptWaiting" | "AttemptDeadlineExtended" | "AttemptRetryScheduled" | "AttemptStarted" | "AttemptSucceeded" | "AttemptFailed" | "AttemptTimedOut" | "AttemptCancelled" | "AttemptInterrupted" | "DispatchWorkClaimed" | "EndpointHealthChanged" | "ProviderUsageRecorded" | "ArtifactCreated" | "CheckStarted" | "CheckPassed" | "CheckFailed" | "CheckInterrupted" | "GatePassed" | "GateFailed" | "CheckpointCreated" | "CheckpointRestored" | "WorkspacePreserved" | "PhaseSessionOpened" | "PhaseSessionJoined" | "PhaseContextPublished" | "AttemptHandoffConfirmed" | "InterventionOpened" | "InterventionReplied";
+export type EventType = "ProjectCreated" | "GoalCreated" | "CompletionContractConfirmed" | "PlanRevisionProposed" | "PlanRevisionApproved" | "PlanningTurnStarted" | "PlanningTurnCompleted" | "PlanningTurnFailed" | "ProcessDraftStarted" | "ProcessDraftCompleted" | "ProcessDraftFailed" | "ProcessReviewStarted" | "ProcessReviewCompleted" | "ProcessReviewFailed" | "ProcessRevisionApplied" | "ProcessAdjustmentStarted" | "ProcessAdjustmentFinished" | "ProcessAdjustmentSkipped" | "PlanNodeReadied" | "PlanNodeStalled" | "PlanNodeSuspended" | "PlanNodeRecovered" | "PlanNodeStarted" | "PlanNodeCandidateSubmitted" | "PlanNodeCompleted" | "PlanNodeFailed" | "PlanNodeReopened" | "PlanNodePruned" | "BranchSelected" | "BranchPruned" | "BranchSelectionInvalidated" | "RunStarted" | "RunSuccessorCreated" | "RunPaused" | "RunResumed" | "RunCompleted" | "RunFailed" | "RunCancelled" | "AttemptQueued" | "AttemptDispatched" | "AttemptBound" | "AttemptHeartbeatObserved" | "AttemptWaiting" | "AttemptDeadlineExtended" | "AttemptRetryScheduled" | "AttemptStarted" | "AttemptSucceeded" | "AttemptFailed" | "AttemptTimedOut" | "AttemptCancelled" | "AttemptInterrupted" | "DispatchWorkClaimed" | "EndpointHealthChanged" | "ProviderUsageRecorded" | "ArtifactCreated" | "CheckStarted" | "CheckPassed" | "CheckFailed" | "CheckInterrupted" | "GatePassed" | "GateFailed" | "CheckpointCreated" | "CheckpointRestored" | "WorkspacePreserved" | "PhaseSessionOpened" | "PhaseSessionJoined" | "PhaseContextPublished" | "AttemptHandoffConfirmed" | "InterventionOpened" | "InterventionReplied";
 
 export type EventEnvelope = {
   readonly id: Id;
@@ -72,6 +72,7 @@ export type Run = {
   readonly plan_revision_id: Id;
   readonly status: RunStatus;
   readonly predecessor_run_id?: NullableId;
+  readonly successor_run_ids?: IdList;
   readonly goal_worker_budget?: GoalWorkerBudgetView | null;
   readonly created_at: UtcDateTime;
   readonly started_at: NullableUtcDateTime;
@@ -803,9 +804,10 @@ export type DiscussPlanRequest = {
 };
 
 export type ApprovePlanRequest = {
-  readonly idempotency_key: IdempotencyKey;
-  readonly plan_revision_id: IdInput;
-  readonly completion_contract_id: IdInput;
+  readonly idempotency_key: string;
+  readonly plan_revision_id: string;
+  readonly completion_contract_id: string;
+  readonly supersession?: SupersessionRequest | null;
 };
 
 export type ExecutionCodexServerRequest = {
@@ -852,9 +854,11 @@ export type ProcessAdjustmentPolicyRequest = {
 };
 
 export type StartRunRequest = {
-  readonly idempotency_key: IdempotencyKey;
-  readonly plan_revision_id: IdInput;
+  readonly idempotency_key: string;
+  readonly plan_revision_id: string;
   readonly execution_config?: ExecutionConfigRequest | null;
+  readonly predecessor_run_id?: string | null;
+  readonly result_adoptions?: ReadonlyArray<ResultAdoptionRequest>;
 };
 
 export type DecideHumanCheckRequest = {
@@ -1027,6 +1031,28 @@ export type ImportPlanErrorResponse = {
 
 export type IntegrateRunRequest = {
   readonly expected_process_revision_id: string;
+};
+
+export type SupersessionRequest = {
+  readonly predecessor_run_id: string;
+  readonly expected_process_revision_id: string;
+  readonly actor: string;
+  readonly reason: string;
+  readonly resolutions: ReadonlyArray<SupersessionResolutionRequest>;
+};
+
+export type SupersessionResolutionRequest = {
+  readonly kind: "human_check" | "intervention";
+  readonly request_id: string;
+  readonly request_token: string;
+  readonly disposition: "resolved" | "superseded";
+  readonly reason: string;
+};
+
+export type ResultAdoptionRequest = {
+  readonly source_plan_node_id: string;
+  readonly target_plan_node_id: string;
+  readonly reason: string;
 };
 
 export class EhaiApiError extends Error {

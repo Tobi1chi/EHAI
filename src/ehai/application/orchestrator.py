@@ -285,6 +285,10 @@ class Orchestrator:
         """Bind isolated code workspaces and authorized final-Gate repair at composition."""
         self._execution_workspace = workspace_resolver
 
+    def read_artifact(self, artifact_id: ID) -> bytes:
+        """Read retained immutable bytes for application-level result adoption validation."""
+        return self._artifact_store.read(artifact_id)
+
     def enable_adoption_execution(
         self,
         workspace_resolver: Callable[[ID], Path],
@@ -2244,6 +2248,23 @@ class Orchestrator:
             reply_context: dict[str, JsonValue] = (
                 {"intervention_reply": replies[-1]} if replies else {}
             )
+            succession = next(
+                (
+                    stored.event.payload
+                    for stored in uow.events.list_events()
+                    if stored.event.run_id == context.run.run_id
+                    and stored.event.type is EventType.RUN_SUCCESSOR_CREATED
+                ),
+                None,
+            )
+            if succession is not None:
+                reply_context["predecessor_context"] = dict(succession)
+                reply_context["predecessor_context_instruction"] = (
+                    "Producer IDs and user dispositions below belong to the predecessor. "
+                    "Use relevant facts under this Run's new approved plan and permissions. "
+                    "Superseded requests are withdrawn, not successful Checks. "
+                    "Execute current Gates."
+                )
             process_notices = attempt_process_interventions(uow, context.attempt)
             if process_notices:
                 reply_context["process_interventions"] = list(process_notices)

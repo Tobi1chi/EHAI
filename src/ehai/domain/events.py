@@ -60,6 +60,7 @@ class EventType(StrEnum):
     BRANCH_PRUNED = "BranchPruned"
     BRANCH_SELECTION_INVALIDATED = "BranchSelectionInvalidated"
     RUN_STARTED = "RunStarted"
+    RUN_SUCCESSOR_CREATED = "RunSuccessorCreated"
     RUN_PAUSED = "RunPaused"
     RUN_RESUMED = "RunResumed"
     RUN_COMPLETED = "RunCompleted"

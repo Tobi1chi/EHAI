@@ -64,7 +64,7 @@ Run 最终 paused，仍有人工介入；未通过完整复测，不把独立诊
 ## 静态与剩余边界
 
 Ruff、格式、mypy、Schema/Client 生成、TS typecheck/build 已执行。
-MCP/导入入口已有正常证据；完整 Pi 长运行、跨批准接续和唯一产品 E2E 未完成。
+截至上述导入批次，MCP/导入入口已有正常证据；完整 Pi 长运行、跨批准接续和唯一产品 E2E 未完成。
 这些未完成事项不能通过删旧文档、增加入口或标记阶段完成消失。
 
 ## 2026-09-16：Block 版本和变更清单
@@ -96,7 +96,7 @@ A/D 为 1；随后删除 B，B 保留版本 2 的 removed 记录，C/R 增为 3�
 
 Ruff、格式、mypy、客户端生成及 TS typecheck/build 通过。本轮没有模型调用、Git 成果
 重整合或真实 Pi 修改过程的重跑，不把无模型编译/查询检查称为产品 E2E 或 MCP 模型调用证据。
-按 block 自动回退/整合、完整跨批准后继 Run 仍未实现；Token/费用硬限额按用户决定暂缓。
+本节提交时按 block 自动整合与跨批准后继 Run 尚未实现，后续交付见下文；Token/费用硬限额暂缓。
 
 ## 2026-09-16：Git 自动整合
 
@@ -116,3 +116,37 @@ bf85a1ecd7f0eab2f3e1fad5ba5f9f8f9a3f857f 无差异；用户试用工作区仍干
 新整合 worktree/patch 位于原隔离试用的 worktrees 下，旧成果未改写。本次没有模型调用。
 Ruff、格式、mypy、Schema/客户端生成及 TS typecheck/build 通过；冲突恢复未做本轮实跑，
 新增 MCP 工具未做真实模型调用，以上不是唯一产品 E2E。后继 Run 在下一独立提交接通。
+
+## 2026-09-16：跨批准后继 Run
+
+approve-plan / POST /plans/approve 新增可选 supersession：绑定 paused 前驱、期望过程、
+操作者和逐项未决请求处置。每个旧 human_check/intervention 均需精确 token；
+external_effects 不能标记 superseded，必须先明确解决。旧历史记录不改写成成功。
+start-run 新增 predecessor_run_id 和 result_adoptions，明确授权下原子写入新 Run、
+ResultAdoption、来源处置、派发意图与回执。旧结果字节和生产者哈希由宿主读取验证，
+不接受调用方伪造 Attempt/Artifact。重复请求返回原 Run，已接续前驱不能再次创建后继。
+
+get-run 显示双向关系；get-trace 的 RunSuccessorCreated 和 get-run-adoptions 展示接续事实。
+新 Worker 上下文获得旧问题的处置和来源；旧 Run 保持 paused、禁止恢复，旧未决记录保留
+原貌，由新 Run 的明确处置解释其去向。已有 Goal Worker Attempt 预算累计，未新做 Token 限额。
+适用的代码输入无需新 Worker，但新 Gate 仍执行；基线/依赖不适用时走原正常执行路径。
+
+真实试用：Temp/ehai-git-successor-20260916/live，临时启动文件不入库。
+首次选用系统 Node 22.18.0 被 Pi >=22.19.0 版本检查拒绝，0 模型 token；定位后以本机
+已有 Node 24.19.0 创建独立试用，不重放未知网络请求，不变更模型或工具严格性。
+当前 Pi/Go deepseek-v4.1-flash、thinking off 执行只读 note.txt 的 Worker 与 Reviewer，
+两者 succeeded；源 Run 143a0f4f-a175-4dbb-96ca-8cebb8e6c987 的 Work completed，
+Reviewer verifying，原人工 Gate 等待。最后一次响应累计 32,049 报告 token，触发试用
+28,000 响应后检查阈值；显式暂停并关闭 Runtime。没有继续发模型请求。
+
+后续只运行宿主：正常 HTTP replan/approve 明确撤销原人工问题，start-run 映射完成的 Work。
+新 Run 8091b681-f831-43c3-827d-0271237a0b7c，两次相同启动返回同一 ID。
+关闭后台模型派发，直接调用生产 advance_ready_adoptions 执行实际输入与 Gate 校验；
+新 Run 在人工 Gate 等待时仍 running，但没有任何 Worker Attempt。HTTP 对新 request token
+作出人工批准后 completed，integrate-run 返回 integrated、commit
+3ad881c8198519b8ff6a5db501a88feaf473a228，与未变更 note 的源 Git 基线相同。
+这是零目标模型调用的真实成果接续，不伪造新 Attempt 或复制旧 Gate pass。
+
+正常 HTTP 路径及静态检查/客户端生成构建通过。完整产品 E2E、变更基线后的新 Worker
+实跑、多次后继链与崩溃注入仍未覆盖；新增 MCP 调用未做真实模型协议复测。
+所有本轮宿主已退出；旧历史试用和 key 未改动、未提交。

@@ -3218,6 +3218,16 @@
             "type": "string",
             "pattern": "^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$",
             "title": "Completion Contract Id"
+          },
+          "supersession": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SupersessionRequest"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "additionalProperties": false,
@@ -4443,6 +4453,33 @@
         ],
         "title": "ResolveWorkerRequestRequest"
       },
+      "ResultAdoptionRequest": {
+        "properties": {
+          "source_plan_node_id": {
+            "type": "string",
+            "pattern": "^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$",
+            "title": "Source Plan Node Id"
+          },
+          "target_plan_node_id": {
+            "type": "string",
+            "pattern": "^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$",
+            "title": "Target Plan Node Id"
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Reason"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "source_plan_node_id",
+          "target_plan_node_id",
+          "reason"
+        ],
+        "title": "ResultAdoptionRequest"
+      },
       "ReviewProcessRequest": {
         "properties": {
           "idempotency_key": {
@@ -4500,6 +4537,25 @@
                 "type": "null"
               }
             ]
+          },
+          "predecessor_run_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Predecessor Run Id"
+          },
+          "result_adoptions": {
+            "items": {
+              "$ref": "#/components/schemas/ResultAdoptionRequest"
+            },
+            "type": "array",
+            "title": "Result Adoptions"
           }
         },
         "additionalProperties": false,
@@ -4509,6 +4565,92 @@
           "plan_revision_id"
         ],
         "title": "StartRunRequest"
+      },
+      "SupersessionRequest": {
+        "properties": {
+          "predecessor_run_id": {
+            "type": "string",
+            "pattern": "^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$",
+            "title": "Predecessor Run Id"
+          },
+          "expected_process_revision_id": {
+            "type": "string",
+            "pattern": "^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$",
+            "title": "Expected Process Revision Id"
+          },
+          "actor": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Actor"
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Reason"
+          },
+          "resolutions": {
+            "items": {
+              "$ref": "#/components/schemas/SupersessionResolutionRequest"
+            },
+            "type": "array",
+            "title": "Resolutions"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "predecessor_run_id",
+          "expected_process_revision_id",
+          "actor",
+          "reason",
+          "resolutions"
+        ],
+        "title": "SupersessionRequest"
+      },
+      "SupersessionResolutionRequest": {
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "human_check",
+              "intervention"
+            ],
+            "title": "Kind"
+          },
+          "request_id": {
+            "type": "string",
+            "pattern": "^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$",
+            "title": "Request Id"
+          },
+          "request_token": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Request Token"
+          },
+          "disposition": {
+            "type": "string",
+            "enum": [
+              "resolved",
+              "superseded"
+            ],
+            "title": "Disposition"
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Reason"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "kind",
+          "request_id",
+          "request_token",
+          "disposition",
+          "reason"
+        ],
+        "title": "SupersessionResolutionRequest"
       },
       "SuspendAttemptRequest": {
         "properties": {

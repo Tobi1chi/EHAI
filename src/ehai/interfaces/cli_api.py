@@ -142,6 +142,14 @@ def _request_arguments(args: argparse.Namespace) -> tuple[str, str, dict[str, Js
         if not args.authorize or args.execution_config is None:
             raise ValueError("API start-run requires --execution-config and explicit --authorize")
         body["execution_config"] = _object_file(args.execution_config)
+        body["predecessor_run_id"] = values["predecessor_run_id"]
+        if args.result_adoptions_file is not None:
+            adoptions = json_loads(args.result_adoptions_file.read_text(encoding="utf-8-sig"))
+            if not isinstance(adoptions, list):
+                raise ValueError("--result-adoptions-file must contain a JSON array")
+            body["result_adoptions"] = adoptions
+    if command == "approve-plan" and args.supersession_file is not None:
+        body["supersession"] = _object_file(args.supersession_file)
     if command == "resolve-worker-request":
         body["resolution"] = _object_file(args.resolution_file)
     if command == "import-plan":

@@ -38,6 +38,7 @@
         "BranchPruned",
         "BranchSelectionInvalidated",
         "RunStarted",
+        "RunSuccessorCreated",
         "RunPaused",
         "RunResumed",
         "RunCompleted",

@@ -113,6 +113,7 @@ class RunView:
     ended_at: datetime | None
     status_reason: str | None
     predecessor_run_id: ID | None = None
+    successor_run_ids: tuple[ID, ...] = ()
     goal_worker_budget: GoalWorkerBudgetView | None = None
 
 
@@ -936,6 +937,11 @@ def _run_view(run: Run, session: ReadSession) -> RunView:
             )
         ),
         predecessor_run_id=run.predecessor_run_id,
+        successor_run_ids=tuple(
+            item.run_id
+            for item in session.states.list_runs(run.goal_id)
+            if item.predecessor_run_id == run.run_id
+        ),
         run_id=run.run_id,
         goal_id=run.goal_id,
         plan_revision_id=run.plan_revision_id,

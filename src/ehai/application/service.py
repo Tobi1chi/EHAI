@@ -82,6 +82,12 @@ from ehai.application.process_reviews import (
 )
 from ehai.application.run_control import RunControllerPort, ensure_dispatch_queued
 from ehai.application.sanitization import bounded_redacted_text, redact_sensitive_text
+from ehai.application.successions import (
+    adopt_successor_results,
+    approve_succession,
+    approved_succession,
+    prepare_succession,
+)
 from ehai.domain.checking import CheckKind, CheckRun, CheckRunStatus, CheckSpec
 from ehai.domain.events import Event, EventType
 from ehai.domain.execution import AttemptStatus, Run, RunStatus
@@ -1079,6 +1085,14 @@ class ExecutionService:
             plan = _required_plan(uow, command.plan_revision_id)
             contract = _required_contract(uow, command.completion_contract_id)
             goal = _required_goal(uow, plan.goal_id)
+            succession = approved_succession(uow, plan.plan_revision_id)
+            if command.supersession_json is not None:
+                if plan.status is PlanRevisionStatus.APPROVED:
+                    raise ApplicationError("An existing approval's succession context is immutable")
+                document = json_loads(command.supersession_json)
+                if not isinstance(document, dict):
+                    raise ValueError("supersession must be an object")
+                succession = approve_succession(uow, plan, document)
             if any(
                 item.status in {RunStatus.PENDING, RunStatus.RUNNING}
                 or any(
@@ -1086,7 +1100,8 @@ class ExecutionService:
                     for attempt in uow.states.list_attempts(item.run_id)
                 )
                 or any(
-                    check.status is CheckRunStatus.RUNNING and check.human_request is None
+                    check.status in {CheckRunStatus.PENDING, CheckRunStatus.RUNNING}
+                    and check.human_request is None
                     for check in uow.states.list_check_runs(item.run_id)
                 )
                 for item in uow.states.list_runs(goal.goal_id)
@@ -1096,6 +1111,13 @@ class ExecutionService:
                 )
             for run in uow.states.list_runs(goal.goal_id):
                 if run.status is not RunStatus.PAUSED:
+                    continue
+                if any(
+                    item.predecessor_run_id == run.run_id
+                    for item in uow.states.list_runs(goal.goal_id)
+                ):
+                    continue
+                if succession is not None and run.run_id == succession["predecessor_run_id"]:
                     continue
                 source_plan = _required_plan(uow, run.plan_revision_id)
                 if (
@@ -1114,7 +1136,7 @@ class ExecutionService:
                     raise ApplicationError(
                         f"Paused Run {run.run_id} has unresolved human Checks or interventions; "
                         "approving a different contract would invalidate their replies. "
-                        "Explicit revision adoption is not yet supported"
+                        "Provide explicit supersession dispositions with approval"
                     )
             confirmed = contract.confirm(confirmed_at=self._clock())
             aligned_goal = goal.use_completion_contract(confirmed)
@@ -1136,7 +1158,7 @@ class ExecutionService:
                 self._event(
                     EventType.PLAN_REVISION_APPROVED,
                     approved.plan_revision_id,
-                    {"plan_revision_id": approved.plan_revision_id},
+                    {"plan_revision_id": approved.plan_revision_id, "succession": succession},
                 )
             )
             self._record_receipt(
@@ -1195,13 +1217,44 @@ class ExecutionService:
                 if budget_document is not None and not isinstance(budget_document, dict):
                     raise ApplicationError("goal_worker_budget must be an object or null")
                 validate_goal_worker_budget(uow, goal.goal_id, budget_document)
+                source, source_process, succession = prepare_succession(
+                    uow, plan, command.predecessor_run_id
+                )
                 run = Run(
                     goal_id=goal.goal_id,
                     plan_revision_id=plan.plan_revision_id,
                     run_id=self._id_factory(),
                     created_at=self._clock(),
+                    predecessor_run_id=command.predecessor_run_id,
                 )
                 uow.states.put_run(run)
+                if source is not None and source_process is not None:
+                    selections = json_loads(command.result_adoptions_json)
+                    assert isinstance(selections, list)
+                    records = adopt_successor_results(
+                        uow,
+                        source=source,
+                        process=source_process,
+                        target=run,
+                        selections=selections,
+                        artifact_reader=self._orchestrator.read_artifact,
+                        id_factory=self._id_factory,
+                        clock=self._clock,
+                    )
+                    uow.events.append(
+                        Event(
+                            type=EventType.RUN_SUCCESSOR_CREATED,
+                            run_id=run.run_id,
+                            correlation_id=run.run_id,
+                            occurred_at=self._clock(),
+                            payload={
+                                "predecessor_run_id": source.run_id,
+                                "source_process_revision_id": source_process.process_revision_id,
+                                "succession": succession,
+                                "adoptions": [record.to_dict() for record in records],
+                            },
+                        )
+                    )
                 if command.authorized_execution_config_json is not None:
                     run = run.start(at=self._clock())
                     uow.states.put_run(run)
@@ -1522,6 +1575,12 @@ class ExecutionService:
         return isinstance(reason, str) and reason in STARTUP_PAUSE_REASONS
 
     def _require_authorized_start_mode(self, command: StartRun) -> None:
+        if command.predecessor_run_id is not None and (
+            not self._background_start or command.authorized_execution_config_json is None
+        ):
+            raise ApplicationError(
+                "Successor execution requires explicit background execution authorization"
+            )
         if command.authorized_execution_config_json is not None and not self._background_start:
             raise ApplicationError(
                 "an explicitly authorized StartRun requires the P2 background Runtime"
@@ -1548,7 +1607,10 @@ class ExecutionService:
                 uow, run, command
             ):
                 return run
-        elif command.authorized_execution_config_json is not None:
+        elif (
+            command.authorized_execution_config_json is not None
+            and command.predecessor_run_id is None
+        ):
             # Before the atomic path existed, the foreground CLI first wrote the
             # historical StartRun receipt and then recorded explicit authorization
             # in a separate transaction. Accept only that exact durable history.

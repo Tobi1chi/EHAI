@@ -398,12 +398,19 @@ def create_parser() -> argparse.ArgumentParser:
     approve.add_argument("--idempotency-key", required=True)
     approve.add_argument("--plan-revision-id", required=True)
     approve.add_argument("--completion-contract-id", required=True)
+    approve.add_argument(
+        "--supersession-file", type=Path, help="explicit predecessor request dispositions"
+    )
 
     start = commands.add_parser("start-run", help="execute locally or enqueue on the API host")
     start.add_argument("--idempotency-key", required=True)
     start.add_argument("--plan-revision-id", required=True)
     start.add_argument("--execution-config", type=Path, help="API mode: exact host execution JSON")
     start.add_argument("--authorize", action="store_true", help="authorize API execution config")
+    start.add_argument("--predecessor-run-id")
+    start.add_argument(
+        "--result-adoptions-file", type=Path, help="JSON array of source/target block mappings"
+    )
 
     integrate = commands.add_parser(
         "integrate-run", help="integrate completed blocks on the API host"
@@ -641,6 +648,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
         if args.command == "integrate-run":
             parser.error("integrate-run requires --api-url for the owning Git execution host")
+        if args.command == "start-run" and (args.predecessor_run_id or args.result_adoptions_file):
+            parser.error(
+                "successor execution requires --api-url and explicit execution authorization"
+            )
     try:
         if args.api_url is not None:
             print(json_dumps(dispatch_api(args)))
@@ -1007,6 +1018,9 @@ def _dispatch(service: ExecutionService, args: argparse.Namespace) -> dict[str, 
                 args.idempotency_key,
                 normalize_id(args.plan_revision_id),
                 normalize_id(args.completion_contract_id),
+                None
+                if args.supersession_file is None
+                else args.supersession_file.read_text(encoding="utf-8-sig"),
             )
         )
         return {"plan_revision_id": plan.plan_revision_id, "status": plan.status.value}

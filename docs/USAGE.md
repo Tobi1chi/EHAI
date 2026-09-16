@@ -191,6 +191,57 @@ integrated 返回独立工作区、commit、完整 diff；conflicted 返回冲�
 commit/diff_path 为 null。可显式处理并暂存冲突后重试，宿主不自动改写冲突内容。
 整合成功只代表代码可物化，不改变 Gate/Run 状态，不自动提交到用户分支或推送。
 
+## 跨批准后继 Run
+
+先暂停并排空旧 Run，再通过 replan-plan 生成其直接后继方案。重新批准后，用原 start-run
+入口显式指定 predecessor_run_id；不再把旧 Run 的批准、完成状态或 Gate 结果复制过去。
+当前支持同一 Goal、同一代码宿主的 paused 前驱；已 satisfied 的 Goal 仍需另建 Goal。
+
+~~~powershell
+uv run ehai --api-url http://127.0.0.1:8000 approve-plan --idempotency-key approve-v2 --plan-revision-id <new-plan-id> --completion-contract-id <new-contract-id> --supersession-file supersession.json
+uv run ehai --api-url http://127.0.0.1:8000 start-run --idempotency-key start-v2 --plan-revision-id <new-plan-id> --execution-config execution.json --authorize --predecessor-run-id <old-run-id> --result-adoptions-file adoptions.json
+~~~
+
+supersession.json 对应 HTTP ApprovePlanRequest 的 supersession 对象：
+
+~~~json
+{
+  "predecessor_run_id": "<old-run-id>",
+  "expected_process_revision_id": "<old-current-process-id>",
+  "actor": "<user-or-authorized-operator>",
+  "reason": "<why this new plan replaces the old approval>",
+  "resolutions": [
+    {"kind":"human_check","request_id":"<check-run-id>","request_token":"<current-token>","disposition":"superseded","reason":"<why this old question is withdrawn under the new plan>"}
+  ]
+}
+~~~
+
+kind 为 human_check 或 intervention；分别从 get-run-checks、get-run-interventions 取 ID/token。
+必须覆盖全部未决事项且 token 精确匹配。resolved 表达操作者已处理该问题并提供说明；
+superseded 表达新批准明确撤销旧问题，不表达旧 Gate 通过。external_effects 类型只能 resolved，
+需要先核对真实副作用并解释安全继续的依据。框架记录操作者决定，不假装代码证明了外部事实。
+没有未决事项时 resolutions=[]，也可以不提供 supersession 文件；显式提供可固定来源过程版本。
+
+adoptions.json 是数组，对应 HTTP StartRunRequest 的 result_adoptions：
+
+~~~json
+[{"source_plan_node_id":"<old-completed-node>","target_plan_node_id":"<new-work-or-merge-node>","reason":"<why this exact old result fits the newly approved task>"}]
+~~~
+
+只声明来源/目标当前执行节点及复用理由，宿主查出真实 Attempt、Artifact 和哈希并验证字节。
+省略文件或传 [] 表示全部重新执行，不自动猜测相似任务。来源必须已完成、最新 Attempt 成功；
+不能用旧成功覆盖后来的中断/失败。映射为一对一，不接续 Reviewer/Gate 的完成状态。
+Run、接续记录、授权、派发意图和幂等回执在同一事务保存；任一验证失败整体回滚。
+
+输入依赖与 Git 基线仍适用时，宿主接纳旧成果并重新运行目标 Gate；输入/基线变化则按新图
+派发 Worker 重做。旧生产者身份和字节不改写。沿用已有 Goal Worker Attempt 预算，换 Run
+不清零，Token/费用硬限额仍暂缓。新 Run 的 get-trace 中 RunSuccessorCreated 保存来源、
+操作者处置及接续记录，get-run-adoptions 可查询实际映射；Worker 上下文也获得这些来源事实。
+
+旧 Run 保持 paused 历史状态，原未决记录保留原貌；处置事实记录在新 Run，不能向旧 Gate
+回填成功。get-run 的 predecessor_run_id / successor_run_ids 连接两侧，旧 Run 不可再恢复执行。
+新 Run 在新人工 Gate 等待时可能仍是 running，须结合节点和 Check 状态查看；不是自动完成。
+
 ## 草稿 Gate 工具
 
 set_node_gate/set_final_gate 完整替换条件；[] 清命令、null 清人工条件，两者不能同时为空。

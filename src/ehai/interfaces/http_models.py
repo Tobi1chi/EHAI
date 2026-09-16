@@ -107,10 +107,33 @@ class DiscussPlanRequest(ProposePlanRequest):
     source_run_id: UuidInput | None = None
 
 
+class SupersessionResolutionRequest(_StrictRequest):
+    kind: Literal["human_check", "intervention"]
+    request_id: UuidInput
+    request_token: NonBlank
+    disposition: Literal["resolved", "superseded"]
+    reason: NonBlank
+
+
+class SupersessionRequest(_StrictRequest):
+    predecessor_run_id: UuidInput
+    expected_process_revision_id: UuidInput
+    actor: NonBlank
+    reason: NonBlank
+    resolutions: list[SupersessionResolutionRequest]
+
+
+class ResultAdoptionRequest(_StrictRequest):
+    source_plan_node_id: UuidInput
+    target_plan_node_id: UuidInput
+    reason: NonBlank
+
+
 class ApprovePlanRequest(_StrictRequest):
     idempotency_key: NonBlank
     plan_revision_id: UuidInput
     completion_contract_id: UuidInput
+    supersession: SupersessionRequest | None = None
 
 
 class ExecutionEndpointCapabilitiesRequest(_StrictRequest):
@@ -191,6 +214,8 @@ class StartRunRequest(_StrictRequest):
     idempotency_key: NonBlank
     plan_revision_id: UuidInput
     execution_config: ExecutionConfigRequest | None = None
+    predecessor_run_id: UuidInput | None = None
+    result_adoptions: list[ResultAdoptionRequest] = Field(default_factory=list)
 
 
 class RunActionRequest(_StrictRequest):

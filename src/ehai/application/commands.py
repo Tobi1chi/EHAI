@@ -284,6 +284,7 @@ class ApprovePlan:
     idempotency_key: str
     plan_revision_id: ID
     completion_contract_id: ID
+    supersession_json: str | None = None
 
     def __post_init__(self) -> None:
         owner = type(self).__name__
@@ -307,6 +308,11 @@ class ApprovePlan:
             {
                 "completion_contract_id": self.completion_contract_id,
                 "plan_revision_id": self.plan_revision_id,
+                **(
+                    {}
+                    if self.supersession_json is None
+                    else {"supersession": json_loads(self.supersession_json)}
+                ),
             },
         )
 
@@ -318,10 +324,20 @@ class StartRun:
     idempotency_key: str
     plan_revision_id: ID
     authorized_execution_config_json: str | None = None
+    predecessor_run_id: ID | None = None
+    result_adoptions_json: str = "[]"
 
     def __post_init__(self) -> None:
         owner = type(self).__name__
         _require_idempotency_key(self.idempotency_key, owner)
+        if self.predecessor_run_id is not None:
+            object.__setattr__(self, "predecessor_run_id", normalize_id(self.predecessor_run_id))
+        adoptions = json_loads(self.result_adoptions_json)
+        if not isinstance(adoptions, list):
+            raise ValueError("result_adoptions must be an array")
+        if adoptions and self.predecessor_run_id is None:
+            raise ValueError("Result adoption requires a predecessor Run")
+        object.__setattr__(self, "result_adoptions_json", json_dumps(adoptions))
         object.__setattr__(
             self,
             "plan_revision_id",
@@ -356,6 +372,16 @@ class StartRun:
     @property
     def fingerprint(self) -> str:
         """Return a deterministic fingerprint excluding the idempotency key."""
+        if self.predecessor_run_id is not None:
+            return _fingerprint(
+                type(self).__name__,
+                {
+                    "plan_revision_id": self.plan_revision_id,
+                    "authorized_execution_config": self.authorized_execution_config,
+                    "predecessor_run_id": self.predecessor_run_id,
+                    "result_adoptions": json_loads(self.result_adoptions_json),
+                },
+            )
         if self.authorized_execution_config_json is None:
             # Preserve the historical StartRun fingerprint for callers that do
             # not carry an explicit execution authorization.

@@ -417,24 +417,42 @@
       }
     },
     "ApprovePlanRequest": {
-      "type": "object",
       "additionalProperties": false,
+      "properties": {
+        "idempotency_key": {
+          "minLength": 1,
+          "title": "Idempotency Key",
+          "type": "string"
+        },
+        "plan_revision_id": {
+          "pattern": "^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$",
+          "title": "Plan Revision Id",
+          "type": "string"
+        },
+        "completion_contract_id": {
+          "pattern": "^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$",
+          "title": "Completion Contract Id",
+          "type": "string"
+        },
+        "supersession": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SupersessionRequest"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
       "required": [
         "idempotency_key",
         "plan_revision_id",
         "completion_contract_id"
       ],
-      "properties": {
-        "idempotency_key": {
-          "$ref": "common.schema.json#/$defs/IdempotencyKey"
-        },
-        "plan_revision_id": {
-          "$ref": "common.schema.json#/$defs/IdInput"
-        },
-        "completion_contract_id": {
-          "$ref": "common.schema.json#/$defs/IdInput"
-        }
-      }
+      "title": "ApprovePlanRequest",
+      "type": "object"
     },
     "ExecutionCodexServerRequest": {
       "additionalProperties": false,
@@ -736,18 +754,17 @@
       "type": "object"
     },
     "StartRunRequest": {
-      "type": "object",
       "additionalProperties": false,
-      "required": [
-        "idempotency_key",
-        "plan_revision_id"
-      ],
       "properties": {
         "idempotency_key": {
-          "$ref": "common.schema.json#/$defs/IdempotencyKey"
+          "minLength": 1,
+          "title": "Idempotency Key",
+          "type": "string"
         },
         "plan_revision_id": {
-          "$ref": "common.schema.json#/$defs/IdInput"
+          "pattern": "^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$",
+          "title": "Plan Revision Id",
+          "type": "string"
         },
         "execution_config": {
           "anyOf": [
@@ -759,8 +776,34 @@
             }
           ],
           "default": null
+        },
+        "predecessor_run_id": {
+          "anyOf": [
+            {
+              "pattern": "^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Predecessor Run Id"
+        },
+        "result_adoptions": {
+          "items": {
+            "$ref": "#/$defs/ResultAdoptionRequest"
+          },
+          "title": "Result Adoptions",
+          "type": "array"
         }
-      }
+      },
+      "required": [
+        "idempotency_key",
+        "plan_revision_id"
+      ],
+      "title": "StartRunRequest",
+      "type": "object"
     },
     "DecideHumanCheckRequest": {
       "type": "object",
@@ -1626,6 +1669,119 @@
         "expected_process_revision_id"
       ],
       "title": "IntegrateRunRequest",
+      "type": "object"
+    },
+    "SupersessionRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "predecessor_run_id": {
+          "pattern": "^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$",
+          "title": "Predecessor Run Id",
+          "type": "string"
+        },
+        "expected_process_revision_id": {
+          "pattern": "^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$",
+          "title": "Expected Process Revision Id",
+          "type": "string"
+        },
+        "actor": {
+          "minLength": 1,
+          "title": "Actor",
+          "type": "string"
+        },
+        "reason": {
+          "minLength": 1,
+          "title": "Reason",
+          "type": "string"
+        },
+        "resolutions": {
+          "items": {
+            "$ref": "#/$defs/SupersessionResolutionRequest"
+          },
+          "title": "Resolutions",
+          "type": "array"
+        }
+      },
+      "required": [
+        "predecessor_run_id",
+        "expected_process_revision_id",
+        "actor",
+        "reason",
+        "resolutions"
+      ],
+      "title": "SupersessionRequest",
+      "type": "object"
+    },
+    "SupersessionResolutionRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "enum": [
+            "human_check",
+            "intervention"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "request_id": {
+          "pattern": "^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$",
+          "title": "Request Id",
+          "type": "string"
+        },
+        "request_token": {
+          "minLength": 1,
+          "title": "Request Token",
+          "type": "string"
+        },
+        "disposition": {
+          "enum": [
+            "resolved",
+            "superseded"
+          ],
+          "title": "Disposition",
+          "type": "string"
+        },
+        "reason": {
+          "minLength": 1,
+          "title": "Reason",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "request_id",
+        "request_token",
+        "disposition",
+        "reason"
+      ],
+      "title": "SupersessionResolutionRequest",
+      "type": "object"
+    },
+    "ResultAdoptionRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "source_plan_node_id": {
+          "pattern": "^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$",
+          "title": "Source Plan Node Id",
+          "type": "string"
+        },
+        "target_plan_node_id": {
+          "pattern": "^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$",
+          "title": "Target Plan Node Id",
+          "type": "string"
+        },
+        "reason": {
+          "minLength": 1,
+          "title": "Reason",
+          "type": "string"
+        }
+      },
+      "required": [
+        "source_plan_node_id",
+        "target_plan_node_id",
+        "reason"
+      ],
+      "title": "ResultAdoptionRequest",
       "type": "object"
     }
   }

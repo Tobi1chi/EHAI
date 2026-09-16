@@ -398,6 +398,9 @@ def create_app(
                     request.idempotency_key,
                     _id(str(request.plan_revision_id)),
                     _id(str(request.completion_contract_id)),
+                    None
+                    if request.supersession is None
+                    else json_dumps(request.supersession.model_dump(mode="json")),
                 )
             )
         )
@@ -412,7 +415,16 @@ def create_app(
         if request.execution_config is None:
             return _response(
                 execution_service.start_run(
-                    StartRun(request.idempotency_key, _id(str(request.plan_revision_id)))
+                    StartRun(
+                        request.idempotency_key,
+                        _id(str(request.plan_revision_id)),
+                        predecessor_run_id=None
+                        if request.predecessor_run_id is None
+                        else _id(str(request.predecessor_run_id)),
+                        result_adoptions_json=json_dumps(
+                            [item.model_dump(mode="json") for item in request.result_adoptions]
+                        ),
+                    )
                 )
             )
         document = request.execution_config.model_dump(mode="json")
@@ -426,6 +438,12 @@ def create_app(
             request.idempotency_key,
             _id(str(request.plan_revision_id)),
             authorized_execution_config_json=json_dumps(config.to_document()),
+            predecessor_run_id=None
+            if request.predecessor_run_id is None
+            else _id(str(request.predecessor_run_id)),
+            result_adoptions_json=json_dumps(
+                [item.model_dump(mode="json") for item in request.result_adoptions]
+            ),
         )
         replay = execution_service.get_start_run_replay(command)
         if replay is not None:

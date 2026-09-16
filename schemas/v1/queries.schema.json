@@ -118,6 +118,7 @@
         "plan_revision_id": {"$ref": "common.schema.json#/$defs/Id"},
         "status": {"$ref": "#/$defs/RunStatus"},
         "predecessor_run_id": {"$ref": "#/$defs/NullableId"},
+        "successor_run_ids": {"$ref": "#/$defs/IdList"},
         "goal_worker_budget": {
           "oneOf": [{"$ref": "#/$defs/GoalWorkerBudgetView"}, {"type": "null"}]
         },
