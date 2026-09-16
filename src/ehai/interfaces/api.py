@@ -10,7 +10,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.requests import Request
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 
-from ehai import ID, json_dumps, normalize_id
+from ehai import ID, JsonValue, json_dumps, normalize_id
 from ehai.application.commands import (
     ApplyProcess,
     ApprovePlan,
@@ -60,6 +60,7 @@ from ehai.interfaces.http_models import (
     ErrorResponse,
     ExtendAttemptDeadlineRequest,
     ImportPlanRequest,
+    IntegrateRunRequest,
     ProposePlanRequest,
     ProposeProcessRequest,
     ReplanPlanRequest,
@@ -161,10 +162,25 @@ def create_app(
     trajectory_suspensions: TrajectorySuspensions | None = None,
     execution_config_validator: Callable[[ExecutionConfig], None] | None = None,
     artifact_root: str | None = None,
+    code_integration: Callable[[ID, ID], dict[str, JsonValue]] | None = None,
 ) -> FastAPI:
     """Create the additive P2 HTTP surface around already-constructed services."""
     app = FastAPI(title="EHAI Execution Plane", version="2")
     router = APIRouter(prefix="/api/v1")
+
+    @router.post(
+        "/runs/{run_id}/integrate",
+        response_model=DataResponse,
+        operation_id="integrateRun",
+        responses=_read_responses("CodeIntegrationResponse", "Git integration"),
+    )
+    def integrate_run(run_id: UuidInput, request: IntegrateRunRequest) -> DataResponse:
+        if code_integration is None:
+            raise StateConflictError("This host has no Git integration backend")
+        return _response(
+            code_integration(_id(str(run_id)), _id(str(request.expected_process_revision_id)))
+        )
+
     event_stream_endpoint = create_event_stream_endpoint(
         lambda *, after_event_id, limit: (
             query_service.list_events(

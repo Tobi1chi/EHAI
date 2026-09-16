@@ -12,6 +12,7 @@ from ehai.application.plan_imports import plan_import_error_schema, plan_import_
 from ehai.interfaces.http_models import (
     ExecutionConfigRequest,
     ImportPlanRequest,
+    IntegrateRunRequest,
     SuspendAttemptRequest,
 )
 from ehai.interfaces.runtime import create_local_app
@@ -19,6 +20,7 @@ from ehai.interfaces.runtime import create_local_app
 schema_root = Path(__file__).resolve().parents[2] / "schemas" / "v1"
 commands_path = schema_root / "commands.schema.json"
 commands = json.loads(commands_path.read_text(encoding="utf-8"))
+commands["$defs"]["IntegrateRunRequest"] = IntegrateRunRequest.model_json_schema()
 commands["$defs"]["ImportPlanRequest"] = ImportPlanRequest.model_json_schema()
 commands["$defs"]["ImportPlanErrorResponse"] = plan_import_error_schema()
 (schema_root / "plan-import.schema.json").write_text(

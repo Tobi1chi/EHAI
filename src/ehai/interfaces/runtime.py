@@ -489,6 +489,9 @@ def create_local_app(
         trajectory_suspensions=trajectory_suspensions,
         execution_config_validator=validate_execution_config,
         artifact_root=str(artifact_root),
+        code_integration=connector.integrate_run
+        if isinstance(connector, CodeRuntimeConnector)
+        else None,
     )
     app.state.database = query_database
     app.state.artifact_root = artifact_root.resolve()

@@ -36,6 +36,7 @@ _QUERIES = {
     "get-worker-requests": "/attempts/{attempt_id}/worker-requests",
 }
 _COMMANDS: dict[str, tuple[str, tuple[str, ...]]] = {
+    "integrate-run": ("/runs/{run_id}/integrate", ("expected_process_revision_id",)),
     "import-plan": ("/plans/import", ("goal_id",)),
     "create-project": ("/projects", ("name",)),
     "create-goal": ("/goals", ("project_id", "objective")),
@@ -124,7 +125,9 @@ def _request_arguments(args: argparse.Namespace) -> tuple[str, str, dict[str, Js
             f"{command} is local-only; use start-run/resume-run for API-hosted execution"
         )
     path, fields = _COMMANDS[command]
-    body: dict[str, JsonValue] = {"idempotency_key": args.idempotency_key}
+    body: dict[str, JsonValue] = (
+        {} if command == "integrate-run" else {"idempotency_key": args.idempotency_key}
+    )
     for field in fields:
         body[field] = values[field]
     if command in {"propose-plan", "discuss-plan", "replan-plan"}:

@@ -34,6 +34,7 @@ const requiredOperations = [
   "proposeProcess",
   "reviewProcess",
   "applyProcess",
+  "integrateRun",
   "decideHumanCheck",
   "get_run_interventions_api_v1_runs__run_id__interventions_get",
   "list_result_adoptions_api_v1_runs__run_id__adoptions_get",
@@ -233,6 +234,10 @@ export class EhaiApiClient {
 
   applyProcess(request: ApplyProcessRequest): Promise<ProcessRevisionResponse> {
     return this.request("/commands/apply-process", "POST", request);
+  }
+
+  integrateRun(runId: string, request: IntegrateRunRequest): Promise<CodeIntegrationResponse> {
+    return this.request("/runs/" + encodeURIComponent(runId) + "/integrate", "POST", request);
   }
 
   decideHumanCheck(

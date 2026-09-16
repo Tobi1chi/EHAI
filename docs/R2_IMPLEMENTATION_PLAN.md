@@ -97,3 +97,22 @@ A/D 为 1；随后删除 B，B 保留版本 2 的 removed 记录，C/R 增为 3�
 Ruff、格式、mypy、客户端生成及 TS typecheck/build 通过。本轮没有模型调用、Git 成果
 重整合或真实 Pi 修改过程的重跑，不把无模型编译/查询检查称为产品 E2E 或 MCP 模型调用证据。
 按 block 自动回退/整合、完整跨批准后继 Run 仍未实现；Token/费用硬限额按用户决定暂缓。
+
+## 2026-09-16：Git 自动整合
+
+新增 integrate-run / POST /runs/{run_id}/integrate / MCP integrate_run，客户端 Schema 同步。
+宿主依据当前过程版本筛选完成且有效的成果，验证 Artifact 字节/来源、输入 commit 仍在
+有效集合内，以 Run 固定基线重建独立 worktree。内容绑定的 integration_id、合并游标和
+结果 commit 保留在 Git 元数据目录；冲突返回 conflicted，不默认解冲突、回退用户分支或推送。
+输入是 Run 与期望过程版本，输出为 block/Attempt/输入/结果 commit 映射及整合结果。
+过程变化或活动 Attempt 拒绝调用；没有输入基线的历史成果需要重新执行。
+
+复制 Luna 试用数据库到 Temp/ehai-git-successor-20260916/luna.sqlite，保留原任务数据库。
+生产 create_local_app 配置代码后端但不启动 Runtime，通过 HTTP ASGI 入口整合历史实际
+Luna Run 956d9ada-ccbc-411e-950c-f5ba41194182 的两个并行实现成果与 Reviewer 快照。
+两次返回 integration_id=69d6f949-31d0-5ac7-aa43-d0d36506bb1b、相同 commit
+a075da26eae8b53eca785fb477c7b724a6e27535。Git 对比其 tree 与原已验收 Reviewer
+bf85a1ecd7f0eab2f3e1fad5ba5f9f8f9a3f857f 无差异；用户试用工作区仍干净。
+新整合 worktree/patch 位于原隔离试用的 worktrees 下，旧成果未改写。本次没有模型调用。
+Ruff、格式、mypy、Schema/客户端生成及 TS typecheck/build 通过；冲突恢复未做本轮实跑，
+新增 MCP 工具未做真实模型调用，以上不是唯一产品 E2E。后继 Run 在下一独立提交接通。

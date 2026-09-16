@@ -266,6 +266,37 @@
       "type": "string",
       "enum": ["run_started", "legacy_snapshot", "planner_adjustment"]
     },
+    "CodeIntegrationSource": {
+      "type": "object", "additionalProperties": false,
+      "required": ["block_id", "block_version", "plan_node_id", "source_run_id", "attempt_id", "prepared_commit", "commit"],
+      "properties": {
+        "block_id": {"$ref": "common.schema.json#/$defs/Id"},
+        "block_version": {"type": ["integer", "null"], "minimum": 1},
+        "plan_node_id": {"$ref": "common.schema.json#/$defs/Id"},
+        "source_run_id": {"$ref": "common.schema.json#/$defs/Id"},
+        "attempt_id": {"$ref": "common.schema.json#/$defs/Id"},
+        "prepared_commit": {"type": "string"}, "commit": {"type": "string"}
+      }
+    },
+    "CodeIntegration": {
+      "type": "object", "additionalProperties": false,
+      "required": ["integration_id", "run_id", "process_revision_id", "base_commit", "sources", "status", "workspace", "commit", "diff_path", "conflicts"],
+      "properties": {
+        "integration_id": {"$ref": "common.schema.json#/$defs/Id"},
+        "run_id": {"$ref": "common.schema.json#/$defs/Id"},
+        "process_revision_id": {"$ref": "common.schema.json#/$defs/Id"},
+        "base_commit": {"type": "string"},
+        "sources": {"type": "array", "items": {"$ref": "#/$defs/CodeIntegrationSource"}},
+        "status": {"type": "string", "enum": ["integrated", "conflicted"]},
+        "workspace": {"type": "string"},
+        "commit": {"type": ["string", "null"]}, "diff_path": {"type": ["string", "null"]},
+        "conflicts": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "CodeIntegrationResponse": {
+      "type": "object", "additionalProperties": false, "required": ["data"],
+      "properties": {"data": {"$ref": "#/$defs/CodeIntegration"}}
+    },
     "BlockChange": {
       "type": "object",
       "additionalProperties": false,

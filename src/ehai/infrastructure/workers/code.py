@@ -30,7 +30,7 @@ from ehai.application.workers import (
 )
 from ehai.domain.adoptions import ResultAdoption
 from ehai.domain.artifacts import ArtifactKind
-from ehai.domain.execution import Attempt, AttemptStatus
+from ehai.domain.execution import Attempt, AttemptStatus, RunStatus
 from ehai.domain.planning import (
     Branch,
     BranchStatus,
@@ -100,6 +100,108 @@ class CodeRuntimeConnector:
         except RunBaseNotFoundError:
             self.code_store.pin_run_base(run_id=str(adoption.target_run_id), base_commit="HEAD")
         return self.code_store.prepare_adoption_worktree(adoption)
+
+    def integrate_run(self, run_id: ID, process_revision_id: ID) -> dict[str, JsonValue]:
+        """Materialize only completed, currently selected blocks and their valid inputs."""
+        if self.artifact_store is None:
+            raise ValueError("Git integration requires the Artifact store")
+        with self.database.read_session() as session:
+            run = session.states.get_run(run_id)
+            process = session.states.get_active_process_revision(run_id)
+            plan = session.states.get_execution_plan(run_id)
+            attempts = session.states.list_attempts(run_id)
+            artifacts = {a.artifact_id: a for a in session.states.list_artifacts_for_run(run_id)}
+            adoptions = session.states.list_result_adoptions(run_id)
+        if (
+            run is None
+            or plan is None
+            or process is None
+            or process.process_revision_id != process_revision_id
+            or run.status not in {RunStatus.PAUSED, RunStatus.COMPLETED}
+            or any(a.status in {AttemptStatus.PENDING, AttemptStatus.RUNNING} for a in attempts)
+        ):
+            raise ValueError(
+                "Integration requires a drained paused/completed Run and current process"
+            )
+        excluded = {
+            node_id
+            for branch in plan.branches
+            if branch.status is not BranchStatus.SELECTED
+            for node_id in branch.node_ids
+        }
+        latest = {a.plan_node_id: a for a in sorted(attempts, key=lambda a: a.sequence)}
+        accepted = {a.target_plan_node_id: a for a in adoptions}
+        blocks = {b.node_id: b for b in process.block_changes or () if b.node_id is not None}
+        sources: list[JsonValue] = []
+        dependencies: list[tuple[str, ...]] = []
+        result: GitCodeResult | None
+        for node in plan.nodes:
+            if (
+                node.status is not PlanNodeStatus.COMPLETED
+                or node.plan_node_id in excluded
+                or node.kind is PlanNodeKind.EVALUATOR
+            ):
+                continue
+            attempt = latest.get(node.plan_node_id)
+            if attempt is None and node.plan_node_id in accepted:
+                _, result = self._adopted_snapshot(accepted[node.plan_node_id].adoption_id)
+            else:
+                if attempt is None or attempt.status is not AttemptStatus.SUCCEEDED:
+                    raise ValueError("Completed block has no successful current producer")
+                result = self._snapshot(attempt)
+                snapshots = [
+                    artifacts[i]
+                    for i in attempt.artifact_ids
+                    if i in artifacts and artifacts[i].media_type == CODE_SNAPSHOT_MEDIA_TYPE
+                ]
+                if result is None or len(snapshots) != 1:
+                    raise ValueError("Completed block has no unique host code snapshot")
+                artifact = snapshots[0]
+                content = self.artifact_store.read(artifact.artifact_id)
+                if (
+                    artifact.attempt_id != attempt.attempt_id
+                    or artifact.run_id != run_id
+                    or artifact.plan_node_id != node.plan_node_id
+                    or len(content) != artifact.size_bytes
+                    or sha256(content).hexdigest() != artifact.sha256
+                    or json_loads(content.decode("utf-8")) != _delivery(result)
+                ):
+                    raise ValueError("Block snapshot provenance or bytes changed")
+            recorded = self.code_store.load_attempt_dependency_commits(
+                run_id=result.run_id, attempt_id=result.attempt_id
+            )
+            if recorded is None:
+                raise ValueError("Block has no recorded input baseline; re-execution is required")
+            dependencies.append(recorded)
+            block = blocks.get(node.plan_node_id)
+            sources.append(
+                {
+                    "block_id": node.plan_node_id if block is None else block.block_id,
+                    "block_version": None if block is None else block.version,
+                    "plan_node_id": node.plan_node_id,
+                    "source_run_id": result.run_id,
+                    "attempt_id": result.attempt_id,
+                    "prepared_commit": self.code_store.prepared_commit(
+                        run_id=result.run_id, attempt_id=result.attempt_id
+                    ),
+                    "commit": result.commit,
+                }
+            )
+        commits = {s["commit"] for s in sources if isinstance(s, dict)}
+        if any(not set(inputs).issubset(commits) for inputs in dependencies):
+            raise ValueError("A selected snapshot contains excluded or superseded block inputs")
+        result_document = self.code_store.integrate_results(
+            run_id=str(run_id), process_revision_id=str(process_revision_id), sources=sources
+        )
+        with self.database.read_session() as session:
+            if (
+                session.states.get_run(run_id) != run
+                or session.states.get_execution_plan(run_id) != plan
+                or session.states.get_active_process_revision(run_id) != process
+                or session.states.list_attempts(run_id) != attempts
+            ):
+                raise ValueError("Run changed during integration; result is not current")
+        return result_document
 
     def _adopted_snapshot(self, adoption_id: ID) -> tuple[ResultAdoption, GitCodeResult]:
         """Read immutable accepted evidence without allocating a verification workspace."""

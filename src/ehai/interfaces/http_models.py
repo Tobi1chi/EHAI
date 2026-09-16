@@ -197,6 +197,10 @@ class RunActionRequest(_StrictRequest):
     idempotency_key: NonBlank
 
 
+class IntegrateRunRequest(_StrictRequest):
+    expected_process_revision_id: UuidInput
+
+
 class SuspendAttemptRequest(RunActionRequest):
     review_id: UuidInput
     through_sequence: Annotated[int, Field(strict=True, ge=1)]

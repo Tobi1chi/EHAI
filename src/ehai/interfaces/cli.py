@@ -405,6 +405,12 @@ def create_parser() -> argparse.ArgumentParser:
     start.add_argument("--execution-config", type=Path, help="API mode: exact host execution JSON")
     start.add_argument("--authorize", action="store_true", help="authorize API execution config")
 
+    integrate = commands.add_parser(
+        "integrate-run", help="integrate completed blocks on the API host"
+    )
+    integrate.add_argument("--run-id", required=True)
+    integrate.add_argument("--expected-process-revision-id", required=True)
+
     decide_check = commands.add_parser(
         "decide-human-check",
         help="record an explicit human verdict for an open CheckRun",
@@ -633,6 +639,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             parser.error(
                 "local configured execution uses execute-plan; API execution uses --api-url"
             )
+        if args.command == "integrate-run":
+            parser.error("integrate-run requires --api-url for the owning Git execution host")
     try:
         if args.api_url is not None:
             print(json_dumps(dispatch_api(args)))

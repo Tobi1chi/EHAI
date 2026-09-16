@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from hashlib import sha256
 from pathlib import Path
 from threading import Lock
+from uuid import NAMESPACE_URL, uuid5
 
 from ehai import JsonValue, json_dumps, json_loads, normalize_id
 from ehai.domain.adoptions import ResultAdoption
@@ -69,6 +70,7 @@ class GitCodeWorkspace:
             raise ValueError("The user workspace cannot be an owned execution workspace")
         self._common_dir: Path | None = None
         self._pin_lock = Lock()
+        self._integration_lock = Lock()
 
     def _repository(self) -> Path:
         if self._common_dir is None:
@@ -483,6 +485,84 @@ class GitCodeWorkspace:
 
     def read_diff(self, result: GitCodeResult) -> bytes:
         return self._owned(result.diff_path).read_bytes()
+
+    def integrate_results(
+        self, *, run_id: str, process_revision_id: str, sources: list[JsonValue]
+    ) -> dict[str, JsonValue]:
+        """Rebuild a host-selected result set from the pinned base, never the user index.
+
+        Sources must already be authorized and checked by the execution layer.
+        A content-bound identity makes retries resume the same merge cursor.
+        Conflicts remain in the isolated worktree for explicit repair.
+        """
+        with self._integration_lock:
+            return self._integrate_results(run_id, process_revision_id, sources)
+
+    def _integrate_results(
+        self, run_id: str, process_revision_id: str, sources: list[JsonValue]
+    ) -> dict[str, JsonValue]:
+        base = self.load_run_base(run_id=run_id).base_commit
+        selection: dict[str, JsonValue] = {
+            "run_id": str(normalize_id(run_id)),
+            "process_revision_id": str(normalize_id(process_revision_id)),
+            "base_commit": base,
+            "sources": sources,
+        }
+        identity = str(uuid5(NAMESPACE_URL, "ehai:git-integration:" + json_dumps(selection)))
+        workspace = self._owned(self.owned_root / f"integration-{identity}")
+        path = self._path(run_id, f"integration-{identity}.json")
+        commits: list[JsonValue] = []
+        for source in sources:
+            if not isinstance(source, dict):
+                raise MetadataError("Integration sources must be objects")
+            commit = self._commit_id(self.base_workspace, _string(source, "commit"))
+            self._git(self.base_workspace, ("merge-base", "--is-ancestor", base, commit))
+            if commit not in commits:
+                commits.append(commit)
+        if path.exists():
+            document = self._read(path)
+            if document.get("selection") != selection or document.get("upstreams") != commits:
+                raise MetadataError("Integration identity changed")
+        else:
+            if workspace.exists():
+                raise MetadataError("Unregistered integration worktree already exists")
+            document = {
+                "selection": selection,
+                "workspace": str(workspace),
+                "upstreams": commits,
+                "next_upstream": 0,
+            }
+            self._write(path, document)
+        if not workspace.exists():
+            if document.get("prepared_commit") is not None or document["next_upstream"] != 0:
+                raise MetadataError("Retained integration worktree is missing")
+            workspace.parent.mkdir(parents=True, exist_ok=True)
+            self._git(self.base_workspace, ("worktree", "add", "--detach", str(workspace), base))
+        self._worktree(workspace)
+        if document.get("prepared_commit") is not None and (
+            self._commit_id(workspace, "HEAD") != document["prepared_commit"]
+            or self._text(workspace, ("status", "--porcelain"))
+        ):
+            raise MetadataError("Completed integration workspace changed; retain for inspection")
+        preparation = self._merge_remaining(path, document, workspace)
+        integrated_commit = None if preparation.conflicts else self._commit_id(workspace, "HEAD")
+        diff_path = self._path(run_id, f"integration-{identity}.patch")
+        if integrated_commit is not None:
+            self._write_bytes(
+                diff_path,
+                self._git(
+                    workspace, ("diff", "--binary", "--full-index", base, integrated_commit)
+                ).stdout,
+            )
+        return {
+            **selection,
+            "integration_id": identity,
+            "status": "conflicted" if preparation.conflicts else "integrated",
+            "workspace": str(workspace),
+            "commit": integrated_commit,
+            "diff_path": None if integrated_commit is None else str(diff_path),
+            "conflicts": list(preparation.conflicts),
+        }
 
     def prepared_commit(self, *, run_id: str, attempt_id: str) -> str:
         """Return the immutable code baseline recorded before a Worker started."""

@@ -1612,6 +1612,21 @@
           }
         }
       }
+    },
+    "IntegrateRunRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "expected_process_revision_id": {
+          "pattern": "^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$",
+          "title": "Expected Process Revision Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "expected_process_revision_id"
+      ],
+      "title": "IntegrateRunRequest",
+      "type": "object"
     }
   }
 }

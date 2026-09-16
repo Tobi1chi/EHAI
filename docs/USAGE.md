@@ -169,7 +169,27 @@ Attempt 和 Artifact；也可用 HTTP GET /api/v1/runs/{run_id}/artifacts 查询
 modified/removed 的历史记录仍保留。应用仍需 review-process → apply-process，
 批准需求、接口、Gate、权限发生变化时不能通过清单绕过重新批准。
 清单覆盖节点定义及其输入，不替代整个方案文档、Phase 等其他结构的差异审查。
-本次未提供按 block 自动 revert/cherry-pick、Git 重整合或跨批准后继 Run 启动。
+Git 整合使用下述入口；不把清单直接转换成 revert/cherry-pick。
+
+## Git 自动整合
+
+在拥有该代码工作区的 API 宿主上运行：
+
+~~~powershell
+uv run ehai --api-url http://127.0.0.1:8000 integrate-run --run-id <run-id> --expected-process-revision-id <current-process-id>
+~~~
+
+对应 POST /api/v1/runs/{run_id}/integrate；请求体只有 expected_process_revision_id。
+MCP 名称为 integrate_run，仍需 --allow-writes。调用后宿主自动选择当前图中已完成且
+所属分支已选定的代码成果，从 Run 固定 Git 基线合并；Run 必须 paused/completed 且
+没有未结束的 Attempt。被删除、重置、未完成、未选中分支的成果不会选入。
+输入基线引用了未选中或已被替代成果时拒绝整合，要求重新执行受影响节点。
+
+返回 sources 列出 block、生产 Attempt、prepared_commit、commit；旧 block 版本为 null。
+同一过程及成果集合对应同一 integration_id，重试继续原合并记录，不需要额外幂等键。
+integrated 返回独立工作区、commit、完整 diff；conflicted 返回冲突路径和保留工作区，
+commit/diff_path 为 null。可显式处理并暂存冲突后重试，宿主不自动改写冲突内容。
+整合成功只代表代码可物化，不改变 Gate/Run 状态，不自动提交到用户分支或推送。
 
 ## 草稿 Gate 工具
 

@@ -138,6 +138,33 @@ export type PlanGraph = {
 
 export type ProcessRevisionSource = "run_started" | "legacy_snapshot" | "planner_adjustment";
 
+export type CodeIntegrationSource = {
+  readonly block_id: Id;
+  readonly block_version: number | null;
+  readonly plan_node_id: Id;
+  readonly source_run_id: Id;
+  readonly attempt_id: Id;
+  readonly prepared_commit: string;
+  readonly commit: string;
+};
+
+export type CodeIntegration = {
+  readonly integration_id: Id;
+  readonly run_id: Id;
+  readonly process_revision_id: Id;
+  readonly base_commit: string;
+  readonly sources: ReadonlyArray<CodeIntegrationSource>;
+  readonly status: "integrated" | "conflicted";
+  readonly workspace: string;
+  readonly commit: string | null;
+  readonly diff_path: string | null;
+  readonly conflicts: ReadonlyArray<string>;
+};
+
+export type CodeIntegrationResponse = {
+  readonly data: CodeIntegration;
+};
+
 export type BlockChange = {
   readonly block_id: Id;
   readonly version: number;
@@ -998,6 +1025,10 @@ export type ImportPlanErrorResponse = {
 };
 };
 
+export type IntegrateRunRequest = {
+  readonly expected_process_revision_id: string;
+};
+
 export class EhaiApiError extends Error {
   readonly status: number;
   readonly detail: ErrorResponse | null;
@@ -1074,6 +1105,10 @@ export class EhaiApiClient {
 
   applyProcess(request: ApplyProcessRequest): Promise<ProcessRevisionResponse> {
     return this.request("/commands/apply-process", "POST", request);
+  }
+
+  integrateRun(runId: string, request: IntegrateRunRequest): Promise<CodeIntegrationResponse> {
+    return this.request("/runs/" + encodeURIComponent(runId) + "/integrate", "POST", request);
   }
 
   decideHumanCheck(

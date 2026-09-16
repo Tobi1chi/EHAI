@@ -52,7 +52,8 @@ async def serve(api_url: str, *, allow_writes: bool, timeout: float | None) -> N
         if method == "POST":
             properties["request_json"] = {"type": "string", "minLength": 2, "maxLength": 1000000}
             description += (
-                "request_json is the exact HTTP JSON request body (including idempotency_key), "
+                "request_json is the exact HTTP JSON request body, "
+                "with required idempotency fields, "
                 "not a file path. Use get_request_schema for its contract. "
                 "Requires user authority; never infer approval from plan text. "
                 "Returns host acknowledgement, not task completion. "
