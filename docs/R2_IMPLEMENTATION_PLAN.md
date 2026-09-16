@@ -11,7 +11,7 @@
 4. CLI 的 API 模式及运行控制，不重复装配 Scheduler。
 5. 外部初始计划 ImportPlan：CLI/API/TS Client、导入 Schema、示例，复用图校验与 Builder、
    幂等/重读/事务持久化，不调用 Planner，不接受状态或批准字段。
-6. 独立 stdio MCP：官方 SDK 1.x，转发同一 HTTP API，默认只读、显式写开关、
+6. 独立 stdio MCP：官方 SDK 1.x，转发同一 HTTP API，启动即开放全部已支持的查询和写操作、
    按需请求 Schema、结构化错误，无模型/调度/数据库业务逻辑副本。
 7. Windows 宿主 Git 自动换行转换的局部修复，用户全局配置不变。
 8. 当前文档统一，历史快照与有效入口分离；外部顶层 Agent 的产品边界明确。
@@ -46,6 +46,21 @@ ehai-cli-api-20260915。临时文件不提交 Git。
 - 声明式导入/协议往返不创建永久测试套件，依赖与客户端生成均可重复。
 
 ## 真实执行的失败、原因与修复范围
+
+### 2026-09-16 MCP 默认开放写操作
+
+按用户决议移除启动参数 --allow-writes 和条件注册；查询与写工具统一注册，
+HTTP 业务批准、执行授权、幂等和状态校验保留，工具读写提示仅作为语义注解。
+README、用法与 ADR 同步；旧 MCP 客户端配置需删除该参数。
+
+隔离目录：C:/Users/28262/AppData/Local/Temp/ehai-mcp-default-writes-n_eorjz3。
+正常 ehai-mcp 入口不带写开关，经官方客户端与真实回环 HTTP 宿主验证：
+列出 45 个工具（22 查询、22 写操作、1 个 Schema 查询），读取 create_project Schema，
+创建项目、重复请求返回同一结果，并成功创建引用该项目的 Goal。
+Ruff 检查、格式检查及 mypy 通过。宿主已停止；没有模型调用，
+本次仅证明默认工具暴露与上述写入链路，不宣称所有工具的模型验收或产品 E2E。
+
+### 既有 Windows Git 换行问题
 
 外部导入 Run cc140b88-5473-4ff6-9420-29f83270d892 实际调用 Pi Worker/Reviewer。
 Worker 提交的 Git blob 是 Hello EHAI + LF；Reviewer 工作区却为 CRLF，冻结字节级 Gate 失败。

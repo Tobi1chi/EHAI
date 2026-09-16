@@ -24,7 +24,7 @@ def _result(value: JsonValue, *, error: bool = False) -> CallToolResult:
     )
 
 
-async def serve(api_url: str, *, allow_writes: bool, timeout: float | None) -> None:
+async def serve(api_url: str, *, timeout: float | None) -> None:
     """Expose a fixed route allowlist; authoritative requests and state live on the HTTP host."""
     document = await asyncio.to_thread(
         request_api, api_url, "GET", "/openapi.json", timeout=timeout, unwrap=False
@@ -33,13 +33,12 @@ async def serve(api_url: str, *, allow_writes: bool, timeout: float | None) -> N
         raise ValueError("Host did not provide an OpenAPI document")
     openapi = cast(dict[str, Any], document)
     routes = {name.replace("-", "_"): ("GET", "/api/v1" + path) for name, path in _QUERIES.items()}
-    if allow_writes:
-        routes.update(
-            {
-                name.replace("-", "_"): ("POST", "/api/v1" + path)
-                for name, (path, _) in _COMMANDS.items()
-            }
-        )
+    routes.update(
+        {
+            name.replace("-", "_"): ("POST", "/api/v1" + path)
+            for name, (path, _) in _COMMANDS.items()
+        }
+    )
     tools: list[Tool] = []
     for name, (method, path) in routes.items():
         operation = openapi["paths"].get(path, {}).get(method.lower())
@@ -173,15 +172,10 @@ async def serve(api_url: str, *, allow_writes: bool, timeout: float | None) -> N
 def main() -> int:
     parser = argparse.ArgumentParser(description="EHAI stdio MCP adapter for an existing HTTP host")
     parser.add_argument("--api-url", required=True)
-    parser.add_argument(
-        "--allow-writes", action="store_true", help="expose authorized write operations"
-    )
     parser.add_argument("--api-timeout-seconds", type=float, default=None)
     args = parser.parse_args()
     try:
-        asyncio.run(
-            serve(args.api_url, allow_writes=args.allow_writes, timeout=args.api_timeout_seconds)
-        )
+        asyncio.run(serve(args.api_url, timeout=args.api_timeout_seconds))
     except KeyboardInterrupt:
         return 130
     except (ApiCommandError, ValueError, OSError) as error:

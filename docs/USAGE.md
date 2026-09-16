@@ -1,6 +1,6 @@
 # EHAI 当前用法
 
-更新：2026-09-15。能力成熟度见 [STATUS](STATUS.md)，历史用法不作为当前参数说明。
+更新：2026-09-16。能力成熟度见 [STATUS](STATUS.md)，历史用法不作为当前参数说明。
 
 ## 安装与私有 Pi 配置
 
@@ -180,7 +180,7 @@ uv run ehai --api-url http://127.0.0.1:8000 integrate-run --run-id <run-id> --ex
 ~~~
 
 对应 POST /api/v1/runs/{run_id}/integrate；请求体只有 expected_process_revision_id。
-MCP 名称为 integrate_run，仍需 --allow-writes。调用后宿主自动选择当前图中已完成且
+MCP 名称为 integrate_run，启动即可调用。调用后宿主自动选择当前图中已完成且
 所属分支已选定的代码成果，从 Run 固定 Git 基线合并；Run 必须 paused/completed 且
 没有未结束的 Attempt。被删除、重置、未完成、未选中分支的成果不会选入。
 输入基线引用了未选中或已被替代成果时拒绝整合，要求重新执行受影响节点。
@@ -255,13 +255,12 @@ NODE_GATE_FINAL_CONFLICT 返回节点键与修复入口。过程模式不暴露�
 
 ~~~powershell
 uv run ehai-mcp --api-url http://127.0.0.1:8000
-uv run ehai-mcp --api-url http://127.0.0.1:8000 --allow-writes
 ~~~
 
 使用官方 Python MCP SDK 1.x，uv.lock 固定实际版本；[上游维护分支](https://github.com/modelcontextprotocol/python-sdk/tree/v1.x)。
 本轮支持 stdio，不另开 MCP HTTP 监听、不启动 EHAI 服务。协议 stdout 专用，诊断在 stderr。
-默认只列出只读工具；--allow-writes 才注册写工具，直接调用未授权工具也拒绝。
-该开关不是对具体目标、方案或执行的批准。
+启动即列出全部已支持的查询和写工具，不设 MCP 读写开关。
+工具可调用不等于方案已批准或执行已授权；这些业务校验仍由 HTTP 宿主负责。
 
 工具名对应 CLI 名称的下划线形式。GET 工具接收路径 ID；写工具接收路径 ID 和 request_json，
 后者是原 HTTP JSON 请求体字符串，不是文件路径。通过 get_request_schema(tool_name)
@@ -274,7 +273,7 @@ uv run ehai-mcp --api-url http://127.0.0.1:8000 --allow-writes
 
 通用 stdio 客户端可配置 command=uv，args 为
 ["run","--directory","C:/work/EHAI","ehai-mcp","--api-url","http://127.0.0.1:8000"]；
-需要写工具时明确追加 --allow-writes。各外部产品的配置文件格式遵循其自身文档。
+旧配置中的 --allow-writes 参数需移除。各外部产品的配置文件格式遵循其自身文档。
 
 当前 API 无新增认证层，默认仅回环使用，不直接暴露公网。模型 key 留在宿主，不传给 MCP 客户端。
 静态检查和正常入口试用范围见 [STATUS](STATUS.md)。

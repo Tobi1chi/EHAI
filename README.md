@@ -27,7 +27,7 @@ uv run ehai-mcp --help
 
 - 本地 CLI：讨论/导入/批准，再 execute-plan 前台执行；resume-session 恢复。
 - API 客户端：ehai --api-url http://127.0.0.1:8000，复用规划、执行控制和查询命令。
-- 独立 MCP：ehai-mcp --api-url http://127.0.0.1:8000，默认只读；明确授权时加 --allow-writes。
+- 独立 MCP：ehai-mcp --api-url http://127.0.0.1:8000，启动即开放全部已支持的查询和写操作，无读写开关。
 
 HTTP/MCP 客户端不启动后台服务，需先运行 ehai-api。模型凭证只保留在宿主私有环境，
 不提交 Git。Pi 是按需子进程，不需要独立的 Pi HTTP 服务。

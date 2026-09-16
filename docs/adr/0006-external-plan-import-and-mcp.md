@@ -10,7 +10,8 @@ HTTP、CLI 与 TS Client 同步生成导入契约。
 
 MCP 独立 stdio 进程只转发已有 HTTP API，不直接写库、启动调度或维护模型循环。
 使用官方 MCP SDK 1.x 的维护接口，依赖上界 <2，实际锁定版本见 uv.lock；不手写协议。
-默认只读，--allow-writes 显式开放写工具。写工具接收 HTTP request_json，
+2026-09-16 调整：启动即开放全部已支持的查询和写工具，移除 MCP 读写开关。
+方案批准、执行授权和状态校验仍由 HTTP 宿主负责。写工具接收 HTTP request_json，
 通过 get_request_schema 按需取契约，减少重复模型上下文并保留 HTTP 作为参数真相来源。
 没有根据错误切换 Schema、关闭模型 strict 或隐式重试。
 
