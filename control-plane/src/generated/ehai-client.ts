@@ -138,12 +138,22 @@ export type PlanGraph = {
 
 export type ProcessRevisionSource = "run_started" | "legacy_snapshot" | "planner_adjustment";
 
+export type BlockChange = {
+  readonly block_id: Id;
+  readonly version: number;
+  readonly previous_node_id: NullableId;
+  readonly node_id: NullableId;
+  readonly change: "added" | "modified" | "removed" | "unchanged";
+  readonly changed_fields: ReadonlyArray<string>;
+};
+
 export type ProcessRevision = {
   readonly process_revision_id: Id;
   readonly run_id: Id;
   readonly version: number;
   readonly parent_process_revision_id: NullableId;
   readonly gate_owners: Readonly<Record<string, Id>>;
+  readonly block_changes: ReadonlyArray<BlockChange> | null;
   readonly source: ProcessRevisionSource;
   readonly reason: string;
   readonly created_at: UtcDateTime;

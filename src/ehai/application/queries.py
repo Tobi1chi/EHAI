@@ -22,6 +22,7 @@ from ehai.application.process_reviews import ProcessReviewView, process_review_h
 from ehai.application.run_results import RunResultView, project_run_result
 from ehai.application.sanitization import redact_sensitive_text, sanitize_json_object
 from ehai.domain.artifacts import Artifact, ArtifactKind
+from ehai.domain.blocks import BlockChange
 from ehai.domain.checking import (
     CheckKind,
     Checkpoint,
@@ -200,6 +201,7 @@ class ProcessRevisionView:
     created_at: datetime
     graph: PlanGraphView
     gate_owners: Mapping[ID, ID]
+    block_changes: tuple[BlockChange, ...] | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -977,6 +979,7 @@ def _process_revision_view(process: ProcessRevision) -> ProcessRevisionView:
         parent_process_revision_id=process.parent_process_revision_id,
         source=process.source,
         gate_owners=process.gate_owners,
+        block_changes=process.block_changes,
         reason=process.reason,
         created_at=process.created_at,
         graph=_plan_graph_view(

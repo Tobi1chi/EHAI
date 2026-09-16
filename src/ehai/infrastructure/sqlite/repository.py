@@ -9,6 +9,7 @@ from datetime import datetime
 
 from ehai import ID, format_utc_datetime, json_dumps, json_loads, new_id, parse_utc_datetime
 from ehai.application.ports import CommandReceipt, StateConflictError, StoredEvent
+from ehai.application.process_blocks import initial_block_changes, validate_block_changes
 from ehai.application.process_changes import validate_process_gate_preservation
 from ehai.application.process_obligations import ProcessObligationMapping
 from ehai.domain.adoptions import ResultAdoption
@@ -804,6 +805,7 @@ class SQLiteCurrentStateRepository:
             source_documents=source_documents,
         )
         self._validate_retained_process_selections(run.run_id, current, revision.graph)
+        validate_block_changes(previous, revision)
         self._connection.execute("SAVEPOINT publish_process_revision")
         try:
             self._insert_process_members(current, revision.graph)
@@ -1135,6 +1137,7 @@ class SQLiteCurrentStateRepository:
                 created_at=run.created_at,
                 reason="Execution starts from the original approved plan",
                 source=ProcessRevisionSource.RUN_STARTED,
+                block_changes=initial_block_changes(plan_revision),
             )
             self._connection.execute(
                 """
@@ -2296,6 +2299,7 @@ class SQLiteCurrentStateRepository:
             raise PersistenceConflictError(
                 "ProcessDraft candidate must be the immediate successor of its parent"
             )
+        validate_block_changes(parent, candidate)
         approved = self._required_plan_revision(draft.base_execution_plan.plan_revision_id)
         if _process_approval_identity(approved) != _process_approval_identity(
             draft.base_execution_plan

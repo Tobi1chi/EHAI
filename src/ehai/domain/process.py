@@ -9,6 +9,7 @@ from enum import StrEnum
 from types import MappingProxyType
 
 from ehai import ID, normalize_id
+from ehai.domain.blocks import BlockChange, BlockChangeKind
 from ehai.domain.planning import (
     Branch,
     PlanNode,
@@ -43,6 +44,7 @@ class ProcessRevision:
     source: ProcessRevisionSource
     parent_process_revision_id: ID | None = None
     gate_owners: Mapping[ID, ID] = field(default_factory=dict)
+    block_changes: tuple[BlockChange, ...] | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "process_revision_id", normalize_id(self.process_revision_id))
@@ -90,6 +92,26 @@ class ProcessRevision:
                 "Process Gate bindings must cover each current Gate owner exactly once"
             )
         object.__setattr__(self, "gate_owners", MappingProxyType(bindings))
+        if self.block_changes is not None:
+            changes = tuple(self.block_changes)
+            if not all(isinstance(item, BlockChange) for item in changes):
+                raise TypeError("Process block_changes must contain BlockChange values")
+            current_ids = [item.node_id for item in changes if item.node_id is not None]
+            previous_ids = [
+                item.previous_node_id for item in changes if item.previous_node_id is not None
+            ]
+            if (
+                len({item.block_id for item in changes}) != len(changes)
+                or len(set(current_ids)) != len(current_ids)
+                or len(set(previous_ids)) != len(previous_ids)
+                or set(current_ids) != {node.plan_node_id for node in self.graph.nodes}
+            ):
+                raise ValueError("Process block changes must cover its nodes exactly once")
+            if self.version == 1 and any(
+                item.change is not BlockChangeKind.ADDED for item in changes
+            ):
+                raise ValueError("A process baseline can only anchor added blocks")
+            object.__setattr__(self, "block_changes", changes)
 
 
 def process_approval_identity(plan: PlanRevision) -> tuple[object, ...]:

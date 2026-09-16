@@ -7,6 +7,7 @@ from datetime import datetime
 
 from ehai import ID, JsonValue, format_utc_datetime, json_dumps, json_loads, parse_utc_datetime
 from ehai.domain.artifacts import Artifact
+from ehai.domain.blocks import BlockChange, BlockChangeKind
 from ehai.domain.checking import (
     CheckKind,
     Checkpoint,
@@ -158,6 +159,11 @@ def encode_process_revision(revision: ProcessRevision) -> str:
             "source": revision.source.value,
             "parent_process_revision_id": revision.parent_process_revision_id,
             "gate_owners": {str(key): value for key, value in revision.gate_owners.items()},
+            "block_changes": (
+                None
+                if revision.block_changes is None
+                else [item.to_document() for item in revision.block_changes]
+            ),
         }
     )
 
@@ -181,6 +187,28 @@ def decode_process_revision(snapshot: str) -> ProcessRevision:
             if "gate_owners" in document
             else {}
         ),
+        block_changes=(
+            None
+            if document.get("block_changes") is None
+            else tuple(
+                _decode_block_change(item)
+                for item in _object_list(document, "block_changes", "BlockChange")
+            )
+        ),
+    )
+
+
+def _decode_block_change(document: Mapping[str, JsonValue]) -> BlockChange:
+    fields = document.get("changed_fields")
+    if not isinstance(fields, list):
+        raise ValueError("Block changed_fields must be an array")
+    return BlockChange(
+        block_id=ID(_string(document, "block_id")),
+        version=_integer(document, "version"),
+        previous_node_id=_optional_id(document, "previous_node_id"),
+        node_id=_optional_id(document, "node_id"),
+        change=BlockChangeKind(_string(document, "change")),
+        changed_fields=tuple(_json_string(item, "changed field") for item in fields),
     )
 
 

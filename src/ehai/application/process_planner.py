@@ -25,6 +25,7 @@ from ehai.application.planner import (
     PlanNodeTemplate,
     PlanTemplate,
 )
+from ehai.application.process_blocks import build_block_changes
 from ehai.domain.planning import (
     Branch,
     BranchStatus,
@@ -173,6 +174,15 @@ def build_process_proposal(
         source=ProcessRevisionSource.PLANNER_ADJUSTMENT,
         parent_process_revision_id=previous.process_revision_id,
         gate_owners=gate_owners,
+        block_changes=build_block_changes(
+            previous,
+            candidate_plan,
+            {
+                node_ids[node.key]: old_id
+                for node in template.nodes
+                if (old_id := _existing_id(node.key, previous_nodes)) is not None
+            },
+        ),
     )
 
 

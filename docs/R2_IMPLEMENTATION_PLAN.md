@@ -1,6 +1,6 @@
 # 当前实施与验证记录
 
-更新：2026-09-15。旧逐日记录、原始 Run ID 和历史试验保留于 [归档](history/R2_IMPLEMENTATION_PLAN.md)。
+更新：2026-09-16。旧逐日记录、原始 Run ID 和历史试验保留于 [归档](history/R2_IMPLEMENTATION_PLAN.md)。
 本页只记录当前代码对应的能力与本批证据，阶段结论见 [STATUS](STATUS.md)。
 
 ## 本批交付
@@ -66,3 +66,34 @@ Run 最终 paused，仍有人工介入；未通过完整复测，不把独立诊
 Ruff、格式、mypy、Schema/Client 生成、TS typecheck/build 已执行。
 MCP/导入入口已有正常证据；完整 Pi 长运行、跨批准接续和唯一产品 E2E 未完成。
 这些未完成事项不能通过删旧文档、增加入口或标记阶段完成消失。
+
+## 2026-09-16：Block 版本和变更清单
+
+用户结果：在过程草稿和历史版本查询中看清哪些任务被修改/删除，哪些下游因输入变化
+失去旧执行身份，为成果与 Git 接续提供明确节点对应关系。block 指计划节点。
+
+- 输入：前一过程版本、编译后的候选图、Planner 保留的旧节点键。
+- 输出：block_changes，包括稳定 block_id、version、前后节点 ID、change、changed_fields。
+- 所有权：宿主编译器生成，SQLite 在草稿保存和过程应用时重新核对图、版本及对应关系。
+  不新增模型填写字段，不更改 Pi 工具输入 Schema、角色权限或独立批准审查。
+- 失败：身份重复、跨图引用、清单与实际图不符被拒绝；不根据标题推断对应。
+  历史缺失字段读取为 null，首次新调整以旧节点为追踪起点，不重写旧快照。
+- 入口：既有 get-process-draft、get-run-process-drafts、get-process-revision；
+  CLI/HTTP/MCP 共用查询模型，公开 Schema 和生成的 TS 类型同步。
+
+验证目录：C:/Users/28262/AppData/Local/Temp/ehai-block-changes-186dfa196c4d498c9b4bb7ae4b97def1。
+CLI 创建、导入并批准一份仅供本地检查的 A→B→C、独立 D、最终 R 的计划；
+生产应用服务以 background_start 建立 pending Run，没有启动 Runtime 或派发 Worker。
+Run a69ca211-9bf5-4ae2-9a8f-1b5cfc98415d 的初始过程版本
+b3118010-b774-4480-8251-47fb27e5eca5 经 CLI 重读返回 5 个 added block。
+
+对该真实导入图直接调用生产过程编译器观察两次候选变化：修改 B 时 B/C/R 版本为 2，
+A/D 为 1；随后删除 B，B 保留版本 2 的 removed 记录，C/R 增为 3，A/D 仍为 1。
+两次候选均通过清单核对，codec 编解码后对象相等；候选未作批准或应用。
+生产 create_local_app 的 HTTP 查询通过 ASGI transport 返回新清单，公开响应 Schema 校验通过；
+复制旧试用数据库到隔离目录后，同一 HTTP 查询返回 block_changes=null，Schema 同样通过。
+原历史数据库和原 Run 未恢复或修改。
+
+Ruff、格式、mypy、客户端生成及 TS typecheck/build 通过。本轮没有模型调用、Git 成果
+重整合或真实 Pi 修改过程的重跑，不把无模型编译/查询检查称为产品 E2E 或 MCP 模型调用证据。
+按 block 自动回退/整合、完整跨批准后继 Run 仍未实现；Token/费用硬限额按用户决定暂缓。

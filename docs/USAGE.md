@@ -132,7 +132,46 @@ get-run-trajectory-reviews 提供意见和覆盖序号。
 控制结果 requested / suspended / not_suspended 不等于 Run 状态；还须看节点、Attempt 与 intervention。
 独立节点可继续；人工回复前不自动恢复。脏工作区只作证据，不伪装成已确认 handoff。
 
-## 草稿 Gate
+## Block 变更清单
+
+block 是计划图中的任务节点，不是代码 diff hunk。通过已有入口读取：
+
+~~~powershell
+uv run ehai --api-url http://127.0.0.1:8000 get-process-draft --draft-id <draft-id>
+uv run ehai --api-url http://127.0.0.1:8000 get-process-revision --process-revision-id <revision-id>
+~~~
+
+前者的 candidate.block_changes、后者的 block_changes 给出同一份宿主生成的清单；
+本地 CLI、HTTP 和对应 MCP 查询共用该投影。规划尚未完成时 candidate 为 null。
+
+| 字段 | 含义 |
+| --- | --- |
+| block_id | 逻辑任务标识，沿保留旧节点键的修改连续追踪 |
+| version | 初始为 1；执行身份变化时递增，未变或删除时保留原版本 |
+| previous_node_id / node_id | 本次调整前/后的执行节点 ID；新增无前者，删除无后者 |
+| change | added、modified、removed、unchanged；这是变更类型，不是执行状态 |
+| changed_fields | 修改的定义字段、input_scope，或仅重置执行身份的 execution_identity |
+
+新增 Run 的基线列出全部 added。过程编译器使用草稿中的旧节点 UUID 键追踪修改；
+改用全新键就是删除旧 block 并新增 block，不根据标题猜测对应关系。
+拆分/合并时可保留其中一个旧键，其余部分明确新增/删除，不声称多对一成果自动继承。
+缺少历史清单的旧版本返回 block_changes=null；首次新调整从该旧版本节点建立追踪起点，
+不补造更早的版本关系。清单在草稿生成时冻结，旧记录不随之后的执行状态改变。
+
+例如 A → B → C，另有独立 D：修改 B 会保留 B 的 block_id 并递增版本，
+C 因输入变化也获得新版本/节点身份；A、D 保持身份。删除 B 则列出 removed，
+所有受到新输入影响的下游仍由现有编译器重置。通过这些节点 ID 关联 get-trace 中的
+Attempt 和 Artifact；也可用 HTTP GET /api/v1/runs/{run_id}/artifacts 查询成果。
+代码成果内容中的 base_commit/commit
+描述 Run 基线和结果快照；结果可能包含上游改动，不能将其当作单 block 的独立补丁。
+
+清单只说明变化，不判定批准范围或允许复用。unchanged 仍需现有独立审查核对成果，
+modified/removed 的历史记录仍保留。应用仍需 review-process → apply-process，
+批准需求、接口、Gate、权限发生变化时不能通过清单绕过重新批准。
+清单覆盖节点定义及其输入，不替代整个方案文档、Phase 等其他结构的差异审查。
+本次未提供按 block 自动 revert/cherry-pick、Git 重整合或跨批准后继 Run 启动。
+
+## 草稿 Gate 工具
 
 set_node_gate/set_final_gate 完整替换条件；[] 清命令、null 清人工条件，两者不能同时为空。
 remove_node_gate/remove_final_gate 是明确删除，保留图结构；必需 Gate 仍由 finish_plan 校验。

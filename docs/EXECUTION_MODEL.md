@@ -1,6 +1,6 @@
 # 执行模型
 
-更新：2026-09-15。用户/外部 Agent → Planner 或外部导入 → 校验草稿 → 明确批准 →
+更新：2026-09-16。用户/外部 Agent → Planner 或外部导入 → 校验草稿 → 明确批准 →
 执行配置授权 → Orchestrator/Scheduler → Worker → Reviewer/Check/Gate → 成果查询。
 
 ## 实例与会话
@@ -31,6 +31,9 @@ reply-intervention 只解决对应问题，不扩权。周期审查默认 600 �
 仅建议；显式 suspend-attempt 需匹配 Attempt、review_id 和覆盖序号，不自动采纳。
 
 批准内过程调整使用同一 Run 的提案/独立审查/应用路径。
+过程版本保存 block_changes：稳定 block_id、版本、前后执行节点与字段变化；
+下游输入变化仍产生新执行身份。它描述修改/删除，不自行批准或授权 Git 成果复用。
+旧版本未记录的清单为 null；不会从标题推断历史。使用细节见 Usage 的 Block 变更清单。
 改变批准边界后的后继 Run 需要明确成果、未决事项和预算接续；部分内部结构已有，
 正常启动事务与完整验收未完成。
 
