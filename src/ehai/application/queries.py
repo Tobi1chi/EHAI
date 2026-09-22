@@ -6,7 +6,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
 from ehai import ID, JsonValue, format_utc_datetime, normalize_id
 from ehai.application.agent_trace import (
@@ -60,6 +60,12 @@ from ehai.domain.workers import (
 )
 
 ReadSessionFactory = Callable[[], ReadSession]
+
+if TYPE_CHECKING:
+    from ehai.application.inbox import InboxDetailView, InboxKind, InboxListView
+    from ehai.application.project_queries import ProjectDetailView, ProjectListView
+    from ehai.application.runtime_control import RuntimeControlService
+
 _MAX_TRACE_SESSION_EVENTS = 512
 _MAX_TRACE_SESSION_PAYLOAD_BYTES = 8 * 1024
 _TRACE_SESSION_EVENT_TYPES = frozenset(
@@ -499,6 +505,46 @@ class QueryService:
         with self._read_session_factory() as session:
             run = _required_run(session.states.get_run(normalized_id), normalized_id)
             return _run_view(run, session)
+
+    def list_projects(self) -> ProjectListView:
+        """Discover projects and their goal/Run counts in a single snapshot."""
+        from ehai.application.project_queries import list_projects
+
+        with self._read_session_factory() as session:
+            return list_projects(session)
+
+    def list_inbox(
+        self,
+        *,
+        project_id: ID | None = None,
+        run_id: ID | None = None,
+        runtime_control: RuntimeControlService | None = None,
+    ) -> InboxListView:
+        """Combine durable requests with explicitly marked live Worker observations."""
+        from ehai.application.inbox import InboxQuery
+
+        with self._read_session_factory() as session:
+            return InboxQuery(session, runtime_control).list_items(project_id, run_id)
+
+    def get_inbox_item(
+        self,
+        kind: InboxKind,
+        request_id: ID,
+        *,
+        runtime_control: RuntimeControlService | None = None,
+    ) -> InboxDetailView:
+        """Read current action eligibility or the retained disposition for a request."""
+        from ehai.application.inbox import InboxQuery
+
+        with self._read_session_factory() as session:
+            return InboxQuery(session, runtime_control).get(kind, request_id)
+
+    def get_project(self, project_id: ID) -> ProjectDetailView:
+        """Return project navigation, current results and historical execution origins."""
+        from ehai.application.project_queries import get_project
+
+        with self._read_session_factory() as session:
+            return get_project(session, project_id)
 
     def get_planning_conversation(self, conversation_id: ID) -> PlanningConversationView:
         normalized_id = normalize_id(conversation_id)

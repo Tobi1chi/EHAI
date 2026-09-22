@@ -58,6 +58,11 @@ from ehai.application.planner import (
     discussion_proposal_criteria,
     require_p1_criteria,
 )
+from ehai.application.planner_capacity import (
+    PlannerCapacity,
+    async_planning_operation,
+    planning_operation,
+)
 from ehai.application.planning_dialogue import PlanningConversationView, planning_conversation
 from ehai.application.ports import CommandReceipt, UnitOfWork
 from ehai.application.process_control import (
@@ -162,6 +167,11 @@ class ExecutionService:
         id_factory: Callable[[], ID] = new_id,
         background_start: bool = False,
         planning_workspace: str | None = None,
+        planner_capacity: int = 1,
+        project_configuration_resolver: Callable[
+            [ID, dict[str, JsonValue] | None], dict[str, JsonValue]
+        ]
+        | None = None,
     ) -> None:
         self._uow_factory = uow_factory
         self._planner = planner
@@ -172,7 +182,14 @@ class ExecutionService:
         self._id_factory = id_factory
         self._background_start = background_start
         self._planning_workspace = planning_workspace
+        self._planner_capacity = PlannerCapacity(planner_capacity)
+        self._project_configuration_resolver = project_configuration_resolver
         self._execution_lock = Lock()
+
+    @property
+    def planner_capacity(self) -> PlannerCapacity:
+        """The host's shared admission limit; distinct from Worker execution capacity."""
+        return self._planner_capacity
 
     @property
     def orchestrator(self) -> Orchestrator:
@@ -250,6 +267,7 @@ class ExecutionService:
             uow.commit()
             return goal
 
+    @planning_operation
     def propose_plan(self, command: ProposePlan) -> PlanRevision:
         """Ask the Planner for an unapproved contract and graph proposal."""
         return self._create_plan_proposal(
@@ -341,6 +359,7 @@ class ExecutionService:
             uow.commit()
             return proposal.plan_revision
 
+    @planning_operation
     def propose_process(self, command: ProposeProcess) -> ProcessDraft:
         """Retain a single generation attempt; never publish the proposed process."""
         prepared = self._prepare_process_draft(command, asynchronous=False)
@@ -366,6 +385,7 @@ class ExecutionService:
                 raise
             return retained
 
+    @async_planning_operation
     async def propose_process_async(self, command: ProposeProcess) -> ProcessDraft:
         """Retain one asynchronously cancellable process-draft generation attempt."""
         prepared = self._prepare_process_draft(command, asynchronous=True)
@@ -566,6 +586,7 @@ class ExecutionService:
             uow.commit()
             return candidate
 
+    @planning_operation
     def review_process(self, command: ReviewProcess) -> ProcessReviewView:
         """Retain the independent model review; its conclusion does not apply the candidate."""
         prepared = self._prepare_process_review(command, asynchronous=False)
@@ -584,6 +605,7 @@ class ExecutionService:
                 raise
             return result
 
+    @async_planning_operation
     async def review_process_async(self, command: ReviewProcess) -> ProcessReviewView:
         """Retain one independently reviewable result from a cancellable async model call."""
         prepared = self._prepare_process_review(command, asynchronous=True)
@@ -696,6 +718,7 @@ class ExecutionService:
             )
         )
 
+    @planning_operation
     def discuss_plan(self, command: DiscussPlan) -> PlanningConversationView:
         requested_criteria = (
             require_p1_criteria(command.criteria, "Planning discussion") if command.criteria else ()
@@ -957,6 +980,7 @@ class ExecutionService:
                 f"{bounded_redacted_text(str(error), max_bytes=2000)}"
             ) from error
 
+    @planning_operation
     def replan_plan(self, command: ReplanPlan) -> PlanRevision:
         """Create a new draft revision without mutating its approved base or history."""
         with self._uow_factory() as uow:
@@ -1213,6 +1237,11 @@ class ExecutionService:
                         "P1 permits one Run per PlanRevision"
                     )
                 config = command.authorized_execution_config
+                project_configuration = (
+                    None
+                    if self._project_configuration_resolver is None
+                    else self._project_configuration_resolver(goal.project_id, config)
+                )
                 budget_document = None if config is None else config.get("goal_worker_budget")
                 if budget_document is not None and not isinstance(budget_document, dict):
                     raise ApplicationError("goal_worker_budget must be an object or null")
@@ -1228,6 +1257,16 @@ class ExecutionService:
                     predecessor_run_id=command.predecessor_run_id,
                 )
                 uow.states.put_run(run)
+                if project_configuration is not None:
+                    uow.events.append(
+                        Event(
+                            type=EventType.RUN_CONFIGURATION_CAPTURED,
+                            run_id=run.run_id,
+                            correlation_id=run.run_id,
+                            occurred_at=self._clock(),
+                            payload={"project_configuration": project_configuration},
+                        )
+                    )
                 if source is not None and source_process is not None:
                     selections = json_loads(command.result_adoptions_json)
                     assert isinstance(selections, list)
@@ -1267,6 +1306,7 @@ class ExecutionService:
                             payload={
                                 "run_id": run.run_id,
                                 "execution_config": command.authorized_execution_config,
+                                "project_configuration": project_configuration,
                                 "execution_config_fingerprint": _config_fingerprint(config_json),
                                 "authorization": {"explicit": True},
                             },

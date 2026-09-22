@@ -10,7 +10,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.requests import Request
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 
-from ehai import ID, JsonValue, json_dumps, normalize_id
+from ehai import ID, JsonValue, json_dumps, normalize_id, utc_now
 from ehai.application.commands import (
     ApplyProcess,
     ApprovePlan,
@@ -29,10 +29,19 @@ from ehai.application.commands import (
     ReviewProcess,
     StartRun,
 )
+from ehai.application.event_consumers import EventConsumerNotFoundError, EventConsumerService
+from ehai.application.inbox import InboxKind
+from ehai.application.notes import NoteService
 from ehai.application.orchestrator import OrchestrationError
 from ehai.application.plan_imports import PlanImportError, plan_import_schema
+from ehai.application.planner_capacity import PlannerCapacityExceeded
 from ehai.application.ports import StateConflictError
 from ehai.application.process_adjustments import ProcessAdjustments
+from ehai.application.project_configuration import (
+    ProjectConfigurationConflict,
+    ProjectConfigurationService,
+)
+from ehai.application.project_queries import RuntimeContextView
 from ehai.application.queries import QueryNotFoundError, QueryService
 from ehai.application.run_control import RunControlConflictError, RunControlError
 from ehai.application.runtime_control import RuntimeControlError, RuntimeControlService
@@ -47,6 +56,7 @@ from ehai.domain.checking import InvalidCheckRunTransition
 from ehai.domain.execution import InvalidAttemptTransition, InvalidRunTransition, RunStatus
 from ehai.domain.goal import GoalInvariantError
 from ehai.domain.planning import PlanInvariantError, PlanTransitionError
+from ehai.interfaces.event_consumers_api import build_event_consumers_router
 from ehai.interfaces.http_models import (
     ApplyProcessRequest,
     ApprovePlanRequest,
@@ -72,6 +82,8 @@ from ehai.interfaces.http_models import (
     SuspendAttemptRequest,
     UuidInput,
 )
+from ehai.interfaces.notes_api import build_notes_router
+from ehai.interfaces.project_configuration_api import create_project_configuration_router
 from ehai.interfaces.public_documents import public_json_value
 from ehai.interfaces.session_host import ExecutionConfig
 from ehai.interfaces.sse import create_event_stream_endpoint
@@ -163,10 +175,94 @@ def create_app(
     execution_config_validator: Callable[[ExecutionConfig], None] | None = None,
     artifact_root: str | None = None,
     code_integration: Callable[[ID, ID], dict[str, JsonValue]] | None = None,
+    runtime_context: Callable[[], RuntimeContextView] | None = None,
+    notes: NoteService | None = None,
+    event_consumers: EventConsumerService | None = None,
+    project_configuration: ProjectConfigurationService | None = None,
 ) -> FastAPI:
     """Create the additive P2 HTTP surface around already-constructed services."""
     app = FastAPI(title="EHAI Execution Plane", version="2")
     router = APIRouter(prefix="/api/v1")
+    if notes is not None:
+        router.include_router(build_notes_router(notes, execution_service, runtime_control))
+    if event_consumers is not None:
+        router.include_router(build_event_consumers_router(event_consumers))
+    if project_configuration is not None:
+        router.include_router(create_project_configuration_router(project_configuration))
+
+    @router.get(
+        "/planning/capacity",
+        response_model=DataResponse,
+        operation_id="getPlannerCapacity",
+        responses=_read_responses("PlannerCapacityResponse", "Current host planning admission"),
+    )
+    def get_planner_capacity() -> DataResponse:
+        return _response(execution_service.planner_capacity.snapshot())
+
+    @router.get(
+        "/inbox",
+        response_model=DataResponse,
+        operation_id="listInbox",
+        responses=_read_responses(
+            "InboxListResponse", "Current human requests and source availability"
+        ),
+    )
+    def list_inbox(
+        project_id: UuidInput | None = None, run_id: UuidInput | None = None
+    ) -> DataResponse:
+        return _response(
+            query_service.list_inbox(
+                project_id=None if project_id is None else _id(str(project_id)),
+                run_id=None if run_id is None else _id(str(run_id)),
+                runtime_control=runtime_control,
+            )
+        )
+
+    @router.get(
+        "/inbox/{kind}/{request_id}",
+        response_model=DataResponse,
+        operation_id="getInboxItem",
+        responses=_read_responses(
+            "InboxDetailResponse", "Human request actions or retained disposition"
+        ),
+    )
+    def get_inbox_item(kind: InboxKind, request_id: UuidInput) -> DataResponse:
+        return _response(
+            query_service.get_inbox_item(
+                kind, _id(str(request_id)), runtime_control=runtime_control
+            )
+        )
+
+    @router.get(
+        "/projects",
+        response_model=DataResponse,
+        operation_id="listProjects",
+        responses=_read_responses("ProjectListResponse", "Project discovery snapshot"),
+    )
+    def list_projects() -> DataResponse:
+        return _response(query_service.list_projects())
+
+    @router.get(
+        "/projects/{project_id}",
+        response_model=DataResponse,
+        operation_id="getProject",
+        responses=_read_responses("ProjectDetailResponse", "Goals, Runs and effective evidence"),
+    )
+    def get_project(project_id: UuidInput) -> DataResponse:
+        return _response(query_service.get_project(_id(str(project_id))))
+
+    @router.get(
+        "/runtime/context",
+        response_model=DataResponse,
+        operation_id="getRuntimeContext",
+        responses=_read_responses("RuntimeContextResponse", "Current host execution context"),
+    )
+    def get_runtime_context() -> DataResponse:
+        return _response(
+            RuntimeContextView(utc_now(), None, None, None, None)
+            if runtime_context is None
+            else runtime_context()
+        )
 
     @router.post(
         "/runs/{run_id}/integrate",
@@ -931,6 +1027,7 @@ def _install_error_handlers(app: FastAPI) -> None:
 
     @app.exception_handler(EntityNotFoundError)
     @app.exception_handler(QueryNotFoundError)
+    @app.exception_handler(EventConsumerNotFoundError)
     async def entity_not_found(request: Request, error: Exception) -> JSONResponse:
         del request
         code = (
@@ -940,7 +1037,25 @@ def _install_error_handlers(app: FastAPI) -> None:
         )
         return _error_response(404, code, str(error))
 
+    @app.exception_handler(PlannerCapacityExceeded)
+    async def planner_capacity_exceeded(
+        request: Request, error: PlannerCapacityExceeded
+    ) -> JSONResponse:
+        del request
+        return JSONResponse(
+            status_code=409,
+            content={
+                "error": {
+                    "code": "planner_capacity_exceeded",
+                    "message": str(error),
+                    "capacity": error.capacity,
+                    "in_use": error.in_use,
+                }
+            },
+        )
+
     @app.exception_handler(IdempotencyConflictError)
+    @app.exception_handler(ProjectConfigurationConflict)
     @app.exception_handler(RunControlConflictError)
     async def conflict(request: Request, error: Exception) -> JSONResponse:
         del request

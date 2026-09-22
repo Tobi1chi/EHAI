@@ -1,0 +1,287 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.ehai.local/v1/project-configuration.schema.json",
+  "title": "EHAI versioned project configuration contracts",
+  "$defs": {
+    "ProjectConfigurationSnapshot": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "project_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "version": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "workspace": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "execution_config_fingerprint": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "role_configuration_ref": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "static_rules": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "project_id",
+        "version",
+        "workspace",
+        "execution_config_fingerprint",
+        "role_configuration_ref",
+        "static_rules",
+        "created_at"
+      ]
+    },
+    "HostConfiguration": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "workspace": {
+          "type": "string"
+        },
+        "execution_config_fingerprint": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "role_configuration_ref": {
+          "type": "string"
+        },
+        "role_configuration": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "worker_kind": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "model": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "reasoning_effort": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "worker_kind",
+            "model",
+            "reasoning_effort"
+          ]
+        }
+      },
+      "required": [
+        "workspace",
+        "execution_config_fingerprint",
+        "role_configuration_ref",
+        "role_configuration"
+      ]
+    },
+    "UpdateProjectConfigurationRequest": {
+      "additionalProperties": false,
+      "description": "A complete replacement: empty static_rules clears rules in the new version only.",
+      "properties": {
+        "idempotency_key": {
+          "minLength": 1,
+          "title": "Idempotency Key",
+          "type": "string"
+        },
+        "expected_version": {
+          "minimum": 0,
+          "title": "Expected Version",
+          "type": "integer"
+        },
+        "workspace": {
+          "minLength": 1,
+          "title": "Workspace",
+          "type": "string"
+        },
+        "execution_config_fingerprint": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Execution Config Fingerprint"
+        },
+        "role_configuration_ref": {
+          "minLength": 1,
+          "title": "Role Configuration Ref",
+          "type": "string"
+        },
+        "static_rules": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 100,
+          "title": "Static Rules",
+          "type": "array"
+        }
+      },
+      "required": [
+        "idempotency_key",
+        "expected_version",
+        "workspace",
+        "execution_config_fingerprint",
+        "role_configuration_ref",
+        "static_rules"
+      ],
+      "title": "UpdateProjectConfigurationRequest",
+      "type": "object"
+    },
+    "HostConfigurationResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "data": {
+          "$ref": "#/$defs/HostConfiguration"
+        }
+      },
+      "required": [
+        "data"
+      ]
+    },
+    "ProjectConfigurationResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "data": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "project_id": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "configuration": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/ProjectConfigurationSnapshot"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "project_id",
+            "configuration"
+          ]
+        }
+      },
+      "required": [
+        "data"
+      ]
+    },
+    "ProjectConfigurationVersionsResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "data": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "project_id": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "versions": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/ProjectConfigurationSnapshot"
+              }
+            }
+          },
+          "required": [
+            "project_id",
+            "versions"
+          ]
+        }
+      },
+      "required": [
+        "data"
+      ]
+    },
+    "UpdateProjectConfigurationResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "data": {
+          "$ref": "#/$defs/ProjectConfigurationSnapshot"
+        }
+      },
+      "required": [
+        "data"
+      ]
+    },
+    "RunConfigurationResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "data": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "run_id": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "configuration": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/ProjectConfigurationSnapshot"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "run_id",
+            "configuration"
+          ]
+        }
+      },
+      "required": [
+        "data"
+      ]
+    }
+  }
+}

@@ -1,8 +1,226 @@
 # EHAI 当前用法
 
-更新：2026-09-16。能力成熟度见 [STATUS](STATUS.md)，历史用法不作为当前参数说明。
+更新：2026-09-22。能力成熟度见 [STATUS](STATUS.md)，历史用法不作为当前参数说明。
 首次用 0.1 开发项目，先按 [README 快速开始](../README.md#快速开始) 配置宿主并完成一个任务；
 本页补充控制、恢复、计划变更和成果接续的详细契约。
+
+同时管理多个仓库、配置各自 Planner 或限制规划并发，见 [多工作区后端](WORKSPACE_MANAGER.md)。
+原业务接口可通过管理地址加 `/workspaces/{workspace_id}` 前缀使用，批准、授权和恢复仍在对应核心完成。
+
+## 项目总览（P3.1）
+
+已有 API 宿主时，从项目入口发现目标、计划、Run 和成果：
+
+```powershell
+$Api = @('--api-url', 'http://127.0.0.1:8000')
+uv run ehai @Api get-runtime-context
+uv run ehai @Api list-projects
+uv run ehai @Api get-project --project-id '<project-id>'
+```
+
+`list-projects` 返回 `projects` 摘要列表；`get-project` 返回项目及其 `goals`，每个目标含
+`plans` 和 `runs`。Run 摘要含原始状态、当前 `process_revision_id`、`node_counts`、
+历史授权的 `configured_workspace`、实际 Attempt 的 `worker_endpoint_ids` 和
+`completed_results`。可用返回的 ID 继续调用 `get-run-plan`、`get-run-checks`、`get-result`
+或 `get-trace`；这些查询不启动 Worker，也不执行 Git 整合。
+
+`completed_results` 只列当前图中完成、分支已选定并具有匹配生产者 Gate 证据的节点。
+每项带 checkpoint、Gate、Attempt、可空 adoption ID 和成果元数据；跨 Run 接续保留
+Artifact 原始来源。没有匹配 Gate 的节点不会被当作已验证成果。元数据查询不重新验证
+磁盘字节或保证 Git 可整合；需要整合时仍使用 `integrate-run`。
+
+列表和详情的 `observed_at`、`event_offset` 标明只读快照的读取时间和事件位置。
+`get-runtime-context` 返回当前宿主工作区、Endpoint、执行配置指纹及调度健康；
+它与 Run 的历史授权信息分别呈现。未记录或未装配的值为 null，不能推断在线或已完成。
+历史 Endpoint ID 也不表示该 Endpoint 当前在线。不存在的项目返回 404，空项目返回空列表。
+
+沿用一宿主一工作区配置。不同仓库使用各自宿主、数据库、产物目录和 API 地址，
+调用方保留来源 API 地址与项目/Run ID 的组合，再向同一来源提交后续操作。
+不要让不同工作区的宿主共享执行数据库。Project 不自动绑定当前目录或授权新的仓库；
+本轮没有单宿主动态多仓库路由或跨宿主聚合服务。
+
+本地只读查询也支持 `list-projects` 和 `get-project`，沿用 `--database`、`--artifacts`
+参数；此时没有在线宿主事实，不能使用 `get-runtime-context`。
+MCP 对应工具为 `list_projects`、`get_project` 和 `get_runtime_context`；
+TypeScript Client 对应 `listProjects()`、`getProject(projectId)`、`getRuntimeContext()`。
+
+## 统一人工待办（P3.2）
+
+```powershell
+$Api = @('--api-url', 'http://127.0.0.1:8000')
+uv run ehai @Api list-inbox
+uv run ehai @Api list-inbox --project-id '<project-id>'
+uv run ehai @Api list-inbox --run-id '<run-id>'
+uv run ehai @Api get-inbox-item --kind human_check --request-id '<check-run-id>'
+```
+
+HTTP 为 `GET /api/v1/inbox?project_id=...&run_id=...` 和
+`GET /api/v1/inbox/{kind}/{request_id}`。两种筛选均可省略，同时提供时必须符合归属，
+否则 422；不存在的项目、Run 或待办返回 404。首版返回该宿主范围内的完整当前待办列表，
+没有分页或新的待办存储。`kind` 包含 `intervention`、`human_check`、`worker_request`、`note`。
+运行前便签可以只有项目/目标归属，因此 owner 的 Run、节点、Attempt 和 Run 状态允许 null。
+
+每项包含 `owner` 归属、问题、证据、源状态、`pending`、`actionable`、不可处理原因、
+`actions` 和 `next_step`。`request_token` 保留人工干预/验收原请求版本；Worker 请求为 null。
+列表按创建时间排序；Worker 请求没有持久创建时间，`created_at=null`，按宿主首次观察时间排序。
+历史详情可查询已处理或被后续批准明确处置的请求，`disposition` 保留操作者、原因和批准来源；
+这些旧请求不会重新进入当前列表，也不会被改写为旧 Gate 通过。
+
+按 `actions[].operation` 调用原操作，`arguments` 是已绑定的源 ID/token/判定值，
+`input_fields` 是用户仍需提供的字段；写入端会再次检查当前状态、证据及批准边界：
+
+| operation | 现有接口 |
+| --- | --- |
+| reply-intervention | POST /api/v1/interventions/{intervention_id}/reply |
+| decide-human-check | POST /api/v1/check-runs/{check_run_id}/decision |
+| resolve-worker-request | POST /api/v1/worker-requests/{worker_request_id}/resolve |
+| decline-worker-request | POST /api/v1/worker-requests/{worker_request_id}/decline |
+| add-note-message | POST /api/v1/notes/{note_id}/messages |
+| decide-note | POST /api/v1/notes/{note_id}/decisions |
+
+例如人工验收通过时，向 decision 提交 `idempotency_key`、原 `request_token`、
+`passed=true`、`actor` 和 `comment`；CLI 仍使用 `decide-human-check --passed`。
+回复干预不扩大批准，人工 Check 决定由核心继续评估 Gate。提交后重读待办和 Run；
+Run 已暂停时，普通回复不隐式恢复；人工 Check 需先明确恢复 Run 才能作出决定。
+
+外层 `observed_at` / `event_offset` 描述持久事实的只读快照；`worker_requests` 单独给出
+运行期观察时间及 `available` / `partial` / `unavailable`，并列出无法读取的 Attempt。
+它们不是同一原子快照。空列表且 Worker 来源不可用，不表示没有任何人工请求。
+本地 `--database` / `--artifacts` 模式可查询持久待办，Worker 来源明确为 unavailable。
+
+Worker 详情的 `worker_form.context` 只包含选定的请求字段，`resolution_schema` 给出
+发送到原 resolve 接口的 `resolution` 对象格式。输入问题保留问题 ID、选项和自由输入/秘密输入提示；
+命令批准只建议本次 accept，权限批准只建议明确列出的权限及 turn 范围。
+上下文缺失、脱敏/截断或仅提供不支持的授权范围时，表单给出不可回答原因，仍可明确拒绝。
+表单是该待办建议的回答子集，不覆盖原 Provider 的全部可选响应；旧 resolve 接口继续承担传输。
+
+Worker 请求 ID 和处理回执只在当前宿主进程有效。回答前重新核对源请求；相同幂等键不能用于
+不同的请求或答案。回答发送中或发送失败后结果未知时，详情禁用后续回答并要求核对 Run；
+不自动重发。宿主重启后的旧 Worker ID 不可用于重放，需重新查询当前请求。
+
+MCP 对应 `list_inbox(project_id, run_id)`（不筛选时参数显式为 null）及
+`get_inbox_item(kind, request_id)`。TS Client 对应 `listInbox({ projectId, runId })`、
+`getInboxItem(kind, requestId)`；筛选项均可省略。处理操作继续使用现有 Client 方法。
+
+## 便签讨论与明确决定（P3.2 后端）
+
+便签可以关联尚未运行的 Goal，也可以关联 Run 及其 Intervention/HumanCheck。
+每条便签保存问题、证据、来源批准/过程版本、消息和决定结果；普通消息只推进讨论。
+当前新入口使用 API 宿主，CLI 是同一接口的客户端。
+
+创建文件 `C:/private/note.json`：
+
+```json
+{"goal_id":"<goal-id>","actor":"user","question":"需要明确哪条实现路线？","evidence":"目前已确认的约束与证据"}
+```
+
+```powershell
+uv run ehai @Api create-note --file C:/private/note.json --idempotency-key note-001
+uv run ehai @Api list-notes --project-id '<project-id>'
+uv run ehai @Api get-note --note-id '<note-id>'
+```
+
+若便签要处理现有请求，创建时额外提供 `run_id`、`source_kind`（intervention 或 human_check）、
+`source_id` 和原 `source_token`，宿主核对归属与请求版本。公共创建 origin 仅允许 user/agent；
+Planner 工具生成的 origin=planner 和 actor=planner 由宿主固定。
+
+向 `add-note-message --note-id ... --file ... --idempotency-key ...` 提供
+`{"request_token":"<note-token>","actor":"user","message":"补充事实或回复"}`。
+每次消息产生新的 note request_token，下一次消息/决定使用新 token；旧 token 拒绝。
+`list-notes` 可按 project/goal/run 筛选，`--include-resolved` 包含已关闭讨论。
+
+向 `decide-note --note-id ... --file ... --idempotency-key ...` 提供：
+
+```json
+{"request_token":"<latest-note-token>","actor":"user","action":"continue","message":"已核实，可以继续","passed":true}
+```
+
+| action | 实际后续行为 |
+| --- | --- |
+| resolve | 关闭讨论，不改变执行或批准 |
+| continue | 仅针对绑定的原 Intervention/HumanCheck，调用原回复/判定命令；人工 Check 必须明确 passed，其他情形省略 passed 或为 null |
+| propose_process | 对明确暂停的 Run 调用现有过程 Planner，返回实际 ready 草稿；后续仍须 review-process / apply-process |
+| revise_plan | 将便签问题、证据、讨论和决定传入现有 discuss-plan，保存规划会话/可能的草稿；后续批准和执行授权仍独立 |
+
+修改方案前先明确暂停来源 Run；普通讨论、便签创建不会擅自暂停全部执行。
+`propose_process` / `revise_plan` 需要对应 Planner 装配，可能调用模型；单个规划输入仍受现有
+8000 字符限制，超出时需整理为精简后续便签。新增需求/接口/Gate/权限不会因便签决定隐式获批。
+结果记录在 `decision.result`；讨论完成与计划已批准、Run 已完成分别读取。
+
+决定先记录操作意图，再以固定幂等键调用核心，最后持久保存结果。
+结果未知时不重放模型/业务操作；同键再次请求只核对已有下游持久回执，已有确定结果时收敛记录。
+源请求/批准/过程已失效时，新执行决定拒绝；历史仍可读，关闭讨论不等于把旧执行结果改成成功。
+
+Pi Planner 已接入 `raise_note(question,evidence)`，发现差距或取舍可生成持久便签并结束本轮规划。
+建议通过 discuss-plan 使用这一能力；直接 propose-plan 仍要求返回方案，只有便签时会保留便签并报无方案。
+它不赋予 Planner 任意暂停执行的权限；运行期阻塞继续沿现有 Intervention 和核心挂起语义。
+MCP 工具对应 create_note/list_notes/get_note/add_note_message/decide_note，写入仍用 request_json。
+
+## 外部 Agent 持久事件消费（P3.4 后端）
+
+每个 consumer_id 标识该宿主数据库上的一个消费进度；允许 1–128 位字母、数字、点、下划线或连字符，
+首位必须是字母或数字。注册从保留历史的开头读取；重复注册返回原进度，不重置、不跳到最新。
+
+```powershell
+uv run ehai @Api register-event-consumer --consumer-id assistant-main
+uv run ehai @Api read-consumer-events --consumer-id assistant-main --limit 100
+uv run ehai @Api ack-consumer-events --consumer-id assistant-main --batch-token '<batch-token>'
+uv run ehai @Api get-event-consumer --consumer-id assistant-main
+```
+
+HTTP 对应 POST /event-consumers、GET /event-consumers/{consumer_id}、
+POST /event-consumers/{consumer_id}/batches（body 为 limit）、POST /event-consumers/{consumer_id}/ack
+（body 为 batch_token），均位于 /api/v1 下。
+
+同一 consumer 同时只有一个待确认批次，重复读取和宿主重启均返回相同事件与 token；
+确认后才前进到下一批。空批次 token=null，无需确认。未知或其他 consumer 的 token 拒绝。
+重复确认返回该 token 原来的确认回执；查询 consumer 才能看到它后来推进到的当前位置。
+一个 consumer 是共享订阅而非独占 Worker 租约；多个调用者可能收到同一批次。
+
+当前按宿主消费完整事件流，不提供项目过滤、重置或任意位置跳跃。外部 Agent 自行选择相关事项，
+使用现有业务命令幂等键防止重复动作，核对实际处理结果后确认批次。
+消费和确认不执行任务，不等于外部 Agent 自动唤醒；原 HTTP 事件查询/SSE 继续可独立使用。
+
+## 项目规则、宿主绑定与执行快照（P3.5 后端）
+
+```powershell
+uv run ehai @Api get-configuration-host
+uv run ehai @Api get-project-configuration --project-id '<project-id>'
+uv run ehai @Api configure-project --project-id '<project-id>' --file C:/private/project-rules.json --idempotency-key config-001
+uv run ehai @Api get-project-configuration-versions --project-id '<project-id>'
+uv run ehai @Api get-run-configuration --run-id '<run-id>'
+```
+
+配置文件完整替换示例：
+
+```json
+{
+  "expected_version": 0,
+  "workspace": "<workspace returned by get-configuration-host>",
+  "execution_config_fingerprint": "<fingerprint returned by get-configuration-host>",
+  "role_configuration_ref": "<role ref returned by get-configuration-host>",
+  "static_rules": ["代码和文档使用项目约定的命名规范"]
+}
+```
+
+首次版本使用 expected_version=0，后续填当前版本；`static_rules=[]` 明确清空新版本规则。
+无完整执行配置的 fake 宿主 fingerprint 为 null，按宿主原值填写，不能编造授权指纹。
+错误的版本、工作区或宿主角色/配置引用返回冲突，不能切换到另一个项目工作区继续执行。
+HTTP 为 GET /project-configuration-host，GET/POST /projects/{project_id}/configuration，
+GET /projects/{project_id}/configuration/versions 和 GET /runs/{run_id}/configuration，均在 /api/v1 下。
+
+配置版本不可变。新 Run 在创建事务中捕获所用版本和规则，Worker 从该快照获取上下文；
+更新项目配置只影响后续 Run，已有 Run 和运行中的过程 Planner 保留原版本。
+初始规划使用当前项目规则，旧 Run 的修订讨论使用原 Run 快照。无配置的项目显式捕获 version=0；
+升级前没有快照的历史 Run 返回 null，不用当前规则填补历史。
+
+角色引用来自当前宿主实际装配的 worker_kind/model/reasoning_effort，多个项目可引用同一宿主角色；
+它不是新增的可编辑角色库。Pi 私有配置和凭证仍在宿主文件/环境，项目接口不保存密钥或远程任意模型配置。
+精确执行配置继续显式授权、由原宿主校验；每 Run 的过程调整策略沿原校验规则独立处理。
+本轮不改变一宿主固定工作区的拓扑，不提供跨宿主调度器或单宿主动态多仓库执行。
+
+新数据库版本为 18：新增事件消费进度/批次回执和项目配置版本表。
+便签及执行配置快照使用现有事件日志；所有新增数据均在宿主指定数据库，升级前请保留自己的数据库备份。
 
 ## 安装与私有 Pi 配置
 

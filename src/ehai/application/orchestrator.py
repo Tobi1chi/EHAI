@@ -2118,6 +2118,24 @@ class Orchestrator:
         context: _ExecutionContext,
         artifact_inputs: tuple[ArtifactInputSnapshot, ...],
     ) -> dict[str, JsonValue]:
+        from ehai.application.project_configuration import run_configuration
+
+        with self._uow_factory() as uow:
+            configuration = run_configuration(uow.events, context.run.run_id)
+        result = self._node_worker_context(context, artifact_inputs)
+        if configuration is not None:
+            result["project_configuration"] = configuration
+            result["project_configuration_instruction"] = (
+                "Apply static_rules within the approved task and authorized tools. "
+                "Rules do not grant permissions or change approved Gates."
+            )
+        return result
+
+    def _node_worker_context(
+        self,
+        context: _ExecutionContext,
+        artifact_inputs: tuple[ArtifactInputSnapshot, ...],
+    ) -> dict[str, JsonValue]:
         if context.plan_node.kind is PlanNodeKind.EVALUATOR:
             evaluator_branches = _evaluator_branches(context.plan_revision, context.plan_node)
             return {

@@ -8,7 +8,7 @@ from hashlib import sha256
 from uuid import NAMESPACE_URL, uuid5
 
 from ehai import ID, JsonValue, json_dumps, normalize_id, utc_now
-from ehai.application.ports import EventReader, StoredEvent, UnitOfWork
+from ehai.application.ports import EventReader, ReadSession, StoredEvent, UnitOfWork
 from ehai.application.sanitization import redact_sensitive_text
 from ehai.domain.events import Event, EventType
 from ehai.domain.execution import Attempt, AttemptStatus, RunStatus
@@ -297,7 +297,7 @@ def reply_intervention(
             raise ValueError("intervention already has a different reply")
         return _with_status(opened, existing)
 
-    _validate_reply_context(uow, opened)
+    validate_intervention_reply_context(uow, opened)
     run_id = _document_id(opened, "run_id")
     payload: dict[str, JsonValue] = {
         "intervention_id": normalized_id,
@@ -392,7 +392,10 @@ def _open_context(uow: UnitOfWork, attempt_id: ID) -> _ExecutionContext | None:
     )
 
 
-def _validate_reply_context(uow: UnitOfWork, opened: Mapping[str, JsonValue]) -> None:
+def validate_intervention_reply_context(
+    uow: UnitOfWork | ReadSession, opened: Mapping[str, JsonValue]
+) -> None:
+    """Share current-context checks with the read-only human inbox."""
     run_id = _document_id(opened, "run_id")
     plan_revision_id = _document_id(opened, "plan_revision_id")
     plan_node_id = _document_id(opened, "plan_node_id")

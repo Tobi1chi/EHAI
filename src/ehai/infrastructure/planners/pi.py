@@ -8,7 +8,7 @@ from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 
-from ehai import ID, JsonValue, new_id, utc_now
+from ehai import ID, JsonValue, new_id, normalize_id, utc_now
 from ehai.application.agent_contracts import (
     CancellationToken,
     RecoverableToolError,
@@ -27,6 +27,7 @@ from ehai.application.agent_trace import (
     AgentTrace,
     AgentTraceStore,
 )
+from ehai.application.notes import NoteService
 from ehai.application.plan_graph_tools import (
     MAX_VALIDATION_RETRIES,
     PlanGraphToolRuntime,
@@ -263,6 +264,8 @@ class PiPlannerAdapter:
         workspace: Path | None = None,
         artifact_store: ArtifactStore | None = None,
         check_configuration: Mapping[str, JsonValue] | None = None,
+        note_service: NoteService | None = None,
+        project_context_resolver: Callable[[ID, ID | None], dict[str, JsonValue]] | None = None,
         id_factory: Callable[[], ID] = new_id,
         clock: Callable[[], datetime] = utc_now,
     ) -> None:
@@ -291,6 +294,8 @@ class PiPlannerAdapter:
             raise ValueError("Planner workspace must be a directory")
         self._artifact_store = artifact_store
         self._check_configuration = dict(check_configuration or {})
+        self._note_service = note_service
+        self._project_context_resolver = project_context_resolver
         self._id_factory = id_factory
         self._clock = clock
 
@@ -332,6 +337,7 @@ class PiPlannerAdapter:
             base,
             context,
         )
+        input_document["project_id"] = goal.project_id
         template = asyncio.run(
             self._build_template(
                 input_document,
@@ -370,6 +376,7 @@ class PiPlannerAdapter:
             context=source_context,
         )
         document["discussion_history"] = [dict(item) for item in history]
+        document["project_id"] = goal.project_id
         document["user_message"] = message
         document["current_design_document"] = None if base is None else base.design_document
         template, answer, session_id = asyncio.run(
@@ -455,6 +462,8 @@ class PiPlannerAdapter:
         ) != (approved.completion_contract_id, approved.completion_contract_version):
             raise ValueError("Process drafting requires the original completion contract")
         document = build_codex_planner_input(goal, contract.criteria, self._budget, approved)
+        document["project_id"] = goal.project_id
+        document["note_run_id"] = previous.run_id
         document["operation"] = "propose_process"
         document["original_approved_plan"] = document.pop("base_plan_revision")
         document["current_process_plan"] = build_codex_planner_input(
@@ -555,7 +564,47 @@ class PiPlannerAdapter:
                 allow_workspace_write=False,
             )
         )
-        registry, names = _planner_registry(graph, design, answer, workspace_tools, discussion)
+        note_run_id = input_document.get("note_run_id")
+        replan_context = input_document.get("replan_context")
+        if isinstance(replan_context, dict):
+            note_run_id = replan_context.get("source_run_id")
+        goal_document = input_document.get("goal")
+        goal_id = goal_document.get("goal_id") if isinstance(goal_document, dict) else None
+        note_handler = None
+        if self._note_service is not None and isinstance(goal_id, str):
+            note_service = self._note_service
+
+            def raise_note(arguments: dict[str, JsonValue]) -> JsonValue:
+                question, evidence = arguments.get("question"), arguments.get("evidence")
+                if not isinstance(question, str) or not isinstance(evidence, str):
+                    raise RecoverableToolError(
+                        "invalid_note", "question and evidence must be strings"
+                    )
+                note = note_service.create(
+                    idempotency_key="planner-note:" + str(new_id()),
+                    goal_id=normalize_id(goal_id),
+                    run_id=normalize_id(note_run_id) if isinstance(note_run_id, str) else None,
+                    actor="planner",
+                    origin="planner",
+                    question=question,
+                    evidence=evidence,
+                )
+                answer["message"] = (
+                    "Decision requested in note " + str(note["note_id"]) + ": " + question
+                )
+                return note
+
+            note_handler = raise_note
+        registry, names = _planner_registry(
+            graph, design, answer, workspace_tools, discussion, note_handler
+        )
+        project_context: dict[str, JsonValue] = {}
+        project_id = input_document.get("project_id")
+        if self._project_context_resolver is not None and isinstance(project_id, str):
+            project_context = self._project_context_resolver(
+                normalize_id(project_id),
+                normalize_id(note_run_id) if isinstance(note_run_id, str) else None,
+            )
         config = AgentRoleConfig(
             role=AgentRole.PLANNER,
             system_prompt=(
@@ -564,7 +613,10 @@ class PiPlannerAdapter:
                 else _DISCUSSION_SYSTEM_PROMPT
                 if discussion
                 else _PLANNER_SYSTEM_PROMPT
-            ),
+            )
+            + "\nApply project_configuration.static_rules only within existing approved authority. "
+            "When raise_note is available, use it to durably request a decision on an infeasible "
+            "route, scope gap or tradeoff; it ends this turn without approving or applying a plan.",
             tool_profile=(
                 "planner-process-v1"
                 if process_graph is not None
@@ -601,6 +653,7 @@ class PiPlannerAdapter:
                 ),
                 context={
                     "planner_input": dict(input_document),
+                    "project_configuration": project_context,
                     "host_check_configuration": (
                         self._check_configuration if process_graph is None else {}
                     ),
@@ -643,9 +696,36 @@ def _planner_registry(
     answer: dict[str, str],
     workspace_tools: HostToolRuntime | None,
     discussion: bool,
+    note_handler: Callable[[dict[str, JsonValue]], JsonValue] | None = None,
 ) -> tuple[ToolRegistry, tuple[str, ...]]:
     definitions: list[ToolDefinition] = []
     handlers: dict[str, ToolHandler] = {}
+    if note_handler is not None:
+        definitions.append(
+            ToolDefinition(
+                "raise_note",
+                "Persist a Planner question for explicit decision; end this turn without approval",
+                {
+                    "type": "object",
+                    "properties": {
+                        "question": {"type": "string", "minLength": 1, "maxLength": 8000},
+                        "evidence": {"type": "string", "maxLength": 8000},
+                    },
+                    "required": ["question", "evidence"],
+                    "additionalProperties": False,
+                },
+                ends_turn=True,
+            )
+        )
+
+        async def persist_note(
+            arguments: dict[str, JsonValue], cancellation: CancellationToken
+        ) -> JsonValue:
+            cancellation.raise_if_cancelled()
+            assert note_handler is not None
+            return note_handler(arguments)
+
+        handlers["raise_note"] = persist_note
     for graph_definition in graph.tool_definitions():
         name = graph_definition.name
         definitions.append(

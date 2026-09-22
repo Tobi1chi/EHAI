@@ -12,6 +12,8 @@ CLI/MCP 参数和生成 Client 必须按各自调用边界与契约一致，内�
 | [events.schema.json](v1/events.schema.json) | 公开事件类型、envelope 与分页 |
 | [plan-import.schema.json](v1/plan-import.schema.json) | 外部声明式计划导入 |
 | [http-api.openapi.json](v1/http-api.openapi.json) | HTTP 路由、operation ID、请求、响应和 SSE |
+| [notes.schema.json](v1/notes.schema.json) | 持久便签、消息、明确决定及其来源/结果 |
+| [project-configuration.schema.json](v1/project-configuration.schema.json) | 项目规则版本、宿主绑定和 Run 配置快照 |
 
 block 变化、Git 整合和后继 Run 的公开字段以这些文件和实际接口为准；
 这里不维护另一份阶段实现清单。Responses-facing Schema 不使用 uniqueItems。

@@ -1,0 +1,553 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.ehai.local/v1/notes.schema.json",
+  "title": "EHAI durable notes",
+  "$defs": {
+    "NoteSource": {
+      "type": "object",
+      "properties": {
+        "project_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "goal_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "run_id": {
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "uuid"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "plan_revision_id": {
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "uuid"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "completion_contract_id": {
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "uuid"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "process_revision_id": {
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "uuid"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "source_id": {
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "uuid"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "source_kind": {
+          "anyOf": [
+            {
+              "type": "string",
+              "enum": [
+                "intervention",
+                "human_check"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "source_token": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "project_id",
+        "goal_id",
+        "run_id",
+        "plan_revision_id",
+        "completion_contract_id",
+        "process_revision_id",
+        "source_id",
+        "source_kind",
+        "source_token"
+      ],
+      "additionalProperties": false
+    },
+    "NoteMessage": {
+      "type": "object",
+      "properties": {
+        "note_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "request_token": {
+          "type": "string"
+        },
+        "actor": {
+          "type": "string"
+        },
+        "message": {
+          "type": "string"
+        },
+        "message_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "note_id",
+        "request_token",
+        "actor",
+        "message",
+        "message_id",
+        "created_at"
+      ],
+      "additionalProperties": false
+    },
+    "NoteDecision": {
+      "type": "object",
+      "properties": {
+        "note_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "request_token": {
+          "type": "string"
+        },
+        "actor": {
+          "type": "string"
+        },
+        "action": {
+          "type": "string",
+          "enum": [
+            "resolve",
+            "continue",
+            "propose_process",
+            "revise_plan"
+          ]
+        },
+        "message": {
+          "type": "string"
+        },
+        "passed": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "operation_key": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "pending",
+            "completed",
+            "unknown"
+          ]
+        },
+        "result": {
+          "anyOf": [
+            {
+              "type": "object",
+              "additionalProperties": true
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "error": {
+          "type": "string"
+        },
+        "source_after": {
+          "$ref": "#/$defs/NoteSource"
+        },
+        "source_changed": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "note_id",
+        "request_token",
+        "actor",
+        "action",
+        "message",
+        "passed",
+        "operation_key",
+        "status",
+        "result"
+      ],
+      "additionalProperties": false
+    },
+    "Note": {
+      "type": "object",
+      "properties": {
+        "note_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "actor": {
+          "type": "string"
+        },
+        "origin": {
+          "type": "string",
+          "enum": [
+            "user",
+            "agent",
+            "planner"
+          ]
+        },
+        "question": {
+          "type": "string"
+        },
+        "evidence": {
+          "type": "string"
+        },
+        "source": {
+          "$ref": "#/$defs/NoteSource"
+        },
+        "request_token": {
+          "type": "string"
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "messages": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/NoteMessage"
+          }
+        },
+        "decision": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/NoteDecision"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "open",
+            "decision_pending",
+            "resolved"
+          ]
+        },
+        "stale_reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "note_id",
+        "actor",
+        "origin",
+        "question",
+        "evidence",
+        "source",
+        "request_token",
+        "created_at",
+        "messages",
+        "decision",
+        "status"
+      ],
+      "additionalProperties": false
+    },
+    "NoteList": {
+      "type": "object",
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Note"
+          }
+        },
+        "event_offset": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "observed_at": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "items",
+        "event_offset",
+        "observed_at"
+      ],
+      "additionalProperties": false
+    },
+    "CreateNoteRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "idempotency_key": {
+          "minLength": 1,
+          "title": "Idempotency Key",
+          "type": "string"
+        },
+        "goal_id": {
+          "pattern": "^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$",
+          "title": "Goal Id",
+          "type": "string"
+        },
+        "actor": {
+          "minLength": 1,
+          "title": "Actor",
+          "type": "string"
+        },
+        "question": {
+          "maxLength": 8000,
+          "minLength": 1,
+          "title": "Question",
+          "type": "string"
+        },
+        "evidence": {
+          "default": "",
+          "maxLength": 8000,
+          "title": "Evidence",
+          "type": "string"
+        },
+        "run_id": {
+          "anyOf": [
+            {
+              "pattern": "^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Run Id"
+        },
+        "source_kind": {
+          "anyOf": [
+            {
+              "enum": [
+                "intervention",
+                "human_check"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Source Kind"
+        },
+        "source_id": {
+          "anyOf": [
+            {
+              "pattern": "^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Source Id"
+        },
+        "source_token": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Source Token"
+        },
+        "origin": {
+          "default": "user",
+          "enum": [
+            "user",
+            "agent"
+          ],
+          "title": "Origin",
+          "type": "string"
+        }
+      },
+      "required": [
+        "idempotency_key",
+        "goal_id",
+        "actor",
+        "question"
+      ],
+      "title": "CreateNoteRequest",
+      "type": "object"
+    },
+    "AddNoteMessageRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "idempotency_key": {
+          "minLength": 1,
+          "title": "Idempotency Key",
+          "type": "string"
+        },
+        "request_token": {
+          "minLength": 1,
+          "title": "Request Token",
+          "type": "string"
+        },
+        "actor": {
+          "minLength": 1,
+          "title": "Actor",
+          "type": "string"
+        },
+        "message": {
+          "maxLength": 8000,
+          "minLength": 1,
+          "title": "Message",
+          "type": "string"
+        }
+      },
+      "required": [
+        "idempotency_key",
+        "request_token",
+        "actor",
+        "message"
+      ],
+      "title": "AddNoteMessageRequest",
+      "type": "object"
+    },
+    "DecideNoteRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "idempotency_key": {
+          "minLength": 1,
+          "title": "Idempotency Key",
+          "type": "string"
+        },
+        "request_token": {
+          "minLength": 1,
+          "title": "Request Token",
+          "type": "string"
+        },
+        "actor": {
+          "minLength": 1,
+          "title": "Actor",
+          "type": "string"
+        },
+        "message": {
+          "maxLength": 8000,
+          "minLength": 1,
+          "title": "Message",
+          "type": "string"
+        },
+        "action": {
+          "enum": [
+            "resolve",
+            "continue",
+            "propose_process",
+            "revise_plan"
+          ],
+          "title": "Action",
+          "type": "string"
+        },
+        "passed": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Passed"
+        }
+      },
+      "required": [
+        "idempotency_key",
+        "request_token",
+        "actor",
+        "message",
+        "action"
+      ],
+      "title": "DecideNoteRequest",
+      "type": "object"
+    },
+    "NoteResponse": {
+      "type": "object",
+      "properties": {
+        "data": {
+          "$ref": "#/$defs/Note"
+        }
+      },
+      "required": [
+        "data"
+      ],
+      "additionalProperties": false
+    },
+    "NoteListResponse": {
+      "type": "object",
+      "properties": {
+        "data": {
+          "$ref": "#/$defs/NoteList"
+        }
+      },
+      "required": [
+        "data"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

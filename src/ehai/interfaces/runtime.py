@@ -16,12 +16,16 @@ from uuid import NAMESPACE_URL, uuid5
 import uvicorn
 from fastapi import FastAPI
 
-from ehai import ID, JsonValue, json_dumps, json_loads
+from ehai import ID, JsonValue, json_dumps, json_loads, utc_now
 from ehai.application.async_runtime import RuntimeConnector, SingleSlotRuntime
+from ehai.application.event_consumers import EventConsumerService
 from ehai.application.execution_policy import ExecutionPolicy
 from ehai.application.legacy_config import ResponsesEndpointCapabilities
+from ehai.application.notes import NoteService
 from ehai.application.ports import StateConflictError
 from ehai.application.process_adjustments import ProcessAdjustments
+from ehai.application.project_configuration import ProjectConfigurationService
+from ehai.application.project_queries import RuntimeContextView
 from ehai.application.queries import QueryService
 from ehai.application.runtime_control import RuntimeControlService
 from ehai.application.scheduler import (
@@ -47,6 +51,8 @@ from ehai.infrastructure.artifacts import FilesystemArtifactStore
 from ehai.infrastructure.pi_config import PiBackendConfig
 from ehai.infrastructure.session_mailbox import SQLiteSessionMailboxRepository
 from ehai.infrastructure.sqlite import SQLiteDatabase
+from ehai.infrastructure.sqlite.event_consumers import SQLiteEventConsumerRepository
+from ehai.infrastructure.sqlite.project_configuration import SQLiteProjectConfigurationStore
 from ehai.infrastructure.workers import (
     CodexAppServerConnector,
     PiAgentConnector,
@@ -56,7 +62,7 @@ from ehai.infrastructure.workers.code import CodeRuntimeConnector
 from ehai.infrastructure.workspaces import WorkspaceManager
 from ehai.interfaces.agent_backends import resolve_planner_kind
 from ehai.interfaces.api import create_app
-from ehai.interfaces.cli import build_service
+from ehai.interfaces.cli import _positive_planner_capacity, build_service
 from ehai.interfaces.session_host import ExecutionConfig
 
 _MAX_RUNTIME_RESTARTS = 2
@@ -93,6 +99,7 @@ def create_local_app(
     planner_timeout_seconds: float = 120.0,
     planner_model: str | None = None,
     planner_reasoning_effort: str | None = None,
+    planner_capacity: int = 1,
     command_check_argv: Sequence[str] | None = None,
     semantic_required_terms: Sequence[str] = (),
     command_check_timeout_seconds: float = 30.0,
@@ -185,6 +192,22 @@ def create_local_app(
         if planner_reasoning_effort is not None
         else (agent_reasoning_effort if planner_kind == "pi" and planner_model is None else None)
     )
+    database_path.parent.mkdir(parents=True, exist_ok=True)
+    query_database = SQLiteDatabase(database_path)
+    notes = NoteService(query_database.unit_of_work, query_database.read_session)
+    event_consumers = EventConsumerService(SQLiteEventConsumerRepository(query_database))
+    project_configuration = ProjectConfigurationService(
+        SQLiteProjectConfigurationStore(query_database),
+        None if host_execution_config is None else host_execution_config.to_document(),
+        workspace=worker_workspace or Path.cwd(),
+        role_configuration={
+            "worker_kind": worker_kind,
+            "model": agent_model if worker_kind == "pi" else codex_model,
+            "reasoning_effort": agent_reasoning_effort
+            if worker_kind == "pi"
+            else codex_reasoning_effort,
+        },
+    )
     execution_service = build_service(
         database_path,
         artifact_root,
@@ -194,6 +217,7 @@ def create_local_app(
         planner_timeout_seconds=planner_timeout_seconds,
         planner_model=resolved_planner_model,
         planner_reasoning_effort=resolved_planner_effort,
+        planner_capacity=planner_capacity,
         command_check_argv=command_check_argv,
         semantic_required_terms=semantic_required_terms,
         command_check_timeout_seconds=command_check_timeout_seconds,
@@ -203,8 +227,9 @@ def create_local_app(
         background_start=p2_runtime,
         endpoint_capabilities=endpoint_capabilities,
         pi_backend=pi_backend,
+        notes=notes,
+        project_configuration=project_configuration,
     )
-    query_database = SQLiteDatabase(database_path)
     builtin_sessions = SQLiteAgentTraceStore(query_database)
     session_mailbox = SessionMailbox(SQLiteSessionMailboxRepository(query_database))
     query_service = QueryService(
@@ -213,7 +238,21 @@ def create_local_app(
     )
     if not p2_runtime:
         execution_service.recover_startup()
-        app = create_app(execution_service, query_service, artifact_root=str(artifact_root))
+        app = create_app(
+            execution_service,
+            query_service,
+            notes=notes,
+            event_consumers=event_consumers,
+            project_configuration=project_configuration,
+            artifact_root=str(artifact_root),
+            runtime_context=lambda: RuntimeContextView(
+                utc_now(),
+                None if worker_workspace is None else str(worker_workspace.resolve()),
+                None,
+                None,
+                None,
+            ),
+        )
         app.state.database = query_database
         app.state.artifact_root = artifact_root.resolve()
         app.state.execution_service = execution_service
@@ -485,6 +524,9 @@ def create_local_app(
         execution_service,
         query_service,
         runtime_control,
+        notes=notes,
+        event_consumers=event_consumers,
+        project_configuration=project_configuration,
         process_adjustments=process_adjustments,
         trajectory_suspensions=trajectory_suspensions,
         execution_config_validator=validate_execution_config,
@@ -492,6 +534,13 @@ def create_local_app(
         code_integration=connector.integrate_run
         if isinstance(connector, CodeRuntimeConnector)
         else None,
+        runtime_context=lambda: RuntimeContextView(
+            utc_now(),
+            str(workspace),
+            endpoint.worker_endpoint_id,
+            None if host_execution_config is None else host_execution_config.fingerprint,
+            runtime_control.runtime_health(),
+        ),
     )
     app.state.database = query_database
     app.state.artifact_root = artifact_root.resolve()
@@ -649,6 +698,12 @@ def create_parser() -> argparse.ArgumentParser:
     parser.add_argument("--planner-timeout-seconds", type=float, default=120.0)
     parser.add_argument("--planner-model")
     parser.add_argument(
+        "--planner-capacity",
+        type=_positive_planner_capacity,
+        default=1,
+        help="maximum concurrent planning operations on this host (default: 1)",
+    )
+    parser.add_argument(
         "--planner-reasoning-effort",
         choices=("off", "minimal", "low", "medium", "high", "xhigh", "max"),
     )
@@ -744,6 +799,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         planner_timeout_seconds=args.planner_timeout_seconds,
         planner_model=args.planner_model,
         planner_reasoning_effort=args.planner_reasoning_effort,
+        planner_capacity=args.planner_capacity,
         worker_timeout_seconds=args.worker_timeout_seconds,
         attempt_deadline_seconds=args.attempt_deadline_seconds,
         codex_model=args.codex_model,

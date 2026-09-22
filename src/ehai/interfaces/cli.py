@@ -34,6 +34,7 @@ from ehai.application.commands import (
     StartRun,
 )
 from ehai.application.legacy_config import ResponsesEndpointCapabilities
+from ehai.application.notes import NoteService
 from ehai.application.orchestrator import OrchestrationError, Orchestrator
 from ehai.application.plan_imports import PlanImportError, plan_import_schema
 from ehai.application.planner import (
@@ -49,7 +50,9 @@ from ehai.application.planner import (
     PlanProposal,
     ReplanContext,
 )
+from ehai.application.planner_capacity import PlannerCapacityExceeded
 from ehai.application.ports import StateConflictError
+from ehai.application.project_configuration import ProjectConfigurationService
 from ehai.application.queries import QueryNotFoundError, QueryService
 from ehai.application.run_control import BackgroundRunController, RunControlError, RunController
 from ehai.application.service import ApplicationError, ExecutionService
@@ -74,7 +77,9 @@ from ehai.infrastructure.planners import (
     PiPlannerError,
 )
 from ehai.infrastructure.sqlite import SQLiteDatabase
+from ehai.infrastructure.sqlite.project_configuration import SQLiteProjectConfigurationStore
 from ehai.infrastructure.workers import CodexWorkerAdapter, FakeWorker
+from ehai.interfaces.backend_cli import register_backend_commands
 from ehai.interfaces.cli_api import API_ONLY_COMMANDS, ApiCommandError, dispatch_api
 from ehai.interfaces.public_documents import public_json_value
 from ehai.interfaces.session_host import (
@@ -132,6 +137,7 @@ def build_service(
     planner_timeout_seconds: float = 120.0,
     planner_model: str | None = None,
     planner_reasoning_effort: str | None = None,
+    planner_capacity: int = 1,
     command_check_argv: Sequence[str] | None = None,
     semantic_required_terms: Sequence[str] = (),
     command_check_timeout_seconds: float = 30.0,
@@ -141,6 +147,8 @@ def build_service(
     background_start: bool = False,
     endpoint_capabilities: ResponsesEndpointCapabilities | None = None,
     pi_backend: PiBackendConfig | None = None,
+    project_configuration: ProjectConfigurationService | None = None,
+    notes: NoteService | None = None,
 ) -> ExecutionService:
     """Build the local service from concrete infrastructure Adapters."""
     from ehai.interfaces.agent_backends import resolve_planner_kind
@@ -157,6 +165,18 @@ def build_service(
             raise ValueError("Pi Planner requires --planner-model")
     database_path.parent.mkdir(parents=True, exist_ok=True)
     database = SQLiteDatabase(database_path)
+    notes = notes or NoteService(database.unit_of_work, database.read_session)
+    project_configuration = project_configuration or ProjectConfigurationService(
+        SQLiteProjectConfigurationStore(database),
+        workspace=worker_workspace or Path.cwd(),
+        role_configuration={
+            "worker_kind": worker_kind,
+            "model": planner_model if worker_kind == "pi" else codex_model,
+            "reasoning_effort": planner_reasoning_effort
+            if worker_kind == "pi"
+            else codex_reasoning_effort,
+        },
+    )
     artifact_store = FilesystemArtifactStore(artifact_root)
     worker: WorkerAdapter | None
     if worker_kind == "fake":
@@ -193,6 +213,8 @@ def build_service(
             session_store=SQLiteAgentTraceStore(database),
             workspace=worker_workspace or Path.cwd(),
             artifact_store=artifact_store,
+            note_service=notes,
+            project_context_resolver=project_configuration.planner_context,
             check_configuration={
                 "command_argv": [] if command_check_argv is None else list(command_check_argv),
                 "semantic_required_terms": list(semantic_required_terms),
@@ -240,7 +262,19 @@ def build_service(
         recovery_service=RecoveryService(uow_factory=database.unit_of_work),
         background_start=background_start,
         planning_workspace=str((worker_workspace or Path.cwd()).resolve()),
+        planner_capacity=planner_capacity,
+        project_configuration_resolver=project_configuration.resolve_for_run,
     )
+
+
+def _positive_planner_capacity(value: str) -> int:
+    try:
+        capacity = int(value)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError("planner capacity must be a positive integer") from error
+    if capacity < 1:
+        raise argparse.ArgumentTypeError("planner capacity must be a positive integer")
+    return capacity
 
 
 def create_parser() -> argparse.ArgumentParser:
@@ -250,7 +284,10 @@ def create_parser() -> argparse.ArgumentParser:
         description="EHAI planning, execution and runtime control",
         epilog="Use --api-url for a running API host; otherwise supply --database and --artifacts.",
     )
-    parser.add_argument("--api-url", help="running EHAI HTTP API origin (or /api/v1 URL)")
+    parser.add_argument(
+        "--api-url",
+        help="EHAI HTTP origin or /workspaces/{workspace_id} base (optional /api/v1 suffix)",
+    )
     parser.add_argument(
         "--api-timeout-seconds",
         type=float,
@@ -287,6 +324,12 @@ def create_parser() -> argparse.ArgumentParser:
         help="Codex Planner wall-clock timeout (default: 120)",
     )
     parser.add_argument("--planner-model", help="exact native Pi model ID for the Planner")
+    parser.add_argument(
+        "--planner-capacity",
+        type=_positive_planner_capacity,
+        default=1,
+        help="maximum concurrent planning operations on this host (default: 1)",
+    )
     parser.add_argument(
         "--planner-reasoning-effort",
         choices=("off", "minimal", "low", "medium", "high", "xhigh", "max"),
@@ -327,6 +370,22 @@ def create_parser() -> argparse.ArgumentParser:
         ),
     )
     commands = parser.add_subparsers(dest="command", required=True)
+    register_backend_commands(commands)
+
+    inbox = commands.add_parser("list-inbox", help="list current human requests across projects")
+    inbox.add_argument("--project-id")
+    inbox.add_argument("--run-id")
+    inbox_item = commands.add_parser(
+        "get-inbox-item", help="read a human request and its available actions"
+    )
+    inbox_item.add_argument(
+        "--kind", choices=("intervention", "human_check", "worker_request"), required=True
+    )
+    inbox_item.add_argument("--request-id", required=True)
+
+    commands.add_parser("list-projects", help="discover Projects and their goal/Run counts")
+    project_query = commands.add_parser("get-project", help="read project goals, Runs and results")
+    project_query.add_argument("--project-id", required=True)
 
     project = commands.add_parser("create-project", help="create a Project")
     project.add_argument("--idempotency-key", required=True)
@@ -574,6 +633,7 @@ def create_parser() -> argparse.ArgumentParser:
         "--pi-cli", type=Path, required=True, help="installed Pi dist/bundle/cli.js"
     )
     for name, help_text in (
+        ("get-runtime-context", "read the current host workspace and execution binding"),
         ("get-runtime-health", "read the API host scheduler health"),
         ("get-worker-profiles", "read configured Worker presets"),
         ("get-worker-endpoints", "read configured Worker endpoints"),
@@ -631,6 +691,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             or args.worker != "fake"
             or args.semantic_required_term
             or args.planner_timeout_seconds != 120.0
+            or args.planner_capacity != 1
             or args.worker_timeout_seconds != 300.0
             or args.command_check_timeout_seconds != 30.0
         ):
@@ -665,6 +726,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(json_dumps(asyncio.run(inspect_pi_backend(node=args.node, cli=args.pi_cli))))
             return 0
         if args.command in {
+            "list-inbox",
+            "get-inbox-item",
+            "list-projects",
+            "get-project",
             "get-plan",
             "get-plan-checks",
             "get-run-plan",
@@ -694,6 +759,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             planner_timeout_seconds=args.planner_timeout_seconds,
             planner_model=None if args.command == "import-plan" else args.planner_model,
             planner_reasoning_effort=args.planner_reasoning_effort,
+            planner_capacity=args.planner_capacity,
             command_check_argv=_parse_command_argv(args.command_check_argv),
             semantic_required_terms=tuple(args.semantic_required_term),
             command_check_timeout_seconds=args.command_check_timeout_seconds,
@@ -732,6 +798,21 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(
             json_dumps(
                 {"error": str(error), "error_type": type(error).__name__, "issues": error.issues}
+            ),
+            file=sys.stderr,
+        )
+        return 2
+    except PlannerCapacityExceeded as error:
+        print(
+            json_dumps(
+                {
+                    "error": {
+                        "code": "planner_capacity_exceeded",
+                        "message": str(error),
+                        "capacity": error.capacity,
+                        "in_use": error.in_use,
+                    }
+                }
             ),
             file=sys.stderr,
         )
@@ -830,6 +911,7 @@ def _build_foreground_app(
             worker_kind="fake",
             worker_workspace=Path.cwd(),
             planner_kind="single",
+            planner_capacity=args.planner_capacity,
             p2_runtime=True,
             runtime_autostart=False,
         )
@@ -839,6 +921,7 @@ def _build_foreground_app(
         worker_kind=config.worker_kind,
         worker_workspace=config.workspace,
         planner_kind="single" if config.process_adjustment is None else "pi",
+        planner_capacity=args.planner_capacity,
         planner_model=(
             None if config.process_adjustment is None else config.process_adjustment.model
         ),
@@ -878,6 +961,19 @@ def _dispatch_query(args: argparse.Namespace) -> JsonValue:
         read_session_factory=database.read_session,
         builtin_session_reader=SQLiteAgentTraceStore(database),
     )
+    if args.command == "list-inbox":
+        return public_json_value(
+            queries.list_inbox(
+                project_id=None if args.project_id is None else normalize_id(args.project_id),
+                run_id=None if args.run_id is None else normalize_id(args.run_id),
+            )
+        )
+    if args.command == "get-inbox-item":
+        return public_json_value(queries.get_inbox_item(args.kind, normalize_id(args.request_id)))
+    if args.command == "list-projects":
+        return public_json_value(queries.list_projects())
+    if args.command == "get-project":
+        return public_json_value(queries.get_project(normalize_id(args.project_id)))
     if args.command == "get-plan":
         return public_json_value(queries.get_plan_graph(normalize_id(args.plan_revision_id)))
     if args.command == "get-run-plan":

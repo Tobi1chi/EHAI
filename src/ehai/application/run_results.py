@@ -111,7 +111,7 @@ def project_run_result(
     """
     run_id = trace.run.run_id
     delivery = _code_delivery(trace.events, run_id)
-    configured_workspace = _configured_workspace(trace.events, run_id)
+    workspace = configured_workspace(trace.events, run_id)
     checks = _select_checks(trace.attempts, trace.check_runs, delivery["attempt_id"])
 
     result = RunResult(
@@ -123,7 +123,7 @@ def project_run_result(
         run_id=cast(ID, delivery["run_id"]),
         diff_artifact_ids=cast(tuple[ID, ...], delivery["diff_artifact_ids"]),
         check_result=checks,
-        configured_workspace=configured_workspace,
+        configured_workspace=workspace,
         artifact_root=artifact_root,
     )
 
@@ -173,7 +173,7 @@ def _code_delivery(events: Sequence[object], run_id: ID) -> dict[str, object]:
     return delivery
 
 
-def _configured_workspace(events: Sequence[object], run_id: ID) -> str | None:
+def configured_workspace(events: Sequence[object], run_id: ID) -> str | None:
     """Return the one retained execution workspace, rejecting conflicts."""
     documents: list[dict[str, object]] = []
     for stored in events:

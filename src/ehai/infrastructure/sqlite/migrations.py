@@ -5,8 +5,13 @@ from __future__ import annotations
 import sqlite3
 from collections.abc import Sequence
 
+from ehai.infrastructure.sqlite.p3_event_consumer_migration import EVENT_CONSUMER_MIGRATION
+from ehai.infrastructure.sqlite.p3_project_configuration_migration import (
+    PROJECT_CONFIGURATION_MIGRATION,
+)
+
 P1_SCHEMA_VERSION = 2
-LATEST_SCHEMA_VERSION = 16
+LATEST_SCHEMA_VERSION = 18
 
 
 class SchemaVersionError(RuntimeError):
@@ -645,6 +650,8 @@ _MIGRATIONS: dict[int, Sequence[str]] = {
     14: _MIGRATION_14,
     15: _MIGRATION_15,
     16: _MIGRATION_16,
+    17: EVENT_CONSUMER_MIGRATION,
+    18: PROJECT_CONFIGURATION_MIGRATION,
 }
 
 

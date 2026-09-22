@@ -1783,6 +1783,50 @@
       ],
       "title": "ResultAdoptionRequest",
       "type": "object"
+    },
+    "RegisterEventConsumerRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "consumer_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$",
+          "title": "Consumer Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "consumer_id"
+      ],
+      "title": "RegisterEventConsumerRequest",
+      "type": "object"
+    },
+    "ReadEventConsumerBatchRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "limit": {
+          "default": 100,
+          "maximum": 1000,
+          "minimum": 1,
+          "title": "Limit",
+          "type": "integer"
+        }
+      },
+      "title": "ReadEventConsumerBatchRequest",
+      "type": "object"
+    },
+    "AcknowledgeEventConsumerRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "batch_token": {
+          "pattern": "^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$",
+          "title": "Batch Token",
+          "type": "string"
+        }
+      },
+      "required": [
+        "batch_token"
+      ],
+      "title": "AcknowledgeEventConsumerRequest",
+      "type": "object"
     }
   }
 }

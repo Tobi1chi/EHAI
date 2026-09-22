@@ -11,6 +11,9 @@ const documentNames = [
   "events.schema.json",
   "queries.schema.json",
   "commands.schema.json",
+  "notes.schema.json",
+  "project-configuration.schema.json",
+  "workspace-manager.schema.json",
 ];
 
 const documents = new Map();
@@ -20,8 +23,34 @@ for (const name of documentNames) {
 const openapi = JSON.parse(
   await readFile(resolve(schemaDirectory, "http-api.openapi.json"), "utf8"),
 );
+const managerOpenapi = JSON.parse(
+  await readFile(resolve(schemaDirectory, "workspace-manager.openapi.json"), "utf8"),
+);
+const managerOperations = new Set(
+  Object.values(managerOpenapi.paths).flatMap((pathItem) =>
+    Object.values(pathItem).map((operation) => operation.operationId),
+  ),
+);
+for (const operationId of [
+  "listWorkspaces", "registerWorkspace", "getWorkspace", "startWorkspace", "stopWorkspace",
+  "getWorkspaceOverview", "getWorkspaceExecutionConfig",
+]) {
+  if (!managerOperations.has(operationId)) {
+    throw new Error(`Manager OpenAPI operation is missing: ${operationId}`);
+  }
+}
 
 const requiredOperations = [
+  "getPlannerCapacity",
+  "createNote", "listNotes", "getNote", "addNoteMessage", "decideNote",
+  "registerEventConsumer", "getEventConsumer", "readConsumerEvents", "acknowledgeConsumerEvents",
+  "getConfigurationHost", "getProjectConfiguration", "getProjectConfigurationVersions",
+  "configureProject", "getRunConfiguration",
+  "listInbox",
+  "getInboxItem",
+  "listProjects",
+  "getProject",
+  "getRuntimeContext",
   "importPlan",
   "getPlanImportSchema",
   "create_project_api_v1_projects_post",
@@ -186,6 +215,95 @@ export class EhaiApiClient {
 
   createProject(request: CreateProjectRequest): Promise<ProjectResponse> {
     return this.request("/projects", "POST", request);
+  }
+
+  listProjects(): Promise<ProjectListResponse> {
+    return this.request("/projects", "GET");
+  }
+
+  listInbox(filters: { projectId?: string; runId?: string } = {}): Promise<InboxListResponse> {
+    const query = new URLSearchParams();
+    if (filters.projectId !== undefined) query.set("project_id", filters.projectId);
+    if (filters.runId !== undefined) query.set("run_id", filters.runId);
+    const suffix = query.toString();
+    return this.request("/inbox" + (suffix ? "?" + suffix : ""), "GET");
+  }
+
+  getInboxItem(kind: InboxKind, requestId: string): Promise<InboxDetailResponse> {
+    return this.request("/inbox/" + encodeURIComponent(kind) + "/" + encodeURIComponent(requestId), "GET");
+  }
+
+  getProject(projectId: string): Promise<ProjectDetailResponse> {
+    return this.request("/projects/" + encodeURIComponent(projectId), "GET");
+  }
+
+  getRuntimeContext(): Promise<RuntimeContextResponse> {
+    return this.request("/runtime/context", "GET");
+  }
+
+  getPlannerCapacity(): Promise<PlannerCapacityResponse> {
+    return this.request("/planning/capacity", "GET");
+  }
+
+  createNote(request: CreateNoteRequest): Promise<NoteResponse> {
+    return this.request("/notes", "POST", request);
+  }
+
+  listNotes(filters: { projectId?: string; goalId?: string; runId?: string; includeResolved?: boolean } = {}): Promise<NoteListResponse> {
+    const query = new URLSearchParams();
+    if (filters.projectId !== undefined) query.set("project_id", filters.projectId);
+    if (filters.goalId !== undefined) query.set("goal_id", filters.goalId);
+    if (filters.runId !== undefined) query.set("run_id", filters.runId);
+    if (filters.includeResolved !== undefined) query.set("include_resolved", String(filters.includeResolved));
+    return this.request("/notes?" + query.toString(), "GET");
+  }
+
+  getNote(noteId: string): Promise<NoteResponse> {
+    return this.request("/notes/" + encodeURIComponent(noteId), "GET");
+  }
+
+  addNoteMessage(noteId: string, request: AddNoteMessageRequest): Promise<NoteResponse> {
+    return this.request("/notes/" + encodeURIComponent(noteId) + "/messages", "POST", request);
+  }
+
+  decideNote(noteId: string, request: DecideNoteRequest): Promise<NoteResponse> {
+    return this.request("/notes/" + encodeURIComponent(noteId) + "/decisions", "POST", request);
+  }
+
+  registerEventConsumer(request: RegisterEventConsumerRequest): Promise<EventConsumerResponse> {
+    return this.request("/event-consumers", "POST", request);
+  }
+
+  getEventConsumer(consumerId: string): Promise<EventConsumerResponse> {
+    return this.request("/event-consumers/" + encodeURIComponent(consumerId), "GET");
+  }
+
+  readConsumerEvents(consumerId: string, request: ReadEventConsumerBatchRequest = {}): Promise<EventConsumerBatchResponse> {
+    return this.request("/event-consumers/" + encodeURIComponent(consumerId) + "/batches", "POST", request);
+  }
+
+  acknowledgeConsumerEvents(consumerId: string, request: AcknowledgeEventConsumerRequest): Promise<EventConsumerAcknowledgementResponse> {
+    return this.request("/event-consumers/" + encodeURIComponent(consumerId) + "/ack", "POST", request);
+  }
+
+  getConfigurationHost(): Promise<HostConfigurationResponse> {
+    return this.request("/project-configuration-host", "GET");
+  }
+
+  getProjectConfiguration(projectId: string): Promise<ProjectConfigurationResponse> {
+    return this.request("/projects/" + encodeURIComponent(projectId) + "/configuration", "GET");
+  }
+
+  getProjectConfigurationVersions(projectId: string): Promise<ProjectConfigurationVersionsResponse> {
+    return this.request("/projects/" + encodeURIComponent(projectId) + "/configuration/versions", "GET");
+  }
+
+  configureProject(projectId: string, request: UpdateProjectConfigurationRequest): Promise<UpdateProjectConfigurationResponse> {
+    return this.request("/projects/" + encodeURIComponent(projectId) + "/configuration", "POST", request);
+  }
+
+  getRunConfiguration(runId: string): Promise<RunConfigurationResponse> {
+    return this.request("/runs/" + encodeURIComponent(runId) + "/configuration", "GET");
   }
 
   createGoal(request: CreateGoalRequest): Promise<GoalResponse> {
@@ -412,6 +530,74 @@ export class EhaiApiClient {
       init.body = JSON.stringify(body);
     }
     const response = await this.fetcher(\`\${this.baseUrl}/api/v1\${path}\`, init);
+    const payload: unknown = await response.json();
+    if (!response.ok) {
+      throw new EhaiApiError(response.status, isErrorResponse(payload) ? payload : null);
+    }
+    return payload as T;
+  }
+}
+
+export class EhaiWorkspaceManagerClient {
+  readonly baseUrl: string;
+  readonly fetcher: FetchLike;
+
+  constructor(baseUrl: string, fetcher: FetchLike = globalThis.fetch.bind(globalThis)) {
+    const url = new URL(baseUrl);
+    if (!["http:", "https:"].includes(url.protocol) || url.username || url.password ||
+        url.search || url.hash || !["/", "/api/v1", "/api/v1/"].includes(url.pathname)) {
+      throw new Error("Workspace manager requires an HTTP(S) origin without credentials");
+    }
+    this.baseUrl = url.origin;
+    this.fetcher = fetcher;
+  }
+
+  listWorkspaces(): Promise<WorkspaceListResponse> {
+    return this.request("/workspaces", "GET");
+  }
+
+  registerWorkspace(request: WorkspaceRegistration): Promise<WorkspaceResponse> {
+    return this.request("/workspaces", "POST", request);
+  }
+
+  getWorkspace(workspaceId: string): Promise<WorkspaceResponse> {
+    return this.request(this.workspacePath(workspaceId), "GET");
+  }
+
+  startWorkspace(workspaceId: string): Promise<WorkspaceResponse> {
+    return this.request(this.workspacePath(workspaceId) + "/start", "POST", {});
+  }
+
+  stopWorkspace(workspaceId: string): Promise<WorkspaceResponse> {
+    return this.request(this.workspacePath(workspaceId) + "/stop", "POST", {});
+  }
+
+  getWorkspaceExecutionConfig(workspaceId: string): Promise<WorkspaceExecutionConfigResponse> {
+    return this.request(this.workspacePath(workspaceId) + "/execution-config", "GET");
+  }
+
+  getWorkspaceOverview(): Promise<WorkspaceOverviewResponse> {
+    return this.request("/workspace-overview", "GET");
+  }
+
+  workspace(workspaceId: string): EhaiApiClient {
+    return new EhaiApiClient(this.baseUrl + this.workspacePath(workspaceId), this.fetcher);
+  }
+
+  private workspacePath(workspaceId: string): string {
+    if (!/^[a-z0-9][a-z0-9_-]{0,63}$/.test(workspaceId)) {
+      throw new Error("Invalid workspace_id");
+    }
+    return "/workspaces/" + workspaceId;
+  }
+
+  private async request<T>(path: string, method: string, body?: unknown): Promise<T> {
+    const init: RequestInit = { method };
+    if (body !== undefined) {
+      init.headers = { "content-type": "application/json" };
+      init.body = JSON.stringify(body);
+    }
+    const response = await this.fetcher(this.baseUrl + "/api/v1" + path, init);
     const payload: unknown = await response.json();
     if (!response.ok) {
       throw new EhaiApiError(response.status, isErrorResponse(payload) ? payload : null);

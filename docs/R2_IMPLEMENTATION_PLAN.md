@@ -165,3 +165,77 @@ Reviewer verifying，原人工 Gate 等待。最后一次响应累计 32,049 报
 正常 HTTP 路径及静态检查/客户端生成构建通过。完整产品 E2E、变更基线后的新 Worker
 实跑、多次后继链与崩溃注入仍未覆盖；新增 MCP 调用未做真实模型协议复测。
 所有本轮宿主已退出；旧历史试用和 key 未改动、未提交。
+
+## 2026-09-21：P3.1 公开项目查询
+
+新增只读 MCP 工具 list_projects、get_project、get_runtime_context，沿用正式 HTTP 路由与
+既有参数校验/结果包装；输入对象闭合，路径 ID 必填，无参数工具 required=[]，未新增 uniqueItems。
+CLI、HTTP Schema、生成 TS Client 同步。正常无模型入口与 stdio get_project 协议查询通过，
+未宣称真实模型调用已验证；具体行为、运行证据和范围见 [P3 实施记录](P3_IMPLEMENTATION_PLAN.md)。
+
+## 2026-09-22：P3.2 统一人工待办
+
+新增 list_inbox、get_inbox_item 两个只读 MCP 工具，参数、HTTP 路由/Schema、CLI 和生成 Client 同步。
+列表筛选字段必填且允许 null，详情 kind 使用固定枚举；不把非 UUID 的 kind 按 UUID 解析，
+也不允许它构造任意路径。无参数省略与 null 的 HTTP/CLI 语义见 Usage，MCP 明确要求 null。
+真实 stdio 协议分别查询两个工具，并用原 decide-human-check CLI 完成人工 Gate 闭环；
+Worker 回答表单、请求新鲜度/幂等输入核对和未知结果保护已实现，但未做真实后端模型调用验证。
+试用中的 fake Reviewer 格式限制、原因及调整后的正常路径证据见 [P3 实施记录](P3_IMPLEMENTATION_PLAN.md)。
+
+## 2026-09-22：便签、事件消费与项目配置后端
+
+Planner 新增 raise_note(question,evidence)，对象闭合、字段必填，角色固定 planner；
+注册、prompt、参数、宿主持久化、返回值及 ends_turn 行为同步。该工具不批准计划或任意挂起运行。
+新增 Notes/Consumer/ProjectConfiguration 的 HTTP、CLI API 客户端、MCP 和 TS Client 契约已接通。
+MCP consumer_id 使用固定 ASCII 名称规则，note/inbox 查询筛选显式 nullable，无 uniqueItems。
+便签输入与决定分离，source ID/token 与 note 讨论 token 分别核对；下游操作使用固定幂等键。
+运行配置指纹保持原授权文档，新项目规则只以版本快照注入 Worker/Planner 上下文，不扩权。
+正常 CLI/HTTP/MCP 与持久效果的薄验证通过，未进行真实 Provider 工具调用；不能将工具数量或
+Schema 接通当作 Planner 模型行为已验证。具体试用路径、证据和限制见 P3 实施记录。
+
+### 同日真实 Go 便签证据
+
+用户授权的隔离 Pi 0.85.1 试用已让 Go deepseek-v4.1-flash 实际调用
+workspace_list/workspace_read 和 raise_note(question,evidence)。Provider 收到 strict=true、
+additionalProperties=false、两个必填字段的 Schema，真实参数、宿主持久便签和 Inbox 相符。
+项目 v1 静态规则进入实际模型请求；CLI 澄清仅追加消息，没有生成计划批准或 Run。
+两次流式请求均 200，共 11499 报告 token，未关闭严格校验或换模型。
+
+连接探测首次缺少 Go 会话头而得到 400，补齐后 200/OK（15 token）；
+生产 Pi 原生会话头已正确存在，无 EHAI 接入代码修复。子 Agent 后续 revise_plan 提交
+在发送前被自动审批拦截，未重放，相关链路保持未验证。完整路径和证据见 P3 实施记录；
+本次工具试用不是唯一产品 E2E。
+
+用户明确允许继续后，同一试用的 revise_plan 草稿、正式批准、真实 Worker/Reviewer 和便签
+人工 Gate 已走完，Run `80a7327d-d309-49f6-b2de-702990400b6e` completed。
+Planner 重复 Gate、Reviewer 遗漏必需证据 ID 均由现有校验拒绝，模型自行修正后成功；未改工具约束。
+项目更新后，真实 Worker 与两次 Reviewer 请求仍携带固定的 v3 项目规则。
+临时 16 次上限曾本地拦截新请求，保留 interrupted/Intervention；核对无上游请求、无外部写入后，
+经正常绑定便签 continue 与独立 resume 接续，未改 unknown 分类。临时次数上限调整为 22，
+160000 token 响应后阈值不变，最终 20 次真实 Pi 请求/152263 报告 token（不含连接探测 15）。
+完整失败、恢复、状态与验收范围见 P3 实施记录；未新增永久测试，非全工具或产品 E2E 覆盖。
+
+## 2026-09-22：Workspace Manager 与规划容量工具契约
+
+新增管理工作区及 Planner 容量查询接口、CLI/MCP 和 TS Client。管理 root MCP 动态读取管理
+OpenAPI 与 core-openapi，核心工具增加必填 workspace_id；绑定单工作区时保持原参数形状。
+workspace_id 按固定 slug 校验，核心转发只允许已注册路由，不把内部子进程控制接口暴露给模型。
+get_request_schema 按管理/核心工具选择正确 Schema；无隐式批准、跨工作区回退或模型重试。
+
+真实 stdio 协议查询、正常 CLI/HTTP 和生成 Client 已通过，未进行本轮 Provider 多 workspace
+模型调用。新增注册/启动工具的模型语义仍需在以后实际使用中补充证据，不能把 72/65 个工具
+数量当作全部模型契约已验收。Planner 容量的正常 HTTP 拒绝/释放行为和实际子进程问题修复
+详见 P3 实施记录。本轮没有新增永久测试。
+
+## 2026-09-23：真实多 workspace Pi 调用
+
+两个独立核心使用留存 Go key 与同一 deepseek-v4.1-flash，实际 Planner/Worker/Reviewer 工具
+调用及持久成果均归对应 workspace；跨 workspace 的规划、执行和审查请求都有时间重叠。
+同 workspace 两个真实 Planner 也同时运行，第三请求在发给模型前返回容量 409，完成后释放槽位。
+24 个上游请求全部 200，共 118857 报告 token，12 个 Provider Session，配置标记未串用。
+
+首次 Worker 启动暴露 Windows Git 继承托管监护 stdin 的阻塞；不是 Provider/key/Schema 错误。
+最小故障诊断排除环境变量后，DEVNULL 对照和生产 Git wrappers 重跑通过，显式 input_bytes 保留。
+修复后的原任务接续完成，又在相同两个工作区同时启动一对正常只读 Run，两边均首次通过
+真实 Worker/Reviewer 和明确人工 Gate。没有放宽工具契约或审批。完整失败、修复、用量和
+未覆盖范围见 P3 实施记录；本次未新增永久测试，也不是唯一产品 E2E。

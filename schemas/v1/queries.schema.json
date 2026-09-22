@@ -5,7 +5,14 @@
   "$defs": {
     "RunStatus": {
       "type": "string",
-      "enum": ["pending", "running", "paused", "completed", "failed", "cancelled"]
+      "enum": [
+        "pending",
+        "running",
+        "paused",
+        "completed",
+        "failed",
+        "cancelled"
+      ]
     },
     "AttemptStatus": {
       "type": "string",
@@ -21,11 +28,20 @@
     },
     "PlanRevisionStatus": {
       "type": "string",
-      "enum": ["draft", "approved"]
+      "enum": [
+        "draft",
+        "approved"
+      ]
     },
     "PlanNodeKind": {
       "type": "string",
-      "enum": ["work", "fork", "evaluator", "merge", "reviewer"]
+      "enum": [
+        "work",
+        "fork",
+        "evaluator",
+        "merge",
+        "reviewer"
+      ]
     },
     "PlanNodeStatus": {
       "type": "string",
@@ -44,19 +60,40 @@
     },
     "EdgeType": {
       "type": "string",
-      "enum": ["dependency", "exploration", "conditional", "merge"]
+      "enum": [
+        "dependency",
+        "exploration",
+        "conditional",
+        "merge"
+      ]
     },
     "BranchStatus": {
       "type": "string",
-      "enum": ["active", "selected", "pruned"]
+      "enum": [
+        "active",
+        "selected",
+        "pruned"
+      ]
     },
     "ArtifactKind": {
       "type": "string",
-      "enum": ["candidate", "evidence", "log", "patch", "worker_output", "check_output"]
+      "enum": [
+        "candidate",
+        "evidence",
+        "log",
+        "patch",
+        "worker_output",
+        "check_output"
+      ]
     },
     "CheckKind": {
       "type": "string",
-      "enum": ["command", "artifact", "semantic", "human"]
+      "enum": [
+        "command",
+        "artifact",
+        "semantic",
+        "human"
+      ]
     },
     "CheckRunStatus": {
       "type": "string",
@@ -72,31 +109,57 @@
     },
     "NullableId": {
       "oneOf": [
-        {"$ref": "common.schema.json#/$defs/Id"},
-        {"type": "null"}
+        {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        {
+          "type": "null"
+        }
       ]
     },
     "NullableUtcDateTime": {
       "oneOf": [
-        {"$ref": "common.schema.json#/$defs/UtcDateTime"},
-        {"type": "null"}
+        {
+          "$ref": "common.schema.json#/$defs/UtcDateTime"
+        },
+        {
+          "type": "null"
+        }
       ]
     },
     "NullableString": {
-      "type": ["string", "null"]
+      "type": [
+        "string",
+        "null"
+      ]
     },
     "IdList": {
       "type": "array",
-      "items": {"$ref": "common.schema.json#/$defs/Id"}
+      "items": {
+        "$ref": "common.schema.json#/$defs/Id"
+      }
     },
     "GoalWorkerBudgetView": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["max_worker_attempts", "used", "remaining"],
+      "required": [
+        "max_worker_attempts",
+        "used",
+        "remaining"
+      ],
       "properties": {
-        "max_worker_attempts": {"type": "integer", "minimum": 1},
-        "used": {"type": "integer", "minimum": 0},
-        "remaining": {"type": "integer", "minimum": 0}
+        "max_worker_attempts": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "used": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "remaining": {
+          "type": "integer",
+          "minimum": 0
+        }
       }
     },
     "Run": {
@@ -113,19 +176,46 @@
         "status_reason"
       ],
       "properties": {
-        "run_id": {"$ref": "common.schema.json#/$defs/Id"},
-        "goal_id": {"$ref": "common.schema.json#/$defs/Id"},
-        "plan_revision_id": {"$ref": "common.schema.json#/$defs/Id"},
-        "status": {"$ref": "#/$defs/RunStatus"},
-        "predecessor_run_id": {"$ref": "#/$defs/NullableId"},
-        "successor_run_ids": {"$ref": "#/$defs/IdList"},
-        "goal_worker_budget": {
-          "oneOf": [{"$ref": "#/$defs/GoalWorkerBudgetView"}, {"type": "null"}]
+        "run_id": {
+          "$ref": "common.schema.json#/$defs/Id"
         },
-        "created_at": {"$ref": "common.schema.json#/$defs/UtcDateTime"},
-        "started_at": {"$ref": "#/$defs/NullableUtcDateTime"},
-        "ended_at": {"$ref": "#/$defs/NullableUtcDateTime"},
-        "status_reason": {"$ref": "#/$defs/NullableString"}
+        "goal_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "plan_revision_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "status": {
+          "$ref": "#/$defs/RunStatus"
+        },
+        "predecessor_run_id": {
+          "$ref": "#/$defs/NullableId"
+        },
+        "successor_run_ids": {
+          "$ref": "#/$defs/IdList"
+        },
+        "goal_worker_budget": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/GoalWorkerBudgetView"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "created_at": {
+          "$ref": "common.schema.json#/$defs/UtcDateTime"
+        },
+        "started_at": {
+          "$ref": "#/$defs/NullableUtcDateTime"
+        },
+        "ended_at": {
+          "$ref": "#/$defs/NullableUtcDateTime"
+        },
+        "status_reason": {
+          "$ref": "#/$defs/NullableString"
+        }
       }
     },
     "PlanNode": {
@@ -143,15 +233,42 @@
         "session_policy"
       ],
       "properties": {
-        "plan_node_id": {"$ref": "common.schema.json#/$defs/Id"},
-        "title": {"type": "string"},
-        "instruction": {"type": "string"},
-        "kind": {"$ref": "#/$defs/PlanNodeKind"},
-        "required_dependency_ids": {"$ref": "#/$defs/IdList"},
-        "required_check_ids": {"$ref": "#/$defs/IdList"},
-        "status": {"$ref": "#/$defs/PlanNodeStatus"},
-        "required_capabilities": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
-        "session_policy": {"type": "string", "enum": ["new", "reuse", "fork"]}
+        "plan_node_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "title": {
+          "type": "string"
+        },
+        "instruction": {
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/PlanNodeKind"
+        },
+        "required_dependency_ids": {
+          "$ref": "#/$defs/IdList"
+        },
+        "required_check_ids": {
+          "$ref": "#/$defs/IdList"
+        },
+        "status": {
+          "$ref": "#/$defs/PlanNodeStatus"
+        },
+        "required_capabilities": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true
+        },
+        "session_policy": {
+          "type": "string",
+          "enum": [
+            "new",
+            "reuse",
+            "fork"
+          ]
+        }
       }
     },
     "Edge": {
@@ -166,12 +283,24 @@
         "condition"
       ],
       "properties": {
-        "edge_id": {"$ref": "common.schema.json#/$defs/Id"},
-        "source_node_id": {"$ref": "common.schema.json#/$defs/Id"},
-        "target_node_id": {"$ref": "common.schema.json#/$defs/Id"},
-        "edge_type": {"$ref": "#/$defs/EdgeType"},
-        "branch_id": {"$ref": "#/$defs/NullableId"},
-        "condition": {"$ref": "#/$defs/NullableString"}
+        "edge_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "source_node_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "target_node_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "edge_type": {
+          "$ref": "#/$defs/EdgeType"
+        },
+        "branch_id": {
+          "$ref": "#/$defs/NullableId"
+        },
+        "condition": {
+          "$ref": "#/$defs/NullableString"
+        }
       }
     },
     "Branch": {
@@ -186,12 +315,24 @@
         "status"
       ],
       "properties": {
-        "branch_id": {"$ref": "common.schema.json#/$defs/Id"},
-        "label": {"type": "string"},
-        "fork_node_id": {"$ref": "common.schema.json#/$defs/Id"},
-        "node_ids": {"$ref": "#/$defs/IdList"},
-        "merge_node_id": {"$ref": "common.schema.json#/$defs/Id"},
-        "status": {"$ref": "#/$defs/BranchStatus"}
+        "branch_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "label": {
+          "type": "string"
+        },
+        "fork_node_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "node_ids": {
+          "$ref": "#/$defs/IdList"
+        },
+        "merge_node_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "status": {
+          "$ref": "#/$defs/BranchStatus"
+        }
       }
     },
     "PlanPhase": {
@@ -206,12 +347,25 @@
         "rework_node_ids"
       ],
       "properties": {
-        "phase_id": {"$ref": "common.schema.json#/$defs/Id"},
-        "title": {"type": "string", "minLength": 1},
-        "node_ids": {"$ref": "#/$defs/IdList"},
-        "reviewer_node_id": {"$ref": "common.schema.json#/$defs/Id"},
-        "gate_node_id": {"$ref": "common.schema.json#/$defs/Id"},
-        "rework_node_ids": {"$ref": "#/$defs/IdList"}
+        "phase_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1
+        },
+        "node_ids": {
+          "$ref": "#/$defs/IdList"
+        },
+        "reviewer_node_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "gate_node_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "rework_node_ids": {
+          "$ref": "#/$defs/IdList"
+        }
       }
     },
     "PlanGraph": {
@@ -234,81 +388,236 @@
         "phases"
       ],
       "properties": {
-        "plan_revision_id": {"$ref": "common.schema.json#/$defs/Id"},
-        "process_revision_id": {"$ref": "#/$defs/NullableId"},
-        "goal_id": {"$ref": "common.schema.json#/$defs/Id"},
-        "version": {"type": "integer", "minimum": 1},
-        "completion_contract_id": {"$ref": "common.schema.json#/$defs/Id"},
-        "completion_contract_version": {"type": "integer", "minimum": 1},
-        "created_at": {"$ref": "common.schema.json#/$defs/UtcDateTime"},
-        "status": {"$ref": "#/$defs/PlanRevisionStatus"},
-        "approved_at": {"$ref": "#/$defs/NullableUtcDateTime"},
-        "supersedes_plan_revision_id": {"$ref": "#/$defs/NullableId"},
-        "design_document": {"type": ["string", "null"], "maxLength": 64000},
+        "plan_revision_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "process_revision_id": {
+          "$ref": "#/$defs/NullableId"
+        },
+        "goal_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "version": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "completion_contract_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "completion_contract_version": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "created_at": {
+          "$ref": "common.schema.json#/$defs/UtcDateTime"
+        },
+        "status": {
+          "$ref": "#/$defs/PlanRevisionStatus"
+        },
+        "approved_at": {
+          "$ref": "#/$defs/NullableUtcDateTime"
+        },
+        "supersedes_plan_revision_id": {
+          "$ref": "#/$defs/NullableId"
+        },
+        "design_document": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 64000
+        },
         "nodes": {
           "type": "array",
-          "items": {"$ref": "#/$defs/PlanNode"}
+          "items": {
+            "$ref": "#/$defs/PlanNode"
+          }
         },
         "edges": {
           "type": "array",
-          "items": {"$ref": "#/$defs/Edge"}
+          "items": {
+            "$ref": "#/$defs/Edge"
+          }
         },
         "branches": {
           "type": "array",
-          "items": {"$ref": "#/$defs/Branch"}
+          "items": {
+            "$ref": "#/$defs/Branch"
+          }
         },
         "phases": {
           "type": "array",
-          "items": {"$ref": "#/$defs/PlanPhase"}
+          "items": {
+            "$ref": "#/$defs/PlanPhase"
+          }
         }
       }
     },
     "ProcessRevisionSource": {
       "type": "string",
-      "enum": ["run_started", "legacy_snapshot", "planner_adjustment"]
+      "enum": [
+        "run_started",
+        "legacy_snapshot",
+        "planner_adjustment"
+      ]
     },
     "CodeIntegrationSource": {
-      "type": "object", "additionalProperties": false,
-      "required": ["block_id", "block_version", "plan_node_id", "source_run_id", "attempt_id", "prepared_commit", "commit"],
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "block_id",
+        "block_version",
+        "plan_node_id",
+        "source_run_id",
+        "attempt_id",
+        "prepared_commit",
+        "commit"
+      ],
       "properties": {
-        "block_id": {"$ref": "common.schema.json#/$defs/Id"},
-        "block_version": {"type": ["integer", "null"], "minimum": 1},
-        "plan_node_id": {"$ref": "common.schema.json#/$defs/Id"},
-        "source_run_id": {"$ref": "common.schema.json#/$defs/Id"},
-        "attempt_id": {"$ref": "common.schema.json#/$defs/Id"},
-        "prepared_commit": {"type": "string"}, "commit": {"type": "string"}
+        "block_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "block_version": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1
+        },
+        "plan_node_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "source_run_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "attempt_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "prepared_commit": {
+          "type": "string"
+        },
+        "commit": {
+          "type": "string"
+        }
       }
     },
     "CodeIntegration": {
-      "type": "object", "additionalProperties": false,
-      "required": ["integration_id", "run_id", "process_revision_id", "base_commit", "sources", "status", "workspace", "commit", "diff_path", "conflicts"],
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "integration_id",
+        "run_id",
+        "process_revision_id",
+        "base_commit",
+        "sources",
+        "status",
+        "workspace",
+        "commit",
+        "diff_path",
+        "conflicts"
+      ],
       "properties": {
-        "integration_id": {"$ref": "common.schema.json#/$defs/Id"},
-        "run_id": {"$ref": "common.schema.json#/$defs/Id"},
-        "process_revision_id": {"$ref": "common.schema.json#/$defs/Id"},
-        "base_commit": {"type": "string"},
-        "sources": {"type": "array", "items": {"$ref": "#/$defs/CodeIntegrationSource"}},
-        "status": {"type": "string", "enum": ["integrated", "conflicted"]},
-        "workspace": {"type": "string"},
-        "commit": {"type": ["string", "null"]}, "diff_path": {"type": ["string", "null"]},
-        "conflicts": {"type": "array", "items": {"type": "string"}}
+        "integration_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "run_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "process_revision_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "base_commit": {
+          "type": "string"
+        },
+        "sources": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/CodeIntegrationSource"
+          }
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "integrated",
+            "conflicted"
+          ]
+        },
+        "workspace": {
+          "type": "string"
+        },
+        "commit": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "diff_path": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "conflicts": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
       }
     },
     "CodeIntegrationResponse": {
-      "type": "object", "additionalProperties": false, "required": ["data"],
-      "properties": {"data": {"$ref": "#/$defs/CodeIntegration"}}
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "data"
+      ],
+      "properties": {
+        "data": {
+          "$ref": "#/$defs/CodeIntegration"
+        }
+      }
     },
     "BlockChange": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["block_id", "version", "previous_node_id", "node_id", "change", "changed_fields"],
+      "required": [
+        "block_id",
+        "version",
+        "previous_node_id",
+        "node_id",
+        "change",
+        "changed_fields"
+      ],
       "properties": {
-        "block_id": {"$ref": "common.schema.json#/$defs/Id"},
-        "version": {"type": "integer", "minimum": 1},
-        "previous_node_id": {"$ref": "#/$defs/NullableId"},
-        "node_id": {"$ref": "#/$defs/NullableId"},
-        "change": {"type": "string", "enum": ["added", "modified", "removed", "unchanged"]},
-        "changed_fields": {"type": "array", "items": {"type": "string", "minLength": 1}}
+        "block_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "version": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "previous_node_id": {
+          "$ref": "#/$defs/NullableId"
+        },
+        "node_id": {
+          "$ref": "#/$defs/NullableId"
+        },
+        "change": {
+          "type": "string",
+          "enum": [
+            "added",
+            "modified",
+            "removed",
+            "unchanged"
+          ]
+        },
+        "changed_fields": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
       }
     },
     "ProcessRevision": {
@@ -327,31 +636,65 @@
         "graph"
       ],
       "properties": {
-        "process_revision_id": {"$ref": "common.schema.json#/$defs/Id"},
-        "run_id": {"$ref": "common.schema.json#/$defs/Id"},
-        "version": {"type": "integer", "minimum": 1},
-        "parent_process_revision_id": {"$ref": "#/$defs/NullableId"},
+        "process_revision_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "run_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "version": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "parent_process_revision_id": {
+          "$ref": "#/$defs/NullableId"
+        },
         "gate_owners": {
           "type": "object",
-          "propertyNames": {"$ref": "common.schema.json#/$defs/Id"},
-          "additionalProperties": {"$ref": "common.schema.json#/$defs/Id"}
+          "propertyNames": {
+            "$ref": "common.schema.json#/$defs/Id"
+          },
+          "additionalProperties": {
+            "$ref": "common.schema.json#/$defs/Id"
+          }
         },
         "block_changes": {
           "description": "Host-authored lineage, not approval or a Git revert recipe. Null means historical lineage was not recorded.",
           "oneOf": [
-            {"type": "array", "items": {"$ref": "#/$defs/BlockChange"}},
-            {"type": "null"}
+            {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/BlockChange"
+              }
+            },
+            {
+              "type": "null"
+            }
           ]
         },
-        "source": {"$ref": "#/$defs/ProcessRevisionSource"},
-        "reason": {"type": "string", "minLength": 1, "maxLength": 16000},
-        "created_at": {"$ref": "common.schema.json#/$defs/UtcDateTime"},
-        "graph": {"$ref": "#/$defs/PlanGraph"}
+        "source": {
+          "$ref": "#/$defs/ProcessRevisionSource"
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 16000
+        },
+        "created_at": {
+          "$ref": "common.schema.json#/$defs/UtcDateTime"
+        },
+        "graph": {
+          "$ref": "#/$defs/PlanGraph"
+        }
       }
     },
     "ProcessDraftStatus": {
       "type": "string",
-      "enum": ["planning", "ready", "failed"]
+      "enum": [
+        "planning",
+        "ready",
+        "failed"
+      ]
     },
     "ProcessDraft": {
       "type": "object",
@@ -371,21 +714,49 @@
         "candidate"
       ],
       "properties": {
-        "draft_id": {"$ref": "common.schema.json#/$defs/Id"},
-        "run_id": {"$ref": "common.schema.json#/$defs/Id"},
-        "parent_process_revision_id": {"$ref": "common.schema.json#/$defs/Id"},
-        "planner_session_ref_id": {"$ref": "common.schema.json#/$defs/Id"},
-        "status": {"$ref": "#/$defs/ProcessDraftStatus"},
-        "reason": {"type": "string", "minLength": 1, "maxLength": 16000},
-        "created_at": {"$ref": "common.schema.json#/$defs/UtcDateTime"},
-        "completed_at": {"$ref": "#/$defs/NullableUtcDateTime"},
-        "error": {"$ref": "#/$defs/NullableString"},
-        "base_is_current": {"type": "boolean"},
-        "base_execution_plan": {"$ref": "#/$defs/PlanGraph"},
+        "draft_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "run_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "parent_process_revision_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "planner_session_ref_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "status": {
+          "$ref": "#/$defs/ProcessDraftStatus"
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 16000
+        },
+        "created_at": {
+          "$ref": "common.schema.json#/$defs/UtcDateTime"
+        },
+        "completed_at": {
+          "$ref": "#/$defs/NullableUtcDateTime"
+        },
+        "error": {
+          "$ref": "#/$defs/NullableString"
+        },
+        "base_is_current": {
+          "type": "boolean"
+        },
+        "base_execution_plan": {
+          "$ref": "#/$defs/PlanGraph"
+        },
         "candidate": {
           "oneOf": [
-            {"$ref": "#/$defs/ProcessRevision"},
-            {"type": "null"}
+            {
+              "$ref": "#/$defs/ProcessRevision"
+            },
+            {
+              "type": "null"
+            }
           ]
         }
       }
@@ -393,22 +764,39 @@
     "RunProcessDrafts": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["run_id", "drafts"],
+      "required": [
+        "run_id",
+        "drafts"
+      ],
       "properties": {
-        "run_id": {"$ref": "common.schema.json#/$defs/Id"},
+        "run_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
         "drafts": {
           "type": "array",
-          "items": {"$ref": "#/$defs/ProcessDraft"}
+          "items": {
+            "$ref": "#/$defs/ProcessDraft"
+          }
         }
       }
     },
     "ProcessBoundarySourceRef": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["source_key", "quote"],
+      "required": [
+        "source_key",
+        "quote"
+      ],
       "properties": {
-        "source_key": {"type": "string", "minLength": 1},
-        "quote": {"type": "string", "minLength": 1, "maxLength": 16000}
+        "source_key": {
+          "type": "string",
+          "minLength": 1
+        },
+        "quote": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 16000
+        }
       }
     },
     "ProcessBoundaryAssessment": {
@@ -424,52 +812,93 @@
       "properties": {
         "aspect": {
           "type": "string",
-          "enum": ["requirements", "interfaces", "permissions", "gate_scope", "result_reuse"]
+          "enum": [
+            "requirements",
+            "interfaces",
+            "permissions",
+            "gate_scope",
+            "result_reuse"
+          ]
         },
         "judgment": {
           "type": "string",
-          "enum": ["preserved", "not_preserved", "uncertain"]
+          "enum": [
+            "preserved",
+            "not_preserved",
+            "uncertain"
+          ]
         },
-        "explanation": {"type": "string", "minLength": 1, "maxLength": 16000},
+        "explanation": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 16000
+        },
         "source_refs": {
           "type": "array",
           "maxItems": 256,
-          "items": {"$ref": "#/$defs/ProcessBoundarySourceRef"}
+          "items": {
+            "$ref": "#/$defs/ProcessBoundarySourceRef"
+          }
         },
         "candidate_node_ids": {
           "type": "array",
           "maxItems": 256,
-          "items": {"$ref": "common.schema.json#/$defs/Id"}
+          "items": {
+            "$ref": "common.schema.json#/$defs/Id"
+          }
         }
       }
     },
     "ProcessBoundaryObligation": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["key", "description", "source_refs"],
+      "required": [
+        "key",
+        "description",
+        "source_refs"
+      ],
       "properties": {
-        "key": {"type": "string", "minLength": 1, "maxLength": 16000},
-        "description": {"type": "string", "minLength": 1, "maxLength": 16000},
+        "key": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 16000
+        },
+        "description": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 16000
+        },
         "source_refs": {
           "type": "array",
           "maxItems": 256,
-          "items": {"$ref": "#/$defs/ProcessBoundarySourceRef"}
+          "items": {
+            "$ref": "#/$defs/ProcessBoundarySourceRef"
+          }
         }
       }
     },
     "ProcessBoundaryImplementation": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["obligation_key", "alternatives"],
+      "required": [
+        "obligation_key",
+        "alternatives"
+      ],
       "properties": {
-        "obligation_key": {"type": "string", "minLength": 1, "maxLength": 16000},
+        "obligation_key": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 16000
+        },
         "alternatives": {
           "type": "array",
           "maxItems": 256,
           "items": {
             "type": "array",
             "maxItems": 256,
-            "items": {"$ref": "common.schema.json#/$defs/Id"}
+            "items": {
+              "$ref": "common.schema.json#/$defs/Id"
+            }
           }
         }
       }
@@ -477,62 +906,102 @@
     "ProcessBoundaryGateScope": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["original_gate_id", "obligation_keys"],
+      "required": [
+        "original_gate_id",
+        "obligation_keys"
+      ],
       "properties": {
-        "original_gate_id": {"$ref": "common.schema.json#/$defs/Id"},
+        "original_gate_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
         "obligation_keys": {
           "type": "array",
           "maxItems": 256,
-          "items": {"type": "string", "minLength": 1, "maxLength": 16000}
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 16000
+          }
         }
       }
     },
     "ProcessBoundaryObligationMapping": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["obligations", "implementations", "gate_scopes"],
+      "required": [
+        "obligations",
+        "implementations",
+        "gate_scopes"
+      ],
       "properties": {
         "obligations": {
           "type": "array",
           "maxItems": 256,
-          "items": {"$ref": "#/$defs/ProcessBoundaryObligation"}
+          "items": {
+            "$ref": "#/$defs/ProcessBoundaryObligation"
+          }
         },
         "implementations": {
           "type": "array",
           "maxItems": 256,
-          "items": {"$ref": "#/$defs/ProcessBoundaryImplementation"}
+          "items": {
+            "$ref": "#/$defs/ProcessBoundaryImplementation"
+          }
         },
         "gate_scopes": {
           "type": "array",
           "maxItems": 256,
-          "items": {"$ref": "#/$defs/ProcessBoundaryGateScope"}
+          "items": {
+            "$ref": "#/$defs/ProcessBoundaryGateScope"
+          }
         }
       }
     },
     "ProcessBoundaryReport": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["summary", "assessments", "obligation_mapping", "evidence_artifact_ids"],
+      "required": [
+        "summary",
+        "assessments",
+        "obligation_mapping",
+        "evidence_artifact_ids"
+      ],
       "properties": {
-        "summary": {"type": "string", "minLength": 1, "maxLength": 16000},
+        "summary": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 16000
+        },
         "assessments": {
           "type": "array",
           "minItems": 5,
           "maxItems": 5,
-          "items": {"$ref": "#/$defs/ProcessBoundaryAssessment"}
+          "items": {
+            "$ref": "#/$defs/ProcessBoundaryAssessment"
+          }
         },
         "obligation_mapping": {
           "oneOf": [
-            {"$ref": "#/$defs/ProcessBoundaryObligationMapping"},
-            {"type": "null"}
+            {
+              "$ref": "#/$defs/ProcessBoundaryObligationMapping"
+            },
+            {
+              "type": "null"
+            }
           ]
         },
-        "evidence_artifact_ids": {"$ref": "#/$defs/IdList"}
+        "evidence_artifact_ids": {
+          "$ref": "#/$defs/IdList"
+        }
       }
     },
     "ProcessReviewStatus": {
       "type": "string",
-      "enum": ["reviewing", "completed", "failed"]
+      "enum": [
+        "reviewing",
+        "completed",
+        "failed"
+      ]
     },
     "ProcessReview": {
       "type": "object",
@@ -550,32 +1019,64 @@
         "error"
       ],
       "properties": {
-        "review_id": {"$ref": "common.schema.json#/$defs/Id"},
-        "draft_id": {"$ref": "common.schema.json#/$defs/Id"},
-        "run_id": {"$ref": "common.schema.json#/$defs/Id"},
-        "reviewer_session_ref_id": {"$ref": "common.schema.json#/$defs/Id"},
-        "status": {"$ref": "#/$defs/ProcessReviewStatus"},
-        "created_at": {"$ref": "common.schema.json#/$defs/UtcDateTime"},
-        "completed_at": {"$ref": "#/$defs/NullableUtcDateTime"},
-        "preserves_boundary": {"type": ["boolean", "null"]},
-        "report": {
-          "oneOf": [
-            {"$ref": "#/$defs/ProcessBoundaryReport"},
-            {"type": "null"}
+        "review_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "draft_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "run_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "reviewer_session_ref_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "status": {
+          "$ref": "#/$defs/ProcessReviewStatus"
+        },
+        "created_at": {
+          "$ref": "common.schema.json#/$defs/UtcDateTime"
+        },
+        "completed_at": {
+          "$ref": "#/$defs/NullableUtcDateTime"
+        },
+        "preserves_boundary": {
+          "type": [
+            "boolean",
+            "null"
           ]
         },
-        "error": {"$ref": "#/$defs/NullableString"}
+        "report": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/ProcessBoundaryReport"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "error": {
+          "$ref": "#/$defs/NullableString"
+        }
       }
     },
     "ProcessDraftReviews": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["draft_id", "reviews"],
+      "required": [
+        "draft_id",
+        "reviews"
+      ],
       "properties": {
-        "draft_id": {"$ref": "common.schema.json#/$defs/Id"},
+        "draft_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
         "reviews": {
           "type": "array",
-          "items": {"$ref": "#/$defs/ProcessReview"}
+          "items": {
+            "$ref": "#/$defs/ProcessReview"
+          }
         }
       }
     },
@@ -583,37 +1084,99 @@
       "type": "object",
       "additionalProperties": false,
       "required": [
-        "turn_id", "message", "status", "reply", "plan_revision_id", "agent_session_ref_id", "error"
+        "turn_id",
+        "message",
+        "status",
+        "reply",
+        "plan_revision_id",
+        "agent_session_ref_id",
+        "error"
       ],
       "properties": {
-        "turn_id": {"$ref": "common.schema.json#/$defs/Id"},
-        "message": {"type": "string"},
-        "status": {"enum": ["running", "completed", "failed"]},
-        "reply": {"type": ["string", "null"]},
-        "plan_revision_id": {"$ref": "#/$defs/NullableId"},
-        "agent_session_ref_id": {"$ref": "#/$defs/NullableId"},
-        "error": {"type": ["string", "null"]}
+        "turn_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "message": {
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "running",
+            "completed",
+            "failed"
+          ]
+        },
+        "reply": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "plan_revision_id": {
+          "$ref": "#/$defs/NullableId"
+        },
+        "agent_session_ref_id": {
+          "$ref": "#/$defs/NullableId"
+        },
+        "error": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
       }
     },
     "PlanningConversation": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["conversation_id", "goal_id", "workspace", "turns"],
+      "required": [
+        "conversation_id",
+        "goal_id",
+        "workspace",
+        "turns"
+      ],
       "properties": {
-        "conversation_id": {"$ref": "common.schema.json#/$defs/Id"},
-        "goal_id": {"$ref": "common.schema.json#/$defs/Id"},
-        "workspace": {"type": ["string", "null"]},
-        "source_run_id": {
-          "oneOf": [{"$ref": "common.schema.json#/$defs/Id"}, {"type": "null"}]
+        "conversation_id": {
+          "$ref": "common.schema.json#/$defs/Id"
         },
-        "turns": {"type": "array", "items": {"$ref": "#/$defs/PlanningTurn"}}
+        "goal_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "workspace": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "source_run_id": {
+          "oneOf": [
+            {
+              "$ref": "common.schema.json#/$defs/Id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "turns": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/PlanningTurn"
+          }
+        }
       }
     },
     "PlanningConversationResponse": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["data"],
-      "properties": {"data": {"$ref": "#/$defs/PlanningConversation"}}
+      "required": [
+        "data"
+      ],
+      "properties": {
+        "data": {
+          "$ref": "#/$defs/PlanningConversation"
+        }
+      }
     },
     "Attempt": {
       "type": "object",
@@ -632,17 +1195,40 @@
         "outcome_reason"
       ],
       "properties": {
-        "attempt_id": {"$ref": "common.schema.json#/$defs/Id"},
-        "run_id": {"$ref": "common.schema.json#/$defs/Id"},
-        "process_revision_id": {"$ref": "#/$defs/NullableId"},
-        "plan_node_id": {"$ref": "common.schema.json#/$defs/Id"},
-        "sequence": {"type": "integer", "minimum": 1},
-        "status": {"$ref": "#/$defs/AttemptStatus"},
-        "artifact_ids": {"$ref": "#/$defs/IdList"},
-        "created_at": {"$ref": "common.schema.json#/$defs/UtcDateTime"},
-        "started_at": {"$ref": "#/$defs/NullableUtcDateTime"},
-        "ended_at": {"$ref": "#/$defs/NullableUtcDateTime"},
-        "outcome_reason": {"$ref": "#/$defs/NullableString"}
+        "attempt_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "run_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "process_revision_id": {
+          "$ref": "#/$defs/NullableId"
+        },
+        "plan_node_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "sequence": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "status": {
+          "$ref": "#/$defs/AttemptStatus"
+        },
+        "artifact_ids": {
+          "$ref": "#/$defs/IdList"
+        },
+        "created_at": {
+          "$ref": "common.schema.json#/$defs/UtcDateTime"
+        },
+        "started_at": {
+          "$ref": "#/$defs/NullableUtcDateTime"
+        },
+        "ended_at": {
+          "$ref": "#/$defs/NullableUtcDateTime"
+        },
+        "outcome_reason": {
+          "$ref": "#/$defs/NullableString"
+        }
       }
     },
     "Artifact": {
@@ -661,16 +1247,38 @@
         "attempt_id"
       ],
       "properties": {
-        "artifact_id": {"$ref": "common.schema.json#/$defs/Id"},
-        "kind": {"$ref": "#/$defs/ArtifactKind"},
-        "name": {"type": "string"},
-        "media_type": {"type": "string"},
-        "size_bytes": {"type": "integer", "minimum": 0},
-        "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
-        "created_at": {"$ref": "common.schema.json#/$defs/UtcDateTime"},
-        "run_id": {"$ref": "#/$defs/NullableId"},
-        "plan_node_id": {"$ref": "#/$defs/NullableId"},
-        "attempt_id": {"$ref": "#/$defs/NullableId"}
+        "artifact_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "kind": {
+          "$ref": "#/$defs/ArtifactKind"
+        },
+        "name": {
+          "type": "string"
+        },
+        "media_type": {
+          "type": "string"
+        },
+        "size_bytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "created_at": {
+          "$ref": "common.schema.json#/$defs/UtcDateTime"
+        },
+        "run_id": {
+          "$ref": "#/$defs/NullableId"
+        },
+        "plan_node_id": {
+          "$ref": "#/$defs/NullableId"
+        },
+        "attempt_id": {
+          "$ref": "#/$defs/NullableId"
+        }
       }
     },
     "CheckSpec": {
@@ -686,18 +1294,32 @@
         "semantic_required_terms"
       ],
       "properties": {
-        "check_id": {"$ref": "common.schema.json#/$defs/Id"},
-        "name": {"type": "string"},
-        "kind": {"$ref": "#/$defs/CheckKind"},
-        "description": {"type": "string"},
-        "required": {"type": "boolean"},
+        "check_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "name": {
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/CheckKind"
+        },
+        "description": {
+          "type": "string"
+        },
+        "required": {
+          "type": "boolean"
+        },
         "command_argv": {
           "type": "array",
-          "items": {"type": "string"}
+          "items": {
+            "type": "string"
+          }
         },
         "semantic_required_terms": {
           "type": "array",
-          "items": {"type": "string"}
+          "items": {
+            "type": "string"
+          }
         }
       }
     },
@@ -717,26 +1339,56 @@
         "failure_reason"
       ],
       "properties": {
-        "check_id": {"$ref": "common.schema.json#/$defs/Id"},
-        "check_run_id": {"$ref": "common.schema.json#/$defs/Id"},
-        "adoption_id": {"$ref": "#/$defs/NullableId"},
-        "run_id": {"$ref": "common.schema.json#/$defs/Id"},
-        "plan_node_id": {"$ref": "common.schema.json#/$defs/Id"},
-        "attempt_id": {"$ref": "common.schema.json#/$defs/Id"},
-        "passed": {"type": "boolean"},
-        "evaluated_at": {"$ref": "common.schema.json#/$defs/UtcDateTime"},
-        "evidence_artifact_ids": {"$ref": "#/$defs/IdList"},
-        "output": {"$ref": "#/$defs/NullableString"},
-        "failure_reason": {"$ref": "#/$defs/NullableString"}
+        "check_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "check_run_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "adoption_id": {
+          "$ref": "#/$defs/NullableId"
+        },
+        "run_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "plan_node_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "attempt_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "passed": {
+          "type": "boolean"
+        },
+        "evaluated_at": {
+          "$ref": "common.schema.json#/$defs/UtcDateTime"
+        },
+        "evidence_artifact_ids": {
+          "$ref": "#/$defs/IdList"
+        },
+        "output": {
+          "$ref": "#/$defs/NullableString"
+        },
+        "failure_reason": {
+          "$ref": "#/$defs/NullableString"
+        }
       }
     },
     "HumanCheckEvidence": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["artifact_id", "sha256"],
+      "required": [
+        "artifact_id",
+        "sha256"
+      ],
       "properties": {
-        "artifact_id": {"$ref": "common.schema.json#/$defs/Id"},
-        "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+        "artifact_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
       }
     },
     "ResultAdoption": {
@@ -757,22 +1409,48 @@
         "created_at"
       ],
       "properties": {
-        "adoption_id": {"$ref": "common.schema.json#/$defs/Id"},
-        "target_run_id": {"$ref": "common.schema.json#/$defs/Id"},
-        "target_plan_revision_id": {"$ref": "common.schema.json#/$defs/Id"},
-        "target_plan_node_id": {"$ref": "common.schema.json#/$defs/Id"},
-        "source_run_id": {"$ref": "common.schema.json#/$defs/Id"},
-        "source_plan_revision_id": {"$ref": "common.schema.json#/$defs/Id"},
-        "source_process_revision_id": {"$ref": "common.schema.json#/$defs/Id"},
-        "source_plan_node_id": {"$ref": "common.schema.json#/$defs/Id"},
-        "source_attempt_id": {"$ref": "common.schema.json#/$defs/Id"},
+        "adoption_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "target_run_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "target_plan_revision_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "target_plan_node_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "source_run_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "source_plan_revision_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "source_process_revision_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "source_plan_node_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "source_attempt_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
         "evidence": {
           "type": "array",
           "minItems": 1,
-          "items": {"$ref": "#/$defs/HumanCheckEvidence"}
+          "items": {
+            "$ref": "#/$defs/HumanCheckEvidence"
+          }
         },
-        "reason": {"type": "string", "minLength": 1, "pattern": "\\S"},
-        "created_at": {"$ref": "common.schema.json#/$defs/UtcDateTime"}
+        "reason": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
+        "created_at": {
+          "$ref": "common.schema.json#/$defs/UtcDateTime"
+        }
       }
     },
     "HumanCheckRequest": {
@@ -787,26 +1465,56 @@
         "request_token"
       ],
       "properties": {
-        "plan_revision_id": {"$ref": "common.schema.json#/$defs/Id"},
-        "completion_contract_id": {"$ref": "common.schema.json#/$defs/Id"},
-        "completion_contract_version": {"type": "integer", "minimum": 1},
-        "question": {"type": "string", "minLength": 1, "pattern": "\\S"},
+        "plan_revision_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "completion_contract_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "completion_contract_version": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "question": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
         "evidence": {
           "type": "array",
           "minItems": 1,
-          "items": {"$ref": "#/$defs/HumanCheckEvidence"}
+          "items": {
+            "$ref": "#/$defs/HumanCheckEvidence"
+          }
         },
-        "request_token": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+        "request_token": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
       }
     },
     "HumanCheckDecision": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["actor", "comment", "decided_at"],
+      "required": [
+        "actor",
+        "comment",
+        "decided_at"
+      ],
       "properties": {
-        "actor": {"type": "string", "minLength": 1, "pattern": "\\S"},
-        "comment": {"type": "string", "minLength": 1, "pattern": "\\S"},
-        "decided_at": {"$ref": "common.schema.json#/$defs/UtcDateTime"}
+        "actor": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
+        "comment": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
+        "decided_at": {
+          "$ref": "common.schema.json#/$defs/UtcDateTime"
+        }
       }
     },
     "CheckRun": {
@@ -828,33 +1536,67 @@
         "human_decision"
       ],
       "properties": {
-        "check_run_id": {"$ref": "common.schema.json#/$defs/Id"},
-        "run_id": {"$ref": "common.schema.json#/$defs/Id"},
-        "adoption_id": {"$ref": "#/$defs/NullableId"},
-        "plan_node_id": {"$ref": "common.schema.json#/$defs/Id"},
-        "attempt_id": {"$ref": "common.schema.json#/$defs/Id"},
-        "check_id": {"$ref": "common.schema.json#/$defs/Id"},
-        "status": {"$ref": "#/$defs/CheckRunStatus"},
-        "created_at": {"$ref": "common.schema.json#/$defs/UtcDateTime"},
-        "started_at": {"$ref": "#/$defs/NullableUtcDateTime"},
-        "ended_at": {"$ref": "#/$defs/NullableUtcDateTime"},
+        "check_run_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "run_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "adoption_id": {
+          "$ref": "#/$defs/NullableId"
+        },
+        "plan_node_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "attempt_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "check_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "status": {
+          "$ref": "#/$defs/CheckRunStatus"
+        },
+        "created_at": {
+          "$ref": "common.schema.json#/$defs/UtcDateTime"
+        },
+        "started_at": {
+          "$ref": "#/$defs/NullableUtcDateTime"
+        },
+        "ended_at": {
+          "$ref": "#/$defs/NullableUtcDateTime"
+        },
         "result": {
           "oneOf": [
-            {"$ref": "#/$defs/CheckResult"},
-            {"type": "null"}
+            {
+              "$ref": "#/$defs/CheckResult"
+            },
+            {
+              "type": "null"
+            }
           ]
         },
-        "failure_reason": {"$ref": "#/$defs/NullableString"},
+        "failure_reason": {
+          "$ref": "#/$defs/NullableString"
+        },
         "human_request": {
           "oneOf": [
-            {"$ref": "#/$defs/HumanCheckRequest"},
-            {"type": "null"}
+            {
+              "$ref": "#/$defs/HumanCheckRequest"
+            },
+            {
+              "type": "null"
+            }
           ]
         },
         "human_decision": {
           "oneOf": [
-            {"$ref": "#/$defs/HumanCheckDecision"},
-            {"type": "null"}
+            {
+              "$ref": "#/$defs/HumanCheckDecision"
+            },
+            {
+              "type": "null"
+            }
           ]
         }
       }
@@ -1016,26 +1758,55 @@
         "reason"
       ],
       "properties": {
-        "gate_id": {"$ref": "common.schema.json#/$defs/Id"},
-        "run_id": {"$ref": "common.schema.json#/$defs/Id"},
-        "adoption_id": {"$ref": "#/$defs/NullableId"},
-        "plan_node_id": {"$ref": "common.schema.json#/$defs/Id"},
-        "attempt_id": {"$ref": "common.schema.json#/$defs/Id"},
-        "passed": {"type": "boolean"},
-        "evaluated_at": {"$ref": "common.schema.json#/$defs/UtcDateTime"},
-        "required_check_ids": {"$ref": "#/$defs/IdList"},
-        "failed_check_ids": {"$ref": "#/$defs/IdList"},
-        "evidence_artifact_ids": {"$ref": "#/$defs/IdList"},
-        "reason": {"$ref": "#/$defs/NullableString"}
+        "gate_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "run_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "adoption_id": {
+          "$ref": "#/$defs/NullableId"
+        },
+        "plan_node_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "attempt_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "passed": {
+          "type": "boolean"
+        },
+        "evaluated_at": {
+          "$ref": "common.schema.json#/$defs/UtcDateTime"
+        },
+        "required_check_ids": {
+          "$ref": "#/$defs/IdList"
+        },
+        "failed_check_ids": {
+          "$ref": "#/$defs/IdList"
+        },
+        "evidence_artifact_ids": {
+          "$ref": "#/$defs/IdList"
+        },
+        "reason": {
+          "$ref": "#/$defs/NullableString"
+        }
       }
     },
     "BranchSelection": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["fork_node_id", "branch_id"],
+      "required": [
+        "fork_node_id",
+        "branch_id"
+      ],
       "properties": {
-        "fork_node_id": {"$ref": "common.schema.json#/$defs/Id"},
-        "branch_id": {"$ref": "common.schema.json#/$defs/Id"}
+        "fork_node_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "branch_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        }
       }
     },
     "Checkpoint": {
@@ -1053,23 +1824,53 @@
         "created_at"
       ],
       "properties": {
-        "checkpoint_id": {"$ref": "common.schema.json#/$defs/Id"},
-        "plan_revision_id": {"$ref": "common.schema.json#/$defs/Id"},
-        "process_revision_id": {"$ref": "#/$defs/NullableId"},
-        "run_id": {"$ref": "common.schema.json#/$defs/Id"},
-        "event_offset": {"type": "integer", "minimum": 1},
-        "gate_decision": {"$ref": "#/$defs/GateDecision"},
+        "checkpoint_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "plan_revision_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "process_revision_id": {
+          "$ref": "#/$defs/NullableId"
+        },
+        "run_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "event_offset": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "gate_decision": {
+          "$ref": "#/$defs/GateDecision"
+        },
         "branch_selections": {
           "type": "array",
-          "items": {"$ref": "#/$defs/BranchSelection"}
+          "items": {
+            "$ref": "#/$defs/BranchSelection"
+          }
         },
-        "artifact_ids": {"$ref": "#/$defs/IdList"},
-        "created_at": {"$ref": "common.schema.json#/$defs/UtcDateTime"}
+        "artifact_ids": {
+          "$ref": "#/$defs/IdList"
+        },
+        "created_at": {
+          "$ref": "common.schema.json#/$defs/UtcDateTime"
+        }
       }
     },
     "BuiltinSessionEventType": {
       "type": "string",
-      "enum": ["message/received", "step/start", "model/message", "model/transport", "tool/call", "tool/result", "tool/error", "step/end", "backend/event", "backend/error"]
+      "enum": [
+        "message/received",
+        "step/start",
+        "model/message",
+        "model/transport",
+        "tool/call",
+        "tool/result",
+        "tool/error",
+        "step/end",
+        "backend/event",
+        "backend/error"
+      ]
     },
     "BuiltinSessionEvent": {
       "type": "object",
@@ -1084,13 +1885,29 @@
         "payload_truncated"
       ],
       "properties": {
-        "agent_session_ref_id": {"$ref": "common.schema.json#/$defs/Id"},
-        "attempt_id": {"$ref": "common.schema.json#/$defs/Id"},
-        "sequence": {"type": "integer", "minimum": 1},
-        "type": {"$ref": "#/$defs/BuiltinSessionEventType"},
-        "occurred_at": {"$ref": "common.schema.json#/$defs/UtcDateTime"},
-        "payload": {"type": "object", "additionalProperties": true},
-        "payload_truncated": {"type": "boolean"}
+        "agent_session_ref_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "attempt_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "sequence": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "type": {
+          "$ref": "#/$defs/BuiltinSessionEventType"
+        },
+        "occurred_at": {
+          "$ref": "common.schema.json#/$defs/UtcDateTime"
+        },
+        "payload": {
+          "type": "object",
+          "additionalProperties": true
+        },
+        "payload_truncated": {
+          "type": "boolean"
+        }
       }
     },
     "ExecutionTrace": {
@@ -1107,32 +1924,48 @@
         "session_events_truncated"
       ],
       "properties": {
-        "run": {"$ref": "#/$defs/Run"},
+        "run": {
+          "$ref": "#/$defs/Run"
+        },
         "attempts": {
           "type": "array",
-          "items": {"$ref": "#/$defs/Attempt"}
+          "items": {
+            "$ref": "#/$defs/Attempt"
+          }
         },
         "artifacts": {
           "type": "array",
-          "items": {"$ref": "#/$defs/Artifact"}
+          "items": {
+            "$ref": "#/$defs/Artifact"
+          }
         },
         "check_runs": {
           "type": "array",
-          "items": {"$ref": "#/$defs/CheckRun"}
+          "items": {
+            "$ref": "#/$defs/CheckRun"
+          }
         },
         "checkpoints": {
           "type": "array",
-          "items": {"$ref": "#/$defs/Checkpoint"}
+          "items": {
+            "$ref": "#/$defs/Checkpoint"
+          }
         },
         "events": {
           "type": "array",
-          "items": {"$ref": "events.schema.json#/$defs/StoredEventRecord"}
+          "items": {
+            "$ref": "events.schema.json#/$defs/StoredEventRecord"
+          }
         },
         "session_events": {
           "type": "array",
-          "items": {"$ref": "#/$defs/BuiltinSessionEvent"}
+          "items": {
+            "$ref": "#/$defs/BuiltinSessionEvent"
+          }
         },
-        "session_events_truncated": {"type": "boolean"}
+        "session_events_truncated": {
+          "type": "boolean"
+        }
       }
     },
     "EventPage": {
@@ -1148,114 +1981,343 @@
       "properties": {
         "events": {
           "type": "array",
-          "items": {"$ref": "events.schema.json#/$defs/StoredEventRecord"}
+          "items": {
+            "$ref": "events.schema.json#/$defs/StoredEventRecord"
+          }
         },
-        "after_event_id": {"$ref": "#/$defs/NullableId"},
-        "next_after_event_id": {"$ref": "#/$defs/NullableId"},
-        "latest_offset": {"type": "integer", "minimum": 0},
-        "has_more": {"type": "boolean"}
+        "after_event_id": {
+          "$ref": "#/$defs/NullableId"
+        },
+        "next_after_event_id": {
+          "$ref": "#/$defs/NullableId"
+        },
+        "latest_offset": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "has_more": {
+          "type": "boolean"
+        }
       }
     },
     "WorkerProfile": {
       "type": "object",
       "additionalProperties": false,
       "required": [
-        "worker_profile_id", "name", "kind", "model", "capabilities",
-        "session_policy", "budget_ref", "priority"
+        "worker_profile_id",
+        "name",
+        "kind",
+        "model",
+        "capabilities",
+        "session_policy",
+        "budget_ref",
+        "priority"
       ],
       "properties": {
-        "worker_profile_id": {"$ref": "common.schema.json#/$defs/Id"},
-        "name": {"type": "string", "minLength": 1},
-        "kind": {"enum": ["builtin", "pi", "codex_cli", "codex_app_server"]},
-        "model": {"type": "string", "minLength": 1},
-        "capabilities": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
-        "session_policy": {"enum": ["new", "reuse", "fork"]},
-        "budget_ref": {"oneOf": [{"type": "string"}, {"type": "null"}]},
-        "priority": {"type": "integer"}
+        "worker_profile_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "kind": {
+          "enum": [
+            "builtin",
+            "pi",
+            "codex_cli",
+            "codex_app_server"
+          ]
+        },
+        "model": {
+          "type": "string",
+          "minLength": 1
+        },
+        "capabilities": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true
+        },
+        "session_policy": {
+          "enum": [
+            "new",
+            "reuse",
+            "fork"
+          ]
+        },
+        "budget_ref": {
+          "oneOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "priority": {
+          "type": "integer"
+        }
       }
     },
     "WorkerEndpoint": {
       "type": "object",
       "additionalProperties": false,
       "required": [
-        "worker_endpoint_id", "name", "worker_kind", "endpoint_type",
-        "capacity", "status"
+        "worker_endpoint_id",
+        "name",
+        "worker_kind",
+        "endpoint_type",
+        "capacity",
+        "status"
       ],
       "properties": {
-        "worker_endpoint_id": {"$ref": "common.schema.json#/$defs/Id"},
-        "name": {"type": "string", "minLength": 1},
-        "worker_kind": {"enum": ["builtin", "pi", "codex_cli", "codex_app_server"]},
-        "endpoint_type": {"enum": ["in_process", "command", "address"]},
-        "capacity": {"type": "integer", "minimum": 1},
-        "status": {"enum": ["enabled", "draining", "disabled"]}
+        "worker_endpoint_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "worker_kind": {
+          "enum": [
+            "builtin",
+            "pi",
+            "codex_cli",
+            "codex_app_server"
+          ]
+        },
+        "endpoint_type": {
+          "enum": [
+            "in_process",
+            "command",
+            "address"
+          ]
+        },
+        "capacity": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "status": {
+          "enum": [
+            "enabled",
+            "draining",
+            "disabled"
+          ]
+        }
       }
     },
     "RuntimeHealth": {
       "type": "object",
       "additionalProperties": false,
       "required": [
-        "status", "loop_active", "consecutive_failures", "restart_count", "last_error"
+        "status",
+        "loop_active",
+        "consecutive_failures",
+        "restart_count",
+        "last_error"
       ],
       "properties": {
-        "status": {"enum": ["starting", "healthy", "degraded", "failed", "stopped"]},
-        "loop_active": {"type": "boolean"},
-        "consecutive_failures": {"type": "integer", "minimum": 0},
-        "restart_count": {"type": "integer", "minimum": 0},
-        "last_error": {"type": ["string", "null"]}
+        "status": {
+          "enum": [
+            "starting",
+            "healthy",
+            "degraded",
+            "failed",
+            "stopped"
+          ]
+        },
+        "loop_active": {
+          "type": "boolean"
+        },
+        "consecutive_failures": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "restart_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "last_error": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
       }
     },
     "AttemptRuntime": {
       "type": "object",
       "additionalProperties": false,
       "required": [
-        "attempt_id", "worker_profile_id", "worker_endpoint_id", "agent_session_ref_id",
-        "provider_session_id", "session_recoverable", "execution_kind",
-        "provider_execution_id", "activity", "event_cursor", "heartbeat_at",
-        "progress_at", "deadline_at", "lease_expires_at", "queue_reason", "diagnostics"
+        "attempt_id",
+        "worker_profile_id",
+        "worker_endpoint_id",
+        "agent_session_ref_id",
+        "provider_session_id",
+        "session_recoverable",
+        "execution_kind",
+        "provider_execution_id",
+        "activity",
+        "event_cursor",
+        "heartbeat_at",
+        "progress_at",
+        "deadline_at",
+        "lease_expires_at",
+        "queue_reason",
+        "diagnostics"
       ],
       "properties": {
-        "attempt_id": {"$ref": "common.schema.json#/$defs/Id"},
-        "worker_profile_id": {"$ref": "#/$defs/NullableId"},
-        "worker_endpoint_id": {"$ref": "#/$defs/NullableId"},
-        "agent_session_ref_id": {"$ref": "#/$defs/NullableId"},
-        "provider_session_id": {"oneOf": [{"type": "string"}, {"type": "null"}]},
-        "session_recoverable": {"oneOf": [{"type": "boolean"}, {"type": "null"}]},
+        "attempt_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "worker_profile_id": {
+          "$ref": "#/$defs/NullableId"
+        },
+        "worker_endpoint_id": {
+          "$ref": "#/$defs/NullableId"
+        },
+        "agent_session_ref_id": {
+          "$ref": "#/$defs/NullableId"
+        },
+        "provider_session_id": {
+          "oneOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "session_recoverable": {
+          "oneOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "execution_kind": {
           "oneOf": [
-            {"enum": ["builtin_turn", "external_execution"]},
-            {"type": "null"}
+            {
+              "enum": [
+                "builtin_turn",
+                "external_execution"
+              ]
+            },
+            {
+              "type": "null"
+            }
           ]
         },
-        "provider_execution_id": {"oneOf": [{"type": "string"}, {"type": "null"}]},
+        "provider_execution_id": {
+          "oneOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "activity": {
           "oneOf": [
-            {"enum": ["queued", "running", "waiting", "stalled"]},
-            {"type": "null"}
+            {
+              "enum": [
+                "queued",
+                "running",
+                "waiting",
+                "stalled"
+              ]
+            },
+            {
+              "type": "null"
+            }
           ]
         },
-        "event_cursor": {"oneOf": [{"type": "string"}, {"type": "null"}]},
-        "heartbeat_at": {"$ref": "#/$defs/NullableUtcDateTime"},
-        "progress_at": {"$ref": "#/$defs/NullableUtcDateTime"},
-        "deadline_at": {"$ref": "#/$defs/NullableUtcDateTime"},
-        "lease_expires_at": {"$ref": "#/$defs/NullableUtcDateTime"},
-        "queue_reason": {"oneOf": [{"type": "string"}, {"type": "null"}]},
-        "diagnostics": {"type": "array", "items": {"type": "string"}, "maxItems": 32}
+        "event_cursor": {
+          "oneOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "heartbeat_at": {
+          "$ref": "#/$defs/NullableUtcDateTime"
+        },
+        "progress_at": {
+          "$ref": "#/$defs/NullableUtcDateTime"
+        },
+        "deadline_at": {
+          "$ref": "#/$defs/NullableUtcDateTime"
+        },
+        "lease_expires_at": {
+          "$ref": "#/$defs/NullableUtcDateTime"
+        },
+        "queue_reason": {
+          "oneOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "diagnostics": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 32
+        }
       }
     },
     "WorkerRequest": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["worker_request_id", "attempt_id", "kind", "summary", "status"],
+      "required": [
+        "worker_request_id",
+        "attempt_id",
+        "kind",
+        "summary",
+        "status"
+      ],
       "properties": {
-        "worker_request_id": {"$ref": "common.schema.json#/$defs/Id"},
-        "attempt_id": {"$ref": "common.schema.json#/$defs/Id"},
+        "worker_request_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "attempt_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
         "kind": {
           "enum": [
-            "command_approval", "file_change_approval", "user_input", "permission_approval"
+            "command_approval",
+            "file_change_approval",
+            "user_input",
+            "permission_approval"
           ]
         },
-        "summary": {"type": "string", "minLength": 1, "maxLength": 500},
-        "status": {"enum": ["pending", "resolved", "declined"]}
+        "summary": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500
+        },
+        "status": {
+          "enum": [
+            "pending",
+            "resolved",
+            "declined"
+          ]
+        }
       }
     },
     "InterventionBaseline": {
@@ -1274,16 +2336,37 @@
         "artifact_ids"
       ],
       "properties": {
-        "run_id": {"$ref": "common.schema.json#/$defs/Id"},
-        "plan_revision_id": {"$ref": "common.schema.json#/$defs/Id"},
-        "plan_revision_version": {"type": "integer", "minimum": 1},
-        "plan_node_id": {"$ref": "common.schema.json#/$defs/Id"},
-        "phase_id": {"$ref": "#/$defs/NullableId"},
-        "branch_id": {"$ref": "#/$defs/NullableId"},
-        "agent_session_ref_id": {"$ref": "#/$defs/NullableId"},
-        "phase_session_id": {"$ref": "#/$defs/NullableId"},
-        "handoff_ids": {"$ref": "#/$defs/IdList"},
-        "artifact_ids": {"$ref": "#/$defs/IdList"}
+        "run_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "plan_revision_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "plan_revision_version": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "plan_node_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "phase_id": {
+          "$ref": "#/$defs/NullableId"
+        },
+        "branch_id": {
+          "$ref": "#/$defs/NullableId"
+        },
+        "agent_session_ref_id": {
+          "$ref": "#/$defs/NullableId"
+        },
+        "phase_session_id": {
+          "$ref": "#/$defs/NullableId"
+        },
+        "handoff_ids": {
+          "$ref": "#/$defs/IdList"
+        },
+        "artifact_ids": {
+          "$ref": "#/$defs/IdList"
+        }
       }
     },
     "InterventionReply": {
@@ -1304,18 +2387,50 @@
         "meaning"
       ],
       "properties": {
-        "offset": {"type": "integer", "minimum": 1},
-        "event_id": {"$ref": "common.schema.json#/$defs/Id"},
-        "occurred_at": {"$ref": "common.schema.json#/$defs/UtcDateTime"},
-        "intervention_id": {"$ref": "common.schema.json#/$defs/Id"},
-        "run_id": {"$ref": "common.schema.json#/$defs/Id"},
-        "plan_revision_id": {"$ref": "common.schema.json#/$defs/Id"},
-        "plan_node_id": {"$ref": "common.schema.json#/$defs/Id"},
-        "attempt_id": {"$ref": "common.schema.json#/$defs/Id"},
-        "request_token": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
-        "actor": {"type": "string", "minLength": 1, "pattern": "\\S"},
-        "message": {"type": "string", "minLength": 1, "pattern": "\\S"},
-        "meaning": {"type": "string", "minLength": 1, "pattern": "\\S"}
+        "offset": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "event_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "occurred_at": {
+          "$ref": "common.schema.json#/$defs/UtcDateTime"
+        },
+        "intervention_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "run_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "plan_revision_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "plan_node_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "attempt_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "request_token": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "actor": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
+        "meaning": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        }
       }
     },
     "Intervention": {
@@ -1352,219 +2467,1283 @@
         "known_issues"
       ],
       "properties": {
-        "offset": {"type": "integer", "minimum": 1},
-        "event_id": {"$ref": "common.schema.json#/$defs/Id"},
-        "occurred_at": {"$ref": "common.schema.json#/$defs/UtcDateTime"},
-        "intervention_id": {"$ref": "common.schema.json#/$defs/Id"},
-        "run_id": {"$ref": "common.schema.json#/$defs/Id"},
-        "plan_revision_id": {"$ref": "common.schema.json#/$defs/Id"},
-        "plan_revision_version": {"type": "integer", "minimum": 1},
-        "plan_node_id": {"$ref": "common.schema.json#/$defs/Id"},
-        "attempt_id": {"$ref": "common.schema.json#/$defs/Id"},
-        "phase_id": {"$ref": "#/$defs/NullableId"},
-        "branch_id": {"$ref": "#/$defs/NullableId"},
-        "agent_session_ref_id": {"$ref": "#/$defs/NullableId"},
-        "phase_session_id": {"$ref": "#/$defs/NullableId"},
-        "handoff_ids": {"$ref": "#/$defs/IdList"},
-        "artifact_ids": {"$ref": "#/$defs/IdList"},
-        "baseline": {"$ref": "#/$defs/InterventionBaseline"},
-        "reason": {"type": "string", "minLength": 1, "pattern": "\\S"},
-        "evidence": {"type": "string", "minLength": 1, "pattern": "\\S"},
-        "needed": {"type": "string", "minLength": 1, "pattern": "\\S"},
-        "kind": {"type": "string", "enum": ["worker_blocked", "external_effects"]},
-        "request_token": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
-        "status": {"type": "string", "enum": ["open", "replied"]},
-        "reply": {
-          "oneOf": [
-            {"$ref": "#/$defs/InterventionReply"},
-            {"type": "null"}
+        "offset": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "event_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "occurred_at": {
+          "$ref": "common.schema.json#/$defs/UtcDateTime"
+        },
+        "intervention_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "run_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "plan_revision_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "plan_revision_version": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "plan_node_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "attempt_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "phase_id": {
+          "$ref": "#/$defs/NullableId"
+        },
+        "branch_id": {
+          "$ref": "#/$defs/NullableId"
+        },
+        "agent_session_ref_id": {
+          "$ref": "#/$defs/NullableId"
+        },
+        "phase_session_id": {
+          "$ref": "#/$defs/NullableId"
+        },
+        "handoff_ids": {
+          "$ref": "#/$defs/IdList"
+        },
+        "artifact_ids": {
+          "$ref": "#/$defs/IdList"
+        },
+        "baseline": {
+          "$ref": "#/$defs/InterventionBaseline"
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
+        "evidence": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
+        "needed": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "worker_blocked",
+            "external_effects"
           ]
         },
-        "key": {"type": "string", "minLength": 1},
-        "completed": {"type": "string", "minLength": 1, "pattern": "\\S"},
-        "context": {"type": "string"},
-        "remaining": {"type": "string"},
-        "known_issues": {"type": "string"}
+        "request_token": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "open",
+            "replied"
+          ]
+        },
+        "reply": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/InterventionReply"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "key": {
+          "type": "string",
+          "minLength": 1
+        },
+        "completed": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
+        "context": {
+          "type": "string"
+        },
+        "remaining": {
+          "type": "string"
+        },
+        "known_issues": {
+          "type": "string"
+        }
       }
     },
     "InterventionList": {
       "type": "array",
-      "items": {"$ref": "#/$defs/Intervention"}
+      "items": {
+        "$ref": "#/$defs/Intervention"
+      }
     },
     "ResultAdoptionList": {
       "type": "array",
-      "items": {"$ref": "#/$defs/ResultAdoption"}
+      "items": {
+        "$ref": "#/$defs/ResultAdoption"
+      }
     },
     "WorkerProfileList": {
       "type": "array",
-      "items": {"$ref": "#/$defs/WorkerProfile"}
+      "items": {
+        "$ref": "#/$defs/WorkerProfile"
+      }
     },
     "WorkerEndpointList": {
       "type": "array",
-      "items": {"$ref": "#/$defs/WorkerEndpoint"}
+      "items": {
+        "$ref": "#/$defs/WorkerEndpoint"
+      }
     },
     "WorkerRequestList": {
       "type": "array",
-      "items": {"$ref": "#/$defs/WorkerRequest"}
+      "items": {
+        "$ref": "#/$defs/WorkerRequest"
+      }
     },
     "CheckSpecList": {
       "type": "array",
-      "items": {"$ref": "#/$defs/CheckSpec"}
+      "items": {
+        "$ref": "#/$defs/CheckSpec"
+      }
     },
     "CheckRunList": {
       "type": "array",
-      "items": {"$ref": "#/$defs/CheckRun"}
+      "items": {
+        "$ref": "#/$defs/CheckRun"
+      }
     },
     "CheckpointList": {
       "type": "array",
-      "items": {"$ref": "#/$defs/Checkpoint"}
+      "items": {
+        "$ref": "#/$defs/Checkpoint"
+      }
     },
     "ArtifactList": {
       "type": "array",
-      "items": {"$ref": "#/$defs/Artifact"}
+      "items": {
+        "$ref": "#/$defs/Artifact"
+      }
     },
     "RunResponse": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["data"],
-      "properties": {"data": {"$ref": "#/$defs/Run"}}
+      "required": [
+        "data"
+      ],
+      "properties": {
+        "data": {
+          "$ref": "#/$defs/Run"
+        }
+      }
     },
     "PlanGraphResponse": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["data"],
-      "properties": {"data": {"$ref": "#/$defs/PlanGraph"}}
+      "required": [
+        "data"
+      ],
+      "properties": {
+        "data": {
+          "$ref": "#/$defs/PlanGraph"
+        }
+      }
     },
     "ProcessRevisionResponse": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["data"],
-      "properties": {"data": {"$ref": "#/$defs/ProcessRevision"}}
+      "required": [
+        "data"
+      ],
+      "properties": {
+        "data": {
+          "$ref": "#/$defs/ProcessRevision"
+        }
+      }
     },
     "ProcessDraftResponse": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["data"],
-      "properties": {"data": {"$ref": "#/$defs/ProcessDraft"}}
+      "required": [
+        "data"
+      ],
+      "properties": {
+        "data": {
+          "$ref": "#/$defs/ProcessDraft"
+        }
+      }
     },
     "RunProcessDraftsResponse": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["data"],
-      "properties": {"data": {"$ref": "#/$defs/RunProcessDrafts"}}
+      "required": [
+        "data"
+      ],
+      "properties": {
+        "data": {
+          "$ref": "#/$defs/RunProcessDrafts"
+        }
+      }
     },
     "ProcessReviewResponse": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["data"],
-      "properties": {"data": {"$ref": "#/$defs/ProcessReview"}}
+      "required": [
+        "data"
+      ],
+      "properties": {
+        "data": {
+          "$ref": "#/$defs/ProcessReview"
+        }
+      }
     },
     "ProcessDraftReviewsResponse": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["data"],
-      "properties": {"data": {"$ref": "#/$defs/ProcessDraftReviews"}}
+      "required": [
+        "data"
+      ],
+      "properties": {
+        "data": {
+          "$ref": "#/$defs/ProcessDraftReviews"
+        }
+      }
     },
     "ExecutionTraceResponse": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["data"],
-      "properties": {"data": {"$ref": "#/$defs/ExecutionTrace"}}
+      "required": [
+        "data"
+      ],
+      "properties": {
+        "data": {
+          "$ref": "#/$defs/ExecutionTrace"
+        }
+      }
     },
     "CheckSpecListResponse": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["data"],
-      "properties": {"data": {"$ref": "#/$defs/CheckSpecList"}}
+      "required": [
+        "data"
+      ],
+      "properties": {
+        "data": {
+          "$ref": "#/$defs/CheckSpecList"
+        }
+      }
     },
     "CheckRunListResponse": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["data"],
-      "properties": {"data": {"$ref": "#/$defs/CheckRunList"}}
+      "required": [
+        "data"
+      ],
+      "properties": {
+        "data": {
+          "$ref": "#/$defs/CheckRunList"
+        }
+      }
     },
     "CheckpointListResponse": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["data"],
-      "properties": {"data": {"$ref": "#/$defs/CheckpointList"}}
+      "required": [
+        "data"
+      ],
+      "properties": {
+        "data": {
+          "$ref": "#/$defs/CheckpointList"
+        }
+      }
     },
     "ArtifactListResponse": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["data"],
-      "properties": {"data": {"$ref": "#/$defs/ArtifactList"}}
+      "required": [
+        "data"
+      ],
+      "properties": {
+        "data": {
+          "$ref": "#/$defs/ArtifactList"
+        }
+      }
     },
     "ArtifactResponse": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["data"],
-      "properties": {"data": {"$ref": "#/$defs/Artifact"}}
+      "required": [
+        "data"
+      ],
+      "properties": {
+        "data": {
+          "$ref": "#/$defs/Artifact"
+        }
+      }
     },
     "EventPageResponse": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["data"],
-      "properties": {"data": {"$ref": "#/$defs/EventPage"}}
+      "required": [
+        "data"
+      ],
+      "properties": {
+        "data": {
+          "$ref": "#/$defs/EventPage"
+        }
+      }
     },
     "WorkerProfileListResponse": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["data"],
-      "properties": {"data": {"$ref": "#/$defs/WorkerProfileList"}}
+      "required": [
+        "data"
+      ],
+      "properties": {
+        "data": {
+          "$ref": "#/$defs/WorkerProfileList"
+        }
+      }
     },
     "WorkerEndpointListResponse": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["data"],
-      "properties": {"data": {"$ref": "#/$defs/WorkerEndpointList"}}
+      "required": [
+        "data"
+      ],
+      "properties": {
+        "data": {
+          "$ref": "#/$defs/WorkerEndpointList"
+        }
+      }
     },
     "RuntimeHealthResponse": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["data"],
-      "properties": {"data": {"$ref": "#/$defs/RuntimeHealth"}}
+      "required": [
+        "data"
+      ],
+      "properties": {
+        "data": {
+          "$ref": "#/$defs/RuntimeHealth"
+        }
+      }
     },
     "AttemptRuntimeResponse": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["data"],
-      "properties": {"data": {"$ref": "#/$defs/AttemptRuntime"}}
+      "required": [
+        "data"
+      ],
+      "properties": {
+        "data": {
+          "$ref": "#/$defs/AttemptRuntime"
+        }
+      }
     },
     "WorkerRequestListResponse": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["data"],
-      "properties": {"data": {"$ref": "#/$defs/WorkerRequestList"}}
+      "required": [
+        "data"
+      ],
+      "properties": {
+        "data": {
+          "$ref": "#/$defs/WorkerRequestList"
+        }
+      }
     },
     "WorkerRequestResponse": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["data"],
-      "properties": {"data": {"$ref": "#/$defs/WorkerRequest"}}
+      "required": [
+        "data"
+      ],
+      "properties": {
+        "data": {
+          "$ref": "#/$defs/WorkerRequest"
+        }
+      }
     },
     "InterventionListResponse": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["data"],
-      "properties": {"data": {"$ref": "#/$defs/InterventionList"}}
+      "required": [
+        "data"
+      ],
+      "properties": {
+        "data": {
+          "$ref": "#/$defs/InterventionList"
+        }
+      }
     },
     "TrajectoryReviewListResponse": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["data"],
+      "required": [
+        "data"
+      ],
       "properties": {
         "data": {
           "type": "array",
-          "items": {"type": "object", "additionalProperties": true}
+          "items": {
+            "type": "object",
+            "additionalProperties": true
+          }
         }
       }
     },
     "ResultAdoptionListResponse": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["data"],
-      "properties": {"data": {"$ref": "#/$defs/ResultAdoptionList"}}
+      "required": [
+        "data"
+      ],
+      "properties": {
+        "data": {
+          "$ref": "#/$defs/ResultAdoptionList"
+        }
+      }
+    },
+    "ProjectSummary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "project_id",
+        "name",
+        "created_at",
+        "goal_count",
+        "run_count"
+      ],
+      "properties": {
+        "project_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "name": {
+          "type": "string"
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "goal_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "run_count": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "ProjectListView": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "observed_at",
+        "event_offset",
+        "projects"
+      ],
+      "properties": {
+        "observed_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "event_offset": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "projects": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ProjectSummary"
+          }
+        }
+      }
+    },
+    "ProjectPlanSummary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "plan_revision_id",
+        "version",
+        "status"
+      ],
+      "properties": {
+        "plan_revision_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "version": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "status": {
+          "$ref": "#/$defs/PlanRevisionStatus"
+        }
+      }
+    },
+    "CompletedNodeResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "plan_node_id",
+        "title",
+        "checkpoint_id",
+        "gate_id",
+        "attempt_id",
+        "adoption_id",
+        "artifacts"
+      ],
+      "properties": {
+        "plan_node_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "title": {
+          "type": "string"
+        },
+        "checkpoint_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "gate_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "attempt_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "adoption_id": {
+          "$ref": "#/$defs/NullableId"
+        },
+        "artifacts": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Artifact"
+          }
+        }
+      }
+    },
+    "ProjectRunSummary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "run",
+        "process_revision_id",
+        "configured_workspace",
+        "worker_endpoint_ids",
+        "node_counts",
+        "completed_results"
+      ],
+      "properties": {
+        "run": {
+          "$ref": "#/$defs/Run"
+        },
+        "process_revision_id": {
+          "$ref": "#/$defs/NullableId"
+        },
+        "configured_workspace": {
+          "$ref": "#/$defs/NullableString"
+        },
+        "worker_endpoint_ids": {
+          "$ref": "#/$defs/IdList"
+        },
+        "node_counts": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "completed_results": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/CompletedNodeResult"
+          }
+        }
+      }
+    },
+    "ProjectGoalSummary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "goal_id",
+        "objective",
+        "status",
+        "created_at",
+        "plans",
+        "runs"
+      ],
+      "properties": {
+        "goal_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "objective": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "open",
+            "satisfied"
+          ]
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "plans": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ProjectPlanSummary"
+          }
+        },
+        "runs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ProjectRunSummary"
+          }
+        }
+      }
+    },
+    "ProjectDetailView": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "observed_at",
+        "event_offset",
+        "project",
+        "goals"
+      ],
+      "properties": {
+        "observed_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "event_offset": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "project": {
+          "$ref": "#/$defs/ProjectSummary"
+        },
+        "goals": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ProjectGoalSummary"
+          }
+        }
+      }
+    },
+    "RuntimeContextView": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "observed_at",
+        "workspace",
+        "worker_endpoint_id",
+        "execution_config_fingerprint",
+        "health"
+      ],
+      "properties": {
+        "observed_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "workspace": {
+          "$ref": "#/$defs/NullableString"
+        },
+        "worker_endpoint_id": {
+          "$ref": "#/$defs/NullableId"
+        },
+        "execution_config_fingerprint": {
+          "$ref": "#/$defs/NullableString"
+        },
+        "health": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RuntimeHealth"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "ProjectListResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "data"
+      ],
+      "properties": {
+        "data": {
+          "$ref": "#/$defs/ProjectListView"
+        }
+      }
+    },
+    "ProjectDetailResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "data"
+      ],
+      "properties": {
+        "data": {
+          "$ref": "#/$defs/ProjectDetailView"
+        }
+      }
+    },
+    "RuntimeContextResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "data"
+      ],
+      "properties": {
+        "data": {
+          "$ref": "#/$defs/RuntimeContextView"
+        }
+      }
+    },
+    "InboxKind": {
+      "type": "string",
+      "enum": [
+        "intervention",
+        "human_check",
+        "worker_request",
+        "note"
+      ]
+    },
+    "InboxOwner": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "project_id",
+        "project_name",
+        "goal_id",
+        "goal_objective",
+        "run_id",
+        "run_status",
+        "plan_node_id",
+        "node_title",
+        "attempt_id"
+      ],
+      "properties": {
+        "project_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "project_name": {
+          "type": "string"
+        },
+        "goal_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "goal_objective": {
+          "type": "string"
+        },
+        "run_id": {
+          "$ref": "#/$defs/NullableId"
+        },
+        "run_status": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RunStatus"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "plan_node_id": {
+          "$ref": "#/$defs/NullableId"
+        },
+        "node_title": {
+          "$ref": "#/$defs/NullableString"
+        },
+        "attempt_id": {
+          "$ref": "#/$defs/NullableId"
+        }
+      }
+    },
+    "InboxEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "artifact_id",
+        "sha256"
+      ],
+      "properties": {
+        "artifact_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "sha256": {
+          "$ref": "#/$defs/NullableString"
+        }
+      }
+    },
+    "InboxAction": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "operation",
+        "label",
+        "effect",
+        "input_fields",
+        "arguments"
+      ],
+      "properties": {
+        "operation": {
+          "enum": [
+            "reply-intervention",
+            "decide-human-check",
+            "resolve-worker-request",
+            "decline-worker-request",
+            "add-note-message",
+            "decide-note"
+          ]
+        },
+        "label": {
+          "type": "string"
+        },
+        "effect": {
+          "type": "string"
+        },
+        "input_fields": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "arguments": {
+          "type": "object",
+          "additionalProperties": true
+        }
+      }
+    },
+    "WorkerRequestForm": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "context",
+        "resolution_schema",
+        "unavailable_reason"
+      ],
+      "properties": {
+        "context": {
+          "type": "object",
+          "additionalProperties": true
+        },
+        "resolution_schema": {
+          "anyOf": [
+            {
+              "type": "object",
+              "additionalProperties": true
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "unavailable_reason": {
+          "$ref": "#/$defs/NullableString"
+        }
+      }
+    },
+    "InboxItem": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "request_id",
+        "owner",
+        "source_status",
+        "pending",
+        "actionable",
+        "unavailable_reason",
+        "created_at",
+        "first_observed_at",
+        "question",
+        "evidence_summary",
+        "evidence",
+        "request_token",
+        "actions",
+        "next_step",
+        "worker_form",
+        "disposition"
+      ],
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/InboxKind"
+        },
+        "request_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "owner": {
+          "$ref": "#/$defs/InboxOwner"
+        },
+        "source_status": {
+          "type": "string"
+        },
+        "pending": {
+          "type": "boolean"
+        },
+        "actionable": {
+          "type": "boolean"
+        },
+        "unavailable_reason": {
+          "$ref": "#/$defs/NullableString"
+        },
+        "created_at": {
+          "$ref": "#/$defs/NullableUtcDateTime"
+        },
+        "first_observed_at": {
+          "$ref": "#/$defs/NullableUtcDateTime"
+        },
+        "question": {
+          "type": "string"
+        },
+        "evidence_summary": {
+          "$ref": "#/$defs/NullableString"
+        },
+        "evidence": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/InboxEvidence"
+          }
+        },
+        "request_token": {
+          "$ref": "#/$defs/NullableString"
+        },
+        "actions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/InboxAction"
+          }
+        },
+        "next_step": {
+          "type": "string"
+        },
+        "worker_form": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/WorkerRequestForm"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "disposition": {
+          "anyOf": [
+            {
+              "type": "object",
+              "additionalProperties": true
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "InboxWorkerSource": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "observed_at",
+        "status",
+        "unavailable_attempt_ids"
+      ],
+      "properties": {
+        "observed_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "status": {
+          "enum": [
+            "available",
+            "partial",
+            "unavailable"
+          ]
+        },
+        "unavailable_attempt_ids": {
+          "$ref": "#/$defs/IdList"
+        }
+      }
+    },
+    "InboxListView": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "observed_at",
+        "event_offset",
+        "worker_requests",
+        "items"
+      ],
+      "properties": {
+        "observed_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "event_offset": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "worker_requests": {
+          "$ref": "#/$defs/InboxWorkerSource"
+        },
+        "items": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/InboxItem"
+          }
+        }
+      }
+    },
+    "InboxDetailView": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "observed_at",
+        "event_offset",
+        "worker_requests",
+        "item"
+      ],
+      "properties": {
+        "observed_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "event_offset": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "worker_requests": {
+          "$ref": "#/$defs/InboxWorkerSource"
+        },
+        "item": {
+          "$ref": "#/$defs/InboxItem"
+        }
+      }
+    },
+    "InboxListResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "data"
+      ],
+      "properties": {
+        "data": {
+          "$ref": "#/$defs/InboxListView"
+        }
+      }
+    },
+    "InboxDetailResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "data"
+      ],
+      "properties": {
+        "data": {
+          "$ref": "#/$defs/InboxDetailView"
+        }
+      }
+    },
+    "EventConsumer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "consumer_id",
+        "acknowledged_offset",
+        "acknowledged_event_id",
+        "pending_batch_token",
+        "created_at"
+      ],
+      "properties": {
+        "consumer_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$"
+        },
+        "acknowledged_offset": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "acknowledged_event_id": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uuid"
+        },
+        "pending_batch_token": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uuid"
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    },
+    "EventConsumerResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "data"
+      ],
+      "properties": {
+        "data": {
+          "$ref": "#/$defs/EventConsumer"
+        }
+      }
+    },
+    "EventConsumerBatch": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "consumer_id",
+        "batch_token",
+        "after_offset",
+        "through_offset",
+        "events"
+      ],
+      "properties": {
+        "consumer_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$"
+        },
+        "batch_token": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uuid"
+        },
+        "after_offset": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "through_offset": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "events": {
+          "type": "array",
+          "items": {
+            "$ref": "events.schema.json#/$defs/StoredEventRecord"
+          }
+        }
+      }
+    },
+    "EventConsumerBatchResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "data"
+      ],
+      "properties": {
+        "data": {
+          "$ref": "#/$defs/EventConsumerBatch"
+        }
+      }
+    },
+    "EventConsumerAcknowledgement": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "consumer_id",
+        "batch_token",
+        "acknowledged_offset",
+        "acknowledged_event_id"
+      ],
+      "properties": {
+        "consumer_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$"
+        },
+        "batch_token": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "acknowledged_offset": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "acknowledged_event_id": {
+          "type": "string",
+          "format": "uuid"
+        }
+      }
+    },
+    "EventConsumerAcknowledgementResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "data"
+      ],
+      "properties": {
+        "data": {
+          "$ref": "#/$defs/EventConsumerAcknowledgement"
+        }
+      }
+    },
+    "PlannerCapacity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "capacity",
+        "in_use",
+        "available"
+      ],
+      "properties": {
+        "capacity": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "in_use": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "available": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "PlannerCapacityResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "data"
+      ],
+      "properties": {
+        "data": {
+          "$ref": "#/$defs/PlannerCapacity"
+        }
+      }
     }
   }
 }

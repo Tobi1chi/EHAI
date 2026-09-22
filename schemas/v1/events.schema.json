@@ -37,6 +37,7 @@
         "BranchSelected",
         "BranchPruned",
         "BranchSelectionInvalidated",
+        "RunConfigurationCaptured",
         "RunStarted",
         "RunSuccessorCreated",
         "RunPaused",
@@ -74,6 +75,11 @@
         "PhaseSessionJoined",
         "PhaseContextPublished",
         "AttemptHandoffConfirmed",
+        "NoteCreated",
+        "NoteMessageAdded",
+        "NoteDecisionStarted",
+        "NoteDecisionCompleted",
+        "NoteDecisionFailed",
         "InterventionOpened",
         "InterventionReplied"
       ]

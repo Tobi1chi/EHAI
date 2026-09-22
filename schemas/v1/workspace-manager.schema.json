@@ -1,0 +1,717 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.ehai.local/v1/workspace-manager.schema.json",
+  "$defs": {
+    "HTTPValidationError": {
+      "properties": {
+        "detail": {
+          "items": {
+            "$ref": "#/$defs/ValidationError"
+          },
+          "type": "array",
+          "title": "Detail"
+        }
+      },
+      "type": "object",
+      "title": "HTTPValidationError"
+    },
+    "JsonScalar": {
+      "$ref": "commands.schema.json#/$defs/JsonScalar"
+    },
+    "JsonValue": {
+      "$ref": "commands.schema.json#/$defs/JsonValue"
+    },
+    "PublicRuntimeSettings": {
+      "properties": {
+        "worker_kind": {
+          "type": "string",
+          "enum": [
+            "pi",
+            "fake"
+          ],
+          "title": "Worker Kind"
+        },
+        "planner_kind": {
+          "type": "string",
+          "enum": [
+            "pi",
+            "single"
+          ],
+          "title": "Planner Kind"
+        },
+        "worker_model": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Worker Model"
+        },
+        "planner_model": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Planner Model"
+        },
+        "worker_reasoning_effort": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Worker Reasoning Effort"
+        },
+        "planner_reasoning_effort": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Planner Reasoning Effort"
+        },
+        "worker_capacity": {
+          "type": "integer",
+          "title": "Worker Capacity"
+        },
+        "planner_capacity": {
+          "type": "integer",
+          "title": "Planner Capacity"
+        },
+        "worker_timeout_seconds": {
+          "type": "number",
+          "title": "Worker Timeout Seconds"
+        },
+        "planner_timeout_seconds": {
+          "type": "number",
+          "title": "Planner Timeout Seconds"
+        },
+        "command_timeout_seconds": {
+          "type": "number",
+          "title": "Command Timeout Seconds"
+        },
+        "allowed_commands": {
+          "items": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "type": "array",
+          "title": "Allowed Commands"
+        },
+        "available_shells": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "title": "Available Shells"
+        },
+        "git_permissions": {
+          "items": {
+            "type": "string",
+            "enum": [
+              "git.read",
+              "git.local_write",
+              "git.remote_write",
+              "git.dangerous"
+            ]
+          },
+          "type": "array",
+          "title": "Git Permissions"
+        },
+        "command_check_argv": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Command Check Argv"
+        },
+        "semantic_required_terms": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "title": "Semantic Required Terms"
+        },
+        "attempt_deadline_seconds": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Attempt Deadline Seconds"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "worker_kind",
+        "planner_kind",
+        "worker_model",
+        "planner_model",
+        "worker_reasoning_effort",
+        "planner_reasoning_effort",
+        "worker_capacity",
+        "planner_capacity",
+        "worker_timeout_seconds",
+        "planner_timeout_seconds",
+        "command_timeout_seconds",
+        "allowed_commands",
+        "available_shells",
+        "git_permissions",
+        "command_check_argv",
+        "semantic_required_terms",
+        "attempt_deadline_seconds"
+      ],
+      "title": "PublicRuntimeSettings"
+    },
+    "RuntimeSettings": {
+      "properties": {
+        "worker_kind": {
+          "type": "string",
+          "enum": [
+            "pi",
+            "fake"
+          ],
+          "title": "Worker Kind",
+          "default": "fake"
+        },
+        "planner_kind": {
+          "type": "string",
+          "enum": [
+            "pi",
+            "single"
+          ],
+          "title": "Planner Kind",
+          "default": "single"
+        },
+        "worker_model": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 4096,
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Worker Model"
+        },
+        "planner_model": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 4096,
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Planner Model"
+        },
+        "worker_reasoning_effort": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 4096,
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Worker Reasoning Effort"
+        },
+        "planner_reasoning_effort": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 4096,
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Planner Reasoning Effort"
+        },
+        "worker_capacity": {
+          "type": "integer",
+          "maximum": 64.0,
+          "minimum": 1.0,
+          "title": "Worker Capacity",
+          "default": 1
+        },
+        "planner_capacity": {
+          "type": "integer",
+          "maximum": 64.0,
+          "minimum": 1.0,
+          "title": "Planner Capacity",
+          "default": 1
+        },
+        "worker_timeout_seconds": {
+          "type": "number",
+          "maximum": 86400.0,
+          "exclusiveMinimum": 0.0,
+          "title": "Worker Timeout Seconds",
+          "default": 300
+        },
+        "planner_timeout_seconds": {
+          "type": "number",
+          "maximum": 86400.0,
+          "exclusiveMinimum": 0.0,
+          "title": "Planner Timeout Seconds",
+          "default": 120
+        },
+        "command_timeout_seconds": {
+          "type": "number",
+          "maximum": 3600.0,
+          "exclusiveMinimum": 0.0,
+          "title": "Command Timeout Seconds",
+          "default": 30
+        },
+        "pi_config_path": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 4096,
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Pi Config Path"
+        },
+        "allowed_commands": {
+          "items": {
+            "items": {
+              "type": "string",
+              "maxLength": 4096,
+              "minLength": 1
+            },
+            "type": "array"
+          },
+          "type": "array",
+          "maxItems": 100,
+          "title": "Allowed Commands"
+        },
+        "available_shells": {
+          "items": {
+            "type": "string",
+            "maxLength": 4096,
+            "minLength": 1
+          },
+          "type": "array",
+          "maxItems": 32,
+          "title": "Available Shells"
+        },
+        "git_permissions": {
+          "items": {
+            "type": "string",
+            "enum": [
+              "git.read",
+              "git.local_write",
+              "git.remote_write",
+              "git.dangerous"
+            ]
+          },
+          "type": "array",
+          "maxItems": 4,
+          "title": "Git Permissions"
+        },
+        "command_check_argv": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string",
+                "maxLength": 4096,
+                "minLength": 1
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Command Check Argv"
+        },
+        "semantic_required_terms": {
+          "items": {
+            "type": "string",
+            "maxLength": 4096,
+            "minLength": 1
+          },
+          "type": "array",
+          "maxItems": 100,
+          "title": "Semantic Required Terms"
+        },
+        "attempt_deadline_seconds": {
+          "anyOf": [
+            {
+              "type": "number",
+              "maximum": 86400.0,
+              "exclusiveMinimum": 0.0
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Attempt Deadline Seconds"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "title": "RuntimeSettings",
+      "description": "Fixed executable assembly; this profile never grants a Run execution authorization."
+    },
+    "ValidationError": {
+      "properties": {
+        "loc": {
+          "items": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "integer"
+              }
+            ]
+          },
+          "type": "array",
+          "title": "Location"
+        },
+        "msg": {
+          "type": "string",
+          "title": "Message"
+        },
+        "type": {
+          "type": "string",
+          "title": "Error Type"
+        },
+        "input": {
+          "title": "Input"
+        },
+        "ctx": {
+          "type": "object",
+          "title": "Context"
+        }
+      },
+      "type": "object",
+      "required": [
+        "loc",
+        "msg",
+        "type"
+      ],
+      "title": "ValidationError"
+    },
+    "WorkspaceActionRequest": {
+      "properties": {},
+      "additionalProperties": false,
+      "type": "object",
+      "title": "WorkspaceActionRequest"
+    },
+    "WorkspaceDescriptor": {
+      "properties": {
+        "workspace_id": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9_-]{0,63}$",
+          "title": "Workspace Id"
+        },
+        "path": {
+          "type": "string",
+          "title": "Path"
+        },
+        "runtime": {
+          "$ref": "#/$defs/PublicRuntimeSettings"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "registered",
+            "starting",
+            "ready",
+            "stopping",
+            "stopped",
+            "failed"
+          ],
+          "title": "Status"
+        },
+        "failure_category": {
+          "anyOf": [
+            {
+              "type": "string",
+              "enum": [
+                "startup_timeout",
+                "child_exited",
+                "identity_mismatch",
+                "shutdown_timeout",
+                "launch_failed"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Failure Category"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "workspace_id",
+        "path",
+        "runtime",
+        "status",
+        "failure_category"
+      ],
+      "title": "WorkspaceDescriptor"
+    },
+    "WorkspaceExecutionConfigData": {
+      "properties": {
+        "workspace_id": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9_-]{0,63}$",
+          "title": "Workspace Id"
+        },
+        "execution_config": {
+          "anyOf": [
+            {
+              "$ref": "commands.schema.json#/$defs/ExecutionConfigRequest"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Execution Config"
+        }
+      },
+      "type": "object",
+      "required": [
+        "workspace_id",
+        "execution_config"
+      ],
+      "title": "WorkspaceExecutionConfigData"
+    },
+    "WorkspaceExecutionConfigResponse": {
+      "properties": {
+        "data": {
+          "$ref": "#/$defs/WorkspaceExecutionConfigData"
+        }
+      },
+      "type": "object",
+      "required": [
+        "data"
+      ],
+      "title": "WorkspaceExecutionConfigResponse"
+    },
+    "WorkspaceListData": {
+      "properties": {
+        "workspaces": {
+          "items": {
+            "$ref": "#/$defs/WorkspaceDescriptor"
+          },
+          "type": "array",
+          "title": "Workspaces"
+        }
+      },
+      "type": "object",
+      "required": [
+        "workspaces"
+      ],
+      "title": "WorkspaceListData"
+    },
+    "WorkspaceListResponse": {
+      "properties": {
+        "data": {
+          "$ref": "#/$defs/WorkspaceListData"
+        }
+      },
+      "type": "object",
+      "required": [
+        "data"
+      ],
+      "title": "WorkspaceListResponse"
+    },
+    "WorkspaceOverviewData": {
+      "properties": {
+        "observed_at": {
+          "type": "string",
+          "title": "Observed At"
+        },
+        "workspaces": {
+          "items": {
+            "$ref": "#/$defs/WorkspaceOverviewEntry"
+          },
+          "type": "array",
+          "title": "Workspaces"
+        },
+        "consistent_across_workspaces": {
+          "type": "boolean",
+          "const": false,
+          "title": "Consistent Across Workspaces",
+          "default": false
+        }
+      },
+      "type": "object",
+      "required": [
+        "observed_at",
+        "workspaces"
+      ],
+      "title": "WorkspaceOverviewData"
+    },
+    "WorkspaceOverviewEntry": {
+      "properties": {
+        "workspace": {
+          "$ref": "#/$defs/WorkspaceDescriptor"
+        },
+        "api_path": {
+          "type": "string",
+          "title": "Api Path"
+        },
+        "available": {
+          "type": "boolean",
+          "title": "Available"
+        },
+        "projects": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "queries.schema.json#/$defs/ProjectDetailView"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Projects"
+        },
+        "inbox": {
+          "anyOf": [
+            {
+              "$ref": "queries.schema.json#/$defs/InboxListView"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Inbox"
+        },
+        "error": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/WorkspaceQueryError"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "type": "object",
+      "required": [
+        "workspace",
+        "api_path",
+        "available",
+        "projects",
+        "inbox",
+        "error"
+      ],
+      "title": "WorkspaceOverviewEntry"
+    },
+    "WorkspaceOverviewResponse": {
+      "properties": {
+        "data": {
+          "$ref": "#/$defs/WorkspaceOverviewData"
+        }
+      },
+      "type": "object",
+      "required": [
+        "data"
+      ],
+      "title": "WorkspaceOverviewResponse"
+    },
+    "WorkspaceQueryError": {
+      "properties": {
+        "code": {
+          "type": "string",
+          "title": "Code"
+        },
+        "message": {
+          "type": "string",
+          "title": "Message"
+        }
+      },
+      "type": "object",
+      "required": [
+        "code",
+        "message"
+      ],
+      "title": "WorkspaceQueryError"
+    },
+    "WorkspaceRegistration": {
+      "properties": {
+        "workspace_id": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9_-]{0,63}$",
+          "title": "Workspace Id"
+        },
+        "path": {
+          "type": "string",
+          "maxLength": 4096,
+          "minLength": 1,
+          "title": "Path"
+        },
+        "runtime": {
+          "$ref": "#/$defs/RuntimeSettings"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "workspace_id",
+        "path"
+      ],
+      "title": "WorkspaceRegistration"
+    },
+    "WorkspaceResponse": {
+      "properties": {
+        "data": {
+          "$ref": "#/$defs/WorkspaceDescriptor"
+        }
+      },
+      "type": "object",
+      "required": [
+        "data"
+      ],
+      "title": "WorkspaceResponse"
+    }
+  }
+}

@@ -14,16 +14,17 @@ dependencies = [
     "uvicorn>=0.35,<1",
     "jsonschema>=4.25,<5",
     "mcp>=1.28,<2",
+    "httpx>=0.28,<1",
 ]
 
 [project.scripts]
 ehai = "ehai.interfaces.cli:main"
 ehai-api = "ehai.interfaces.runtime:main"
 ehai-mcp = "ehai.interfaces.mcp_server:main"
+ehai-manager = "ehai.interfaces.workspace_api:main"
 
 [dependency-groups]
 dev = [
-    "httpx>=0.28,<1",
     "mypy>=1.17,<2",
     "types-jsonschema>=4.25,<5",
     "pytest>=8.4,<9",

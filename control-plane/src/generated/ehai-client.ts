@@ -15,7 +15,7 @@ export type ErrorResponse = {
 };
 };
 
-export type EventType = "ProjectCreated" | "GoalCreated" | "CompletionContractConfirmed" | "PlanRevisionProposed" | "PlanRevisionApproved" | "PlanningTurnStarted" | "PlanningTurnCompleted" | "PlanningTurnFailed" | "ProcessDraftStarted" | "ProcessDraftCompleted" | "ProcessDraftFailed" | "ProcessReviewStarted" | "ProcessReviewCompleted" | "ProcessReviewFailed" | "ProcessRevisionApplied" | "ProcessAdjustmentStarted" | "ProcessAdjustmentFinished" | "ProcessAdjustmentSkipped" | "PlanNodeReadied" | "PlanNodeStalled" | "PlanNodeSuspended" | "PlanNodeRecovered" | "PlanNodeStarted" | "PlanNodeCandidateSubmitted" | "PlanNodeCompleted" | "PlanNodeFailed" | "PlanNodeReopened" | "PlanNodePruned" | "BranchSelected" | "BranchPruned" | "BranchSelectionInvalidated" | "RunStarted" | "RunSuccessorCreated" | "RunPaused" | "RunResumed" | "RunCompleted" | "RunFailed" | "RunCancelled" | "AttemptQueued" | "AttemptDispatched" | "AttemptBound" | "AttemptHeartbeatObserved" | "AttemptWaiting" | "AttemptDeadlineExtended" | "AttemptRetryScheduled" | "AttemptStarted" | "AttemptSucceeded" | "AttemptFailed" | "AttemptTimedOut" | "AttemptCancelled" | "AttemptInterrupted" | "DispatchWorkClaimed" | "EndpointHealthChanged" | "ProviderUsageRecorded" | "ArtifactCreated" | "CheckStarted" | "CheckPassed" | "CheckFailed" | "CheckInterrupted" | "GatePassed" | "GateFailed" | "CheckpointCreated" | "CheckpointRestored" | "WorkspacePreserved" | "PhaseSessionOpened" | "PhaseSessionJoined" | "PhaseContextPublished" | "AttemptHandoffConfirmed" | "InterventionOpened" | "InterventionReplied";
+export type EventType = "ProjectCreated" | "GoalCreated" | "CompletionContractConfirmed" | "PlanRevisionProposed" | "PlanRevisionApproved" | "PlanningTurnStarted" | "PlanningTurnCompleted" | "PlanningTurnFailed" | "ProcessDraftStarted" | "ProcessDraftCompleted" | "ProcessDraftFailed" | "ProcessReviewStarted" | "ProcessReviewCompleted" | "ProcessReviewFailed" | "ProcessRevisionApplied" | "ProcessAdjustmentStarted" | "ProcessAdjustmentFinished" | "ProcessAdjustmentSkipped" | "PlanNodeReadied" | "PlanNodeStalled" | "PlanNodeSuspended" | "PlanNodeRecovered" | "PlanNodeStarted" | "PlanNodeCandidateSubmitted" | "PlanNodeCompleted" | "PlanNodeFailed" | "PlanNodeReopened" | "PlanNodePruned" | "BranchSelected" | "BranchPruned" | "BranchSelectionInvalidated" | "RunConfigurationCaptured" | "RunStarted" | "RunSuccessorCreated" | "RunPaused" | "RunResumed" | "RunCompleted" | "RunFailed" | "RunCancelled" | "AttemptQueued" | "AttemptDispatched" | "AttemptBound" | "AttemptHeartbeatObserved" | "AttemptWaiting" | "AttemptDeadlineExtended" | "AttemptRetryScheduled" | "AttemptStarted" | "AttemptSucceeded" | "AttemptFailed" | "AttemptTimedOut" | "AttemptCancelled" | "AttemptInterrupted" | "DispatchWorkClaimed" | "EndpointHealthChanged" | "ProviderUsageRecorded" | "ArtifactCreated" | "CheckStarted" | "CheckPassed" | "CheckFailed" | "CheckInterrupted" | "GatePassed" | "GateFailed" | "CheckpointCreated" | "CheckpointRestored" | "WorkspacePreserved" | "PhaseSessionOpened" | "PhaseSessionJoined" | "PhaseContextPublished" | "AttemptHandoffConfirmed" | "NoteCreated" | "NoteMessageAdded" | "NoteDecisionStarted" | "NoteDecisionCompleted" | "NoteDecisionFailed" | "InterventionOpened" | "InterventionReplied";
 
 export type EventEnvelope = {
   readonly id: Id;
@@ -720,6 +720,207 @@ export type ResultAdoptionListResponse = {
   readonly data: ResultAdoptionList;
 };
 
+export type ProjectSummary = {
+  readonly project_id: string;
+  readonly name: string;
+  readonly created_at: string;
+  readonly goal_count: number;
+  readonly run_count: number;
+};
+
+export type ProjectListView = {
+  readonly observed_at: string;
+  readonly event_offset: number;
+  readonly projects: ReadonlyArray<ProjectSummary>;
+};
+
+export type ProjectPlanSummary = {
+  readonly plan_revision_id: string;
+  readonly version: number;
+  readonly status: PlanRevisionStatus;
+};
+
+export type CompletedNodeResult = {
+  readonly plan_node_id: string;
+  readonly title: string;
+  readonly checkpoint_id: string;
+  readonly gate_id: string;
+  readonly attempt_id: string;
+  readonly adoption_id: NullableId;
+  readonly artifacts: ReadonlyArray<Artifact>;
+};
+
+export type ProjectRunSummary = {
+  readonly run: Run;
+  readonly process_revision_id: NullableId;
+  readonly configured_workspace: NullableString;
+  readonly worker_endpoint_ids: IdList;
+  readonly node_counts: Readonly<Record<string, number>>;
+  readonly completed_results: ReadonlyArray<CompletedNodeResult>;
+};
+
+export type ProjectGoalSummary = {
+  readonly goal_id: string;
+  readonly objective: string;
+  readonly status: "open" | "satisfied";
+  readonly created_at: string;
+  readonly plans: ReadonlyArray<ProjectPlanSummary>;
+  readonly runs: ReadonlyArray<ProjectRunSummary>;
+};
+
+export type ProjectDetailView = {
+  readonly observed_at: string;
+  readonly event_offset: number;
+  readonly project: ProjectSummary;
+  readonly goals: ReadonlyArray<ProjectGoalSummary>;
+};
+
+export type RuntimeContextView = {
+  readonly observed_at: string;
+  readonly workspace: NullableString;
+  readonly worker_endpoint_id: NullableId;
+  readonly execution_config_fingerprint: NullableString;
+  readonly health: RuntimeHealth | null;
+};
+
+export type ProjectListResponse = {
+  readonly data: ProjectListView;
+};
+
+export type ProjectDetailResponse = {
+  readonly data: ProjectDetailView;
+};
+
+export type RuntimeContextResponse = {
+  readonly data: RuntimeContextView;
+};
+
+export type InboxKind = "intervention" | "human_check" | "worker_request" | "note";
+
+export type InboxOwner = {
+  readonly project_id: string;
+  readonly project_name: string;
+  readonly goal_id: string;
+  readonly goal_objective: string;
+  readonly run_id: NullableId;
+  readonly run_status: RunStatus | null;
+  readonly plan_node_id: NullableId;
+  readonly node_title: NullableString;
+  readonly attempt_id: NullableId;
+};
+
+export type InboxEvidence = {
+  readonly artifact_id: string;
+  readonly sha256: NullableString;
+};
+
+export type InboxAction = {
+  readonly operation: "reply-intervention" | "decide-human-check" | "resolve-worker-request" | "decline-worker-request" | "add-note-message" | "decide-note";
+  readonly label: string;
+  readonly effect: string;
+  readonly input_fields: ReadonlyArray<string>;
+  readonly arguments: Readonly<Record<string, unknown>>;
+};
+
+export type WorkerRequestForm = {
+  readonly context: Readonly<Record<string, unknown>>;
+  readonly resolution_schema: Readonly<Record<string, unknown>> | null;
+  readonly unavailable_reason: NullableString;
+};
+
+export type InboxItem = {
+  readonly kind: InboxKind;
+  readonly request_id: string;
+  readonly owner: InboxOwner;
+  readonly source_status: string;
+  readonly pending: boolean;
+  readonly actionable: boolean;
+  readonly unavailable_reason: NullableString;
+  readonly created_at: NullableUtcDateTime;
+  readonly first_observed_at: NullableUtcDateTime;
+  readonly question: string;
+  readonly evidence_summary: NullableString;
+  readonly evidence: ReadonlyArray<InboxEvidence>;
+  readonly request_token: NullableString;
+  readonly actions: ReadonlyArray<InboxAction>;
+  readonly next_step: string;
+  readonly worker_form: WorkerRequestForm | null;
+  readonly disposition: Readonly<Record<string, unknown>> | null;
+};
+
+export type InboxWorkerSource = {
+  readonly observed_at: string;
+  readonly status: "available" | "partial" | "unavailable";
+  readonly unavailable_attempt_ids: IdList;
+};
+
+export type InboxListView = {
+  readonly observed_at: string;
+  readonly event_offset: number;
+  readonly worker_requests: InboxWorkerSource;
+  readonly items: ReadonlyArray<InboxItem>;
+};
+
+export type InboxDetailView = {
+  readonly observed_at: string;
+  readonly event_offset: number;
+  readonly worker_requests: InboxWorkerSource;
+  readonly item: InboxItem;
+};
+
+export type InboxListResponse = {
+  readonly data: InboxListView;
+};
+
+export type InboxDetailResponse = {
+  readonly data: InboxDetailView;
+};
+
+export type EventConsumer = {
+  readonly consumer_id: string;
+  readonly acknowledged_offset: number;
+  readonly acknowledged_event_id: string | null;
+  readonly pending_batch_token: string | null;
+  readonly created_at: string;
+};
+
+export type EventConsumerResponse = {
+  readonly data: EventConsumer;
+};
+
+export type EventConsumerBatch = {
+  readonly consumer_id: string;
+  readonly batch_token: string | null;
+  readonly after_offset: number;
+  readonly through_offset: number;
+  readonly events: ReadonlyArray<StoredEventRecord>;
+};
+
+export type EventConsumerBatchResponse = {
+  readonly data: EventConsumerBatch;
+};
+
+export type EventConsumerAcknowledgement = {
+  readonly consumer_id: string;
+  readonly batch_token: string;
+  readonly acknowledged_offset: number;
+  readonly acknowledged_event_id: string;
+};
+
+export type EventConsumerAcknowledgementResponse = {
+  readonly data: EventConsumerAcknowledgement;
+};
+
+export type PlannerCapacity = {
+  readonly capacity: number;
+  readonly in_use: number;
+  readonly available: number;
+};
+
+export type PlannerCapacityResponse = {
+  readonly data: PlannerCapacity;
+};
+
 export type JsonScalar = boolean | number | number | string | null;
 
 export type JsonValue = JsonScalar | ReadonlyArray<JsonValue> | { readonly [key: string]: JsonValue };
@@ -1055,6 +1256,285 @@ export type ResultAdoptionRequest = {
   readonly reason: string;
 };
 
+export type RegisterEventConsumerRequest = {
+  readonly consumer_id: string;
+};
+
+export type ReadEventConsumerBatchRequest = {
+  readonly limit?: number;
+};
+
+export type AcknowledgeEventConsumerRequest = {
+  readonly batch_token: string;
+};
+
+export type NoteSource = {
+  readonly project_id: string;
+  readonly goal_id: string;
+  readonly run_id: string | null;
+  readonly plan_revision_id: string | null;
+  readonly completion_contract_id: string | null;
+  readonly process_revision_id: string | null;
+  readonly source_id: string | null;
+  readonly source_kind: "intervention" | "human_check" | null;
+  readonly source_token: string | null;
+};
+
+export type NoteMessage = {
+  readonly note_id: string;
+  readonly request_token: string;
+  readonly actor: string;
+  readonly message: string;
+  readonly message_id: string;
+  readonly created_at: string;
+};
+
+export type NoteDecision = {
+  readonly note_id: string;
+  readonly request_token: string;
+  readonly actor: string;
+  readonly action: "resolve" | "continue" | "propose_process" | "revise_plan";
+  readonly message: string;
+  readonly passed: boolean | null;
+  readonly operation_key: string;
+  readonly status: "pending" | "completed" | "unknown";
+  readonly result: Readonly<Record<string, unknown>> | null;
+  readonly error?: string;
+  readonly source_after?: NoteSource;
+  readonly source_changed?: boolean;
+};
+
+export type Note = {
+  readonly note_id: string;
+  readonly actor: string;
+  readonly origin: "user" | "agent" | "planner";
+  readonly question: string;
+  readonly evidence: string;
+  readonly source: NoteSource;
+  readonly request_token: string;
+  readonly created_at: string;
+  readonly messages: ReadonlyArray<NoteMessage>;
+  readonly decision: NoteDecision | null;
+  readonly status: "open" | "decision_pending" | "resolved";
+  readonly stale_reason?: string | null;
+};
+
+export type NoteList = {
+  readonly items: ReadonlyArray<Note>;
+  readonly event_offset: number;
+  readonly observed_at: string;
+};
+
+export type CreateNoteRequest = {
+  readonly idempotency_key: string;
+  readonly goal_id: string;
+  readonly actor: string;
+  readonly question: string;
+  readonly evidence?: string;
+  readonly run_id?: string | null;
+  readonly source_kind?: "intervention" | "human_check" | null;
+  readonly source_id?: string | null;
+  readonly source_token?: string | null;
+  readonly origin?: "user" | "agent";
+};
+
+export type AddNoteMessageRequest = {
+  readonly idempotency_key: string;
+  readonly request_token: string;
+  readonly actor: string;
+  readonly message: string;
+};
+
+export type DecideNoteRequest = {
+  readonly idempotency_key: string;
+  readonly request_token: string;
+  readonly actor: string;
+  readonly message: string;
+  readonly action: "resolve" | "continue" | "propose_process" | "revise_plan";
+  readonly passed?: boolean | null;
+};
+
+export type NoteResponse = {
+  readonly data: Note;
+};
+
+export type NoteListResponse = {
+  readonly data: NoteList;
+};
+
+export type ProjectConfigurationSnapshot = {
+  readonly project_id: string;
+  readonly version: number;
+  readonly workspace: string | null;
+  readonly execution_config_fingerprint: string | null;
+  readonly role_configuration_ref: string | null;
+  readonly static_rules: ReadonlyArray<string>;
+  readonly created_at: string;
+};
+
+export type HostConfiguration = {
+  readonly workspace: string;
+  readonly execution_config_fingerprint: string | null;
+  readonly role_configuration_ref: string;
+  readonly role_configuration: {
+  readonly worker_kind: string | null;
+  readonly model: string | null;
+  readonly reasoning_effort: string | null;
+};
+};
+
+export type UpdateProjectConfigurationRequest = {
+  readonly idempotency_key: string;
+  readonly expected_version: number;
+  readonly workspace: string;
+  readonly execution_config_fingerprint: string | null;
+  readonly role_configuration_ref: string;
+  readonly static_rules: ReadonlyArray<string>;
+};
+
+export type HostConfigurationResponse = {
+  readonly data: HostConfiguration;
+};
+
+export type ProjectConfigurationResponse = {
+  readonly data: {
+  readonly project_id: string;
+  readonly configuration: ProjectConfigurationSnapshot | null;
+};
+};
+
+export type ProjectConfigurationVersionsResponse = {
+  readonly data: {
+  readonly project_id: string;
+  readonly versions: ReadonlyArray<ProjectConfigurationSnapshot>;
+};
+};
+
+export type UpdateProjectConfigurationResponse = {
+  readonly data: ProjectConfigurationSnapshot;
+};
+
+export type RunConfigurationResponse = {
+  readonly data: {
+  readonly run_id: string;
+  readonly configuration: ProjectConfigurationSnapshot | null;
+};
+};
+
+export type HTTPValidationError = {
+  readonly detail?: ReadonlyArray<ValidationError>;
+};
+
+export type PublicRuntimeSettings = {
+  readonly worker_kind: "pi" | "fake";
+  readonly planner_kind: "pi" | "single";
+  readonly worker_model: string | null;
+  readonly planner_model: string | null;
+  readonly worker_reasoning_effort: string | null;
+  readonly planner_reasoning_effort: string | null;
+  readonly worker_capacity: number;
+  readonly planner_capacity: number;
+  readonly worker_timeout_seconds: number;
+  readonly planner_timeout_seconds: number;
+  readonly command_timeout_seconds: number;
+  readonly allowed_commands: ReadonlyArray<ReadonlyArray<string>>;
+  readonly available_shells: ReadonlyArray<string>;
+  readonly git_permissions: ReadonlyArray<"git.read" | "git.local_write" | "git.remote_write" | "git.dangerous">;
+  readonly command_check_argv: ReadonlyArray<string> | null;
+  readonly semantic_required_terms: ReadonlyArray<string>;
+  readonly attempt_deadline_seconds: number | null;
+};
+
+export type RuntimeSettings = {
+  readonly worker_kind?: "pi" | "fake";
+  readonly planner_kind?: "pi" | "single";
+  readonly worker_model?: string | null;
+  readonly planner_model?: string | null;
+  readonly worker_reasoning_effort?: string | null;
+  readonly planner_reasoning_effort?: string | null;
+  readonly worker_capacity?: number;
+  readonly planner_capacity?: number;
+  readonly worker_timeout_seconds?: number;
+  readonly planner_timeout_seconds?: number;
+  readonly command_timeout_seconds?: number;
+  readonly pi_config_path?: string | null;
+  readonly allowed_commands?: ReadonlyArray<ReadonlyArray<string>>;
+  readonly available_shells?: ReadonlyArray<string>;
+  readonly git_permissions?: ReadonlyArray<"git.read" | "git.local_write" | "git.remote_write" | "git.dangerous">;
+  readonly command_check_argv?: ReadonlyArray<string> | null;
+  readonly semantic_required_terms?: ReadonlyArray<string>;
+  readonly attempt_deadline_seconds?: number | null;
+};
+
+export type ValidationError = {
+  readonly loc: ReadonlyArray<string | number>;
+  readonly msg: string;
+  readonly type: string;
+  readonly input?: unknown;
+  readonly ctx?: Readonly<Record<string, unknown>>;
+};
+
+export type WorkspaceActionRequest = Readonly<Record<string, never>>;
+
+export type WorkspaceDescriptor = {
+  readonly workspace_id: string;
+  readonly path: string;
+  readonly runtime: PublicRuntimeSettings;
+  readonly status: "registered" | "starting" | "ready" | "stopping" | "stopped" | "failed";
+  readonly failure_category: "startup_timeout" | "child_exited" | "identity_mismatch" | "shutdown_timeout" | "launch_failed" | null;
+};
+
+export type WorkspaceExecutionConfigData = {
+  readonly workspace_id: string;
+  readonly execution_config: ExecutionConfigRequest | null;
+};
+
+export type WorkspaceExecutionConfigResponse = {
+  readonly data: WorkspaceExecutionConfigData;
+};
+
+export type WorkspaceListData = {
+  readonly workspaces: ReadonlyArray<WorkspaceDescriptor>;
+};
+
+export type WorkspaceListResponse = {
+  readonly data: WorkspaceListData;
+};
+
+export type WorkspaceOverviewData = {
+  readonly observed_at: string;
+  readonly workspaces: ReadonlyArray<WorkspaceOverviewEntry>;
+  readonly consistent_across_workspaces?: false;
+};
+
+export type WorkspaceOverviewEntry = {
+  readonly workspace: WorkspaceDescriptor;
+  readonly api_path: string;
+  readonly available: boolean;
+  readonly projects: ReadonlyArray<ProjectDetailView> | null;
+  readonly inbox: InboxListView | null;
+  readonly error: WorkspaceQueryError | null;
+};
+
+export type WorkspaceOverviewResponse = {
+  readonly data: WorkspaceOverviewData;
+};
+
+export type WorkspaceQueryError = {
+  readonly code: string;
+  readonly message: string;
+};
+
+export type WorkspaceRegistration = {
+  readonly workspace_id: string;
+  readonly path: string;
+  readonly runtime?: RuntimeSettings;
+};
+
+export type WorkspaceResponse = {
+  readonly data: WorkspaceDescriptor;
+};
+
 export class EhaiApiError extends Error {
   readonly status: number;
   readonly detail: ErrorResponse | null;
@@ -1083,6 +1563,95 @@ export class EhaiApiClient {
 
   createProject(request: CreateProjectRequest): Promise<ProjectResponse> {
     return this.request("/projects", "POST", request);
+  }
+
+  listProjects(): Promise<ProjectListResponse> {
+    return this.request("/projects", "GET");
+  }
+
+  listInbox(filters: { projectId?: string; runId?: string } = {}): Promise<InboxListResponse> {
+    const query = new URLSearchParams();
+    if (filters.projectId !== undefined) query.set("project_id", filters.projectId);
+    if (filters.runId !== undefined) query.set("run_id", filters.runId);
+    const suffix = query.toString();
+    return this.request("/inbox" + (suffix ? "?" + suffix : ""), "GET");
+  }
+
+  getInboxItem(kind: InboxKind, requestId: string): Promise<InboxDetailResponse> {
+    return this.request("/inbox/" + encodeURIComponent(kind) + "/" + encodeURIComponent(requestId), "GET");
+  }
+
+  getProject(projectId: string): Promise<ProjectDetailResponse> {
+    return this.request("/projects/" + encodeURIComponent(projectId), "GET");
+  }
+
+  getRuntimeContext(): Promise<RuntimeContextResponse> {
+    return this.request("/runtime/context", "GET");
+  }
+
+  getPlannerCapacity(): Promise<PlannerCapacityResponse> {
+    return this.request("/planning/capacity", "GET");
+  }
+
+  createNote(request: CreateNoteRequest): Promise<NoteResponse> {
+    return this.request("/notes", "POST", request);
+  }
+
+  listNotes(filters: { projectId?: string; goalId?: string; runId?: string; includeResolved?: boolean } = {}): Promise<NoteListResponse> {
+    const query = new URLSearchParams();
+    if (filters.projectId !== undefined) query.set("project_id", filters.projectId);
+    if (filters.goalId !== undefined) query.set("goal_id", filters.goalId);
+    if (filters.runId !== undefined) query.set("run_id", filters.runId);
+    if (filters.includeResolved !== undefined) query.set("include_resolved", String(filters.includeResolved));
+    return this.request("/notes?" + query.toString(), "GET");
+  }
+
+  getNote(noteId: string): Promise<NoteResponse> {
+    return this.request("/notes/" + encodeURIComponent(noteId), "GET");
+  }
+
+  addNoteMessage(noteId: string, request: AddNoteMessageRequest): Promise<NoteResponse> {
+    return this.request("/notes/" + encodeURIComponent(noteId) + "/messages", "POST", request);
+  }
+
+  decideNote(noteId: string, request: DecideNoteRequest): Promise<NoteResponse> {
+    return this.request("/notes/" + encodeURIComponent(noteId) + "/decisions", "POST", request);
+  }
+
+  registerEventConsumer(request: RegisterEventConsumerRequest): Promise<EventConsumerResponse> {
+    return this.request("/event-consumers", "POST", request);
+  }
+
+  getEventConsumer(consumerId: string): Promise<EventConsumerResponse> {
+    return this.request("/event-consumers/" + encodeURIComponent(consumerId), "GET");
+  }
+
+  readConsumerEvents(consumerId: string, request: ReadEventConsumerBatchRequest = {}): Promise<EventConsumerBatchResponse> {
+    return this.request("/event-consumers/" + encodeURIComponent(consumerId) + "/batches", "POST", request);
+  }
+
+  acknowledgeConsumerEvents(consumerId: string, request: AcknowledgeEventConsumerRequest): Promise<EventConsumerAcknowledgementResponse> {
+    return this.request("/event-consumers/" + encodeURIComponent(consumerId) + "/ack", "POST", request);
+  }
+
+  getConfigurationHost(): Promise<HostConfigurationResponse> {
+    return this.request("/project-configuration-host", "GET");
+  }
+
+  getProjectConfiguration(projectId: string): Promise<ProjectConfigurationResponse> {
+    return this.request("/projects/" + encodeURIComponent(projectId) + "/configuration", "GET");
+  }
+
+  getProjectConfigurationVersions(projectId: string): Promise<ProjectConfigurationVersionsResponse> {
+    return this.request("/projects/" + encodeURIComponent(projectId) + "/configuration/versions", "GET");
+  }
+
+  configureProject(projectId: string, request: UpdateProjectConfigurationRequest): Promise<UpdateProjectConfigurationResponse> {
+    return this.request("/projects/" + encodeURIComponent(projectId) + "/configuration", "POST", request);
+  }
+
+  getRunConfiguration(runId: string): Promise<RunConfigurationResponse> {
+    return this.request("/runs/" + encodeURIComponent(runId) + "/configuration", "GET");
   }
 
   createGoal(request: CreateGoalRequest): Promise<GoalResponse> {
@@ -1309,6 +1878,74 @@ export class EhaiApiClient {
       init.body = JSON.stringify(body);
     }
     const response = await this.fetcher(`${this.baseUrl}/api/v1${path}`, init);
+    const payload: unknown = await response.json();
+    if (!response.ok) {
+      throw new EhaiApiError(response.status, isErrorResponse(payload) ? payload : null);
+    }
+    return payload as T;
+  }
+}
+
+export class EhaiWorkspaceManagerClient {
+  readonly baseUrl: string;
+  readonly fetcher: FetchLike;
+
+  constructor(baseUrl: string, fetcher: FetchLike = globalThis.fetch.bind(globalThis)) {
+    const url = new URL(baseUrl);
+    if (!["http:", "https:"].includes(url.protocol) || url.username || url.password ||
+        url.search || url.hash || !["/", "/api/v1", "/api/v1/"].includes(url.pathname)) {
+      throw new Error("Workspace manager requires an HTTP(S) origin without credentials");
+    }
+    this.baseUrl = url.origin;
+    this.fetcher = fetcher;
+  }
+
+  listWorkspaces(): Promise<WorkspaceListResponse> {
+    return this.request("/workspaces", "GET");
+  }
+
+  registerWorkspace(request: WorkspaceRegistration): Promise<WorkspaceResponse> {
+    return this.request("/workspaces", "POST", request);
+  }
+
+  getWorkspace(workspaceId: string): Promise<WorkspaceResponse> {
+    return this.request(this.workspacePath(workspaceId), "GET");
+  }
+
+  startWorkspace(workspaceId: string): Promise<WorkspaceResponse> {
+    return this.request(this.workspacePath(workspaceId) + "/start", "POST", {});
+  }
+
+  stopWorkspace(workspaceId: string): Promise<WorkspaceResponse> {
+    return this.request(this.workspacePath(workspaceId) + "/stop", "POST", {});
+  }
+
+  getWorkspaceExecutionConfig(workspaceId: string): Promise<WorkspaceExecutionConfigResponse> {
+    return this.request(this.workspacePath(workspaceId) + "/execution-config", "GET");
+  }
+
+  getWorkspaceOverview(): Promise<WorkspaceOverviewResponse> {
+    return this.request("/workspace-overview", "GET");
+  }
+
+  workspace(workspaceId: string): EhaiApiClient {
+    return new EhaiApiClient(this.baseUrl + this.workspacePath(workspaceId), this.fetcher);
+  }
+
+  private workspacePath(workspaceId: string): string {
+    if (!/^[a-z0-9][a-z0-9_-]{0,63}$/.test(workspaceId)) {
+      throw new Error("Invalid workspace_id");
+    }
+    return "/workspaces/" + workspaceId;
+  }
+
+  private async request<T>(path: string, method: string, body?: unknown): Promise<T> {
+    const init: RequestInit = { method };
+    if (body !== undefined) {
+      init.headers = { "content-type": "application/json" };
+      init.body = JSON.stringify(body);
+    }
+    const response = await this.fetcher(this.baseUrl + "/api/v1" + path, init);
     const payload: unknown = await response.json();
     if (!response.ok) {
       throw new EhaiApiError(response.status, isErrorResponse(payload) ? payload : null);

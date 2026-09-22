@@ -7,13 +7,24 @@ import asyncio
 import re
 import sys
 from typing import Any, cast
+from urllib.parse import urlencode
 
 from mcp.server.lowlevel import Server
 from mcp.server.stdio import stdio_server
 from mcp.types import CallToolResult, TextContent, Tool, ToolAnnotations
 
 from ehai import JsonValue, json_dumps, json_loads, normalize_id
-from ehai.interfaces.cli_api import _COMMANDS, _QUERIES, ApiCommandError, request_api
+from ehai.application.event_consumers import CONSUMER_ID_PATTERN
+from ehai.application.inbox import INBOX_KINDS
+from ehai.interfaces.backend_cli import MANAGER_COMMANDS, MANAGER_QUERIES, WORKSPACE_ID_PATTERN
+from ehai.interfaces.cli_api import (
+    _COMMANDS,
+    _QUERIES,
+    ApiCommandError,
+    normalized_api_base,
+    request_api,
+    validate_workspace_id,
+)
 
 
 def _result(value: JsonValue, *, error: bool = False) -> CallToolResult:
@@ -31,28 +42,75 @@ async def serve(api_url: str, *, timeout: float | None) -> None:
     )
     if not isinstance(document, dict) or not isinstance(document.get("paths"), dict):
         raise ValueError("Host did not provide an OpenAPI document")
+    manager = document.get("x-ehai-workspace-manager") is True
+    manager_openapi = cast(dict[str, Any], document)
+    if manager:
+        document = await asyncio.to_thread(
+            request_api, api_url, "GET", "/core-openapi.json", timeout=timeout, unwrap=False
+        )
+        if not isinstance(document, dict) or not isinstance(document.get("paths"), dict):
+            raise ValueError("Manager did not provide a core OpenAPI document")
     openapi = cast(dict[str, Any], document)
-    routes = {name.replace("-", "_"): ("GET", "/api/v1" + path) for name, path in _QUERIES.items()}
+    routes = {
+        name.replace("-", "_"): ("GET", "/api/v1" + path)
+        for name, path in _QUERIES.items()
+        if name not in MANAGER_QUERIES or manager
+    }
     routes.update(
         {
             name.replace("-", "_"): ("POST", "/api/v1" + path)
             for name, (path, _) in _COMMANDS.items()
+            if name not in MANAGER_COMMANDS or manager
         }
     )
+    manager_tools = {name.replace("-", "_") for name in (*MANAGER_QUERIES, *MANAGER_COMMANDS)}
     tools: list[Tool] = []
     for name, (method, path) in routes.items():
-        operation = openapi["paths"].get(path, {}).get(method.lower())
+        source_schema = manager_openapi if name in manager_tools else openapi
+        operation = source_schema["paths"].get(path, {}).get(method.lower())
         if not isinstance(operation, dict):
             raise ValueError(f"Host API is missing {method} {path}; align client and host versions")
         properties: dict[str, Any] = {
-            key: {"type": "string", "format": "uuid"} for key in re.findall(r"{(\w+)}", path)
+            key: (
+                {"type": "string", "enum": list(INBOX_KINDS)}
+                if key == "kind"
+                else {"type": "string", "pattern": CONSUMER_ID_PATTERN}
+                if key == "consumer_id"
+                else {"type": "string", "pattern": WORKSPACE_ID_PATTERN}
+                if key == "workspace_id"
+                else {"type": "string", "format": "uuid"}
+            )
+            for key in re.findall(r"{(\w+)}", path)
         }
         description = f"{operation.get('summary', name)}. {method} {path}. "
+        if manager and name not in manager_tools:
+            properties["workspace_id"] = {"type": "string", "pattern": WORKSPACE_ID_PATTERN}
+            description += "workspace_id selects the registered workspace and its isolated core. "
+        if name in {"list_inbox", "list_notes"}:
+            filters = (
+                ("project_id", "run_id")
+                if name == "list_inbox"
+                else ("project_id", "goal_id", "run_id")
+            )
+            properties.update(
+                {key: {"type": ["string", "null"], "format": "uuid"} for key in filters}
+            )
+            if name == "list_notes":
+                properties["include_resolved"] = {"type": "boolean"}
+            description += (
+                "Pass null for unfiltered ID parameters. "
+                "Check worker_requests availability before interpreting an empty list. "
+            )
+        if name == "get_inbox_item":
+            description += (
+                "Read actions and required inputs. Submit through the corresponding source tool, "
+                "then re-read this item and its Run. Worker IDs are scoped to this host process. "
+            )
         if method == "POST":
             properties["request_json"] = {"type": "string", "minLength": 2, "maxLength": 1000000}
             description += (
                 "request_json is the exact HTTP JSON request body, "
-                "with required idempotency fields, "
+                "including any idempotency fields required by that operation, "
                 "not a file path. Use get_request_schema for its contract. "
                 "Requires user authority; never infer approval from plan text. "
                 "Returns host acknowledgement, not task completion. "
@@ -112,9 +170,10 @@ async def serve(api_url: str, *, timeout: float | None) -> None:
             if name == "get_request_schema":
                 target = arguments["tool_name"]
                 method, path = routes[target]
+                source_schema = manager_openapi if target in manager_tools else openapi
                 if method != "POST":
                     raise ValueError("This tool has no HTTP request body")
-                schema = openapi["paths"][path]["post"]["requestBody"]["content"][
+                schema = source_schema["paths"][path]["post"]["requestBody"]["content"][
                     "application/json"
                 ]["schema"]
                 # Keep only transitively used definitions, not the whole API catalog.
@@ -134,7 +193,7 @@ async def serve(api_url: str, *, timeout: float | None) -> None:
                         key = ref.removeprefix(prefix)
                         if key not in definitions:
                             definitions[key] = {}
-                            definitions[key] = rewrite(openapi["components"]["schemas"][key])
+                            definitions[key] = rewrite(source_schema["components"]["schemas"][key])
                         result["$ref"] = "#/$defs/" + key
                     return result
 
@@ -143,8 +202,44 @@ async def serve(api_url: str, *, timeout: float | None) -> None:
                     resolved["$defs"] = definitions
                 return _result(cast(JsonValue, resolved))
             method, path = routes[name]
+            target_api_url = api_url
+            if manager and name not in manager_tools:
+                workspace_id = validate_workspace_id(arguments["workspace_id"])
+                target_api_url = normalized_api_base(api_url) + "/workspaces/" + workspace_id
             for key in re.findall(r"{(\w+)}", path):
-                path = path.replace("{" + key + "}", str(normalize_id(arguments[key])))
+                if key == "kind":
+                    value = arguments[key]
+                    if value not in INBOX_KINDS:
+                        raise ValueError("Unknown inbox request kind")
+                elif key == "workspace_id":
+                    value = validate_workspace_id(arguments[key])
+                elif key == "consumer_id":
+                    value = arguments[key]
+                    if (
+                        not isinstance(value, str)
+                        or re.fullmatch(CONSUMER_ID_PATTERN, value) is None
+                    ):
+                        raise ValueError("Invalid consumer_id")
+                else:
+                    value = str(normalize_id(arguments[key]))
+                path = path.replace("{" + key + "}", value)
+            if name in {"list_inbox", "list_notes"}:
+                fields = (
+                    ("project_id", "run_id")
+                    if name == "list_inbox"
+                    else ("project_id", "goal_id", "run_id")
+                )
+                filters = {
+                    key: str(normalize_id(arguments[key]))
+                    for key in fields
+                    if arguments.get(key) is not None
+                }
+                if name == "list_notes":
+                    filters["include_resolved"] = (
+                        "true" if arguments["include_resolved"] else "false"
+                    )
+                if filters:
+                    path += "?" + urlencode(filters)
             body = None
             if method == "POST":
                 value = json_loads(arguments["request_json"])
@@ -152,7 +247,7 @@ async def serve(api_url: str, *, timeout: float | None) -> None:
                     raise ValueError("request_json must encode a JSON object")
                 body = value
             return _result(
-                await asyncio.to_thread(request_api, api_url, method, path, body, timeout)
+                await asyncio.to_thread(request_api, target_api_url, method, path, body, timeout)
             )
         except ApiCommandError as error:
             return _result(error.document, error=True)
