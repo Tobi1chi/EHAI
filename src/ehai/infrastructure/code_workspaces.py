@@ -667,6 +667,9 @@ class GitCodeWorkspace:
                 *arguments,
             ],
             input=input_bytes,
+            # Keep the managed host's parent-monitor pipe out of Git. Commands
+            # with explicit input still get subprocess.run's own stdin PIPE.
+            stdin=subprocess.DEVNULL if input_bytes is None else None,
             capture_output=True,
             check=False,
             timeout=120,

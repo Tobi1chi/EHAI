@@ -1,4 +1,8 @@
-"""EHAI-owned Git worktree lifecycle and persisted Workspace leases."""
+"""EHAI-owned Git worktree lifecycle and persisted Workspace leases.
+
+Host Git commands do not consume stdin. In particular, they must not inherit a
+managed child's parent-monitor pipe, which can block Git startup on Windows.
+"""
 
 from __future__ import annotations
 
@@ -90,6 +94,7 @@ class WorkspaceManager:
                 check=True,
                 capture_output=True,
                 text=True,
+                stdin=subprocess.DEVNULL,
             )
             reference = WorkspaceRef(
                 run_id,
@@ -162,6 +167,7 @@ class WorkspaceManager:
             check=True,
             capture_output=True,
             text=True,
+            stdin=subprocess.DEVNULL,
         ).stdout
         if dirty:
             preserved = lease.preserve(at=self.clock())
@@ -172,6 +178,7 @@ class WorkspaceManager:
             check=True,
             capture_output=True,
             text=True,
+            stdin=subprocess.DEVNULL,
         )
         released = lease.release(at=self.clock())
         self._update_lease(released)
@@ -205,6 +212,7 @@ class WorkspaceManager:
             check=False,
             capture_output=True,
             text=True,
+            stdin=subprocess.DEVNULL,
         )
         return result.returncode == 0 and result.stdout.strip() == "true"
 
