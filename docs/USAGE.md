@@ -246,6 +246,11 @@ environment_names 是允许传入 Pi 的模型凭证环境变量名。settings/m
 discuss-plan --goal-id ... --message ... --idempotency-key ... 进行讨论，
 继续讨论加 --conversation-id；也支持 --message-file UTF-8 文件。
 
+`--planner-timeout-seconds` 设置单次规划/讨论/过程草稿的模型调用时限，默认120秒；
+API宿主与Workspace配置使用同一设置。该设置现在也对Pi Planner生效，较长规划应显式
+配置足够时间。超时保留失败及已有事实、关闭所属Pi进程，不自动重发；先检查讨论记录，
+确认结果后再以新幂等键继续。它不等于Worker或独立过程Reviewer的时限。
+
 不需要 Planner 时：
 
 ~~~powershell

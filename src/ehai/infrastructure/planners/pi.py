@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import math
 from collections.abc import Callable, Mapping
 from dataclasses import replace
 from datetime import datetime
@@ -259,6 +260,7 @@ class PiPlannerAdapter:
         model: str,
         backend: PiBackendConfig,
         reasoning_effort: str | None = None,
+        timeout_seconds: float = 120.0,
         budget: ExplorationBudget | None = None,
         session_store: AgentTraceStore | None = None,
         workspace: Path | None = None,
@@ -271,6 +273,13 @@ class PiPlannerAdapter:
     ) -> None:
         if not isinstance(model, str) or not model.strip():
             raise ValueError("PiPlannerAdapter model must not be blank")
+        if (
+            isinstance(timeout_seconds, bool)
+            or not math.isfinite(timeout_seconds)
+            or timeout_seconds <= 0
+        ):
+            raise ValueError("Pi Planner timeout must be finite and positive")
+        self._timeout_seconds = timeout_seconds
         self._budget = budget or _DEFAULT_PLANNER_BUDGET
         if not isinstance(self._budget, ExplorationBudget):
             raise TypeError("budget must be an ExplorationBudget")
@@ -635,30 +644,37 @@ class PiPlannerAdapter:
         session = self._agent_runtime.create_session(session_ref_id)
         self._last_session = session
         try:
-            await self._agent_runtime.run(
-                config=config,
-                registry=registry,
-                model=self._profile.model,
-                reasoning_effort=self._reasoning_effort,
-                session=session,
-                workspace=self._workspace or Path.cwd(),
-                execution=AgentRoleExecution(session.agent_session_ref_id),
-                instruction=(
-                    "Discuss the user's request. Ask for clarification or respond to review using "
-                    "ask_user when appropriate; otherwise prepare a detailed design and graph, "
-                    "then finish_plan."
-                    if discussion
-                    else "Prepare a detailed design with set_plan_design, build the graph, "
-                    "then finish_plan."
-                ),
-                context={
-                    "planner_input": dict(input_document),
-                    "project_configuration": project_context,
-                    "host_check_configuration": (
-                        self._check_configuration if process_graph is None else {}
+            async with asyncio.timeout(self._timeout_seconds):
+                await self._agent_runtime.run(
+                    config=config,
+                    registry=registry,
+                    model=self._profile.model,
+                    reasoning_effort=self._reasoning_effort,
+                    session=session,
+                    workspace=self._workspace or Path.cwd(),
+                    execution=AgentRoleExecution(session.agent_session_ref_id),
+                    instruction=(
+                        "Discuss the user's request. Ask for clarification or respond to review "
+                        "using "
+                        "ask_user when appropriate; otherwise prepare a detailed design and graph, "
+                        "then finish_plan."
+                        if discussion
+                        else "Prepare a detailed design with set_plan_design, build the graph, "
+                        "then finish_plan."
                     ),
-                },
-            )
+                    context={
+                        "planner_input": dict(input_document),
+                        "project_configuration": project_context,
+                        "host_check_configuration": (
+                            self._check_configuration if process_graph is None else {}
+                        ),
+                    },
+                )
+        except TimeoutError as error:
+            raise PiPlannerError(
+                f"Pi Planner exceeded its {self._timeout_seconds:g}s deadline; "
+                "inspect retained state before retrying. No prompt replay was attempted."
+            ) from error
         finally:
             if workspace_tools is not None:
                 await workspace_tools.aclose()

@@ -209,6 +209,7 @@ def build_service(
         planner = PiPlannerAdapter(
             backend=pi_backend,
             model=planner_model,
+            timeout_seconds=planner_timeout_seconds,
             reasoning_effort=planner_reasoning_effort,
             session_store=SQLiteAgentTraceStore(database),
             workspace=worker_workspace or Path.cwd(),
