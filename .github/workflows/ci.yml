@@ -1,0 +1,74 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  static:
+    name: Static checks and contracts
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: control-plane/package-lock.json
+      - name: Verify uv.lock
+        run: uv lock --check
+      - name: Sync environment
+        run: uv sync --frozen
+      - name: Ruff lint
+        run: uv run ruff check .
+      - name: Ruff format
+        run: uv run ruff format --check .
+      - name: Mypy (Linux)
+        run: uv run mypy
+      - name: Mypy (Windows platform)
+        run: uv run mypy --platform win32
+      - name: Install control-plane dependencies
+        working-directory: control-plane
+        run: npm ci
+      - name: Regenerate schemas and client
+        run: |
+          uv run control-plane/scripts/generate-api-schema.py
+          npm --prefix control-plane run generate
+      - name: Check generated contracts are committed
+        run: git diff --exit-code -- schemas control-plane/src/generated
+      - name: TypeScript typecheck and build
+        working-directory: control-plane
+        run: |
+          npm run typecheck
+          npm run build
+
+  e2e:
+    name: Product E2E (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+      - name: Sync environment
+        run: uv sync --frozen
+      - name: Run the product E2E
+        run: uv run pytest tests/test_product_e2e.py
