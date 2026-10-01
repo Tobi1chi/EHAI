@@ -28,6 +28,15 @@ def redact_sensitive_text(value: str) -> str:
     return _TYPESAFE_KEY_PATTERN.sub("[REDACTED]", _KEY_PATTERN.sub("[REDACTED]", redacted))
 
 
+def redact_secret_bytes(value: bytes, secret_values: tuple[str, ...] = ()) -> bytes:
+    """Redact known secret values and recognizable credential forms from process output."""
+    text = value.decode("utf-8", errors="replace")
+    for secret in secret_values:
+        if secret:
+            text = text.replace(secret, "[REDACTED]")
+    return redact_sensitive_text(text).encode("utf-8")
+
+
 def bounded_redacted_text(value: str | None, *, max_bytes: int = 500) -> str | None:
     """Redact a diagnostic string and bound its UTF-8 representation."""
     if value is None:

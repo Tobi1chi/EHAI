@@ -26,8 +26,8 @@ from ehai.application.agent_contracts import (
 from ehai.application.agent_roles import ToolRegistry
 from ehai.application.phase_session_tools import PhaseSessionToolProvider
 from ehai.application.ports import ArtifactStore
+from ehai.application.sanitization import redact_secret_bytes
 from ehai.application.session_mailbox import SessionMailboxToolProvider
-from ehai.infrastructure.codex_transport import redact_codex_bytes
 from ehai.infrastructure.mcp_tools import MCPToolProvider
 from ehai.infrastructure.skill_loader import SkillToolProvider
 from ehai.infrastructure.web_tools import WebToolProvider
@@ -736,8 +736,8 @@ class HostToolRuntime:
             )
         return {
             "exit_code": return_code,
-            "stdout": redact_codex_bytes(stdout, secret_values).decode(errors="replace"),
-            "stderr": redact_codex_bytes(stderr, secret_values).decode(errors="replace"),
+            "stdout": redact_secret_bytes(stdout, secret_values).decode(errors="replace"),
+            "stderr": redact_secret_bytes(stderr, secret_values).decode(errors="replace"),
         }
 
     async def _handoff(
