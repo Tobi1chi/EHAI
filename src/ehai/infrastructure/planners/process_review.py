@@ -40,7 +40,7 @@ from ehai.domain.process import ProcessRevision
 from ehai.infrastructure.artifacts import ArtifactIntegrityError
 from ehai.infrastructure.host_tools import HostToolRuntime
 from ehai.infrastructure.pi_runtime import PiRoleRunner
-from ehai.infrastructure.planners.codex_protocol import _base_plan_document
+from ehai.infrastructure.planners.plan_documents import base_plan_document
 
 _WORKSPACE_TOOL_NAMES = frozenset({"workspace_list", "workspace_read", "workspace_search"})
 _MAX_EVIDENCE_PAGE_BYTES = 64 * 1024
@@ -350,7 +350,7 @@ def _review_context(
             "planner_session_ref_id": context.draft.planner_session_ref_id,
             "reason": context.draft.reason,
             "created_at": format_utc_datetime(context.draft.created_at),
-            "base_execution_plan": _base_plan_document(context.draft.base_execution_plan),
+            "base_execution_plan": base_plan_document(context.draft.base_execution_plan),
             "run": {
                 "run_id": context.run.run_id,
                 "goal_id": context.run.goal_id,
@@ -402,13 +402,13 @@ def _review_context(
 
 
 def _plan_document(plan: object) -> dict[str, JsonValue]:
-    # Keep the graph IR in codex_protocol; this wrapper adds only approval
+    # Keep the graph IR in plan_documents; this wrapper adds only approval
     # metadata that the review role must see alongside the graph.
     from ehai.domain.planning import PlanRevision
 
     if not isinstance(plan, PlanRevision):
         raise TypeError("plan must be a PlanRevision")
-    document = _base_plan_document(plan)
+    document = base_plan_document(plan)
     document.update(
         {
             "goal_id": plan.goal_id,

@@ -65,7 +65,7 @@ from ehai.domain.workers import WorkerCapability, WorkerKind, WorkerProfile
 from ehai.infrastructure.host_tools import HostToolRuntime
 from ehai.infrastructure.pi_config import PiBackendConfig
 from ehai.infrastructure.pi_runtime import PiRoleRunner
-from ehai.infrastructure.planners.codex_protocol import build_codex_planner_input
+from ehai.infrastructure.planners.plan_documents import build_planner_input
 
 _DEFAULT_PLANNER_BUDGET = ExplorationBudget(max_attempts=24, max_width=3, max_depth=4)
 
@@ -339,7 +339,7 @@ class PiPlannerAdapter:
         context: ReplanContext | None = None,
     ) -> PlanProposal:
         normalized_criteria = require_p1_criteria(criteria, "PiPlannerAdapter")
-        input_document = build_codex_planner_input(
+        input_document = build_planner_input(
             goal,
             normalized_criteria,
             self._budget,
@@ -375,7 +375,7 @@ class PiPlannerAdapter:
     ) -> PlanningReply:
         self._require_goal(goal, allow_completion_contract=True)
         normalized = normalize_discussion_criteria(criteria, "Planning discussion")
-        document = build_codex_planner_input(
+        document = build_planner_input(
             goal,
             normalized,
             self._budget,
@@ -470,12 +470,12 @@ class PiPlannerAdapter:
             contract.version,
         ) != (approved.completion_contract_id, approved.completion_contract_version):
             raise ValueError("Process drafting requires the original completion contract")
-        document = build_codex_planner_input(goal, contract.criteria, self._budget, approved)
+        document = build_planner_input(goal, contract.criteria, self._budget, approved)
         document["project_id"] = goal.project_id
         document["note_run_id"] = previous.run_id
         document["operation"] = "propose_process"
         document["original_approved_plan"] = document.pop("base_plan_revision")
-        document["current_process_plan"] = build_codex_planner_input(
+        document["current_process_plan"] = build_planner_input(
             goal, contract.criteria, self._budget, current
         )["base_plan_revision"]
         document["parent_process_revision_id"] = previous.process_revision_id
