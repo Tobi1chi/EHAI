@@ -1,5 +1,8 @@
 # P3 实施计划
 
+> 归档（2026-10-01 文档重组）：本文按原样保留为运行证据原文，其中的“当前”“下一步”指当时上下文。
+> 现状见 [STATUS](../STATUS.md)，证据摘要见 [EVIDENCE](../EVIDENCE.md)。
+
 ## P3.1：项目总览与执行归属
 
 本轮目标：从正常 CLI/HTTP/MCP 入口发现项目，进入目标、计划、Run 和当前有效成果，
@@ -309,7 +312,7 @@ Planner 容量证据位于 `Temp/ehai-planner-capacity-3525b01e392048279c953c1b6
 
 Ruff、格式、mypy、Schema/Client 生成及 TS typecheck/build 通过。全部本轮临时子宿主和管理器已停止。
 这验证后端隔离与正式调用闭环，真实多 Pi/多模型并发、强杀/网络断开时序与唯一产品 E2E 未覆盖。
-实际使用说明见 [多工作区后端](WORKSPACE_MANAGER.md)。
+实际使用说明见 [多工作区后端](../WORKSPACE_MANAGER.md)。
 
 ## 2026-09-23：真实多 Pi 并发与 Windows Git 阻塞修复
 

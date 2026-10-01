@@ -119,7 +119,7 @@ uv run ehai-mcp --api-url http://127.0.0.1:8765
 生成的 `EhaiWorkspaceManagerClient` 提供管理操作，`manager.workspace("project-a")`
 返回绑定该工作区的 `EhaiApiClient`。页面仍只消费这些公开能力。
 
-实际薄验证、失败修复与未覆盖范围见 [P3 实施记录](P3_IMPLEMENTATION_PLAN.md)。
+实际薄验证、失败修复与未覆盖范围见 [运行证据](EVIDENCE.md#p3-平台后端)。
 
 2026-09-23 已完成本机同一 Pi/Go 模型的真实跨 workspace Planner/Worker/Reviewer 并发、
 同工作区双 Planner 容量限制与分别人工 Gate 验收。Windows 上托管核心的 Git 子命令现在显式

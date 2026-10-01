@@ -6,7 +6,7 @@ EHAI uses Python for Execution Plane and TypeScript for Control Plane. Put imple
 
 ## Product Scope & Implementation Boundaries
 
-Read `docs/PRODUCT_SCOPE.md` before product or architecture work, then `docs/ROADMAP.md` and, for core closure, `docs/P2_IMPLEMENTATION_PLAN.md`. For refactoring, follow `docs/REFACTOR_PLAN.md`. EHAI is the planning/execution core of a general Agent platform; coding is the first end-to-end use case, not its permanent boundary. The top-level Agent is distinct from Planner. Historical increments and passing tests do not override current scope or prove product delivery. Define each module's user outcome, inputs/outputs, ownership, failure behavior, and normal-entry acceptance before restructuring code. Distinguish target design from implemented interfaces; do not invent commands or status values in usage documentation.
+`docs/README.md` indexes all documents by role. Read `docs/PRODUCT_SCOPE.md` before product or architecture work, then `docs/ROADMAP.md` (its P2 section covers core closure). For refactoring, follow `docs/REFACTOR_PLAN.md`. `docs/STATUS.md` states what is implemented and verified; `docs/EVIDENCE.md` lists each trial and what it did not cover. EHAI is the planning/execution core of a general Agent platform; coding is the first end-to-end use case, not its permanent boundary. The top-level Agent is distinct from Planner. Historical increments and passing tests do not override current scope or prove product delivery. Define each module's user outcome, inputs/outputs, ownership, failure behavior, and normal-entry acceptance before restructuring code. Distinguish target design from implemented interfaces; do not invent commands or status values in usage documentation.
 
 The current `docs/EXECUTION_MODEL.md` governs Worker instantiation, phased decision trees, automatic/human Gates, approved-boundary plan adjustments, phase Sessions, handoff recovery, and parallelism. Read it alongside product scope. Keep implementation limitations and historical trial results distinct from these agreed targets.
 
@@ -41,7 +41,7 @@ If actual use or the E2E fails, create only the necessary diagnostic test in an 
 
 ## Model Tool Changes and Runtime Evidence
 
-Treat a model-facing tool change as a change to the whole calling contract, not just its handler. The requirements below govern tool definitions, parameters, execution behavior, and result handling; `docs/R2_IMPLEMENTATION_PLAN.md` records the corresponding runtime evidence.
+Treat a model-facing tool change as a change to the whole calling contract, not just its handler. The requirements below govern tool definitions, parameters, execution behavior, and result handling; `docs/EVIDENCE.md` lists the corresponding runtime evidence; earlier tool-contract records are archived in `docs/history/RECORD_R2.md`.
 
 - Trace the affected path: registered ToolSet and role permissions, provider-facing Schema, prompt/example arguments, handler validation, returned result, and any persistence or downstream consumer. Update affected layers together; do not broaden unrelated interfaces.
 - Validate against the configured provider's tool contract, not only general JSON Schema. For strict tools, check object closure and required/nullable fields, including nested objects. Define omission, `null`, empty collections, defaults, and update/preserve semantics explicitly; descriptions and handlers must agree.
@@ -49,7 +49,7 @@ Treat a model-facing tool change as a change to the whole calling contract, not 
 - Before claiming a changed tool works, use the normal CLI/API and production assembly in an isolated workspace within the user's current model-call authorization. Confirm provider acceptance, the actual tool arguments and execution, and the relevant persisted result or downstream effect. Acceptance of the ToolSet alone does not verify every handler; an HTTP 200 alone does not prove completion. If unverified, label the capability accordingly.
 - For actual call failures, inspect local configuration, serialized requests, Schema and response parsing first. Use a bounded minimal comparison when needed; classify provider, network and authentication causes from evidence. Do not fix unexplained errors by disabling strict validation, silently changing models, or replaying calls with unknown outcomes.
 - Follow Testing Guidelines: only failure-driven temporary diagnostics outside the repository, followed by retrying the original normal path. Do not add a permanent tool test suite or speculative verification matrix.
-- Record the observed failure, cause, fix and verification scope in the relevant implementation record without secrets. A tool integration trial is not the sole product E2E, and static checks cannot substitute for runtime evidence.
+- Record the observed failure, cause, fix and verification scope without secrets: one row in `docs/EVIDENCE.md`, with the longer narrative in the execution record of the plan driving the work (for example `docs/REFACTOR_PLAN.md`). A tool integration trial is not the sole product E2E, and static checks cannot substitute for runtime evidence.
 
 ## Commit & Pull Request Guidelines
 

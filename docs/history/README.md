@@ -17,4 +17,9 @@ PI_BACKEND_MIGRATION、MIGRATION_STATUS、SELF_HOSTING_GOAL、USAGE_PRE_PI 六�
 - [自举试跑](SELF_HOSTING_GOAL.md) · [执行契约](P2_EXECUTION_CONTRACT.md)
 - [用法快照](USAGE.md) · [迁移前用法](USAGE_PRE_PI.md) · [旧开发规范](DEVELOPMENT_GUIDELINES.md)
 
+2026-10-01 文档重组移入的原始记录（摘要见 [EVIDENCE](../EVIDENCE.md)）：
+
+- [R2 实施记录](RECORD_R2.md) · [P3 实施记录](RECORD_P3.md) · [P4 实施记录](RECORD_P4.md)
+- [P2 收尾计划](P2_CLOSURE_PLAN.md)（已并入路线图）
+
 指向退役源码的历史链接可能仅在对应 Git 版本存在。不要按历史段落直接执行旧命令。

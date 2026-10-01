@@ -1,5 +1,8 @@
 # P4：精简生活事务后端
 
+> 归档（2026-10-01 文档重组）：本文按原样保留为运行证据原文，其中的“当前”“下一步”指当时上下文。
+> 现状见 [STATUS](../STATUS.md)，证据摘要见 [EVIDENCE](../EVIDENCE.md)，生活 Workflow 用法见 [WORKFLOWS](../WORKFLOWS.md)。
+
 更新：2026-09-24。先做一条日常闭环，再由子 Agent 模拟使用；页面单独开发。
 
 ## 本轮交付边界
@@ -211,14 +214,14 @@ get_workflow_execution 与 HTTP 返回完全一致，证据 review-summary.json�
 
 2026-09-24 用户明确：Routine 面向订票、日程提醒等日常事务，需要自定义流程、条件分支和
 可扩展外部 Connector。现有待办/回顾只是固定流程原型；仅增加默认参数不能满足该要求。
-下一增量的目标设计、步骤与连接器边界见 [自定义 Workflow 设计](P4_WORKFLOW_DESIGN.md)。
+下一增量的目标设计、步骤与连接器边界见 [自定义 Workflow 设计](../P4_WORKFLOW_DESIGN.md)。
 当前尚不支持这些通用能力；上述历史试用不能作为新目标已实现的证据。
 先推进该后端，再单独进入 P3.3 页面。
 
 ## 2026-09-24：Jev 双反馈环只读实验
 
 根据用户提供的双反馈环构想，加入显式创建的 Project-local Routing lab。
-正常入口、模块所有权及限制见 [实验说明](DUAL_FEEDBACK_EXPERIMENT.md)。
+正常入口、模块所有权及限制见 [实验说明](../DUAL_FEEDBACK_EXPERIMENT.md)。
 SQLite schema22 保存目录/请求/回放快照、反馈及幂等回执；独立 Jev 进程复用既有
 Connector HTTP 队列，不内置第二个 Planner。主 LLM/System 2 由外部 Agent 经公开接口承担。
 没有启用 Workflow 版本兼容，也没有将实验 recipe 混入定时 Routine 或通用分支图。
@@ -379,7 +382,7 @@ Pi 重新读取真实证据并提交更正，区分观测事实与原因假设�
 ## 2026-09-24：正式宿主的固定 Pi 回退分支
 
 用户确认采用精简的 `Jev escalate → Pi` 分支。本增量将此前仓库外适配接入生产宿主，
-正常配置、模块输入输出/所有权及边界见[实验说明](DUAL_FEEDBACK_EXPERIMENT.md#固定-pi-回退分支)。
+正常配置、模块输入输出/所有权及边界见[实验说明](../DUAL_FEEDBACK_EXPERIMENT.md#固定-pi-回退分支)。
 新增 `--routing-model/--routing-reasoning-effort/--routing-timeout-seconds`，继续使用已有
 私有 Pi 配置；每个 lab 显式选择 pi 模式。默认 external 和已有实验保持手动推进。
 只支持直接 API 宿主，Workspace Manager 暂未提供这些新启动参数。
@@ -463,7 +466,7 @@ Python Ruff/format/mypy（163个源文件）、锁文件检查、Schema/Client�
 数据库和成果目录重叠；独立 EHAI clone/worktree 可以作为目标。绑定快照随调用保存，
 转交前再次核对。Pi 收尾后释放本地模型槽位，宿主仅创建目标 Goal 和规划讨论，不批准、
 执行、合并或部署。实际接口和后续通用流程引擎设计见
-[Project 修改边界](P4_WORKFLOW_REVISION_DESIGN.md)。
+[Project 修改边界](../P4_WORKFLOW_REVISION_DESIGN.md)。
 
 隔离试用以真实 EHAI 克隆中的 examples/routing_revision_demo.py 为目标：保留函数签名，
 仅将 status=open 的项送入 tasks 分支，无 open 项走 inbox 分支，仅允许修改该文件。

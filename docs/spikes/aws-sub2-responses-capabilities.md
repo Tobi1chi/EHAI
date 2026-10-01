@@ -168,7 +168,7 @@ Ruff、格式、mypy 以及生成 TypeScript Client 的类型检查和构建通�
 随后通过正常 CLI 完成 Astra/high 规划、审查批准、Luna/max 并行编码和交付。
 七个 Attempt 成功，原四个 Gate 全部通过；条件路线获选，映射路线被剪枝，
 最终代码只包含两个模块与 README。完整记录见
-[R2 七节点 CLI 端到端复跑](../R2_IMPLEMENTATION_PLAN.md)。
+[R2 七节点 CLI 端到端复跑](../history/RECORD_R2.md)。
 
 完整 Session 审计统计 Planner 32 次、Worker 42 次逻辑调用，分别对应相同数量的 HTTP 请求；
 合计 74 个 200 与 74 个 response.completed，零 HTTP error、非 200、fallback、retry 或未知结果。

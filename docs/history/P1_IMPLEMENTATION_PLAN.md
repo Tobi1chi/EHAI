@@ -7,7 +7,7 @@
 本文保留 P1/P1.1 的原型设计和验收记录。当前产品定义以 [Product Scope](../PRODUCT_SCOPE.md) 为准；
 P1 的固定模板、检查种类、单次规划和状态限制不是通用平台的永久范围。历史“已完成”不表示新的
 多轮方案审查、需求相关代码验收或挂起人工回路已经交付。当前实施入口见
-[P2 Implementation Plan](../P2_IMPLEMENTATION_PLAN.md) 开头的重整章节。
+[P2 Implementation Plan](P2_CLOSURE_PLAN.md) 开头的重整章节。
 
 ## 目标
 

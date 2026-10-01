@@ -18,7 +18,7 @@ Query/SSE 观察进展。
 ## 实现与目标的边界
 
 本页是当前入口参考，不是目标产品说明。目标流程与职责见 [Product Scope](../PRODUCT_SCOPE.md)，
-实施状态见 [P2 Implementation Plan](../P2_IMPLEMENTATION_PLAN.md)。
+实施状态见 [P2 Implementation Plan](P2_CLOSURE_PLAN.md)。
 现有命令已接入规划讨论、草稿修订、批准及查询；仍不能据此宣称需求相关最终验收以及
 “执行阻塞 → 用户回复 → 继续”的完整产品流程已完成。真实模型交互与最终 E2E 另行验证。
 本页不为尚未实现的交互编造命令；下列演示中固定计划或产物的成功只证明其对应协议。

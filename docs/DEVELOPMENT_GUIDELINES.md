@@ -26,6 +26,6 @@
   amend、强推；合入 main 前检查对应工作区。
 - 历史记录只作证据，旧全量测试规则与退役参数不是当前指南。
 
-文档分工见 [README](../README.md)：产品范围管边界，路线图管顺序，STATUS 管现状，
-Usage 只写已实现操作，实施记录保存证据；模块 README 只索引代码职责。
+文档分工见 [docs/README](README.md)：产品范围管边界，路线图管顺序，STATUS 管现状，
+EVIDENCE 记试用证据，Usage 只写已实现操作；模块 README 只索引代码职责。
 旧规范与试验保留于 [历史目录](history/README.md)，不再维护同内容的顶层跳转页。

@@ -77,7 +77,7 @@ R2 已新增前台 `execute-plan`、`resume-session` 和只读 `get-result`，�
 不重跑已完成的上游任务。Codex App Server 也已完成真实 CLI 并行编码、Ctrl+C 和同一 Run 立即恢复，
 由 5.5 Planner 配合 5.6 Luna Server Worker 通过获批 Gate，并保留中断代码和已完成任务。
 任意关窗/强杀、文件写操作中途恢复及完整长运行仍待验证，不据此宣布整个 R2/P2 完成。
-证据与边界见 [R2 实施记录](../R2_IMPLEMENTATION_PLAN.md)。
+证据与边界见 [R2 实施记录](RECORD_R2.md)。
 
 ## Development Status
 
@@ -141,7 +141,7 @@ API 模式不访问本地数据库，不启动额外的 Pi/Scheduler；规划、
 - [Usage Guide](../USAGE.md)：真实 Codex、CLI、API、SSE 和离线验证。
 - [Roadmap](../ROADMAP.md)：P1 至 P5 的产品阶段、范围和退出条件。
 - [P1 Implementation Plan](../P1_IMPLEMENTATION_PLAN.md)：P1 增量、验收与完成记录。
-- [P2 Implementation Plan](../P2_IMPLEMENTATION_PLAN.md)：当前产品重整顺序，以及保留的历史执行增量。
+- [P2 Implementation Plan](P2_CLOSURE_PLAN.md)：当前产品重整顺序，以及保留的历史执行增量。
 - [Development Guidelines](../DEVELOPMENT_GUIDELINES.md)：领域语言、模块边界和开发规范。
 - [Architecture Decision Records](../adr/)：持久化、接口和 Codex 通道等关键决策。
 - [Codex CLI Spike](../spikes/codex-cli-local-channel.md)：真实 Codex 通道与验收观察。

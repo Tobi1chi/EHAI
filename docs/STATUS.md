@@ -1,115 +1,64 @@
 # 当前能力与验证
 
-更新：2026-10-01。此页是状态总表，不将目标、接口存在和真实交付混为一谈。
+更新：2026-10-01。每项能力一行：实现状态、关键边界、证据位置。
+证据摘要见 [EVIDENCE](EVIDENCE.md)，产品边界见 [PRODUCT_SCOPE](PRODUCT_SCOPE.md)，后续顺序见 [ROADMAP](ROADMAP.md)。
 
-## 0.1.0 正式版范围
+**状态含义**：`真实验证` 有真实模型的正常入口证据；`无模型验证` 只有 scripted/fake 或协议级证据；
+`部分` 主路径可用但列出的边界未验证；`未实现`、`暂缓`、`关闭` 按字面理解。
+接口存在、工具数量或 HTTP 200 不算验证。
 
-2026-09-16 用户确定 0.1 为首个正式版本，包版本为 0.1.0。公开范围是可用于项目开发的
-规划与执行核心、Pi 后端及 CLI/HTTP/MCP 入口；安装与开发流程见 [README](../README.md)。
-正式版定位不表示 P2 全部目标已验收；下表继续保留恢复、会话连续性与产品 E2E 的实际边界。
-多项目工作台与自动化按路线图后续交付。此处记录版本定位，不作为 Git tag 或远端 Release 已发布的证据。
+## 版本
 
-## 核心能力
+0.1.0 是首个正式版本（2026-09-16 决定），公开范围是规划与执行核心、Pi 后端及 CLI/HTTP/MCP 入口。
+它不表示 P2 全部目标已验收；这里记录版本定位，不代表已有 Git tag 或远端 Release。
 
-| 能力 | 实现 | 证据与边界 |
-| --- | --- | --- |
-| P1 原型核心 | 已有 | 历史阶段完成，不限制当前通用范围 |
-| Pi 规划/执行/审查 | 已接通 | 真实 Luna 编码、同图并发、挂起回复、Reviewer/Gate completed |
-| Pi 规划调用时限 | 已修复既有配置未接线 | 正常API挂起端点8秒诊断、真实Go300秒取消/失败持久化通过，不自动重放；不能保证上游稳定或完整修改闭环 |
-| 外部计划导入 | 已实现 | CLI/API/MCP 导入与持久化、状态伪造拒绝；只支持初始未规划 Goal |
-| 草稿 Gate 修复 | 已实现 | Go 收到冲突后直接删除重复 Gate 并保存方案 |
-| CLI API 客户端 | 已实现 | 无模型正式宿主路径、错误/幂等；本轮通过它启动真实 Pi Run |
-| MCP 适配服务 | 已实现，默认开放全部支持的操作 | 45 个工具；默认写入已作协议试用，既有真实模型调用健康查询和项目创建 |
-| 周期审查/定向挂起 | 已接线 | 审查仅建议，显式采纳；不能视作自治 Planner 纠偏 |
-| 阶段上下文 | 逻辑共享 | 物理 Pi Session 按 Attempt 隔离，不是完整物理复用 |
-| 过程调整 | 已有入口与部分证据 | 批准内调整，不等于跨批准后继 Run |
-| Block 版本与变更清单 | 已接入编译、持久化和已有查询 | 前后节点对应、下游输入失效原因；不等于 Git 自动重整合或批准 |
-| Git 自动整合 | CLI/API/MCP 入口已接通 | 自动筛选有效完成成果、基线重建、冲突保留；真实历史 Luna 成果 HTTP 整合及重复调用通过，不替代 Gate |
-| 跨批准后继 Run | 明确批准、启动、成果接续已接通 | 真实 Pi 成果 → 新 Run 零 Worker Attempt → 新人工 Gate → completed/Git 整合通过；长链/异常恢复未全面验证 |
-| Token/费用硬限额 | 暂缓 | 用户于 2026-09-16 决定本轮先不实现；用量记录仍保留 |
-| 长任务可靠性 | 部分 | 强杀/写入中断未完整验收 |
-| 产品 E2E | 已入库，scripted Worker | 正常 CLI/HTTP 入口完成导入、批准、并发与人工挂起、强杀重启恢复、人工判定和成果查询；Linux 本地连续 3 次通过，CI 上 Linux/Windows 均通过。不覆盖真实 Pi、Git worktree、integrate-run，详见[重构计划](REFACTOR_PLAN.md#产品-e2e) |
-| CI | 已运行，首次全部通过 | Linux 静态检查、两个平台的 mypy、契约生成比对、TS 构建；Linux/Windows 运行产品 E2E |
-| P2 总验收 | 未完成 | 当前可用核心初版；真实 Pi 手动验收按重构计划第 4 步进行，不宣布 P2 所有能力已完成 |
+## 核心执行
 
-本轮外部计划实际执行发现 Git 换行转换导致 Gate 失败，已局部修复并通过原快照最小诊断。
-原 Run 继续尝试后触达诊断 token 上限，最终 paused，而非 completed。保留失败与成果；
-不把此次接口交付当作完整外部计划开发 E2E。详见 [实施记录](R2_IMPLEMENTATION_PLAN.md)。
+| 能力 | 状态 | 关键边界 | 证据 |
+| --- | --- | --- | --- |
+| Pi 规划 / 执行 / 审查 | 真实验证 | 同图并发、挂起回复、Reviewer/Gate completed | [核心](EVIDENCE.md#核心执行) |
+| Pi 规划调用时限 | 真实验证 | 超时失败并结束进程，不自动重放；不解决上游传输停顿 | [核心](EVIDENCE.md#核心执行) |
+| 外部计划导入 | 真实验证 | 只支持尚未规划的 Goal；拒绝伪造状态/批准 | [核心](EVIDENCE.md#核心执行) |
+| CLI API 客户端 / MCP | 部分 | MCP 默认开放全部操作；只有少数工具做过模型调用 | [核心](EVIDENCE.md#核心执行) |
+| 周期轨迹审查 / 定向挂起 | 部分 | 审查只给建议，需显式采纳；不是自治纠偏 | [RECORD_R2](history/RECORD_R2.md#本批交付) |
+| 阶段上下文 | 部分 | 逻辑 Phase Session 共享；物理 Pi Session 按 Attempt 隔离 | [EXECUTION_MODEL](EXECUTION_MODEL.md#实例与会话) |
+| 批准内过程调整 / Block 清单 | 无模型验证 | 清单只描述变化，不批准、不授权复用成果 | [核心](EVIDENCE.md#核心执行) |
+| Git 自动整合 | 无模型验证 | 用历史真实成果整合；冲突路径未实跑 | [核心](EVIDENCE.md#核心执行) |
+| 跨批准后继 Run | 真实验证 | 单次接续通过；基线变化重执行、多次接续、崩溃未验证 | [核心](EVIDENCE.md#核心执行) |
+| 长任务可靠性 | 部分 | 强杀、写入中断、长链接续未系统验证 | [未决问题](EVIDENCE.md#已知未决问题) |
+| Token / 费用硬限额 | 暂缓 | 2026-09-16 决定暂不实现；用量记录保留 | — |
+| 产品 E2E | 无模型验证 | scripted Worker；不覆盖真实 Pi、worktree、integrate-run、MCP | [REFACTOR_PLAN](REFACTOR_PLAN.md#产品-e2e) |
+| CI | 无模型验证 | 静态检查、两平台 mypy、契约比对、TS 构建、Linux/Windows E2E | [REFACTOR_PLAN](REFACTOR_PLAN.md#执行记录) |
+| P2 总验收 | 未实现 | 真实 Pi 手动验收按重构计划第 4 步进行 | [REFACTOR_PLAN](REFACTOR_PLAN.md#四步顺序) |
+
+## 平台后端（P3）
+
+| 能力 | 状态 | 关键边界 | 证据 |
+| --- | --- | --- | --- |
+| P3.1 项目总览 | 无模型验证 | 按来源宿主查询，不做跨宿主聚合 | [P3](EVIDENCE.md#p3-平台后端) |
+| P3.2 统一人工待办 | 部分 | 人工 Gate 闭环通过；运行期 Worker 回答未做真实后端试用 | [P3](EVIDENCE.md#p3-平台后端) |
+| P3.2 便签 | 真实验证 | 便签→修订→执行→人工验收通过；propose_process 路径未验证 | [P3](EVIDENCE.md#p3-平台后端) |
+| P3.3 薄 Web 工作台 | 未实现 | 后端先行，页面单独设计 | [ROADMAP](ROADMAP.md#p3从多项目管理到日常工作台) |
+| P3.4 事件消费 | 无模型验证 | 重启后补领与确认通过；不自动唤醒、不执行业务动作 | [P3](EVIDENCE.md#p3-平台后端) |
+| P3.5 项目配置与 Run 快照 | 真实验证 | 更新只影响新 Run；不是可编辑角色库 | [P3](EVIDENCE.md#p3-平台后端) |
+| 多工作区管理 / Planner 容量 | 真实验证 | 本机同模型；无跨工作区迁移、动态借用或多 Planner 共编 | [P3](EVIDENCE.md#p3-平台后端) |
+
+## 生活事务与外部连接（P4）
+
+| 能力 | 状态 | 关键边界 | 证据 |
+| --- | --- | --- | --- |
+| 生活 capture / review 与 Routine | 无模型验证 | 两个固定流程、固定间隔；不是通用 Workflow 引擎 | [WORKFLOWS](WORKFLOWS.md) · [P4](EVIDENCE.md#p4-生活事务与外部连接) |
+| Workflow 执行记录 | 无模型验证 | schema 19→20 迁移与续办通过；历史轨迹不补造 | [P4](EVIDENCE.md#p4-生活事务与外部连接) |
+| Workflow 版本兼容 | 关闭 | 代码接口存在，生产无适配器、无启用开关 | [WORKFLOWS](WORKFLOWS.md#执行记录) |
+| 自定义 Workflow / 条件分支 / 事件触发 | 未实现 | 只有目标设计 | [P4_WORKFLOW_DESIGN](P4_WORKFLOW_DESIGN.md) |
+| Connector HTTP 协议 | 无模型验证 | 本地分进程试用；结果未知需显式核对 | [CONNECTOR_PROTOCOL](CONNECTOR_PROTOCOL.md) |
+| Google Calendar Connector | 无模型验证 | 只有本地替身；真实 OAuth/日历未授权验证 | [P4](EVIDENCE.md#p4-生活事务与外部连接) |
+| Jev 双反馈环实验 | 真实验证 | 只读、显式推进；不是自动学习或通用 Workflow | [DUAL_FEEDBACK_EXPERIMENT](DUAL_FEEDBACK_EXPERIMENT.md) |
+| 固定 Pi 回退 | 真实验证 | 显式启用；故障保留不重试；发布仍需明确决定 | [P4](EVIDENCE.md#p4-生活事务与外部连接) |
+| 独立 Project 代码修改转交 | 部分 | 最小项目修改闭环通过；整仓规划收敛与传输稳定性未解决 | [P4_WORKFLOW_REVISION_DESIGN](P4_WORKFLOW_REVISION_DESIGN.md) · [P4](EVIDENCE.md#p4-生活事务与外部连接) |
+| 生活日程 / 经验固化 / 扩展生态 | 未实现 | P5 候选，未排期 | [ROADMAP](ROADMAP.md#p5真实使用后再立项) |
 
 ## 下一步
 
-2026-10-01 起按 [重构与推进计划](REFACTOR_PLAN.md) 推进：安全网 → 低风险清理 → 拆分大文件 → P2 收尾。
-P2 按 [收尾计划](P2_IMPLEMENTATION_PLAN.md) 完善正常项目验收与恢复证据。
-后续交付顺序由 [路线图](ROADMAP.md) 维护，不把文档排期记为实现完成。
-
-| 平台能力 | 当前边界 |
-| --- | --- |
-| P3.1 项目总览查询 | 已接通 CLI/HTTP/MCP 和 TS Client：项目→目标/计划/Run→当前 Gate 成果、历史工作区及宿主当前上下文；按来源宿主查询，不提供跨宿主聚合 |
-| P3.2 统一人工待办 | 列表/详情、项目/Run 筛选、源操作和 Worker 回答表单已接通；人工 Gate 薄闭环通过，运行期 Worker 回答未做真实后端试用 |
-| P3.2 便签后端 | 持久创建/讨论/决定、Inbox、Planner raise_note 和源操作/过程提案/修订讨论接入已实现；真实 Go 便签→澄清→草稿→批准→Worker/Reviewer→便签人工 Gate→completed 通过；不等于所有提案/恢复路径已验收 |
-| 薄 Web 工作台 | P3.3 未实现；按 2026-09-23 最新决定，先推进生活事务与 Workflow 后端，再集中打磨页面 |
-| P3.4 外部 Agent 事件消费 | consumer 持久位置、稳定批次、确认回执已实现；宿主进程重启后补领与确认通过；不包含自动唤醒/业务动作执行 |
-| P3.5 多项目配置 | 项目规则不可变版本、宿主/工作区绑定及 Run 快照已实现；两个项目的版本查询及 FakeWorker 输入通过，真实 Pi Worker/Reviewer 在项目更新后仍使用固定旧规则。未新增可编辑角色库或单宿主动态多仓库调度 |
-| P3 多 workspace 管理 | 独立核心托管、来源路由和聚合已实现；两个真实 Pi/Go 工作区的 Planner、Worker、Reviewer 请求重叠及分别人工验收通过；修复了 Windows Git 继承监护 stdin 导致的阻塞，限本机同模型薄验证 |
-| Planner 并发容量 | 每核心独立配置；真实同工作区两个 Planner 同时运行，第三请求 409，完成后容量归零；跨工作区规划/执行也有真实并发证据。不是多 Planner 共同编辑一个计划 |
-| P4 生活 Workflow / Routine | 两个固定流程、确认/待办/回顾、定时间隔和重启补跑已接通 CLI/API/MCP；非 Git 隔离宿主的子 Agent 正常操作通过，0 模型调用；不是通用 Workflow 引擎 |
-| 自定义 Workflow / 条件分支 | 已记录目标设计，尚未实现；独立 Connector 不等于通用图已接通 |
-| Connector 标准 HTTP 接入 | 连接/动作/事件契约登记、独立进程领取、结果与事件回传、去重和显式核对已接通；本地分进程试用通过，schema21 |
-| Google Calendar Connector | 四个动作、OAuth 授权代码和回传事件已接通；本地替身已验证结果未知→核对成功及重启恢复，真实 OAuth/日历尚未授权验证 |
-| Jev 双反馈环实验 | 已接通并完成累计10次真实 Jev 调用；4项回放、候选发布后快环、模拟纠错暂停/慢环接续和重启通过；只读、显式 advance，详见[实验说明](DUAL_FEEDBACK_EXPERIMENT.md)及 [P4 实施记录](P4_IMPLEMENTATION_PLAN.md)，不等于通用 Workflow 或自动学习 |
-| 固定 Pi 自动回退 | 直接API宿主显式启用后自动推进，escalate→Pi回答/可选候选→一次独立复测；真实Go/Jev正常入口、自动4项回放和明确发布后快环通过。共用现有模型容量，故障保留、不自动重试；shadow/default external不触发。详情及Schema修复见P4记录 |
-| 独立 Project 代码修改转交 | 运行源码绑定拒绝、独立EHAI克隆允许。最小项目真实Jev/Pi转交的原Goal，经人工修订/批准→Pi修改/检查/Reviewer→外部6项行为验证→逐项human验收，Run completed；无命令工具授权、无自动部署。重复human Check、整仓规划收敛及间歇性传输问题仍保留，详见P4记录 |
-| Workflow 独立执行记录 | 已拆分 Run/步骤/本地调用/人工等待并接通 execution 查询；schema19→20 正常迁移、旧流程续办、新等待记录、幂等与重启试用通过，历史轨迹不补造 |
-| Workflow 版本兼容 | 代码接口已实现，按用户要求保持关闭；生产无适配器、无启用开关，不自动升级流程版本 |
-| Workflow 事件 / 日历触发 | 尚未实现，按生活场景接入，不由固定间隔回顾推断已有能力 |
-| 生活日程 / 经验固化 / 扩展生态 | 候选，未排期 |
-
-2026-09-23 P4 精简闭环：子 Agent 在非 Git 临时目录通过正式接口录入两项生活事务，
-Inbox 确认前无正式待办，模拟人类批准后落两项；CLI 标记一项 done，手动回顾保存 open=1/done=1。
-Routine 到期生成回顾，停机期间错过下次时间后重启补一份，后续 tick 不重复，旧快照和任务保持。
-真实 stdio MCP 发现 78 个工具并成功调用 list_life_tasks；数量不是全部工具验收证据。
-Python 静态检查、Schema/Client 生成和 TS 构建通过，SQLite schema=19；
-0 模型调用，无永久测试新增，临时宿主已关闭。具体契约及未覆盖边界见 [P4 实施记录](P4_IMPLEMENTATION_PLAN.md)。
-
-P3.1 薄验证：两个项目经正式 HTTP 入口规划/批准，由 fake Worker 宿主完成 Run 和 Gate；
-项目及成果归属、CLI 本地/API 查询一致性、公开响应 Schema、独立宿主工作区与项目隔离通过。
-真实 stdio MCP 发现 48 个工具，新增 get_project 调用返回对应成果；未作真实模型调用验证。
-对历史 Pi 数据副本的正常 CLI 查询保留授权工作区，并正确返回后继 Run 的 adoption 成果来源。
-Python 静态检查及 TS 生成、类型检查和构建通过。没有新增永久测试，不作为 P2 总验收或新的产品 E2E。
-详情见 [P3 实施记录](P3_IMPLEMENTATION_PLAN.md)。
-
-P3.2 薄验证：fake/single 正式宿主中 A 等待人工 Gate 时 B 独立 completed；
-CLI 提交 A 的人工判定后 A completed、待办消失、历史详情仍可读取。
-项目/Run 筛选、归属冲突拒绝、响应 Schema 和两个新 stdio MCP 查询通过（共 50 个工具）。
-历史 Pi 数据副本中的旧人工问题显示明确 superseded 处置，不重复出现在当前待办。
-本轮 0 模型调用、无新增永久测试。Worker 表单参照本机生成的协议 Schema；
-运行期 Worker 回答和新增干预聚合的真实执行闭环未在本轮实跑，不将该部分标为完整产品验收。
-
-2026-09-22 后端补全：三个 Astra medium 子 Agent 分别实现便签、事件消费和配置，根任务整合入口。
-正常 HTTP/CLI/MCP 便签与配置/事件串联通过（64 个 MCP 工具）；64 仅表示已注册工具数量，
-不是每个工具都完成了真实模型调用。便签两轮消息保持 Gate 等待，明确继续后 Run completed，
-重复决定不重复执行。事件批次在终止并重启宿主进程后保持 token/内容，确认后只返回后续事件。
-项目 A/v1、B/v1、A/v2 的实际 FakeWorker 请求携带各自规则，旧 Run 快照在更新后保持不变。
-静态检查、Schema/Client 生成和 TS 构建通过；数据库 schema=18。本轮无永久测试新增、无目标模型调用。
-Planner raise_note、过程提案/修订讨论和旧恢复边界的真实模型证据仍需按实际使用补充；详见 P3 实施记录。
-
-同日后续真实 Go 试用已补充 Planner raise_note 证据：两个 Pi/Go 请求均 200，
-实际项目规则进入模型输入，持久便签进入 Inbox，CLI 人工澄清保持未批准、未执行。
-明确 revise_plan 曾在发出前被工具自动审批拒绝；用户随后明确允许，同一试用已继续完成
-草稿、批准、Worker/Reviewer、便签人工验收，Run 80a7327d-d309-49f6-b2de-702990400b6e completed。
-临时模型请求上限曾引发 interrupted/Intervention，查明本地拒绝、无外部写入后，通过现有
-便签 continue 和独立 resume 正常接续；没有改恢复机制或放宽校验。事件消费确认至 offset=80，
-项目更新后真实 Pi 输入仍保持 Run 的 v3 规则。本次不是唯一产品 E2E或全部模型工具覆盖。
-调用用量、连接探测和未覆盖范围见 [P3 实施记录](P3_IMPLEMENTATION_PLAN.md)。
-
-顶层 Agent 在 EHAI 外；不需要另造 EHAI 内置通用 Agent。
-多工作区管理默认仅监听本机；首版固定登记配置、不自动启动或重放，不提供跨 workspace 迁移、
-动态借用容量和跨项目公平调度。薄验证使用真实管理/子进程与公开接口，没有目标模型调用或新增永久测试。
-管理入口 MCP 共 72 工具，绑定单核心共 65；数量不等于每个模型工具已被 Provider 调用。
-具体运行边界、命令和配置见 [多工作区后端](WORKSPACE_MANAGER.md)。
-2026-09-23 追加真实 Pi/Go 试用：24 次模型请求、118857 报告 token；用户将本轮 token 停止阈值
-放宽为 10M，未改产品预算机制。跨工作区 Planner/Worker/Reviewer 及同工作区多 Planner 均记录
-实际请求重叠，所有模型输入只有对应项目规则。初次执行发现 Git stdin 阻塞；修复并接续原任务后，
-重新同时启动的一对 Run 首次执行即通过人工 Gate。独立物理会话、成果和待办归属正确。
-这仍是薄验证，未覆盖不同模型/Provider 混用、远程宿主或任意强杀恢复，详见 P3 实施记录。
-历史两代自举未完整完成。当前文档不宣称旧终端或后台任务仍在运行。
+按 [重构与推进计划](REFACTOR_PLAN.md) 推进：安全网 → 低风险清理 → 拆分大文件 → P2 收尾。
+P4 新功能暂停；之后在 P3.3 与 P4 通用 Workflow 中选择一项。

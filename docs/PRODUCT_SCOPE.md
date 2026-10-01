@@ -79,7 +79,7 @@ P3.4 持久事件消费和 P3.5 项目规则/执行快照已独立接通后端�
 完成所需架构边界后再集中开发前端。Project 表达业务归属，workspace 表达执行环境；
 两者不是同一个概念，生活事务的固定步骤不以跨 Project 调度或 Git 成果为前提。
 首条流程已收敛为原文/结构化事项录入、人工确认、待办管理和定时回顾；
-Workflow Run 独立于核心 Run，先提供两个固定流程与项目内 Routine，见 [P4 实施记录](P4_IMPLEMENTATION_PLAN.md)。
+Workflow Run 独立于核心 Run，先提供两个固定流程与项目内 Routine，见 [WORKFLOWS](WORKFLOWS.md)。
 自然语言整理由外部顶层 Agent 完成；本轮不引入通用工作流编辑器或另一个模型执行循环。
 
 2026-09-24 用户澄清：Routine 面向订票、行程和日程提醒等生活事务，不能限定为待办/回顾。
@@ -99,7 +99,7 @@ P2 接续、恢复与总验收继续收尾；P3 可基于已有能力逐项推�
 执行模型继续使用 EHAI 的 Run、Attempt、Phase、Gate 和 Checkpoint；旧项目的 Execution Run
 不能直接等同于 EHAI Run，页面组件也不复用计划 block 的领域身份。
 配置版本、持久事件消费和多工作区管理的已实现接口见 Usage/STATUS；
-生活 Workflow/Routine 的精简接口和限制见 [P4 实施记录](P4_IMPLEMENTATION_PLAN.md)。
+生活 Workflow/Routine 的精简接口和限制见 [WORKFLOWS](WORKFLOWS.md)。
 
 先正常入口、后产品验收。HTTP 200、静态通过、字段存在和旧增量 PASS 均不等于产品交付。
 唯一产品 E2E 与历史部分自举分开；实际失败的最小诊断仅在仓库外，不扩建常驻测试套件。

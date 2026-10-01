@@ -6,7 +6,7 @@
 
 本文固定执行核心的不变量，并区分原型行为和重整后的目标语义。产品定义以
 [Product Scope](../PRODUCT_SCOPE.md) 为准，工作顺序见
-[P2 Implementation Plan](../P2_IMPLEMENTATION_PLAN.md) 的当前重整章节。
+[P2 Implementation Plan](P2_CLOSURE_PLAN.md) 的当前重整章节。
 2026-09-06 的 [Execution Model](../EXECUTION_MODEL.md) 是 Worker、阶段决策树、Gate、Session 与恢复的
 目标语义；本文下述具体 Port、枚举和已接入的自动节点 Gate 是当前代码，不用它们限制目标，也不虚构已完成迁移。
 R1 已增加规划讨论接口、讨论事件及版本化设计；执行挂起求助和完整需求验收仍需要后续状态迁移。
@@ -175,7 +175,7 @@ Built-in Planner/Worker 使用同一 ModelClient 端口。端点能力包括续�
 Planner 的图预算与 Worker 的模型执行预算相互独立：Planner 使用有限的图操作/校验和 `ExplorationBudget`；
 默认 Built-in Worker 使用 `LONG_RUNNING_AGENT_BUDGET`，其模型步数、Tool 次数、wall-clock 和输出上限可不设，
 但仍受取消、heartbeat、显式 deadline、Provider 终态和恢复策略约束。
-代表性真实试用及其边界见 [R2 Implementation Plan](../R2_IMPLEMENTATION_PLAN.md)；
+代表性真实试用及其边界见 [R2 Implementation Plan](RECORD_R2.md)；
 本节是实现契约，不是长时间连续运行或完整产品 E2E 的验收记录。
 
 R1 的 `discuss-plan` / `POST /planning/discuss` 在执行前接收讨论。用户消息和模型回复通过现有 Event Log

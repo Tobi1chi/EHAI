@@ -12,7 +12,7 @@
 本文件记录 2026-09-06 用户确认的共识，与 [Product Scope](../PRODUCT_SCOPE.md) 共同作为当前产品
 设计依据。有关 Worker、规划、Gate、Session、恢复和并行的旧表述与本文件冲突时，以本文件为准。
 这是目标设计，不表示现有代码、数据库、Schema 或 CLI 已实现这些语义。
-实现差距见 [P2 Implementation Plan](../P2_IMPLEMENTATION_PLAN.md)，实际入口见 [Usage](../USAGE.md)。
+实现差距见 [P2 Implementation Plan](P2_CLOSURE_PLAN.md)，实际入口见 [Usage](../USAGE.md)。
 
 本次仅保存已达成的意见，不把未定的底层 Session 映射、模型别名或新命令写成已实现能力。
 历史试用和 ADR 仍保留其原适用范围；通过旧场景不证明本基线已交付。
