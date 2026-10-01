@@ -29,7 +29,7 @@
 
 | 步骤 | 用户结果 | 完成条件 | 状态 |
 | --- | --- | --- | --- |
-| 1. 安全网 | 每次修改都能自动确认主路径未被破坏 | 产品 E2E 入库；CI 在 Linux 跑静态检查、契约生成比对和 E2E，并在 Windows 跑 E2E | E2E 与 CI 配置已入库；CI 待首次在 GitHub 上运行确认 |
+| 1. 安全网 | 每次修改都能自动确认主路径未被破坏 | 产品 E2E 入库；CI 在 Linux 跑静态检查、契约生成比对和 E2E，并在 Windows 跑 E2E | 完成：E2E 与 CI 已入库，首次 CI 全部通过（含 Windows E2E） |
 | 2. 低风险清理 | 代码只保留实际使用的后端和清晰命名 | Codex 去留已决定并执行；图 IR、脱敏工具移到中性模块；`legacy_config.py` 处置；Run/Routine 命名冲突有决定 | 未开始，Codex 去留待用户决定 |
 | 3. 拆分大文件 | 新贡献者能按职责定位代码 | Orchestrator 拆为门面与若干职责模块；Repository/Service 按聚合拆分；幂等回执合并为一个机制；E2E 全程通过 | 未开始 |
 | 4. 收尾 P2 | 在真实项目上完成一次可核对的开发任务 | 真实 Pi 按[手动验收](#真实-pi-手动验收)完成并记录；随后在 P3.3 与 P4 通用 Workflow 中选一项 | 未开始 |
@@ -97,7 +97,8 @@ Reviewer/Gate → 人工验收 → `integrate-run`，并在执行中强杀一次
   运行时行为不变。
 - 本地验证（Linux）：ruff、format、mypy（两个平台）、`uv lock --check`、Schema/Client
   重新生成无差异、TS 类型检查与构建通过；E2E 连续 3 次通过，单次约 21 秒。
-  Windows 上的 E2E 尚待 CI 首次运行确认。
+- GitHub CI 首次运行（PR #1，提交 4333e9d）：静态检查与契约、Linux E2E、Windows E2E 均通过；
+  Windows E2E 约 1 分钟。
 
 ## 待决事项
 

@@ -28,8 +28,8 @@
 | 跨批准后继 Run | 明确批准、启动、成果接续已接通 | 真实 Pi 成果 → 新 Run 零 Worker Attempt → 新人工 Gate → completed/Git 整合通过；长链/异常恢复未全面验证 |
 | Token/费用硬限额 | 暂缓 | 用户于 2026-09-16 决定本轮先不实现；用量记录仍保留 |
 | 长任务可靠性 | 部分 | 强杀/写入中断未完整验收 |
-| 产品 E2E | 已入库，scripted Worker | 正常 CLI/HTTP 入口完成导入、批准、并发与人工挂起、强杀重启恢复、人工判定和成果查询；Linux 本地连续 3 次通过。不覆盖真实 Pi、Git worktree、integrate-run，详见[重构计划](REFACTOR_PLAN.md#产品-e2e) |
-| CI | 已配置，待首次运行 | Linux 静态检查、两个平台的 mypy、契约生成比对、TS 构建；Linux/Windows 运行产品 E2E |
+| 产品 E2E | 已入库，scripted Worker | 正常 CLI/HTTP 入口完成导入、批准、并发与人工挂起、强杀重启恢复、人工判定和成果查询；Linux 本地连续 3 次通过，CI 上 Linux/Windows 均通过。不覆盖真实 Pi、Git worktree、integrate-run，详见[重构计划](REFACTOR_PLAN.md#产品-e2e) |
+| CI | 已运行，首次全部通过 | Linux 静态检查、两个平台的 mypy、契约生成比对、TS 构建；Linux/Windows 运行产品 E2E |
 | P2 总验收 | 未完成 | 当前可用核心初版；真实 Pi 手动验收按重构计划第 4 步进行，不宣布 P2 所有能力已完成 |
 
 本轮外部计划实际执行发现 Git 换行转换导致 Gate 失败，已局部修复并通过原快照最小诊断。
