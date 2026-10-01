@@ -198,6 +198,31 @@ class FakeWorker:
                 raw_output=content,
                 diagnostics=("deterministic fake merge result",),
             )
+        if request.plan_node.kind is PlanNodeKind.REVIEWER:
+            # The core requires one review.json that cites every supplied input exactly once.
+            content = json_dumps(
+                {
+                    "summary": f"fake reviewer accepted inputs for {request.plan_node.title}",
+                    "findings": [],
+                    "evidence_artifact_ids": [
+                        artifact.artifact_id for artifact in request.artifact_inputs
+                    ],
+                    "recommended_action": "pass",
+                }
+            ).encode("utf-8")
+            return WorkerResult(
+                artifacts=(
+                    CandidateArtifact(
+                        kind=ArtifactKind.CANDIDATE,
+                        name="review.json",
+                        media_type="application/json",
+                        content=content,
+                    ),
+                ),
+                summary="fake reviewer returned a passing review",
+                raw_output=content,
+                diagnostics=("deterministic fake reviewer result",),
+            )
         content = (
             f"fake candidate for run={request.run_id} attempt={request.attempt_id} "
             f"node={request.plan_node_id}"
