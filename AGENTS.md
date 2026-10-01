@@ -6,20 +6,24 @@ EHAI uses Python for Execution Plane and TypeScript for Control Plane. Put imple
 
 ## Product Scope & Implementation Boundaries
 
-Read `docs/PRODUCT_SCOPE.md` before product or architecture work, then `docs/ROADMAP.md` and, for core closure, `docs/P2_IMPLEMENTATION_PLAN.md`. EHAI is the planning/execution core of a general Agent platform; coding is the first end-to-end use case, not its permanent boundary. The top-level Agent is distinct from Planner. Historical increments and passing tests do not override current scope or prove product delivery. Define each module's user outcome, inputs/outputs, ownership, failure behavior, and normal-entry acceptance before restructuring code. Distinguish target design from implemented interfaces; do not invent commands or status values in usage documentation.
+Read `docs/PRODUCT_SCOPE.md` before product or architecture work, then `docs/ROADMAP.md` and, for core closure, `docs/P2_IMPLEMENTATION_PLAN.md`. For refactoring, follow `docs/REFACTOR_PLAN.md`. EHAI is the planning/execution core of a general Agent platform; coding is the first end-to-end use case, not its permanent boundary. The top-level Agent is distinct from Planner. Historical increments and passing tests do not override current scope or prove product delivery. Define each module's user outcome, inputs/outputs, ownership, failure behavior, and normal-entry acceptance before restructuring code. Distinguish target design from implemented interfaces; do not invent commands or status values in usage documentation.
 
 The current `docs/EXECUTION_MODEL.md` governs Worker instantiation, phased decision trees, automatic/human Gates, approved-boundary plan adjustments, phase Sessions, handoff recovery, and parallelism. Read it alongside product scope. Keep implementation limitations and historical trial results distinct from these agreed targets.
 
-The 2026-09-16 product direction is core-first, incremental platform delivery. Personal Dashboard is a source of selected product ideas, not an inherited full-scope checklist or domain model. Deliver one usable workflow at a time through normal interfaces, then add a thin UI when those capabilities exist. Keep execution ownership in the current core. Fix observed blockers within the selected workflow and retry it; record unrelated findings separately rather than expanding into an open-ended refactor. Do not require all future backend modules before using the platform. Keep roadmap targets separate from implemented capability evidence.
+The 2026-09-16 product direction is core-first, incremental platform delivery. Personal Dashboard is a source of selected product ideas, not an inherited full-scope checklist or domain model. Deliver one usable workflow at a time through normal interfaces, then add a thin UI when those capabilities exist. Keep execution ownership in the current core. Fix observed blockers within the selected workflow and retry it; record unrelated findings separately rather than expanding into an open-ended refactor. The user-approved refactor in `docs/REFACTOR_PLAN.md` is the exception: follow its step order, keep each step behavior-preserving, and record pending decisions there instead of resolving them on the side. Do not require all future backend modules before using the platform. Keep roadmap targets separate from implemented capability evidence.
 
 ## Build, Test, and Development Commands
 
 Use `uv`; never use bare `pip`.
 
 - `uv sync` — synchronize the environment.
+- `uv run pytest tests/test_product_e2e.py` — run the product E2E (no model calls).
 - `uv run pytest <external-temporary-test.py>` — diagnose a concrete observed failure outside the repository.
 - `uv run ruff check .` — lint the project.
 - `uv run ruff format --check .` — verify formatting; omit `--check` to apply.
+- `uv run mypy` and `uv run mypy --platform win32` — type-check for Linux and Windows; guard platform-only APIs with `sys.platform`, not `os.name`.
+
+CI (`.github/workflows/ci.yml`) runs these checks, regenerates schemas and the TypeScript client and fails on drift, and runs the product E2E on Linux and Windows.
 
 These require `pyproject.toml`; commit `uv.lock` for reproducibility.
 
@@ -31,9 +35,9 @@ Python follows `pyproject.toml`: four spaces, typed public APIs, `snake_case` fu
 
 ## Testing Guidelines
 
-Expose normal CLI/API capabilities first, then agree on one product end-to-end test. That single E2E is the only permanent test code intended for this repository; it has not been authored yet. Legacy unit, integration, contract, smoke, and prototype E2E files are retired, not requirements to restore.
+Expose normal CLI/API capabilities first. The single product E2E is `tests/test_product_e2e.py`: it starts a real `ehai-api` host with the scripted Worker and drives it only through the `ehai` CLI and HTTP API, with no model calls. It is the only permanent test code intended for this repository; extend its one scenario when a refactor or fix needs coverage of the main path, instead of adding new test files. It does not verify Pi, Git worktrees or `integrate-run`; real Pi acceptance stays manual, as described in `docs/REFACTOR_PLAN.md`. Legacy unit, integration, contract, smoke, and prototype E2E files are retired, not requirements to restore; `tests/test_self_hosting.py` is a historic driver.
 
-If actual use or the E2E fails, create only the necessary diagnostic test in an external temporary directory and run it with `uv`. After fixing the issue, retry the original failing path. Do not commit temporary tests, copy them into another repository folder, or automatically promote them to regression tests. Do not create speculative tests, test matrices, or a parallel smoke suite. Static lint, formatting, type checks, and client generation/build remain applicable. No collected tests is not a passing product E2E.
+If actual use or the E2E fails, create only the necessary diagnostic test in an external temporary directory and run it with `uv`. After fixing the issue, retry the original failing path. Do not commit temporary tests, copy them into another repository folder, or automatically promote them to regression tests. Do not create speculative tests, test matrices, or a parallel smoke suite. Static lint, formatting, type checks, and client generation/build remain applicable. The product E2E passing does not prove capabilities it does not exercise.
 
 ## Model Tool Changes and Runtime Evidence
 

@@ -22,6 +22,10 @@ from ehai.interfaces.workspace_models import (
     WorkspaceRegistration,
 )
 
+_CHILD_CREATION_FLAGS = 0
+if sys.platform == "win32":
+    _CHILD_CREATION_FLAGS = subprocess.CREATE_NO_WINDOW
+
 
 class WorkspaceSupervisorError(ValueError):
     """Invalid registration or lifecycle request."""
@@ -372,7 +376,7 @@ class WorkspaceSupervisor:
                         stdout=entry.log,
                         stderr=entry.log,
                         env=environment,
-                        creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+                        creationflags=_CHILD_CREATION_FLAGS,
                     )
                 )
                 try:
@@ -485,7 +489,7 @@ class WorkspaceSupervisor:
             await asyncio.wait_for(process.wait(), timeout=self._shutdown_timeout)
             entry.status = "stopped"
         except TimeoutError:
-            if os.name == "nt":
+            if sys.platform == "win32":
                 # The Windows venv executable is a redirector. Its owned process tree
                 # contains the actual Python child; terminating only the wrapper leaks it.
                 terminator = await asyncio.create_subprocess_exec(
