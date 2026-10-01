@@ -99,18 +99,42 @@ class Host:
             return False
         return response.status_code == 200 and response.json()["data"]["status"] == "healthy"
 
-    def kill(self) -> None:
-        """Stop the host abruptly, as a crash or power loss would."""
+    def _listening(self) -> bool:
+        with closing(socket.socket(socket.AF_INET, socket.SOCK_STREAM)) as sock:
+            sock.settimeout(1)
+            return sock.connect_ex(("127.0.0.1", self.port)) == 0
+
+    def _kill_tree(self) -> None:
         assert self.process is not None
         if sys.platform == "win32":
-            self.process.kill()
+            # The console-script launcher runs the host as a child process; killing only
+            # the launcher would leave the real host serving the port and database.
+            taskkill = (
+                Path(os.environ.get("SYSTEMROOT", r"C:\Windows")) / "System32" / "taskkill.exe"
+            )
+            subprocess.run(
+                [str(taskkill), "/PID", str(self.process.pid), "/T", "/F"],
+                stdin=subprocess.DEVNULL,
+                capture_output=True,
+                timeout=30,
+                check=False,
+            )
         else:
             os.kill(self.process.pid, signal.SIGKILL)
         self.process.wait(timeout=30)
         self.process = None
+        # A restart is only meaningful once no old process still answers on the port.
+        _wait(lambda: not self._listening(), "the killed host to release its port", self)
+
+    def kill(self) -> None:
+        """Stop the host abruptly, as a crash or power loss would."""
+        self._kill_tree()
 
     def stop(self) -> None:
         if self.process is None:
+            return
+        if sys.platform == "win32":
+            self._kill_tree()
             return
         self.process.terminate()
         try:
