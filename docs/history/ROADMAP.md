@@ -78,7 +78,7 @@ workspace 执行，获得符合需求的代码、验证结果与交付证据。
 跨主机分布式调度。用户仍可携带外部审查意见；阶段 Review Agent 属于当前执行目标，
 不把完整通用外部评审平台作为它的前置条件。
 
-实现顺序、现有代码复用与历史增量见 [P2 Implementation Plan](../P2_IMPLEMENTATION_PLAN.md)。
+实现顺序、现有代码复用与历史增量见 [P2 Implementation Plan](P2_CLOSURE_PLAN.md)。
 
 ### 历史 Planning & Execution Readiness Gate
 

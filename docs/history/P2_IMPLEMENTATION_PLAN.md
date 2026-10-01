@@ -44,7 +44,7 @@ R4 的入口在前面各项开发时同步接通，不等最后才开始集成�
 失败处理和用户证据。先实际使用暴露的能力，不预写单测；真实失败时才用仓库外临时测试定位。
 R 编号是当前重整工作项，I 编号保留历史实现定位；不要同时把两套清单当成互相独立的必做项目。
 
-R2 按用户确认的 [实施方案](../R2_IMPLEMENTATION_PLAN.md) 与 [执行模型](../EXECUTION_MODEL.md) 推进：
+R2 按用户确认的 [实施方案](RECORD_R2.md) 与 [执行模型](../EXECUTION_MODEL.md) 推进：
 Worker 实例、阶段决策树与 Gate、阶段 Review、尽可能并行、可追踪过程调整和 handoff 恢复。
 Built-in 与 Codex App Server 的已有接入继续复用；不额外交付桌面协作 UI。
 

@@ -81,7 +81,7 @@ Connector 和 Jev 实验。这些不能由本 E2E 推断已验证。
 需要模型凭证，不在 CI 中运行。按 [README 快速开始](../README.md#快速开始) 配置后，
 在一个隔离的小仓库中经正常入口完成：规划或导入 → 批准 → 两个写代码节点并发执行 →
 Reviewer/Gate → 人工验收 → `integrate-run`，并在执行中强杀一次宿主后恢复。
-结果按 [STATUS](STATUS.md) 的证据格式记录，未覆盖部分明确列出。
+结果在 [EVIDENCE](EVIDENCE.md) 追加一行，未覆盖部分明确列出。
 
 ## 执行记录
 
@@ -99,6 +99,17 @@ Reviewer/Gate → 人工验收 → `integrate-run`，并在执行中强杀一次
   重新生成无差异、TS 类型检查与构建通过；E2E 连续 3 次通过，单次约 21 秒。
 - GitHub CI 首次运行（PR #1，提交 4333e9d）：静态检查与契约、Linux E2E、Windows E2E 均通过；
   Windows E2E 约 1 分钟。
+- 评审发现：Windows 上 console-script 启动器以子进程运行宿主，只杀启动器可能让旧宿主继续占用端口，
+  重启步骤因而可能对旧进程通过。改为 taskkill 结束整个进程树，并在所有平台等待端口释放后再重启
+  （64b6759），CI 两平台通过。
+
+### 2026-10-01 文档重组
+
+- 新增按角色的 [文档索引](README.md)；STATUS 改为每项能力一行（状态、边界、证据链接）。
+- 新增 [EVIDENCE](EVIDENCE.md)，把 R2/P3/P4 实施记录的每次试用压缩为一行；原文按原样移入
+  `history/RECORD_*.md`，P2 收尾计划并入 [路线图](ROADMAP.md#p2围绕真实项目收尾)。
+- P4 记录中的现行用法与契约移到 [WORKFLOWS](WORKFLOWS.md)；USAGE 按任务重排并加目录，内容不变。
+- 顶层文档（含 README、AGENTS）由约 3500 行减到约 2400 行；链接检查除历史快照原有的 12 个失效链接外无错误。
 
 ## 待决事项
 
@@ -107,4 +118,3 @@ Reviewer/Gate → 人工验收 → `integrate-run`，并在执行中强杀一次
 | Codex 后端去留 | 删除或保留为第二后端；保留则需与 Pi 相同的验收要求 |
 | CLI 启动 scripted 宿主 Run | `ehai --api-url ... start-run` 要求 `--execution-config`，而执行配置只接受 pi/codex-server；scripted 宿主只能经 HTTP 启动。E2E 暂用 HTTP，是否调整 CLI 待定 |
 | 幂等重放返回值 | 重复人工判定返回当前 Run 状态而非原回执；如需原回执语义需单独设计 |
-| 证据记录格式 | STATUS 证据叙述较长，建议改为结构化记录：日期、场景、入口、结果、未覆盖范围 |

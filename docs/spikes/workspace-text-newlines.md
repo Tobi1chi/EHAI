@@ -1,7 +1,7 @@
 # Workspace 文本工具换行一致性修复
 
 本文是 2026-09-08 的故障记录，不是当前完整换行策略。2026-09-15 另发现 Git worktree
-物化继承 core.autocrlf 的问题，宿主 Git 已局部关闭隐式转换；见 [当前实施记录](../R2_IMPLEMENTATION_PLAN.md)。
+物化继承 core.autocrlf 的问题，宿主 Git 已局部关闭隐式转换；见 [当前实施记录](../history/RECORD_R2.md)。
 
 ## 已观察的故障
 

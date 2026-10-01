@@ -1,7 +1,10 @@
 # 当前实施与验证记录
 
-更新：2026-09-16。旧逐日记录、原始 Run ID 和历史试验保留于 [归档](history/R2_IMPLEMENTATION_PLAN.md)。
-本页只记录当前代码对应的能力与本批证据，阶段结论见 [STATUS](STATUS.md)。
+> 归档（2026-10-01 文档重组）：本文按原样保留为运行证据原文，其中的“当前”“下一步”指当时上下文。
+> 现状见 [STATUS](../STATUS.md)，证据摘要见 [EVIDENCE](../EVIDENCE.md)。
+
+更新：2026-09-16。旧逐日记录、原始 Run ID 和历史试验保留于 [归档](R2_IMPLEMENTATION_PLAN.md)。
+本页只记录当前代码对应的能力与本批证据，阶段结论见 [STATUS](../STATUS.md)。
 
 ## 本批交付
 
@@ -171,7 +174,7 @@ Reviewer verifying，原人工 Gate 等待。最后一次响应累计 32,049 报
 新增只读 MCP 工具 list_projects、get_project、get_runtime_context，沿用正式 HTTP 路由与
 既有参数校验/结果包装；输入对象闭合，路径 ID 必填，无参数工具 required=[]，未新增 uniqueItems。
 CLI、HTTP Schema、生成 TS Client 同步。正常无模型入口与 stdio get_project 协议查询通过，
-未宣称真实模型调用已验证；具体行为、运行证据和范围见 [P3 实施记录](P3_IMPLEMENTATION_PLAN.md)。
+未宣称真实模型调用已验证；具体行为、运行证据和范围见 [P3 实施记录](RECORD_P3.md)。
 
 ## 2026-09-22：P3.2 统一人工待办
 
@@ -180,7 +183,7 @@ CLI、HTTP Schema、生成 TS Client 同步。正常无模型入口与 stdio get
 也不允许它构造任意路径。无参数省略与 null 的 HTTP/CLI 语义见 Usage，MCP 明确要求 null。
 真实 stdio 协议分别查询两个工具，并用原 decide-human-check CLI 完成人工 Gate 闭环；
 Worker 回答表单、请求新鲜度/幂等输入核对和未知结果保护已实现，但未做真实后端模型调用验证。
-试用中的 fake Reviewer 格式限制、原因及调整后的正常路径证据见 [P3 实施记录](P3_IMPLEMENTATION_PLAN.md)。
+试用中的 fake Reviewer 格式限制、原因及调整后的正常路径证据见 [P3 实施记录](RECORD_P3.md)。
 
 ## 2026-09-22：便签、事件消费与项目配置后端
 
@@ -245,7 +248,7 @@ get_request_schema 按管理/核心工具选择正确 Schema；无隐式批准�
 新增 read_routing_context、read_routing_facts、finish_routing_fallback，组成只读 assistance
 角色，复用生产 PiRoleRunner，不授予发布或业务写权限。已贯穿角色 ToolSet、提示词、
 参数校验、工具返回、原生结束确认及请求/候选持久化。具体行为与证据见
-[P4 固定回退记录](P4_IMPLEMENTATION_PLAN.md)。
+[P4 固定回退记录](RECORD_P4.md)。
 
 真实路径发现 Pi 0.85.1 的严格 JSON Schema 不接受 `$defs`，也不接受 object|null union，
 两次均在上游调用前拒绝。改为必填 nullable 标量字段，候选内容仍在处理器组合成严格模型；

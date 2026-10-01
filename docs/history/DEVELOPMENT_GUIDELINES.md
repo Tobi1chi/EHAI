@@ -6,7 +6,7 @@
 
 [Product Scope](../PRODUCT_SCOPE.md) 是产品定位、职责和用户流程的基线；
 [Execution Model](../EXECUTION_MODEL.md) 是 2026-09-06 确认的 Worker、阶段决策树、Gate 与恢复语义；
-[Roadmap](../ROADMAP.md) 固定阶段，[P2 Implementation Plan](../P2_IMPLEMENTATION_PLAN.md) 开头固定当前
+[Roadmap](../ROADMAP.md) 固定阶段，[P2 Implementation Plan](P2_CLOSURE_PLAN.md) 开头固定当前
 重整顺序。历史增量、ADR 和原型测试按其适用范围使用，不能覆盖新 scope。
 EHAI 是通用平台的规划执行核心，编码只是当前验证场景，不把长期平台缩成编码工具或把未来功能提前塞入 P2。
 

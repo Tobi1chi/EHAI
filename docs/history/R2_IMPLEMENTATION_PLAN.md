@@ -161,7 +161,7 @@ Worker、阶段 Reviewer 均使用完整 Pi 后端并配置 `gpt-5.6-luna/high`�
 依据 2026-09-05 的实现记录，并按 2026-09-06 用户确认的
 [Execution Model](../EXECUTION_MODEL.md) 更新目标，归属于 P2，不是新的产品阶段。
 产品定义见 [Product Scope](../PRODUCT_SCOPE.md)，R1–R4 的关系见
-[P2 Implementation Plan](../P2_IMPLEMENTATION_PLAN.md)。
+[P2 Implementation Plan](P2_CLOSURE_PLAN.md)。
 
 - 开发在当前 EHAI worktree、`codex/ehai-p2` 分支进行，按逻辑能力提交，不修改其他 worktree 的 `main`。
   这是本次开发位置，不是要求所有产品 Worker 共同修改同一个目录。

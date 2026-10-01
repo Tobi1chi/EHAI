@@ -18,11 +18,11 @@ EHAI（Enhanced Human-Agent Interface）是一个可本地部署的 Agent 规划
 - **调整与交付**：追踪任务块的变化、整合有效代码成果，并在重新批准后显式接续适用的旧成果。
 - **多种入口**：CLI、HTTP API 和独立 stdio MCP 共用同一个核心。
 - **多个工作区**：本机 Workspace Manager 托管独立核心，统一查询和路由；各工作区可配置自己的 Planner 与并发容量。见[多工作区用法](docs/WORKSPACE_MANAGER.md)。
-- **生活事务**：项目内录入/确认待办、管理完成状态，手动或定时保存回顾；固定流程不需要 Git 或模型调用。见[生活 Workflow 用法](docs/P4_IMPLEMENTATION_PLAN.md#使用示例)。
-- **外部 Connector**：独立进程通过标准 HTTP 协议领取动作、回传结果和事件；Google Calendar 首版提供日程读写，已通过本地协议试用，真实账号需另行 OAuth 授权。见[Connector 接入与用法](docs/CONNECTOR_PROTOCOL.md)。
-- **Jev 双反馈环实验**：批准目录内的只读路由、外部 Agent 慢环处理、候选回放/发布和纠错暂停；显式创建实验并推进，见[试用说明](docs/DUAL_FEEDBACK_EXPERIMENT.md)。独立进程通过 `--key-file` 私有文件或 `JEV_API_KEY` 环境变量读取 TypeSafe 凭证，不向核心上传密钥。
-- **固定 Pi 回退**：宿主配置 `--routing-model` 与私有 `--pi-config`，lab 显式启用后可自动从升级进入只读慢环，保存回答、可选候选和一次复测；仍需明确发布，使用步骤见上述实验说明。
-- **目标 Project 修改转交**：lab 可绑定独立项目核心，慢环将代码/分支文件修改交给该项目的正常规划、批准和执行链；独立 EHAI 源码检出也可作为目标，禁止指向运行框架和私有状态。见[边界与接口](docs/P4_WORKFLOW_REVISION_DESIGN.md)，实际验证范围见[P4 实施记录](docs/P4_IMPLEMENTATION_PLAN.md)。
+- **生活事务**：项目内录入/确认待办、完成状态管理，手动或定时回顾；不需要 Git 或模型调用。见[生活 Workflow](docs/WORKFLOWS.md)。
+- **外部 Connector 与实验**：独立进程经标准 HTTP 协议接入（Google Calendar 首版，真实账号未授权验证），
+  以及 Jev 双反馈环只读路由、固定 Pi 回退和向独立 Project 转交修改。见[Connector](docs/CONNECTOR_PROTOCOL.md)、[实验说明](docs/DUAL_FEEDBACK_EXPERIMENT.md)。
+
+各项能力的验证程度见 [当前状态](docs/STATUS.md)。
 
 一次开发任务的流程：
 
@@ -252,30 +252,16 @@ uv run ehai-mcp --api-url http://127.0.0.1:8000
 写工具使用 `request_json` 传递 HTTP 请求体，可用 `get_request_schema` 查询契约。
 断开 CLI/MCP 客户端不会取消宿主任务。HTTP 契约见 [OpenAPI](schemas/v1/http-api.openapi.json)。
 
-## 0.1 的范围与后续方向
+## 0.1 的范围与限制
 
-0.1 已有真实模型的编码、并发、人工挂起/回复、Reviewer/Gate 和成果接续试用证据。
-它是执行核心的正式版本，尚不包含多项目 Dashboard、统一待办页面或 Workflow/Routine。
-
-长时间运行、强杀及写入中断恢复仍有待完善的验证范围；物理 Pi 会话目前按 Attempt 隔离。
-Token/费用硬限额暂未实现。具体覆盖与限制见 [当前状态](docs/STATUS.md)。
-
-当前已提供按宿主的项目总览查询，见 [项目总览](docs/USAGE.md#项目总览p31)。
-统一人工待办的查询与处理入口见 [待办用法](docs/USAGE.md#统一人工待办p32)。
-便签讨论/明确决定、持久事件消费、项目规则版本与执行快照后端已接通，详见使用指南。
-Web 页面继续单独设计与实现；真实模型与恢复验证边界见当前状态。
-每次扩展交付一个可使用的小闭环，重复事务自动化另行推进，详见 [路线图](docs/ROADMAP.md)。
+0.1 是执行核心的首个正式版本，已有真实模型的编码、并发、人工挂起/回复、Reviewer/Gate 和成果接续证据。
+尚未完成：Web 工作台、通用 Workflow 引擎、强杀与写入中断恢复的系统验证、Token/费用硬限额。
+逐项状态见 [当前状态](docs/STATUS.md)，后续顺序见 [路线图](docs/ROADMAP.md)。
 
 ## 文档与参与开发
 
-| 文档 | 内容 |
-| --- | --- |
-| [使用指南](docs/USAGE.md) | 配置、控制、恢复、Git 整合与跨批准成果接续 |
-| [产品范围](docs/PRODUCT_SCOPE.md) / [执行模型](docs/EXECUTION_MODEL.md) | 产品边界、角色职责与执行语义 |
-| [当前状态](docs/STATUS.md) / [路线图](docs/ROADMAP.md) | 已验证能力与后续工作 |
-| [开发规则](docs/DEVELOPMENT_GUIDELINES.md) / [AGENTS](AGENTS.md) | 项目结构、检查命令与协作约定 |
-| [重构与推进计划](docs/REFACTOR_PLAN.md) | 当前重构顺序、产品 E2E 覆盖范围与待决事项 |
-| [契约索引](schemas/README.md) / [TS Client](control-plane/README.md) | HTTP Schema、跨层接口与客户端生成 |
+全部文档按角色索引在 [docs/README](docs/README.md)：使用者从 [使用指南](docs/USAGE.md) 开始，
+开发者从 [AGENTS](AGENTS.md) 与 [重构与推进计划](docs/REFACTOR_PLAN.md) 开始。
 
 Python 核心位于 `src/ehai/`，TypeScript Client 位于 `control-plane/`。
 提交问题时，请提供脱敏的版本、入口命令、预期结果、实际结果和相关错误；

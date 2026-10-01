@@ -6,7 +6,7 @@
 
 本基线于 2026-09-04 重整，并于 2026-09-06 按用户确认的执行模型更新，描述目标设计，不表示已经交付。
 产品定位、职责和用户流程以本文为准；阶段归属见 [Roadmap](../ROADMAP.md)，当前重整顺序见
-[P2 Implementation Plan](../P2_IMPLEMENTATION_PLAN.md)。旧增量、ADR 和测试记录保留其历史适用范围，
+[P2 Implementation Plan](P2_CLOSURE_PLAN.md)。旧增量、ADR 和测试记录保留其历史适用范围，
 不得用旧原型限制覆盖本文，也不得用历史 PASS 宣布新的产品范围已完成。
 
 [Usage Guide](../USAGE.md) 只记录已接入的入口和当前限制。产品设计、实现状态与验收证据必须分别说明；
