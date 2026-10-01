@@ -29,6 +29,7 @@ from ehai.application.commands import (
     ReviewProcess,
     StartRun,
 )
+from ehai.application.connectors import ConnectorAuthenticationError, ConnectorService
 from ehai.application.event_consumers import EventConsumerNotFoundError, EventConsumerService
 from ehai.application.inbox import InboxKind
 from ehai.application.notes import NoteService
@@ -43,6 +44,7 @@ from ehai.application.project_configuration import (
 )
 from ehai.application.project_queries import RuntimeContextView
 from ehai.application.queries import QueryNotFoundError, QueryService
+from ehai.application.routing_lab import RoutingLabService
 from ehai.application.run_control import RunControlConflictError, RunControlError
 from ehai.application.runtime_control import RuntimeControlError, RuntimeControlService
 from ehai.application.service import (
@@ -52,10 +54,12 @@ from ehai.application.service import (
     IdempotencyConflictError,
 )
 from ehai.application.trajectory_suspensions import TrajectorySuspensions
+from ehai.application.workflows import WorkflowService
 from ehai.domain.checking import InvalidCheckRunTransition
 from ehai.domain.execution import InvalidAttemptTransition, InvalidRunTransition, RunStatus
 from ehai.domain.goal import GoalInvariantError
 from ehai.domain.planning import PlanInvariantError, PlanTransitionError
+from ehai.interfaces.connectors_api import build_connectors_router
 from ehai.interfaces.event_consumers_api import build_event_consumers_router
 from ehai.interfaces.http_models import (
     ApplyProcessRequest,
@@ -85,8 +89,10 @@ from ehai.interfaces.http_models import (
 from ehai.interfaces.notes_api import build_notes_router
 from ehai.interfaces.project_configuration_api import create_project_configuration_router
 from ehai.interfaces.public_documents import public_json_value
+from ehai.interfaces.routing_api import build_routing_router
 from ehai.interfaces.session_host import ExecutionConfig
 from ehai.interfaces.sse import create_event_stream_endpoint
+from ehai.interfaces.workflows_api import build_workflows_router
 
 
 def _response_contract(schema_ref: str, description: str) -> dict[str, Any]:
@@ -179,6 +185,9 @@ def create_app(
     notes: NoteService | None = None,
     event_consumers: EventConsumerService | None = None,
     project_configuration: ProjectConfigurationService | None = None,
+    workflows: WorkflowService | None = None,
+    connectors: ConnectorService | None = None,
+    routing_labs: RoutingLabService | None = None,
 ) -> FastAPI:
     """Create the additive P2 HTTP surface around already-constructed services."""
     app = FastAPI(title="EHAI Execution Plane", version="2")
@@ -189,6 +198,12 @@ def create_app(
         router.include_router(build_event_consumers_router(event_consumers))
     if project_configuration is not None:
         router.include_router(create_project_configuration_router(project_configuration))
+    if workflows is not None:
+        router.include_router(build_workflows_router(workflows))
+    if connectors is not None:
+        router.include_router(build_connectors_router(connectors))
+    if routing_labs is not None:
+        router.include_router(build_routing_router(routing_labs))
 
     @router.get(
         "/planning/capacity",
@@ -1008,6 +1023,14 @@ def _id(value: str) -> ID:
 
 
 def _install_error_handlers(app: FastAPI) -> None:
+    @app.exception_handler(ConnectorAuthenticationError)
+    async def connector_auth_error(
+        request: Request, error: ConnectorAuthenticationError
+    ) -> JSONResponse:
+        return _error_response(
+            401, "connector_authentication_failed", "Invalid connector credentials"
+        )
+
     @app.exception_handler(PlanImportError)
     async def plan_import_error(request: Request, error: PlanImportError) -> JSONResponse:
         return JSONResponse(

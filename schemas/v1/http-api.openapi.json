@@ -663,6 +663,1790 @@
         }
       }
     },
+    "/api/v1/workflows": {
+      "get": {
+        "summary": "Definitions",
+        "operationId": "listWorkflows",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkflowResponse_list_WorkflowDefinition__"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/routines/scheduler": {
+      "get": {
+        "summary": "Scheduler",
+        "operationId": "getRoutineScheduler",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkflowResponse_RoutineSchedulerStatus_"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/projects/{project_id}/workflow-runs": {
+      "post": {
+        "summary": "Start",
+        "operationId": "startWorkflow",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$",
+              "title": "Project Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StartWorkflowRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkflowResponse_WorkflowRun_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "summary": "Runs",
+        "operationId": "listWorkflowRuns",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$",
+              "title": "Project Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkflowResponse_list_WorkflowRun__"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/workflow-runs/{workflow_run_id}": {
+      "get": {
+        "summary": "Run",
+        "operationId": "getWorkflowRun",
+        "parameters": [
+          {
+            "name": "workflow_run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$",
+              "title": "Workflow Run Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkflowResponse_WorkflowRun_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/workflow-runs/{workflow_run_id}/decisions": {
+      "post": {
+        "summary": "Decide",
+        "operationId": "decideWorkflow",
+        "parameters": [
+          {
+            "name": "workflow_run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$",
+              "title": "Workflow Run Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DecideWorkflowRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkflowResponse_WorkflowRun_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/workflow-runs/{workflow_run_id}/execution": {
+      "get": {
+        "summary": "Execution",
+        "description": "Read independent Run, step, local invocation and wait records from one snapshot.",
+        "operationId": "getWorkflowExecution",
+        "parameters": [
+          {
+            "name": "workflow_run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$",
+              "title": "Workflow Run Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkflowResponse_WorkflowExecutionView_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/projects/{project_id}/life-tasks": {
+      "get": {
+        "summary": "Tasks",
+        "operationId": "listLifeTasks",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$",
+              "title": "Project Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkflowResponse_list_LifeTask__"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/life-tasks/{task_id}": {
+      "get": {
+        "summary": "Task",
+        "operationId": "getLifeTask",
+        "parameters": [
+          {
+            "name": "task_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$",
+              "title": "Task Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkflowResponse_LifeTask_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "summary": "Update Task",
+        "operationId": "updateLifeTask",
+        "parameters": [
+          {
+            "name": "task_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$",
+              "title": "Task Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateLifeTaskRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkflowResponse_LifeTask_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/projects/{project_id}/routines": {
+      "post": {
+        "summary": "Create Routine",
+        "operationId": "createRoutine",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$",
+              "title": "Project Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateRoutineRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkflowResponse_LifeRoutine_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "summary": "Routines",
+        "operationId": "listRoutines",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$",
+              "title": "Project Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkflowResponse_list_LifeRoutine__"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/routines/{routine_id}": {
+      "get": {
+        "summary": "Routine",
+        "operationId": "getRoutine",
+        "parameters": [
+          {
+            "name": "routine_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$",
+              "title": "Routine Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkflowResponse_LifeRoutine_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "summary": "Update Routine",
+        "operationId": "updateRoutine",
+        "parameters": [
+          {
+            "name": "routine_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$",
+              "title": "Routine Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateRoutineRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkflowResponse_LifeRoutine_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/projects/{project_id}/connectors": {
+      "post": {
+        "summary": "Register",
+        "operationId": "registerConnector",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$",
+              "title": "Project Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RegisterConnectorRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConnectorResponse_ConnectorConnection_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "summary": "Connections",
+        "operationId": "listConnectors",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$",
+              "title": "Project Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConnectorResponse_list_ConnectorConnection__"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/connectors/{connector_id}": {
+      "get": {
+        "summary": "Connection",
+        "operationId": "getConnector",
+        "parameters": [
+          {
+            "name": "connector_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$",
+              "title": "Connector Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConnectorResponse_ConnectorConnection_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/connectors/{connector_id}/calls": {
+      "post": {
+        "summary": "Invoke",
+        "operationId": "invokeConnector",
+        "parameters": [
+          {
+            "name": "connector_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$",
+              "title": "Connector Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InvokeConnectorRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConnectorResponse_ConnectorCall_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "summary": "Calls",
+        "operationId": "listConnectorCalls",
+        "parameters": [
+          {
+            "name": "connector_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$",
+              "title": "Connector Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConnectorResponse_list_ConnectorCall__"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/connector-calls/{call_id}": {
+      "get": {
+        "summary": "Call",
+        "operationId": "getConnectorCall",
+        "parameters": [
+          {
+            "name": "call_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$",
+              "title": "Call Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConnectorResponse_ConnectorCall_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/connector-calls/{call_id}/reconcile": {
+      "post": {
+        "summary": "Reconcile",
+        "description": "Ask the original worker to verify an unknown result, without replaying a write.",
+        "operationId": "reconcileConnectorCall",
+        "parameters": [
+          {
+            "name": "call_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$",
+              "title": "Call Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReconcileConnectorCallRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConnectorResponse_ConnectorCall_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/connector-bridge/{connector_id}/claims": {
+      "post": {
+        "summary": "Claim",
+        "operationId": "claimConnectorCall",
+        "parameters": [
+          {
+            "name": "connector_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$",
+              "title": "Connector Id"
+            }
+          },
+          {
+            "name": "X-EHAI-Connector-Token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "X-Ehai-Connector-Token"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ClaimConnectorCallRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConnectorResponse_Union_ConnectorClaim__NoneType__"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/connector-bridge/{connector_id}/results": {
+      "post": {
+        "summary": "Report",
+        "operationId": "reportConnectorResult",
+        "parameters": [
+          {
+            "name": "connector_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$",
+              "title": "Connector Id"
+            }
+          },
+          {
+            "name": "X-EHAI-Connector-Token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "X-Ehai-Connector-Token"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReportConnectorResultRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConnectorResponse_ConnectorCall_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/connector-bridge/{connector_id}/events": {
+      "post": {
+        "summary": "Event",
+        "operationId": "submitConnectorEvent",
+        "parameters": [
+          {
+            "name": "connector_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$",
+              "title": "Connector Id"
+            }
+          },
+          {
+            "name": "X-EHAI-Connector-Token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "X-Ehai-Connector-Token"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SubmitConnectorEventRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConnectorResponse_ConnectorEventReceipt_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/routing-labs/{lab_id}/change-project": {
+      "post": {
+        "summary": "Configure Project",
+        "operationId": "configureRoutingProject",
+        "parameters": [
+          {
+            "name": "lab_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$",
+              "title": "Lab Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConfigureRoutingProjectRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RoutingResponse_RoutingLabView_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/routing-labs/{lab_id}/fallback": {
+      "post": {
+        "summary": "Configure Fallback",
+        "operationId": "configureRoutingFallback",
+        "parameters": [
+          {
+            "name": "lab_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$",
+              "title": "Lab Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConfigureRoutingFallbackRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RoutingResponse_RoutingLabView_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/projects/{project_id}/routing-labs": {
+      "post": {
+        "summary": "Create",
+        "operationId": "createRoutingLab",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$",
+              "title": "Project Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateRoutingLabRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RoutingResponse_RoutingLabView_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/routing-labs/{lab_id}": {
+      "get": {
+        "summary": "Lab",
+        "operationId": "getRoutingLab",
+        "parameters": [
+          {
+            "name": "lab_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$",
+              "title": "Lab Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RoutingResponse_RoutingLabView_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/routing-labs/{lab_id}/requests": {
+      "post": {
+        "summary": "Submit",
+        "operationId": "submitRoutingRequest",
+        "parameters": [
+          {
+            "name": "lab_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$",
+              "title": "Lab Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SubmitRoutingRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RoutingResponse_RoutingRequest_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "summary": "Requests",
+        "operationId": "listRoutingRequests",
+        "parameters": [
+          {
+            "name": "lab_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$",
+              "title": "Lab Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RoutingResponse_list_RoutingRequest__"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/routing-requests/{request_id}": {
+      "get": {
+        "summary": "Request",
+        "operationId": "getRoutingRequest",
+        "parameters": [
+          {
+            "name": "request_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$",
+              "title": "Request Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RoutingResponse_RoutingRequest_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/routing-labs/{lab_id}/advance": {
+      "post": {
+        "summary": "Advance",
+        "operationId": "advanceRoutingLab",
+        "parameters": [
+          {
+            "name": "lab_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$",
+              "title": "Lab Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RoutingResponse_RoutingLabMetrics_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/routing-requests/{request_id}/resolve": {
+      "post": {
+        "summary": "Resolve",
+        "operationId": "resolveRoutingRequest",
+        "parameters": [
+          {
+            "name": "request_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$",
+              "title": "Request Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ResolveRoutingRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RoutingResponse_RoutingRequest_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/routing-requests/{request_id}/feedback": {
+      "post": {
+        "summary": "Feedback",
+        "operationId": "recordRoutingFeedback",
+        "parameters": [
+          {
+            "name": "request_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$",
+              "title": "Request Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RoutingFeedbackRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RoutingResponse_RoutingRequest_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/routing-labs/{lab_id}/candidates": {
+      "post": {
+        "summary": "Propose",
+        "operationId": "proposeRoutingRecipe",
+        "parameters": [
+          {
+            "name": "lab_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$",
+              "title": "Lab Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProposeRoutingRecipeRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RoutingResponse_RoutingRecipe_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/routing-labs/{lab_id}/replays": {
+      "post": {
+        "summary": "Replay",
+        "operationId": "startRoutingReplay",
+        "parameters": [
+          {
+            "name": "lab_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$",
+              "title": "Lab Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StartRoutingReplayRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RoutingResponse_RoutingReplay_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/routing-replays/{replay_id}": {
+      "get": {
+        "summary": "Get Replay",
+        "operationId": "getRoutingReplay",
+        "parameters": [
+          {
+            "name": "replay_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$",
+              "title": "Replay Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RoutingResponse_RoutingReplay_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/routing-recipes/{recipe_id}/publish": {
+      "post": {
+        "summary": "Publish",
+        "operationId": "publishRoutingRecipe",
+        "parameters": [
+          {
+            "name": "recipe_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$",
+              "title": "Recipe Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PublishRoutingRecipeRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RoutingResponse_RoutingRecipe_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/routing-recipes/{recipe_id}/pause": {
+      "post": {
+        "summary": "Pause",
+        "operationId": "pauseRoutingRecipe",
+        "parameters": [
+          {
+            "name": "recipe_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$",
+              "title": "Recipe Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PauseRoutingRecipeRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RoutingResponse_RoutingRecipe_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/routing-labs/{lab_id}/metrics": {
+      "get": {
+        "summary": "Metrics",
+        "operationId": "getRoutingMetrics",
+        "parameters": [
+          {
+            "name": "lab_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$",
+              "title": "Lab Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RoutingResponse_RoutingLabMetrics_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/planning/capacity": {
       "get": {
         "summary": "Get Planner Capacity",
@@ -809,7 +2593,8 @@
                 "intervention",
                 "human_check",
                 "worker_request",
-                "note"
+                "note",
+                "workflow_confirmation"
               ],
               "type": "string",
               "title": "Kind"
@@ -4334,6 +6119,666 @@
         ],
         "title": "CancelRunRequest"
       },
+      "ClaimConnectorCallRequest": {
+        "properties": {
+          "protocol_version": {
+            "type": "integer",
+            "const": 1,
+            "title": "Protocol Version",
+            "default": 1
+          },
+          "worker_id": {
+            "type": "string",
+            "pattern": "^[a-zA-Z0-9_.-]{1,100}$",
+            "title": "Worker Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "worker_id"
+        ],
+        "title": "ClaimConnectorCallRequest"
+      },
+      "ConfigureRoutingFallbackRequest": {
+        "properties": {
+          "idempotency_key": {
+            "type": "string",
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Idempotency Key"
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "external",
+              "pi"
+            ],
+            "title": "Mode"
+          },
+          "validation_cases": {
+            "items": {
+              "$ref": "#/components/schemas/RoutingValidationCase"
+            },
+            "type": "array",
+            "maxItems": 19,
+            "title": "Validation Cases"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "idempotency_key",
+          "mode",
+          "validation_cases"
+        ],
+        "title": "ConfigureRoutingFallbackRequest"
+      },
+      "ConfigureRoutingProjectRequest": {
+        "properties": {
+          "idempotency_key": {
+            "type": "string",
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Idempotency Key"
+          },
+          "api_url": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 200,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Api Url"
+          },
+          "project_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Project Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "idempotency_key",
+          "api_url",
+          "project_id"
+        ],
+        "title": "ConfigureRoutingProjectRequest"
+      },
+      "ConnectorAction-Input": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "pattern": "^[a-zA-Z0-9_.-]{1,100}$",
+            "title": "Name"
+          },
+          "version": {
+            "type": "string",
+            "maxLength": 300,
+            "minLength": 1,
+            "title": "Version"
+          },
+          "description": {
+            "type": "string",
+            "maxLength": 300,
+            "minLength": 1,
+            "title": "Description"
+          },
+          "read_only": {
+            "type": "boolean",
+            "title": "Read Only"
+          },
+          "input_schema": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JsonValue-Input"
+            },
+            "type": "object",
+            "title": "Input Schema"
+          },
+          "output_schema": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JsonValue-Input"
+            },
+            "type": "object",
+            "title": "Output Schema"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "name",
+          "version",
+          "description",
+          "read_only",
+          "input_schema",
+          "output_schema"
+        ],
+        "title": "ConnectorAction"
+      },
+      "ConnectorAction-Output": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "pattern": "^[a-zA-Z0-9_.-]{1,100}$",
+            "title": "Name"
+          },
+          "version": {
+            "type": "string",
+            "maxLength": 300,
+            "minLength": 1,
+            "title": "Version"
+          },
+          "description": {
+            "type": "string",
+            "maxLength": 300,
+            "minLength": 1,
+            "title": "Description"
+          },
+          "read_only": {
+            "type": "boolean",
+            "title": "Read Only"
+          },
+          "input_schema": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JsonValue-Output"
+            },
+            "type": "object",
+            "title": "Input Schema"
+          },
+          "output_schema": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JsonValue-Output"
+            },
+            "type": "object",
+            "title": "Output Schema"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "name",
+          "version",
+          "description",
+          "read_only",
+          "input_schema",
+          "output_schema"
+        ],
+        "title": "ConnectorAction"
+      },
+      "ConnectorCall": {
+        "properties": {
+          "call_id": {
+            "type": "string",
+            "title": "Call Id"
+          },
+          "connector_id": {
+            "type": "string",
+            "title": "Connector Id"
+          },
+          "project_id": {
+            "type": "string",
+            "title": "Project Id"
+          },
+          "action": {
+            "$ref": "#/components/schemas/ConnectorAction-Output"
+          },
+          "inputs": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JsonValue-Output"
+            },
+            "type": "object",
+            "title": "Inputs"
+          },
+          "write_authorized": {
+            "type": "boolean",
+            "title": "Write Authorized"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "queued",
+              "claimed",
+              "completed",
+              "failed",
+              "unknown"
+            ],
+            "title": "Status"
+          },
+          "output": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "$ref": "#/components/schemas/JsonValue-Output"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Output"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "external_operation_ref": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "External Operation Ref"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Updated At"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "call_id",
+          "connector_id",
+          "project_id",
+          "action",
+          "inputs",
+          "write_authorized",
+          "status",
+          "output",
+          "error",
+          "external_operation_ref",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "ConnectorCall"
+      },
+      "ConnectorClaim": {
+        "properties": {
+          "protocol_version": {
+            "type": "integer",
+            "const": 1,
+            "title": "Protocol Version",
+            "default": 1
+          },
+          "connection": {
+            "$ref": "#/components/schemas/ConnectorConnection"
+          },
+          "call": {
+            "$ref": "#/components/schemas/ConnectorCall"
+          },
+          "claim_token": {
+            "type": "string",
+            "title": "Claim Token"
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "execute",
+              "reconcile"
+            ],
+            "title": "Mode"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "connection",
+          "call",
+          "claim_token",
+          "mode"
+        ],
+        "title": "ConnectorClaim"
+      },
+      "ConnectorConnection": {
+        "properties": {
+          "connector_id": {
+            "type": "string",
+            "title": "Connector Id"
+          },
+          "project_id": {
+            "type": "string",
+            "title": "Project Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "manifest": {
+            "$ref": "#/components/schemas/ConnectorManifest-Output"
+          },
+          "configuration": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JsonValue-Output"
+            },
+            "type": "object",
+            "title": "Configuration"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "connector_id",
+          "project_id",
+          "name",
+          "manifest",
+          "configuration",
+          "created_at"
+        ],
+        "title": "ConnectorConnection"
+      },
+      "ConnectorEventReceipt": {
+        "properties": {
+          "connector_id": {
+            "type": "string",
+            "title": "Connector Id"
+          },
+          "project_id": {
+            "type": "string",
+            "title": "Project Id"
+          },
+          "event_id": {
+            "type": "string",
+            "title": "Event Id"
+          },
+          "core_event_id": {
+            "type": "string",
+            "title": "Core Event Id"
+          },
+          "received_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Received At"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "connector_id",
+          "project_id",
+          "event_id",
+          "core_event_id",
+          "received_at"
+        ],
+        "title": "ConnectorEventReceipt"
+      },
+      "ConnectorEventType-Input": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "pattern": "^[a-zA-Z0-9_.-]{1,100}$",
+            "title": "Name"
+          },
+          "version": {
+            "type": "string",
+            "maxLength": 300,
+            "minLength": 1,
+            "title": "Version"
+          },
+          "data_schema": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JsonValue-Input"
+            },
+            "type": "object",
+            "title": "Data Schema"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "name",
+          "version",
+          "data_schema"
+        ],
+        "title": "ConnectorEventType"
+      },
+      "ConnectorEventType-Output": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "pattern": "^[a-zA-Z0-9_.-]{1,100}$",
+            "title": "Name"
+          },
+          "version": {
+            "type": "string",
+            "maxLength": 300,
+            "minLength": 1,
+            "title": "Version"
+          },
+          "data_schema": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JsonValue-Output"
+            },
+            "type": "object",
+            "title": "Data Schema"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "name",
+          "version",
+          "data_schema"
+        ],
+        "title": "ConnectorEventType"
+      },
+      "ConnectorManifest-Input": {
+        "properties": {
+          "protocol_version": {
+            "type": "integer",
+            "const": 1,
+            "title": "Protocol Version",
+            "default": 1
+          },
+          "connector_type": {
+            "type": "string",
+            "pattern": "^[a-zA-Z0-9_.-]{1,100}$",
+            "title": "Connector Type"
+          },
+          "version": {
+            "type": "string",
+            "maxLength": 300,
+            "minLength": 1,
+            "title": "Version"
+          },
+          "actions": {
+            "items": {
+              "$ref": "#/components/schemas/ConnectorAction-Input"
+            },
+            "type": "array",
+            "maxItems": 50,
+            "minItems": 1,
+            "title": "Actions"
+          },
+          "events": {
+            "items": {
+              "$ref": "#/components/schemas/ConnectorEventType-Input"
+            },
+            "type": "array",
+            "maxItems": 50,
+            "title": "Events"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "connector_type",
+          "version",
+          "actions"
+        ],
+        "title": "ConnectorManifest"
+      },
+      "ConnectorManifest-Output": {
+        "properties": {
+          "protocol_version": {
+            "type": "integer",
+            "const": 1,
+            "title": "Protocol Version",
+            "default": 1
+          },
+          "connector_type": {
+            "type": "string",
+            "pattern": "^[a-zA-Z0-9_.-]{1,100}$",
+            "title": "Connector Type"
+          },
+          "version": {
+            "type": "string",
+            "maxLength": 300,
+            "minLength": 1,
+            "title": "Version"
+          },
+          "actions": {
+            "items": {
+              "$ref": "#/components/schemas/ConnectorAction-Output"
+            },
+            "type": "array",
+            "maxItems": 50,
+            "minItems": 1,
+            "title": "Actions"
+          },
+          "events": {
+            "items": {
+              "$ref": "#/components/schemas/ConnectorEventType-Output"
+            },
+            "type": "array",
+            "maxItems": 50,
+            "title": "Events"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "connector_type",
+          "version",
+          "actions"
+        ],
+        "title": "ConnectorManifest"
+      },
+      "ConnectorResponse_ConnectorCall_": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/ConnectorCall"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "ConnectorResponse[ConnectorCall]"
+      },
+      "ConnectorResponse_ConnectorConnection_": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/ConnectorConnection"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "ConnectorResponse[ConnectorConnection]"
+      },
+      "ConnectorResponse_ConnectorEventReceipt_": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/ConnectorEventReceipt"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "ConnectorResponse[ConnectorEventReceipt]"
+      },
+      "ConnectorResponse_Union_ConnectorClaim__NoneType__": {
+        "properties": {
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ConnectorClaim"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "ConnectorResponse[Union[ConnectorClaim, NoneType]]"
+      },
+      "ConnectorResponse_list_ConnectorCall__": {
+        "properties": {
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/ConnectorCall"
+            },
+            "type": "array",
+            "title": "Data"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "ConnectorResponse[list[ConnectorCall]]"
+      },
+      "ConnectorResponse_list_ConnectorConnection__": {
+        "properties": {
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/ConnectorConnection"
+            },
+            "type": "array",
+            "title": "Data"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "ConnectorResponse[list[ConnectorConnection]]"
+      },
       "CreateGoalRequest": {
         "properties": {
           "idempotency_key": {
@@ -4481,6 +6926,132 @@
         ],
         "title": "CreateProjectRequest"
       },
+      "CreateRoutineRequest": {
+        "properties": {
+          "idempotency_key": {
+            "type": "string",
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Idempotency Key"
+          },
+          "name": {
+            "type": "string",
+            "maxLength": 300,
+            "minLength": 1,
+            "title": "Name"
+          },
+          "interval_seconds": {
+            "type": "integer",
+            "maximum": 31536000.0,
+            "minimum": 60.0,
+            "title": "Interval Seconds"
+          },
+          "next_due_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Next Due At"
+          },
+          "enabled": {
+            "type": "boolean",
+            "title": "Enabled",
+            "default": true
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "idempotency_key",
+          "name",
+          "interval_seconds",
+          "next_due_at"
+        ],
+        "title": "CreateRoutineRequest",
+        "description": "Schedule life.review v1 at a fixed interval, with no external or model side effects.\n\nnext_due_at must include a timezone offset. A past time triggers a single coalesced review\nwhen the host next ticks. enabled=false persists the routine without scheduling it."
+      },
+      "CreateRoutingLabRequest": {
+        "properties": {
+          "idempotency_key": {
+            "type": "string",
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Idempotency Key"
+          },
+          "name": {
+            "type": "string",
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Name"
+          },
+          "connector_id": {
+            "type": "string",
+            "title": "Connector Id"
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "shadow",
+              "read_only"
+            ],
+            "title": "Mode",
+            "default": "shadow"
+          },
+          "confidence_threshold": {
+            "type": "number",
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Confidence Threshold",
+            "default": 0.85
+          },
+          "probability_threshold": {
+            "type": "number",
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Probability Threshold",
+            "default": 0.8
+          },
+          "max_pending": {
+            "type": "integer",
+            "maximum": 100.0,
+            "minimum": 1.0,
+            "title": "Max Pending",
+            "default": 32
+          },
+          "actor": {
+            "type": "string",
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Actor"
+          },
+          "approved_recipes": {
+            "items": {
+              "$ref": "#/components/schemas/RoutingRecipeInput"
+            },
+            "type": "array",
+            "maxItems": 20,
+            "minItems": 1,
+            "title": "Approved Recipes"
+          },
+          "fallback_mode": {
+            "type": "string",
+            "enum": [
+              "external",
+              "pi"
+            ],
+            "title": "Fallback Mode",
+            "default": "external"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "idempotency_key",
+          "name",
+          "connector_id",
+          "actor",
+          "approved_recipes"
+        ],
+        "title": "CreateRoutingLabRequest"
+      },
       "DataResponse": {
         "properties": {
           "data": {
@@ -4590,6 +7161,51 @@
           "action"
         ],
         "title": "DecideNoteRequest"
+      },
+      "DecideWorkflowRequest": {
+        "properties": {
+          "idempotency_key": {
+            "type": "string",
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Idempotency Key"
+          },
+          "expected_version": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Expected Version"
+          },
+          "decision": {
+            "type": "string",
+            "enum": [
+              "approve",
+              "reject"
+            ],
+            "title": "Decision"
+          },
+          "actor": {
+            "type": "string",
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Actor"
+          },
+          "reason": {
+            "type": "string",
+            "maxLength": 10000,
+            "minLength": 1,
+            "title": "Reason"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "idempotency_key",
+          "expected_version",
+          "decision",
+          "actor",
+          "reason"
+        ],
+        "title": "DecideWorkflowRequest"
       },
       "DiscussPlanRequest": {
         "properties": {
@@ -5344,6 +7960,123 @@
         ],
         "title": "IntegrateRunRequest"
       },
+      "InvokeConnectorRequest": {
+        "properties": {
+          "idempotency_key": {
+            "type": "string",
+            "maxLength": 300,
+            "minLength": 1,
+            "title": "Idempotency Key"
+          },
+          "action": {
+            "type": "string",
+            "pattern": "^[a-zA-Z0-9_.-]{1,100}$",
+            "title": "Action"
+          },
+          "action_version": {
+            "type": "string",
+            "maxLength": 300,
+            "minLength": 1,
+            "title": "Action Version"
+          },
+          "inputs": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JsonValue-Input"
+            },
+            "type": "object",
+            "title": "Inputs"
+          },
+          "authorize_write": {
+            "type": "boolean",
+            "title": "Authorize Write",
+            "default": false
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "idempotency_key",
+          "action",
+          "action_version",
+          "inputs"
+        ],
+        "title": "InvokeConnectorRequest"
+      },
+      "JevRoutingJudgement": {
+        "properties": {
+          "model": {
+            "type": "string",
+            "title": "Model"
+          },
+          "choice": {
+            "type": "string",
+            "title": "Choice"
+          },
+          "confidence": {
+            "type": "number",
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Confidence"
+          },
+          "probabilities": {
+            "additionalProperties": {
+              "type": "number",
+              "maximum": 1.0,
+              "minimum": 0.0
+            },
+            "type": "object",
+            "title": "Probabilities"
+          },
+          "input_tokens": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Input Tokens"
+          },
+          "output_tokens": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Output Tokens"
+          },
+          "evidence_source": {
+            "type": "string",
+            "enum": [
+              "typesafe",
+              "protocol_trial"
+            ],
+            "title": "Evidence Source"
+          },
+          "template_version": {
+            "type": "string",
+            "const": "routing-v1",
+            "title": "Template Version",
+            "default": "routing-v1"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "model",
+          "choice",
+          "confidence",
+          "probabilities",
+          "evidence_source"
+        ],
+        "title": "JevRoutingJudgement"
+      },
       "JsonScalar": {
         "anyOf": [
           {
@@ -5400,6 +8133,255 @@
             "type": "object"
           }
         ]
+      },
+      "LifeReview": {
+        "properties": {
+          "as_of": {
+            "type": "string",
+            "format": "date-time",
+            "title": "As Of"
+          },
+          "open_tasks": {
+            "items": {
+              "$ref": "#/components/schemas/LifeTask"
+            },
+            "type": "array",
+            "title": "Open Tasks"
+          },
+          "overdue_task_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Overdue Task Ids"
+          },
+          "done_count": {
+            "type": "integer",
+            "title": "Done Count"
+          },
+          "cancelled_count": {
+            "type": "integer",
+            "title": "Cancelled Count"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "as_of",
+          "open_tasks",
+          "overdue_task_ids",
+          "done_count",
+          "cancelled_count"
+        ],
+        "title": "LifeReview"
+      },
+      "LifeRoutine": {
+        "properties": {
+          "routine_id": {
+            "type": "string",
+            "title": "Routine Id"
+          },
+          "project_id": {
+            "type": "string",
+            "title": "Project Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "workflow": {
+            "type": "string",
+            "const": "life.review",
+            "title": "Workflow",
+            "default": "life.review"
+          },
+          "workflow_version": {
+            "type": "integer",
+            "const": 1,
+            "title": "Workflow Version",
+            "default": 1
+          },
+          "interval_seconds": {
+            "type": "integer",
+            "title": "Interval Seconds"
+          },
+          "next_due_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Next Due At"
+          },
+          "enabled": {
+            "type": "boolean",
+            "title": "Enabled"
+          },
+          "version": {
+            "type": "integer",
+            "title": "Version"
+          },
+          "last_workflow_run_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Workflow Run Id"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Updated At"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "routine_id",
+          "project_id",
+          "name",
+          "interval_seconds",
+          "next_due_at",
+          "enabled",
+          "version",
+          "last_workflow_run_id",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "LifeRoutine"
+      },
+      "LifeTask": {
+        "properties": {
+          "task_id": {
+            "type": "string",
+            "title": "Task Id"
+          },
+          "project_id": {
+            "type": "string",
+            "title": "Project Id"
+          },
+          "workflow_run_id": {
+            "type": "string",
+            "title": "Workflow Run Id"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "due_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Due At"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "open",
+              "done",
+              "cancelled"
+            ],
+            "title": "Status"
+          },
+          "version": {
+            "type": "integer",
+            "title": "Version"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Updated At"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "task_id",
+          "project_id",
+          "workflow_run_id",
+          "title",
+          "due_at",
+          "status",
+          "version",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "LifeTask"
+      },
+      "LifeTaskInput": {
+        "properties": {
+          "title": {
+            "type": "string",
+            "maxLength": 300,
+            "minLength": 1,
+            "title": "Title"
+          },
+          "due_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Due At"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "title"
+        ],
+        "title": "LifeTaskInput"
+      },
+      "PauseRoutingRecipeRequest": {
+        "properties": {
+          "idempotency_key": {
+            "type": "string",
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Idempotency Key"
+          },
+          "actor": {
+            "type": "string",
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Actor"
+          },
+          "reason": {
+            "type": "string",
+            "maxLength": 4000,
+            "minLength": 1,
+            "title": "Reason"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "idempotency_key",
+          "actor",
+          "reason"
+        ],
+        "title": "PauseRoutingRecipeRequest"
       },
       "PiBackendConfigRequest": {
         "properties": {
@@ -5571,6 +8553,69 @@
         ],
         "title": "ProposeProcessRequest"
       },
+      "ProposeRoutingRecipeRequest": {
+        "properties": {
+          "idempotency_key": {
+            "type": "string",
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Idempotency Key"
+          },
+          "recipe": {
+            "$ref": "#/components/schemas/RoutingRecipeInput"
+          },
+          "source_request_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 20,
+            "minItems": 1,
+            "title": "Source Request Ids"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "idempotency_key",
+          "recipe",
+          "source_request_ids"
+        ],
+        "title": "ProposeRoutingRecipeRequest"
+      },
+      "PublishRoutingRecipeRequest": {
+        "properties": {
+          "idempotency_key": {
+            "type": "string",
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Idempotency Key"
+          },
+          "actor": {
+            "type": "string",
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Actor"
+          },
+          "replay_id": {
+            "type": "string",
+            "title": "Replay Id"
+          },
+          "allow_protocol_trial": {
+            "type": "boolean",
+            "title": "Allow Protocol Trial",
+            "default": false
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "idempotency_key",
+          "actor",
+          "replay_id"
+        ],
+        "title": "PublishRoutingRecipeRequest"
+      },
       "ReadEventConsumerBatchRequest": {
         "properties": {
           "limit": {
@@ -5584,6 +8629,63 @@
         "additionalProperties": false,
         "type": "object",
         "title": "ReadEventConsumerBatchRequest"
+      },
+      "ReconcileConnectorCallRequest": {
+        "properties": {
+          "idempotency_key": {
+            "type": "string",
+            "maxLength": 300,
+            "minLength": 1,
+            "title": "Idempotency Key"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "idempotency_key"
+        ],
+        "title": "ReconcileConnectorCallRequest"
+      },
+      "RegisterConnectorRequest": {
+        "properties": {
+          "idempotency_key": {
+            "type": "string",
+            "maxLength": 300,
+            "minLength": 1,
+            "title": "Idempotency Key"
+          },
+          "name": {
+            "type": "string",
+            "maxLength": 300,
+            "minLength": 1,
+            "title": "Name"
+          },
+          "manifest": {
+            "$ref": "#/components/schemas/ConnectorManifest-Input"
+          },
+          "configuration": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JsonValue-Input"
+            },
+            "type": "object",
+            "title": "Configuration"
+          },
+          "credential_sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Credential Sha256"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "idempotency_key",
+          "name",
+          "manifest",
+          "configuration",
+          "credential_sha256"
+        ],
+        "title": "RegisterConnectorRequest"
       },
       "RegisterEventConsumerRequest": {
         "properties": {
@@ -5695,6 +8797,123 @@
         ],
         "title": "ReplyInterventionRequest"
       },
+      "ReportConnectorResultRequest": {
+        "properties": {
+          "protocol_version": {
+            "type": "integer",
+            "const": 1,
+            "title": "Protocol Version",
+            "default": 1
+          },
+          "delivery_id": {
+            "type": "string",
+            "maxLength": 300,
+            "minLength": 1,
+            "title": "Delivery Id"
+          },
+          "call_id": {
+            "type": "string",
+            "title": "Call Id"
+          },
+          "claim_token": {
+            "type": "string",
+            "title": "Claim Token"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "completed",
+              "failed",
+              "unknown"
+            ],
+            "title": "Status"
+          },
+          "output": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "$ref": "#/components/schemas/JsonValue-Input"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Output"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 2000
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "external_operation_ref": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 2000
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "External Operation Ref"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "delivery_id",
+          "call_id",
+          "claim_token",
+          "status"
+        ],
+        "title": "ReportConnectorResultRequest"
+      },
+      "ResolveRoutingRequest": {
+        "properties": {
+          "idempotency_key": {
+            "type": "string",
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Idempotency Key"
+          },
+          "actor": {
+            "type": "string",
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Actor"
+          },
+          "response": {
+            "type": "string",
+            "maxLength": 4000,
+            "minLength": 1,
+            "title": "Response"
+          },
+          "evidence": {
+            "type": "string",
+            "maxLength": 4000,
+            "minLength": 1,
+            "title": "Evidence"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "idempotency_key",
+          "actor",
+          "response",
+          "evidence"
+        ],
+        "title": "ResolveRoutingRequest"
+      },
       "ResolveWorkerRequestRequest": {
         "properties": {
           "idempotency_key": {
@@ -5766,6 +8985,1149 @@
         ],
         "title": "ReviewProcessRequest"
       },
+      "RoutineSchedulerStatus": {
+        "properties": {
+          "active": {
+            "type": "boolean",
+            "title": "Active"
+          },
+          "last_tick_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Tick At"
+          },
+          "last_error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Error"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "active",
+          "last_tick_at",
+          "last_error"
+        ],
+        "title": "RoutineSchedulerStatus"
+      },
+      "RoutingFallbackExecution": {
+        "properties": {
+          "attempt_id": {
+            "type": "string",
+            "title": "Attempt Id"
+          },
+          "session_id": {
+            "type": "string",
+            "title": "Session Id"
+          },
+          "model": {
+            "type": "string",
+            "title": "Model"
+          },
+          "configuration_hash": {
+            "type": "string",
+            "title": "Configuration Hash"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "running",
+              "completed",
+              "failed",
+              "interrupted"
+            ],
+            "title": "Status"
+          },
+          "started_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Started At"
+          },
+          "completed_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completed At"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "candidate_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Candidate Id"
+          },
+          "change_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Change Reason"
+          },
+          "replay_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Replay Id"
+          },
+          "replay_error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Replay Error"
+          },
+          "replay_cases": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/RoutingReplayCase"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Replay Cases"
+          },
+          "project_change": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RoutingProjectChange"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "change_project_binding": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RoutingProjectBinding"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "attempt_id",
+          "session_id",
+          "model",
+          "configuration_hash",
+          "status",
+          "started_at"
+        ],
+        "title": "RoutingFallbackExecution"
+      },
+      "RoutingFeedback": {
+        "properties": {
+          "actor": {
+            "type": "string",
+            "title": "Actor"
+          },
+          "outcome": {
+            "type": "string",
+            "enum": [
+              "correct",
+              "misroute",
+              "execution_failed"
+            ],
+            "title": "Outcome"
+          },
+          "explanation": {
+            "type": "string",
+            "title": "Explanation"
+          },
+          "recorded_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Recorded At"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "actor",
+          "outcome",
+          "explanation",
+          "recorded_at"
+        ],
+        "title": "RoutingFeedback"
+      },
+      "RoutingFeedbackRequest": {
+        "properties": {
+          "idempotency_key": {
+            "type": "string",
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Idempotency Key"
+          },
+          "actor": {
+            "type": "string",
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Actor"
+          },
+          "outcome": {
+            "type": "string",
+            "enum": [
+              "correct",
+              "misroute",
+              "execution_failed"
+            ],
+            "title": "Outcome"
+          },
+          "explanation": {
+            "type": "string",
+            "maxLength": 4000,
+            "minLength": 1,
+            "title": "Explanation"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "idempotency_key",
+          "actor",
+          "outcome",
+          "explanation"
+        ],
+        "title": "RoutingFeedbackRequest"
+      },
+      "RoutingLab": {
+        "properties": {
+          "lab_id": {
+            "type": "string",
+            "title": "Lab Id"
+          },
+          "project_id": {
+            "type": "string",
+            "title": "Project Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "connector_id": {
+            "type": "string",
+            "title": "Connector Id"
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "shadow",
+              "read_only"
+            ],
+            "title": "Mode"
+          },
+          "confidence_threshold": {
+            "type": "number",
+            "title": "Confidence Threshold"
+          },
+          "probability_threshold": {
+            "type": "number",
+            "title": "Probability Threshold"
+          },
+          "max_pending": {
+            "type": "integer",
+            "title": "Max Pending"
+          },
+          "catalog_version": {
+            "type": "integer",
+            "title": "Catalog Version"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "fallback_mode": {
+            "type": "string",
+            "enum": [
+              "external",
+              "pi"
+            ],
+            "title": "Fallback Mode",
+            "default": "external"
+          },
+          "fallback_validation_cases": {
+            "items": {
+              "$ref": "#/components/schemas/RoutingValidationCase"
+            },
+            "type": "array",
+            "title": "Fallback Validation Cases"
+          },
+          "change_project": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RoutingProjectBinding"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "lab_id",
+          "project_id",
+          "name",
+          "connector_id",
+          "mode",
+          "confidence_threshold",
+          "probability_threshold",
+          "max_pending",
+          "catalog_version",
+          "created_at"
+        ],
+        "title": "RoutingLab"
+      },
+      "RoutingLabMetrics": {
+        "properties": {
+          "request_count": {
+            "type": "integer",
+            "title": "Request Count"
+          },
+          "routing_count": {
+            "type": "integer",
+            "title": "Routing Count"
+          },
+          "escalated_count": {
+            "type": "integer",
+            "title": "Escalated Count"
+          },
+          "system2_resolved_count": {
+            "type": "integer",
+            "title": "System2 Resolved Count"
+          },
+          "fast_completed_count": {
+            "type": "integer",
+            "title": "Fast Completed Count"
+          },
+          "shadow_count": {
+            "type": "integer",
+            "title": "Shadow Count"
+          },
+          "reviewed_count": {
+            "type": "integer",
+            "title": "Reviewed Count"
+          },
+          "misroute_count": {
+            "type": "integer",
+            "title": "Misroute Count"
+          },
+          "provider_judgements": {
+            "type": "integer",
+            "title": "Provider Judgements"
+          },
+          "protocol_trial_judgements": {
+            "type": "integer",
+            "title": "Protocol Trial Judgements"
+          },
+          "by_recipe": {
+            "additionalProperties": {
+              "additionalProperties": {
+                "type": "integer"
+              },
+              "type": "object"
+            },
+            "type": "object",
+            "title": "By Recipe"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "request_count",
+          "routing_count",
+          "escalated_count",
+          "system2_resolved_count",
+          "fast_completed_count",
+          "shadow_count",
+          "reviewed_count",
+          "misroute_count",
+          "provider_judgements",
+          "protocol_trial_judgements",
+          "by_recipe"
+        ],
+        "title": "RoutingLabMetrics"
+      },
+      "RoutingLabView": {
+        "properties": {
+          "lab": {
+            "$ref": "#/components/schemas/RoutingLab"
+          },
+          "recipes": {
+            "items": {
+              "$ref": "#/components/schemas/RoutingRecipe"
+            },
+            "type": "array",
+            "title": "Recipes"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "lab",
+          "recipes"
+        ],
+        "title": "RoutingLabView"
+      },
+      "RoutingProjectBinding": {
+        "properties": {
+          "api_url": {
+            "type": "string",
+            "title": "Api Url"
+          },
+          "project_id": {
+            "type": "string",
+            "title": "Project Id"
+          },
+          "workspace": {
+            "type": "string",
+            "title": "Workspace"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "api_url",
+          "project_id",
+          "workspace"
+        ],
+        "title": "RoutingProjectBinding"
+      },
+      "RoutingProjectChange": {
+        "properties": {
+          "target": {
+            "$ref": "#/components/schemas/RoutingProjectBinding"
+          },
+          "objective": {
+            "type": "string",
+            "title": "Objective"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "dispatching",
+              "waiting_approval",
+              "needs_input",
+              "failed",
+              "unknown"
+            ],
+            "title": "Status"
+          },
+          "goal_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Goal Id"
+          },
+          "conversation_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Conversation Id"
+          },
+          "plan_revision_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Plan Revision Id"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "target",
+          "objective",
+          "status"
+        ],
+        "title": "RoutingProjectChange"
+      },
+      "RoutingRecipe": {
+        "properties": {
+          "recipe_id": {
+            "type": "string",
+            "title": "Recipe Id"
+          },
+          "lab_id": {
+            "type": "string",
+            "title": "Lab Id"
+          },
+          "project_id": {
+            "type": "string",
+            "title": "Project Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "applicability": {
+            "type": "string",
+            "title": "Applicability"
+          },
+          "target": {
+            "type": "string",
+            "enum": [
+              "life.tasks.list",
+              "inbox.list"
+            ],
+            "title": "Target"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "candidate",
+              "active",
+              "paused"
+            ],
+            "title": "Status"
+          },
+          "source_request_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Source Request Ids"
+          },
+          "approved_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Approved By"
+          },
+          "approval_evidence": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Approval Evidence"
+          },
+          "paused_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Paused By"
+          },
+          "pause_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pause Reason"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "recipe_id",
+          "lab_id",
+          "project_id",
+          "name",
+          "applicability",
+          "target",
+          "status",
+          "source_request_ids",
+          "approved_by",
+          "approval_evidence",
+          "created_at"
+        ],
+        "title": "RoutingRecipe"
+      },
+      "RoutingRecipeInput": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Name"
+          },
+          "applicability": {
+            "type": "string",
+            "maxLength": 4000,
+            "minLength": 1,
+            "title": "Applicability"
+          },
+          "target": {
+            "type": "string",
+            "enum": [
+              "life.tasks.list",
+              "inbox.list"
+            ],
+            "title": "Target"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "name",
+          "applicability",
+          "target"
+        ],
+        "title": "RoutingRecipeInput"
+      },
+      "RoutingReplay": {
+        "properties": {
+          "replay_id": {
+            "type": "string",
+            "title": "Replay Id"
+          },
+          "lab_id": {
+            "type": "string",
+            "title": "Lab Id"
+          },
+          "project_id": {
+            "type": "string",
+            "title": "Project Id"
+          },
+          "candidate_id": {
+            "type": "string",
+            "title": "Candidate Id"
+          },
+          "catalog_version": {
+            "type": "integer",
+            "title": "Catalog Version"
+          },
+          "catalog_snapshot": {
+            "items": {
+              "$ref": "#/components/schemas/RoutingRecipe"
+            },
+            "type": "array",
+            "title": "Catalog Snapshot"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "passed",
+              "failed"
+            ],
+            "title": "Status"
+          },
+          "entries": {
+            "items": {
+              "$ref": "#/components/schemas/RoutingReplayEntry"
+            },
+            "type": "array",
+            "title": "Entries"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "replay_id",
+          "lab_id",
+          "project_id",
+          "candidate_id",
+          "catalog_version",
+          "catalog_snapshot",
+          "status",
+          "entries",
+          "created_at"
+        ],
+        "title": "RoutingReplay"
+      },
+      "RoutingReplayCase": {
+        "properties": {
+          "request_id": {
+            "type": "string",
+            "title": "Request Id"
+          },
+          "expected_choice": {
+            "type": "string",
+            "title": "Expected Choice"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "request_id",
+          "expected_choice"
+        ],
+        "title": "RoutingReplayCase"
+      },
+      "RoutingReplayEntry": {
+        "properties": {
+          "request_id": {
+            "type": "string",
+            "title": "Request Id"
+          },
+          "message": {
+            "type": "string",
+            "title": "Message"
+          },
+          "case_role": {
+            "type": "string",
+            "enum": [
+              "learning",
+              "validation"
+            ],
+            "title": "Case Role"
+          },
+          "expected_choice": {
+            "type": "string",
+            "title": "Expected Choice"
+          },
+          "connector_call_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Connector Call Id"
+          },
+          "judgement": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/JevRoutingJudgement"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "passed": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Passed"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "request_id",
+          "message",
+          "case_role",
+          "expected_choice",
+          "connector_call_id",
+          "judgement",
+          "passed",
+          "reason"
+        ],
+        "title": "RoutingReplayEntry"
+      },
+      "RoutingRequest": {
+        "properties": {
+          "request_id": {
+            "type": "string",
+            "title": "Request Id"
+          },
+          "lab_id": {
+            "type": "string",
+            "title": "Lab Id"
+          },
+          "project_id": {
+            "type": "string",
+            "title": "Project Id"
+          },
+          "message": {
+            "type": "string",
+            "title": "Message"
+          },
+          "case_role": {
+            "type": "string",
+            "enum": [
+              "learning",
+              "validation"
+            ],
+            "title": "Case Role"
+          },
+          "explicit_recipe_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Explicit Recipe Id"
+          },
+          "force_slow": {
+            "type": "boolean",
+            "title": "Force Slow"
+          },
+          "catalog_version": {
+            "type": "integer",
+            "title": "Catalog Version"
+          },
+          "catalog_snapshot": {
+            "items": {
+              "$ref": "#/components/schemas/RoutingRecipe"
+            },
+            "type": "array",
+            "title": "Catalog Snapshot"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "queued",
+              "routing",
+              "escalated",
+              "completed",
+              "shadow"
+            ],
+            "title": "Status"
+          },
+          "route_source": {
+            "type": "string",
+            "enum": [
+              "none",
+              "rule",
+              "jev",
+              "system2"
+            ],
+            "title": "Route Source"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "connector_call_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Connector Call Id"
+          },
+          "judgement": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/JevRoutingJudgement"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "selected_recipe_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Selected Recipe Id"
+          },
+          "result": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "$ref": "#/components/schemas/JsonValue-Output"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Result"
+          },
+          "feedback": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RoutingFeedback"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Updated At"
+          },
+          "fallback": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RoutingFallbackExecution"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "request_id",
+          "lab_id",
+          "project_id",
+          "message",
+          "case_role",
+          "explicit_recipe_id",
+          "force_slow",
+          "catalog_version",
+          "catalog_snapshot",
+          "status",
+          "route_source",
+          "reason",
+          "connector_call_id",
+          "judgement",
+          "selected_recipe_id",
+          "result",
+          "feedback",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "RoutingRequest"
+      },
+      "RoutingResponse_RoutingLabMetrics_": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/RoutingLabMetrics"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "RoutingResponse[RoutingLabMetrics]"
+      },
+      "RoutingResponse_RoutingLabView_": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/RoutingLabView"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "RoutingResponse[RoutingLabView]"
+      },
+      "RoutingResponse_RoutingRecipe_": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/RoutingRecipe"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "RoutingResponse[RoutingRecipe]"
+      },
+      "RoutingResponse_RoutingReplay_": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/RoutingReplay"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "RoutingResponse[RoutingReplay]"
+      },
+      "RoutingResponse_RoutingRequest_": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/RoutingRequest"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "RoutingResponse[RoutingRequest]"
+      },
+      "RoutingResponse_list_RoutingRequest__": {
+        "properties": {
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/RoutingRequest"
+            },
+            "type": "array",
+            "title": "Data"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "RoutingResponse[list[RoutingRequest]]"
+      },
+      "RoutingValidationCase": {
+        "properties": {
+          "request_id": {
+            "type": "string",
+            "title": "Request Id"
+          },
+          "expected_target": {
+            "type": "string",
+            "enum": [
+              "life.tasks.list",
+              "inbox.list",
+              "escalate"
+            ],
+            "title": "Expected Target"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "request_id",
+          "expected_target"
+        ],
+        "title": "RoutingValidationCase"
+      },
       "RunActionRequest": {
         "properties": {
           "idempotency_key": {
@@ -5780,6 +10142,37 @@
           "idempotency_key"
         ],
         "title": "RunActionRequest"
+      },
+      "StartRoutingReplayRequest": {
+        "properties": {
+          "idempotency_key": {
+            "type": "string",
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Idempotency Key"
+          },
+          "candidate_id": {
+            "type": "string",
+            "title": "Candidate Id"
+          },
+          "cases": {
+            "items": {
+              "$ref": "#/components/schemas/RoutingReplayCase"
+            },
+            "type": "array",
+            "maxItems": 20,
+            "minItems": 2,
+            "title": "Cases"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "idempotency_key",
+          "candidate_id",
+          "cases"
+        ],
+        "title": "StartRoutingReplayRequest"
       },
       "StartRunRequest": {
         "properties": {
@@ -5830,6 +10223,162 @@
           "plan_revision_id"
         ],
         "title": "StartRunRequest"
+      },
+      "StartWorkflowRequest": {
+        "properties": {
+          "idempotency_key": {
+            "type": "string",
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Idempotency Key"
+          },
+          "workflow": {
+            "type": "string",
+            "enum": [
+              "life.capture",
+              "life.review"
+            ],
+            "title": "Workflow"
+          },
+          "source_text": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 10000,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Text"
+          },
+          "tasks": {
+            "items": {
+              "$ref": "#/components/schemas/LifeTaskInput"
+            },
+            "type": "array",
+            "maxItems": 100,
+            "title": "Tasks"
+          },
+          "require_confirmation": {
+            "type": "boolean",
+            "title": "Require Confirmation",
+            "default": true
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "idempotency_key",
+          "workflow"
+        ],
+        "title": "StartWorkflowRequest",
+        "description": "Capture needs source_text and tasks; review reads this project and accepts neither.\n\nConfirmation applies only to capture. Omitting it means true; false explicitly creates\nthe provided tasks immediately. Neither workflow executes the described life tasks."
+      },
+      "SubmitConnectorEventRequest": {
+        "properties": {
+          "protocol_version": {
+            "type": "integer",
+            "const": 1,
+            "title": "Protocol Version",
+            "default": 1
+          },
+          "event_id": {
+            "type": "string",
+            "maxLength": 300,
+            "minLength": 1,
+            "title": "Event Id"
+          },
+          "event_type": {
+            "type": "string",
+            "pattern": "^[a-zA-Z0-9_.-]{1,100}$",
+            "title": "Event Type"
+          },
+          "schema_version": {
+            "type": "string",
+            "maxLength": 300,
+            "minLength": 1,
+            "title": "Schema Version"
+          },
+          "occurred_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Occurred At"
+          },
+          "subject": {
+            "type": "string",
+            "maxLength": 300,
+            "minLength": 1,
+            "title": "Subject"
+          },
+          "data": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JsonValue-Input"
+            },
+            "type": "object",
+            "title": "Data"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "event_id",
+          "event_type",
+          "schema_version",
+          "occurred_at",
+          "subject",
+          "data"
+        ],
+        "title": "SubmitConnectorEventRequest"
+      },
+      "SubmitRoutingRequest": {
+        "properties": {
+          "idempotency_key": {
+            "type": "string",
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Idempotency Key"
+          },
+          "message": {
+            "type": "string",
+            "maxLength": 4000,
+            "minLength": 1,
+            "title": "Message"
+          },
+          "explicit_recipe_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Explicit Recipe Id"
+          },
+          "force_slow": {
+            "type": "boolean",
+            "title": "Force Slow",
+            "default": false
+          },
+          "case_role": {
+            "type": "string",
+            "enum": [
+              "learning",
+              "validation"
+            ],
+            "title": "Case Role",
+            "default": "learning"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "idempotency_key",
+          "message"
+        ],
+        "title": "SubmitRoutingRequest"
       },
       "SupersessionRequest": {
         "properties": {
@@ -5984,6 +10533,59 @@
         "type": "object",
         "title": "TrajectoryReviewPolicyRequest"
       },
+      "UpdateLifeTaskRequest": {
+        "properties": {
+          "idempotency_key": {
+            "type": "string",
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Idempotency Key"
+          },
+          "expected_version": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Expected Version"
+          },
+          "title": {
+            "type": "string",
+            "maxLength": 300,
+            "minLength": 1,
+            "title": "Title"
+          },
+          "due_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Due At"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "open",
+              "done",
+              "cancelled"
+            ],
+            "title": "Status"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "idempotency_key",
+          "expected_version",
+          "title",
+          "due_at",
+          "status"
+        ],
+        "title": "UpdateLifeTaskRequest",
+        "description": "Complete replacement of task-editable fields; null explicitly clears due_at."
+      },
       "UpdateProjectConfigurationRequest": {
         "properties": {
           "idempotency_key": {
@@ -6041,6 +10643,54 @@
         "title": "UpdateProjectConfigurationRequest",
         "description": "A complete replacement: empty static_rules clears rules in the new version only."
       },
+      "UpdateRoutineRequest": {
+        "properties": {
+          "idempotency_key": {
+            "type": "string",
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Idempotency Key"
+          },
+          "name": {
+            "type": "string",
+            "maxLength": 300,
+            "minLength": 1,
+            "title": "Name"
+          },
+          "interval_seconds": {
+            "type": "integer",
+            "maximum": 31536000.0,
+            "minimum": 60.0,
+            "title": "Interval Seconds"
+          },
+          "next_due_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Next Due At"
+          },
+          "enabled": {
+            "type": "boolean",
+            "title": "Enabled",
+            "default": true
+          },
+          "expected_version": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Expected Version"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "idempotency_key",
+          "name",
+          "interval_seconds",
+          "next_due_at",
+          "expected_version"
+        ],
+        "title": "UpdateRoutineRequest",
+        "description": "Replace scheduling fields; completed runs retain their original schedule snapshot."
+      },
       "ValidationError": {
         "properties": {
           "loc": {
@@ -6080,6 +10730,848 @@
           "type"
         ],
         "title": "ValidationError"
+      },
+      "WorkflowCompatibilityStatus": {
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "title": "Enabled"
+          },
+          "registered_adapters": {
+            "type": "integer",
+            "title": "Registered Adapters"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "enabled",
+          "registered_adapters"
+        ],
+        "title": "WorkflowCompatibilityStatus"
+      },
+      "WorkflowContractRef": {
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "workflow",
+              "step",
+              "action"
+            ],
+            "title": "Kind"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "version": {
+            "type": "string",
+            "title": "Version"
+          },
+          "digest": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Digest"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "kind",
+          "name",
+          "version"
+        ],
+        "title": "WorkflowContractRef"
+      },
+      "WorkflowDecision": {
+        "properties": {
+          "decision": {
+            "type": "string",
+            "enum": [
+              "approve",
+              "reject"
+            ],
+            "title": "Decision"
+          },
+          "actor": {
+            "type": "string",
+            "title": "Actor"
+          },
+          "reason": {
+            "type": "string",
+            "title": "Reason"
+          },
+          "decided_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Decided At"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "decision",
+          "actor",
+          "reason",
+          "decided_at"
+        ],
+        "title": "WorkflowDecision"
+      },
+      "WorkflowDefinition": {
+        "properties": {
+          "workflow": {
+            "type": "string",
+            "enum": [
+              "life.capture",
+              "life.review"
+            ],
+            "title": "Workflow"
+          },
+          "version": {
+            "type": "integer",
+            "const": 1,
+            "title": "Version",
+            "default": 1
+          },
+          "description": {
+            "type": "string",
+            "title": "Description"
+          },
+          "steps": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Steps"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "workflow",
+          "description",
+          "steps"
+        ],
+        "title": "WorkflowDefinition"
+      },
+      "WorkflowExecutionRecord": {
+        "properties": {
+          "workflow_run_id": {
+            "type": "string",
+            "title": "Workflow Run Id"
+          },
+          "project_id": {
+            "type": "string",
+            "title": "Project Id"
+          },
+          "definition": {
+            "$ref": "#/components/schemas/WorkflowContractRef"
+          },
+          "definition_snapshot": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "$ref": "#/components/schemas/JsonValue-Output"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Definition Snapshot"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "version": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Version"
+          },
+          "inputs": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JsonValue-Output"
+            },
+            "type": "object",
+            "title": "Inputs"
+          },
+          "result": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JsonValue-Output"
+            },
+            "type": "object",
+            "title": "Result"
+          },
+          "trigger": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JsonValue-Output"
+            },
+            "type": "object",
+            "title": "Trigger"
+          },
+          "recording_origin": {
+            "type": "string",
+            "enum": [
+              "native",
+              "legacy_snapshot"
+            ],
+            "title": "Recording Origin"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "completed_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completed At"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "workflow_run_id",
+          "project_id",
+          "definition",
+          "definition_snapshot",
+          "status",
+          "version",
+          "inputs",
+          "result",
+          "trigger",
+          "recording_origin",
+          "created_at",
+          "completed_at"
+        ],
+        "title": "WorkflowExecutionRecord"
+      },
+      "WorkflowExecutionView": {
+        "properties": {
+          "run": {
+            "$ref": "#/components/schemas/WorkflowExecutionRecord"
+          },
+          "steps": {
+            "items": {
+              "$ref": "#/components/schemas/WorkflowStepExecution"
+            },
+            "type": "array",
+            "title": "Steps"
+          },
+          "invocations": {
+            "items": {
+              "$ref": "#/components/schemas/WorkflowInvocationRecord"
+            },
+            "type": "array",
+            "title": "Invocations"
+          },
+          "waits": {
+            "items": {
+              "$ref": "#/components/schemas/WorkflowWaitRecord"
+            },
+            "type": "array",
+            "title": "Waits"
+          },
+          "compatibility": {
+            "$ref": "#/components/schemas/WorkflowCompatibilityStatus"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "run",
+          "steps",
+          "invocations",
+          "waits",
+          "compatibility"
+        ],
+        "title": "WorkflowExecutionView"
+      },
+      "WorkflowInvocationRecord": {
+        "properties": {
+          "invocation_id": {
+            "type": "string",
+            "title": "Invocation Id"
+          },
+          "workflow_run_id": {
+            "type": "string",
+            "title": "Workflow Run Id"
+          },
+          "step_execution_id": {
+            "type": "string",
+            "title": "Step Execution Id"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "local",
+              "connector"
+            ],
+            "title": "Kind"
+          },
+          "action": {
+            "$ref": "#/components/schemas/WorkflowContractRef"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "prepared",
+              "completed",
+              "failed",
+              "unknown"
+            ],
+            "title": "Status"
+          },
+          "idempotency_key": {
+            "type": "string",
+            "title": "Idempotency Key"
+          },
+          "inputs": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JsonValue-Output"
+            },
+            "type": "object",
+            "title": "Inputs"
+          },
+          "output": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "$ref": "#/components/schemas/JsonValue-Output"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Output"
+          },
+          "external_operation_ref": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "External Operation Ref"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "recorded_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Recorded At"
+          },
+          "completed_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completed At"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "invocation_id",
+          "workflow_run_id",
+          "step_execution_id",
+          "kind",
+          "action",
+          "status",
+          "idempotency_key",
+          "inputs",
+          "output",
+          "external_operation_ref",
+          "error",
+          "recorded_at",
+          "completed_at"
+        ],
+        "title": "WorkflowInvocationRecord"
+      },
+      "WorkflowResponse_LifeRoutine_": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/LifeRoutine"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "WorkflowResponse[LifeRoutine]"
+      },
+      "WorkflowResponse_LifeTask_": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/LifeTask"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "WorkflowResponse[LifeTask]"
+      },
+      "WorkflowResponse_RoutineSchedulerStatus_": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/RoutineSchedulerStatus"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "WorkflowResponse[RoutineSchedulerStatus]"
+      },
+      "WorkflowResponse_WorkflowExecutionView_": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/WorkflowExecutionView"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "WorkflowResponse[WorkflowExecutionView]"
+      },
+      "WorkflowResponse_WorkflowRun_": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/WorkflowRun"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "WorkflowResponse[WorkflowRun]"
+      },
+      "WorkflowResponse_list_LifeRoutine__": {
+        "properties": {
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/LifeRoutine"
+            },
+            "type": "array",
+            "title": "Data"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "WorkflowResponse[list[LifeRoutine]]"
+      },
+      "WorkflowResponse_list_LifeTask__": {
+        "properties": {
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/LifeTask"
+            },
+            "type": "array",
+            "title": "Data"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "WorkflowResponse[list[LifeTask]]"
+      },
+      "WorkflowResponse_list_WorkflowDefinition__": {
+        "properties": {
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/WorkflowDefinition"
+            },
+            "type": "array",
+            "title": "Data"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "WorkflowResponse[list[WorkflowDefinition]]"
+      },
+      "WorkflowResponse_list_WorkflowRun__": {
+        "properties": {
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/WorkflowRun"
+            },
+            "type": "array",
+            "title": "Data"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "WorkflowResponse[list[WorkflowRun]]"
+      },
+      "WorkflowRun": {
+        "properties": {
+          "workflow_run_id": {
+            "type": "string",
+            "title": "Workflow Run Id"
+          },
+          "project_id": {
+            "type": "string",
+            "title": "Project Id"
+          },
+          "workflow": {
+            "type": "string",
+            "enum": [
+              "life.capture",
+              "life.review"
+            ],
+            "title": "Workflow"
+          },
+          "workflow_version": {
+            "type": "integer",
+            "const": 1,
+            "title": "Workflow Version",
+            "default": 1
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "awaiting_confirmation",
+              "completed",
+              "rejected"
+            ],
+            "title": "Status"
+          },
+          "version": {
+            "type": "integer",
+            "title": "Version"
+          },
+          "source_text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Text"
+          },
+          "proposed_tasks": {
+            "items": {
+              "$ref": "#/components/schemas/LifeTaskInput"
+            },
+            "type": "array",
+            "title": "Proposed Tasks"
+          },
+          "task_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Task Ids"
+          },
+          "review": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LifeReview"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "decision": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/WorkflowDecision"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "routine_snapshot": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LifeRoutine"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "scheduled_for": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scheduled For"
+          },
+          "coalesced_occurrences": {
+            "type": "integer",
+            "title": "Coalesced Occurrences"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "completed_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completed At"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "workflow_run_id",
+          "project_id",
+          "workflow",
+          "status",
+          "version",
+          "source_text",
+          "proposed_tasks",
+          "task_ids",
+          "review",
+          "decision",
+          "routine_snapshot",
+          "scheduled_for",
+          "coalesced_occurrences",
+          "created_at",
+          "completed_at"
+        ],
+        "title": "WorkflowRun"
+      },
+      "WorkflowStepExecution": {
+        "properties": {
+          "step_execution_id": {
+            "type": "string",
+            "title": "Step Execution Id"
+          },
+          "workflow_run_id": {
+            "type": "string",
+            "title": "Workflow Run Id"
+          },
+          "node_id": {
+            "type": "string",
+            "title": "Node Id"
+          },
+          "execution_index": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Execution Index"
+          },
+          "contract": {
+            "$ref": "#/components/schemas/WorkflowContractRef"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "completed",
+              "waiting",
+              "skipped"
+            ],
+            "title": "Status"
+          },
+          "inputs": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JsonValue-Output"
+            },
+            "type": "object",
+            "title": "Inputs"
+          },
+          "output": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "$ref": "#/components/schemas/JsonValue-Output"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Output"
+          },
+          "recorded_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Recorded At"
+          },
+          "completed_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completed At"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "step_execution_id",
+          "workflow_run_id",
+          "node_id",
+          "execution_index",
+          "contract",
+          "status",
+          "inputs",
+          "output",
+          "recorded_at",
+          "completed_at"
+        ],
+        "title": "WorkflowStepExecution"
+      },
+      "WorkflowWaitRecord": {
+        "properties": {
+          "wait_id": {
+            "type": "string",
+            "title": "Wait Id"
+          },
+          "workflow_run_id": {
+            "type": "string",
+            "title": "Workflow Run Id"
+          },
+          "step_execution_id": {
+            "type": "string",
+            "title": "Step Execution Id"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "human",
+              "time",
+              "event"
+            ],
+            "title": "Kind"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "waiting",
+              "resolved"
+            ],
+            "title": "Status"
+          },
+          "condition": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JsonValue-Output"
+            },
+            "type": "object",
+            "title": "Condition"
+          },
+          "resolution": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "$ref": "#/components/schemas/JsonValue-Output"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resolution"
+          },
+          "recorded_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Recorded At"
+          },
+          "resolved_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resolved At"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "wait_id",
+          "workflow_run_id",
+          "step_execution_id",
+          "kind",
+          "status",
+          "condition",
+          "resolution",
+          "recorded_at",
+          "resolved_at"
+        ],
+        "title": "WorkflowWaitRecord"
       }
     }
   }

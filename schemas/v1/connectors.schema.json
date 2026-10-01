@@ -1,0 +1,825 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.ehai.local/v1/connectors.schema.json",
+  "$defs": {
+    "ClaimConnectorCallRequest": {
+      "properties": {
+        "protocol_version": {
+          "type": "integer",
+          "const": 1,
+          "title": "Protocol Version",
+          "default": 1
+        },
+        "worker_id": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9_.-]{1,100}$",
+          "title": "Worker Id"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "worker_id"
+      ],
+      "title": "ClaimConnectorCallRequest"
+    },
+    "ConnectorAction_Input": {
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9_.-]{1,100}$",
+          "title": "Name"
+        },
+        "version": {
+          "type": "string",
+          "maxLength": 300,
+          "minLength": 1,
+          "title": "Version"
+        },
+        "description": {
+          "type": "string",
+          "maxLength": 300,
+          "minLength": 1,
+          "title": "Description"
+        },
+        "read_only": {
+          "type": "boolean",
+          "title": "Read Only"
+        },
+        "input_schema": {
+          "additionalProperties": {
+            "$ref": "commands.schema.json#/$defs/JsonValue"
+          },
+          "type": "object",
+          "title": "Input Schema"
+        },
+        "output_schema": {
+          "additionalProperties": {
+            "$ref": "commands.schema.json#/$defs/JsonValue"
+          },
+          "type": "object",
+          "title": "Output Schema"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "name",
+        "version",
+        "description",
+        "read_only",
+        "input_schema",
+        "output_schema"
+      ],
+      "title": "ConnectorAction"
+    },
+    "ConnectorAction_Output": {
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9_.-]{1,100}$",
+          "title": "Name"
+        },
+        "version": {
+          "type": "string",
+          "maxLength": 300,
+          "minLength": 1,
+          "title": "Version"
+        },
+        "description": {
+          "type": "string",
+          "maxLength": 300,
+          "minLength": 1,
+          "title": "Description"
+        },
+        "read_only": {
+          "type": "boolean",
+          "title": "Read Only"
+        },
+        "input_schema": {
+          "additionalProperties": {
+            "$ref": "commands.schema.json#/$defs/JsonValue"
+          },
+          "type": "object",
+          "title": "Input Schema"
+        },
+        "output_schema": {
+          "additionalProperties": {
+            "$ref": "commands.schema.json#/$defs/JsonValue"
+          },
+          "type": "object",
+          "title": "Output Schema"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "name",
+        "version",
+        "description",
+        "read_only",
+        "input_schema",
+        "output_schema"
+      ],
+      "title": "ConnectorAction"
+    },
+    "ConnectorCall": {
+      "properties": {
+        "call_id": {
+          "type": "string",
+          "title": "Call Id"
+        },
+        "connector_id": {
+          "type": "string",
+          "title": "Connector Id"
+        },
+        "project_id": {
+          "type": "string",
+          "title": "Project Id"
+        },
+        "action": {
+          "$ref": "#/$defs/ConnectorAction_Output"
+        },
+        "inputs": {
+          "additionalProperties": {
+            "$ref": "commands.schema.json#/$defs/JsonValue"
+          },
+          "type": "object",
+          "title": "Inputs"
+        },
+        "write_authorized": {
+          "type": "boolean",
+          "title": "Write Authorized"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "queued",
+            "claimed",
+            "completed",
+            "failed",
+            "unknown"
+          ],
+          "title": "Status"
+        },
+        "output": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "$ref": "commands.schema.json#/$defs/JsonValue"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Output"
+        },
+        "error": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Error"
+        },
+        "external_operation_ref": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "External Operation Ref"
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time",
+          "title": "Created At"
+        },
+        "updated_at": {
+          "type": "string",
+          "format": "date-time",
+          "title": "Updated At"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "call_id",
+        "connector_id",
+        "project_id",
+        "action",
+        "inputs",
+        "write_authorized",
+        "status",
+        "output",
+        "error",
+        "external_operation_ref",
+        "created_at",
+        "updated_at"
+      ],
+      "title": "ConnectorCall"
+    },
+    "ConnectorClaim": {
+      "properties": {
+        "protocol_version": {
+          "type": "integer",
+          "const": 1,
+          "title": "Protocol Version",
+          "default": 1
+        },
+        "connection": {
+          "$ref": "#/$defs/ConnectorConnection"
+        },
+        "call": {
+          "$ref": "#/$defs/ConnectorCall"
+        },
+        "claim_token": {
+          "type": "string",
+          "title": "Claim Token"
+        },
+        "mode": {
+          "type": "string",
+          "enum": [
+            "execute",
+            "reconcile"
+          ],
+          "title": "Mode"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "connection",
+        "call",
+        "claim_token",
+        "mode"
+      ],
+      "title": "ConnectorClaim"
+    },
+    "ConnectorConnection": {
+      "properties": {
+        "connector_id": {
+          "type": "string",
+          "title": "Connector Id"
+        },
+        "project_id": {
+          "type": "string",
+          "title": "Project Id"
+        },
+        "name": {
+          "type": "string",
+          "title": "Name"
+        },
+        "manifest": {
+          "$ref": "#/$defs/ConnectorManifest_Output"
+        },
+        "configuration": {
+          "additionalProperties": {
+            "$ref": "commands.schema.json#/$defs/JsonValue"
+          },
+          "type": "object",
+          "title": "Configuration"
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time",
+          "title": "Created At"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "connector_id",
+        "project_id",
+        "name",
+        "manifest",
+        "configuration",
+        "created_at"
+      ],
+      "title": "ConnectorConnection"
+    },
+    "ConnectorEventReceipt": {
+      "properties": {
+        "connector_id": {
+          "type": "string",
+          "title": "Connector Id"
+        },
+        "project_id": {
+          "type": "string",
+          "title": "Project Id"
+        },
+        "event_id": {
+          "type": "string",
+          "title": "Event Id"
+        },
+        "core_event_id": {
+          "type": "string",
+          "title": "Core Event Id"
+        },
+        "received_at": {
+          "type": "string",
+          "format": "date-time",
+          "title": "Received At"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "connector_id",
+        "project_id",
+        "event_id",
+        "core_event_id",
+        "received_at"
+      ],
+      "title": "ConnectorEventReceipt"
+    },
+    "ConnectorEventType_Input": {
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9_.-]{1,100}$",
+          "title": "Name"
+        },
+        "version": {
+          "type": "string",
+          "maxLength": 300,
+          "minLength": 1,
+          "title": "Version"
+        },
+        "data_schema": {
+          "additionalProperties": {
+            "$ref": "commands.schema.json#/$defs/JsonValue"
+          },
+          "type": "object",
+          "title": "Data Schema"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "name",
+        "version",
+        "data_schema"
+      ],
+      "title": "ConnectorEventType"
+    },
+    "ConnectorEventType_Output": {
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9_.-]{1,100}$",
+          "title": "Name"
+        },
+        "version": {
+          "type": "string",
+          "maxLength": 300,
+          "minLength": 1,
+          "title": "Version"
+        },
+        "data_schema": {
+          "additionalProperties": {
+            "$ref": "commands.schema.json#/$defs/JsonValue"
+          },
+          "type": "object",
+          "title": "Data Schema"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "name",
+        "version",
+        "data_schema"
+      ],
+      "title": "ConnectorEventType"
+    },
+    "ConnectorManifest_Input": {
+      "properties": {
+        "protocol_version": {
+          "type": "integer",
+          "const": 1,
+          "title": "Protocol Version",
+          "default": 1
+        },
+        "connector_type": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9_.-]{1,100}$",
+          "title": "Connector Type"
+        },
+        "version": {
+          "type": "string",
+          "maxLength": 300,
+          "minLength": 1,
+          "title": "Version"
+        },
+        "actions": {
+          "items": {
+            "$ref": "#/$defs/ConnectorAction_Input"
+          },
+          "type": "array",
+          "maxItems": 50,
+          "minItems": 1,
+          "title": "Actions"
+        },
+        "events": {
+          "items": {
+            "$ref": "#/$defs/ConnectorEventType_Input"
+          },
+          "type": "array",
+          "maxItems": 50,
+          "title": "Events"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "connector_type",
+        "version",
+        "actions"
+      ],
+      "title": "ConnectorManifest"
+    },
+    "ConnectorManifest_Output": {
+      "properties": {
+        "protocol_version": {
+          "type": "integer",
+          "const": 1,
+          "title": "Protocol Version",
+          "default": 1
+        },
+        "connector_type": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9_.-]{1,100}$",
+          "title": "Connector Type"
+        },
+        "version": {
+          "type": "string",
+          "maxLength": 300,
+          "minLength": 1,
+          "title": "Version"
+        },
+        "actions": {
+          "items": {
+            "$ref": "#/$defs/ConnectorAction_Output"
+          },
+          "type": "array",
+          "maxItems": 50,
+          "minItems": 1,
+          "title": "Actions"
+        },
+        "events": {
+          "items": {
+            "$ref": "#/$defs/ConnectorEventType_Output"
+          },
+          "type": "array",
+          "maxItems": 50,
+          "title": "Events"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "connector_type",
+        "version",
+        "actions"
+      ],
+      "title": "ConnectorManifest"
+    },
+    "ConnectorResponse_ConnectorCall_": {
+      "properties": {
+        "data": {
+          "$ref": "#/$defs/ConnectorCall"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "data"
+      ],
+      "title": "ConnectorResponse[ConnectorCall]"
+    },
+    "ConnectorResponse_ConnectorConnection_": {
+      "properties": {
+        "data": {
+          "$ref": "#/$defs/ConnectorConnection"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "data"
+      ],
+      "title": "ConnectorResponse[ConnectorConnection]"
+    },
+    "ConnectorResponse_ConnectorEventReceipt_": {
+      "properties": {
+        "data": {
+          "$ref": "#/$defs/ConnectorEventReceipt"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "data"
+      ],
+      "title": "ConnectorResponse[ConnectorEventReceipt]"
+    },
+    "ConnectorResponse_Union_ConnectorClaim__NoneType__": {
+      "properties": {
+        "data": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ConnectorClaim"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "data"
+      ],
+      "title": "ConnectorResponse[Union[ConnectorClaim, NoneType]]"
+    },
+    "ConnectorResponse_list_ConnectorCall__": {
+      "properties": {
+        "data": {
+          "items": {
+            "$ref": "#/$defs/ConnectorCall"
+          },
+          "type": "array",
+          "title": "Data"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "data"
+      ],
+      "title": "ConnectorResponse[list[ConnectorCall]]"
+    },
+    "ConnectorResponse_list_ConnectorConnection__": {
+      "properties": {
+        "data": {
+          "items": {
+            "$ref": "#/$defs/ConnectorConnection"
+          },
+          "type": "array",
+          "title": "Data"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "data"
+      ],
+      "title": "ConnectorResponse[list[ConnectorConnection]]"
+    },
+    "InvokeConnectorRequest": {
+      "properties": {
+        "idempotency_key": {
+          "type": "string",
+          "maxLength": 300,
+          "minLength": 1,
+          "title": "Idempotency Key"
+        },
+        "action": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9_.-]{1,100}$",
+          "title": "Action"
+        },
+        "action_version": {
+          "type": "string",
+          "maxLength": 300,
+          "minLength": 1,
+          "title": "Action Version"
+        },
+        "inputs": {
+          "additionalProperties": {
+            "$ref": "commands.schema.json#/$defs/JsonValue"
+          },
+          "type": "object",
+          "title": "Inputs"
+        },
+        "authorize_write": {
+          "type": "boolean",
+          "title": "Authorize Write",
+          "default": false
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "idempotency_key",
+        "action",
+        "action_version",
+        "inputs"
+      ],
+      "title": "InvokeConnectorRequest"
+    },
+    "ReconcileConnectorCallRequest": {
+      "properties": {
+        "idempotency_key": {
+          "type": "string",
+          "maxLength": 300,
+          "minLength": 1,
+          "title": "Idempotency Key"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "idempotency_key"
+      ],
+      "title": "ReconcileConnectorCallRequest"
+    },
+    "RegisterConnectorRequest": {
+      "properties": {
+        "idempotency_key": {
+          "type": "string",
+          "maxLength": 300,
+          "minLength": 1,
+          "title": "Idempotency Key"
+        },
+        "name": {
+          "type": "string",
+          "maxLength": 300,
+          "minLength": 1,
+          "title": "Name"
+        },
+        "manifest": {
+          "$ref": "#/$defs/ConnectorManifest_Input"
+        },
+        "configuration": {
+          "additionalProperties": {
+            "$ref": "commands.schema.json#/$defs/JsonValue"
+          },
+          "type": "object",
+          "title": "Configuration"
+        },
+        "credential_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Credential Sha256"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "idempotency_key",
+        "name",
+        "manifest",
+        "configuration",
+        "credential_sha256"
+      ],
+      "title": "RegisterConnectorRequest"
+    },
+    "ReportConnectorResultRequest": {
+      "properties": {
+        "protocol_version": {
+          "type": "integer",
+          "const": 1,
+          "title": "Protocol Version",
+          "default": 1
+        },
+        "delivery_id": {
+          "type": "string",
+          "maxLength": 300,
+          "minLength": 1,
+          "title": "Delivery Id"
+        },
+        "call_id": {
+          "type": "string",
+          "title": "Call Id"
+        },
+        "claim_token": {
+          "type": "string",
+          "title": "Claim Token"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "completed",
+            "failed",
+            "unknown"
+          ],
+          "title": "Status"
+        },
+        "output": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "$ref": "commands.schema.json#/$defs/JsonValue"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Output"
+        },
+        "error": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 2000
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Error"
+        },
+        "external_operation_ref": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 2000
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "External Operation Ref"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "delivery_id",
+        "call_id",
+        "claim_token",
+        "status"
+      ],
+      "title": "ReportConnectorResultRequest"
+    },
+    "SubmitConnectorEventRequest": {
+      "properties": {
+        "protocol_version": {
+          "type": "integer",
+          "const": 1,
+          "title": "Protocol Version",
+          "default": 1
+        },
+        "event_id": {
+          "type": "string",
+          "maxLength": 300,
+          "minLength": 1,
+          "title": "Event Id"
+        },
+        "event_type": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9_.-]{1,100}$",
+          "title": "Event Type"
+        },
+        "schema_version": {
+          "type": "string",
+          "maxLength": 300,
+          "minLength": 1,
+          "title": "Schema Version"
+        },
+        "occurred_at": {
+          "type": "string",
+          "format": "date-time",
+          "title": "Occurred At"
+        },
+        "subject": {
+          "type": "string",
+          "maxLength": 300,
+          "minLength": 1,
+          "title": "Subject"
+        },
+        "data": {
+          "additionalProperties": {
+            "$ref": "commands.schema.json#/$defs/JsonValue"
+          },
+          "type": "object",
+          "title": "Data"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "event_id",
+        "event_type",
+        "schema_version",
+        "occurred_at",
+        "subject",
+        "data"
+      ],
+      "title": "SubmitConnectorEventRequest"
+    }
+  }
+}

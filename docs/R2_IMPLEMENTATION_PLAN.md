@@ -239,3 +239,70 @@ get_request_schema 按管理/核心工具选择正确 Schema；无隐式批准�
 修复后的原任务接续完成，又在相同两个工作区同时启动一对正常只读 Run，两边均首次通过
 真实 Worker/Reviewer 和明确人工 Gate。没有放宽工具契约或审批。完整失败、修复、用量和
 未覆盖范围见 P3 实施记录；本次未新增永久测试，也不是唯一产品 E2E。
+
+## 2026-09-24：固定 Pi 回退工具契约
+
+新增 read_routing_context、read_routing_facts、finish_routing_fallback，组成只读 assistance
+角色，复用生产 PiRoleRunner，不授予发布或业务写权限。已贯穿角色 ToolSet、提示词、
+参数校验、工具返回、原生结束确认及请求/候选持久化。具体行为与证据见
+[P4 固定回退记录](P4_IMPLEMENTATION_PLAN.md)。
+
+真实路径发现 Pi 0.85.1 的严格 JSON Schema 不接受 `$defs`，也不接受 object|null union，
+两次均在上游调用前拒绝。改为必填 nullable 标量字段，候选内容仍在处理器组合成严格模型；
+不关闭 strict、不添加 Provider 回退、不使用 uniqueItems。安装版本的严格转换函数接受后，
+真实 Go deepseek-v4.1-flash 接受并执行读取/结束工具，回答和候选由宿主确认后持久化。
+随后发现 needs_human 的语义和笼统错误提示导致重复无效提交；已澄清当前请求与所列对象
+的状态区别，并返回具体校验原因。保留失败/中断事实，模型后续自行提交有效结果。
+
+诊断和实验脚本在仓库外；没有永久工具测试套件。新增 MCP 配置入口随正常协议注册，
+本轮真实模型证据覆盖上述 Pi 工具，不等于所有 MCP 工具经过模型调用验收。
+
+## 2026-09-25：独立 Project 工程转交契约
+
+finish_routing_fallback 新增必填 nullable 字符串 project_change；null 表示不转交，
+非空必须 needs_human=true、候选字段及 change_reason=null，并存在宿主绑定的目标。
+read_routing_context 提供领取时的目标快照；Pi 无权选择任意 API/Project/路径。
+处理器校验、原生结束确认、持久转交意图和目标 Goal/规划讨论消费一并接通。
+
+真实 Jev→Pi→目标 Goal 已验证该工具字段被 Provider 接受、实际提交并持久消费。
+目标 Planner 首轮过度调查触及实验调用护栏；补充调查范围及 finish_plan 草稿语义后，
+原 Goal 的第二轮仍因大量读取而耗尽可用输出空间（末请求 max_tokens=1、原生length结束），
+未提交草稿。两次失败均保留；提示调整尚无收敛成功证据，代码修改闭环未验收。
+具体证据与限制见 P4 实施记录。
+没有关闭 strict、替换模型、自动批准或添加永久诊断测试。
+
+后续最小项目复测发现模型反复将 nullable candidate_target 写成字符串 "null"，且在工程
+转交时复制现有配方成为候选；核心与原生校验均拒绝。只补充提示词中的真实 JSON null
+字段示例，不改变类型/权限。修复后正式 Jev→Pi→目标草稿链路通过，工程目标仍由内部Pi
+产生；未经授权的命令验收方案由模拟用户拒绝后交回Planner修订，详情见P4后续复测记录。
+修订暴露模型误解未批准base_checks的状态，用户经正常criteria字段明确仅人工条件，
+未代改图。两次较长调用出现流读取超时，一次出现上游RemoteProtocolError；小请求探测
+正常。故本轮仅验收到工程转交/草稿，未批准或执行；缺失用量不按零消耗计。
+
+## 2026-09-27：Pi Planner 超时配置接线
+
+继续诊断长响应中断时发现：build_service 把 planner_timeout_seconds 传给旧 Codex
+Planner，却没有传给 PiPlannerAdapter；后者也没有整体调用期限。因此既有配置的300秒
+并未约束 Pi 规划，在移除外部观测代理之后真实调用超过该时限仍为running。
+这纠正此前试用记录中“角色300秒边界已生效”的判断；它解释等待为何不收尾，不能证明
+上游停止传输数据的根因。原悬挂调用终止所属Pi子进程后保存失败，没有批准或Run。
+
+现在将现有配置传给 Pi Planner，并包住生成/讨论/过程草稿使用的同一角色调用。超时取消
+通过既有 Pi RPC 清理路径关闭所属子进程，返回包含时限的错误，保留未完成事实，不自动
+重放。只改超时接线，不改工具Schema、权限、Gate或原生压缩；过程边界独立Reviewer的
+时限不是本轮修复范围。
+
+仓库外 failure-driven 诊断通过正常API启动实际Pi，对接只保持连接而不返回模型输出的
+本地端点：设置8秒，8.11秒返回409，保存PlanningTurnFailed；同key重复提交仍409，
+上游端点请求数保持1，没有第二次模型派发。诊断不构造计划或回答，不是Provider业务
+完成证据；无永久测试。实际Go路径及传输对照另见P4实施记录。
+
+修复后正常API的真实Pi/Go调用完成读取/设计工具后再次等待，300.064秒按配置失败，
+原生aborted、持久错误明确、所属进程退出，不再无限等待。这验证配置到真实角色取消的
+路径，不代表上游传输停顿或业务修改闭环已解决。Ruff/format/mypy及diff检查通过。
+
+后续同Goal复测由用户要求更简洁的设计/节点说明，52.6秒完成修订；真实Pi Worker调用
+workspace_write修改单文件，独立检查/Reviewer使用只读工具并提交成果，外部行为核验
+与明确human决定后Run completed。共23个带用量的Provider响应、318677报告token。
+没有代写内部计划/代码、放宽命令权限或新增永久测试；两条重复human Check原样逐项
+验收并记为待处理问题。完整链路及单次成功的限制见P4实施记录。

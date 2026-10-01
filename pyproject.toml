@@ -15,6 +15,7 @@ dependencies = [
     "jsonschema>=4.25,<5",
     "mcp>=1.28,<2",
     "httpx>=0.28,<1",
+    "google-auth-oauthlib>=1.2,<2",
 ]
 
 [project.scripts]
@@ -22,6 +23,8 @@ ehai = "ehai.interfaces.cli:main"
 ehai-api = "ehai.interfaces.runtime:main"
 ehai-mcp = "ehai.interfaces.mcp_server:main"
 ehai-manager = "ehai.interfaces.workspace_api:main"
+ehai-google-calendar = "ehai.connectors.google_calendar_cli:main"
+ehai-jev = "ehai.connectors.jev:main"
 
 [dependency-groups]
 dev = [

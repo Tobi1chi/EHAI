@@ -13,6 +13,9 @@ const documentNames = [
   "commands.schema.json",
   "notes.schema.json",
   "project-configuration.schema.json",
+  "workflows.schema.json",
+  "connectors.schema.json",
+  "routing.schema.json",
   "workspace-manager.schema.json",
 ];
 
@@ -41,6 +44,17 @@ for (const operationId of [
 }
 
 const requiredOperations = [
+  "listWorkflows", "startWorkflow", "listWorkflowRuns", "getWorkflowRun", "decideWorkflow",
+  "listLifeTasks", "getLifeTask", "updateLifeTask", "createRoutine", "listRoutines",
+  "getRoutine", "updateRoutine", "getRoutineScheduler",
+  "getWorkflowExecution",
+  "registerConnector", "listConnectors", "getConnector", "invokeConnector",
+  "listConnectorCalls", "getConnectorCall",
+  "reconcileConnectorCall",
+  "createRoutingLab", "getRoutingLab", "submitRoutingRequest", "listRoutingRequests",
+  "getRoutingRequest", "advanceRoutingLab", "resolveRoutingRequest", "recordRoutingFeedback",
+  "proposeRoutingRecipe", "startRoutingReplay", "getRoutingReplay", "publishRoutingRecipe",
+  "pauseRoutingRecipe", "getRoutingMetrics",
   "getPlannerCapacity",
   "createNote", "listNotes", "getNote", "addNoteMessage", "decideNote",
   "registerEventConsumer", "getEventConsumer", "readConsumerEvents", "acknowledgeConsumerEvents",
@@ -243,6 +257,154 @@ export class EhaiApiClient {
 
   getPlannerCapacity(): Promise<PlannerCapacityResponse> {
     return this.request("/planning/capacity", "GET");
+  }
+
+  listWorkflows(): Promise<{ data: WorkflowDefinition[] }> {
+    return this.request("/workflows", "GET");
+  }
+
+  createRoutingLab(projectId: string, request: CreateRoutingLabRequest): Promise<{ data: RoutingLabView }> {
+    return this.request("/projects/" + encodeURIComponent(projectId) + "/routing-labs", "POST", request);
+  }
+
+  getRoutingLab(labId: string): Promise<{ data: RoutingLabView }> {
+    return this.request("/routing-labs/" + encodeURIComponent(labId), "GET");
+  }
+
+  configureRoutingFallback(labId: string, request: ConfigureRoutingFallbackRequest): Promise<{ data: RoutingLabView }> {
+    return this.request("/routing-labs/" + encodeURIComponent(labId) + "/fallback", "POST", request);
+  }
+
+  configureRoutingProject(labId: string, request: ConfigureRoutingProjectRequest): Promise<{ data: RoutingLabView }> {
+    return this.request("/routing-labs/" + encodeURIComponent(labId) + "/change-project", "POST", request);
+  }
+
+  submitRoutingRequest(labId: string, request: SubmitRoutingRequest): Promise<{ data: RoutingRequest }> {
+    return this.request("/routing-labs/" + encodeURIComponent(labId) + "/requests", "POST", request);
+  }
+
+  listRoutingRequests(labId: string): Promise<{ data: RoutingRequest[] }> {
+    return this.request("/routing-labs/" + encodeURIComponent(labId) + "/requests", "GET");
+  }
+
+  getRoutingRequest(requestId: string): Promise<{ data: RoutingRequest }> {
+    return this.request("/routing-requests/" + encodeURIComponent(requestId), "GET");
+  }
+
+  advanceRoutingLab(labId: string): Promise<{ data: RoutingLabMetrics }> {
+    return this.request("/routing-labs/" + encodeURIComponent(labId) + "/advance", "POST", {});
+  }
+
+  resolveRoutingRequest(requestId: string, request: ResolveRoutingRequest): Promise<{ data: RoutingRequest }> {
+    return this.request("/routing-requests/" + encodeURIComponent(requestId) + "/resolve", "POST", request);
+  }
+
+  recordRoutingFeedback(requestId: string, request: RoutingFeedbackRequest): Promise<{ data: RoutingRequest }> {
+    return this.request("/routing-requests/" + encodeURIComponent(requestId) + "/feedback", "POST", request);
+  }
+
+  proposeRoutingRecipe(labId: string, request: ProposeRoutingRecipeRequest): Promise<{ data: RoutingRecipe }> {
+    return this.request("/routing-labs/" + encodeURIComponent(labId) + "/candidates", "POST", request);
+  }
+
+  startRoutingReplay(labId: string, request: StartRoutingReplayRequest): Promise<{ data: RoutingReplay }> {
+    return this.request("/routing-labs/" + encodeURIComponent(labId) + "/replays", "POST", request);
+  }
+
+  getRoutingReplay(replayId: string): Promise<{ data: RoutingReplay }> {
+    return this.request("/routing-replays/" + encodeURIComponent(replayId), "GET");
+  }
+
+  publishRoutingRecipe(recipeId: string, request: PublishRoutingRecipeRequest): Promise<{ data: RoutingRecipe }> {
+    return this.request("/routing-recipes/" + encodeURIComponent(recipeId) + "/publish", "POST", request);
+  }
+
+  pauseRoutingRecipe(recipeId: string, request: PauseRoutingRecipeRequest): Promise<{ data: RoutingRecipe }> {
+    return this.request("/routing-recipes/" + encodeURIComponent(recipeId) + "/pause", "POST", request);
+  }
+
+  getRoutingMetrics(labId: string): Promise<{ data: RoutingLabMetrics }> {
+    return this.request("/routing-labs/" + encodeURIComponent(labId) + "/metrics", "GET");
+  }
+
+  registerConnector(projectId: string, request: RegisterConnectorRequest): Promise<{ data: ConnectorConnection }> {
+    return this.request("/projects/" + encodeURIComponent(projectId) + "/connectors", "POST", request);
+  }
+
+  listConnectors(projectId: string): Promise<{ data: ConnectorConnection[] }> {
+    return this.request("/projects/" + encodeURIComponent(projectId) + "/connectors", "GET");
+  }
+
+  getConnector(connectorId: string): Promise<{ data: ConnectorConnection }> {
+    return this.request("/connectors/" + encodeURIComponent(connectorId), "GET");
+  }
+
+  invokeConnector(connectorId: string, request: InvokeConnectorRequest): Promise<{ data: ConnectorCall }> {
+    return this.request("/connectors/" + encodeURIComponent(connectorId) + "/calls", "POST", request);
+  }
+
+  listConnectorCalls(connectorId: string): Promise<{ data: ConnectorCall[] }> {
+    return this.request("/connectors/" + encodeURIComponent(connectorId) + "/calls", "GET");
+  }
+
+  getConnectorCall(callId: string): Promise<{ data: ConnectorCall }> {
+    return this.request("/connector-calls/" + encodeURIComponent(callId), "GET");
+  }
+
+  reconcileConnectorCall(callId: string, request: ReconcileConnectorCallRequest): Promise<{ data: ConnectorCall }> {
+    return this.request("/connector-calls/" + encodeURIComponent(callId) + "/reconcile", "POST", request);
+  }
+
+  startWorkflow(projectId: string, request: StartWorkflowRequest): Promise<{ data: WorkflowRun }> {
+    return this.request("/projects/" + encodeURIComponent(projectId) + "/workflow-runs", "POST", request);
+  }
+
+  listWorkflowRuns(projectId: string): Promise<{ data: WorkflowRun[] }> {
+    return this.request("/projects/" + encodeURIComponent(projectId) + "/workflow-runs", "GET");
+  }
+
+  getWorkflowRun(workflowRunId: string): Promise<{ data: WorkflowRun }> {
+    return this.request("/workflow-runs/" + encodeURIComponent(workflowRunId), "GET");
+  }
+
+  getWorkflowExecution(workflowRunId: string): Promise<{ data: WorkflowExecutionView }> {
+    return this.request("/workflow-runs/" + encodeURIComponent(workflowRunId) + "/execution", "GET");
+  }
+
+  decideWorkflow(workflowRunId: string, request: DecideWorkflowRequest): Promise<{ data: WorkflowRun }> {
+    return this.request("/workflow-runs/" + encodeURIComponent(workflowRunId) + "/decisions", "POST", request);
+  }
+
+  listLifeTasks(projectId: string): Promise<{ data: LifeTask[] }> {
+    return this.request("/projects/" + encodeURIComponent(projectId) + "/life-tasks", "GET");
+  }
+
+  getLifeTask(taskId: string): Promise<{ data: LifeTask }> {
+    return this.request("/life-tasks/" + encodeURIComponent(taskId), "GET");
+  }
+
+  updateLifeTask(taskId: string, request: UpdateLifeTaskRequest): Promise<{ data: LifeTask }> {
+    return this.request("/life-tasks/" + encodeURIComponent(taskId), "POST", request);
+  }
+
+  createRoutine(projectId: string, request: CreateRoutineRequest): Promise<{ data: LifeRoutine }> {
+    return this.request("/projects/" + encodeURIComponent(projectId) + "/routines", "POST", request);
+  }
+
+  listRoutines(projectId: string): Promise<{ data: LifeRoutine[] }> {
+    return this.request("/projects/" + encodeURIComponent(projectId) + "/routines", "GET");
+  }
+
+  getRoutine(routineId: string): Promise<{ data: LifeRoutine }> {
+    return this.request("/routines/" + encodeURIComponent(routineId), "GET");
+  }
+
+  updateRoutine(routineId: string, request: UpdateRoutineRequest): Promise<{ data: LifeRoutine }> {
+    return this.request("/routines/" + encodeURIComponent(routineId), "POST", request);
+  }
+
+  getRoutineScheduler(): Promise<{ data: RoutineSchedulerStatus }> {
+    return this.request("/routines/scheduler", "GET");
   }
 
   createNote(request: CreateNoteRequest): Promise<NoteResponse> {

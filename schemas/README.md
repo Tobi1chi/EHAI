@@ -14,6 +14,9 @@ CLI/MCP 参数和生成 Client 必须按各自调用边界与契约一致，内�
 | [http-api.openapi.json](v1/http-api.openapi.json) | HTTP 路由、operation ID、请求、响应和 SSE |
 | [notes.schema.json](v1/notes.schema.json) | 持久便签、消息、明确决定及其来源/结果 |
 | [project-configuration.schema.json](v1/project-configuration.schema.json) | 项目规则版本、宿主绑定和 Run 配置快照 |
+| [workflows.schema.json](v1/workflows.schema.json) | 生活事务、Routine 与独立执行记录 |
+| [connectors.schema.json](v1/connectors.schema.json) | 独立 Connector 登记、动作、结果与事件协议 |
+| [routing.schema.json](v1/routing.schema.json) | 显式双反馈实验、只读配方、请求、反馈与候选回放 |
 
 block 变化、Git 整合和后继 Run 的公开字段以这些文件和实际接口为准；
 这里不维护另一份阶段实现清单。Responses-facing Schema 不使用 uniqueItems。

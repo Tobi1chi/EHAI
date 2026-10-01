@@ -17,6 +17,7 @@ _SECRET_PATTERN = re.compile(
     r"[\"']?\s*[:=]\s*[\"']?)[^\s\"',;]+"
 )
 _KEY_PATTERN = re.compile(r"\bsk-[A-Za-z0-9_-]+")
+_TYPESAFE_KEY_PATTERN = re.compile(r"\bapikey_[A-Za-z0-9]+_[A-Za-z0-9]+")
 
 
 def redact_sensitive_text(value: str) -> str:
@@ -24,7 +25,7 @@ def redact_sensitive_text(value: str) -> str:
     redacted = _BEARER_PATTERN.sub("Bearer [REDACTED]", value)
     redacted = _QUOTED_SECRET_PATTERN.sub(r"\1\2[REDACTED]\2", redacted)
     redacted = _SECRET_PATTERN.sub(r"\1[REDACTED]", redacted)
-    return _KEY_PATTERN.sub("[REDACTED]", redacted)
+    return _TYPESAFE_KEY_PATTERN.sub("[REDACTED]", _KEY_PATTERN.sub("[REDACTED]", redacted))
 
 
 def bounded_redacted_text(value: str | None, *, max_bytes: int = 500) -> str | None:

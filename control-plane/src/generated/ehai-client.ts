@@ -15,7 +15,7 @@ export type ErrorResponse = {
 };
 };
 
-export type EventType = "ProjectCreated" | "GoalCreated" | "CompletionContractConfirmed" | "PlanRevisionProposed" | "PlanRevisionApproved" | "PlanningTurnStarted" | "PlanningTurnCompleted" | "PlanningTurnFailed" | "ProcessDraftStarted" | "ProcessDraftCompleted" | "ProcessDraftFailed" | "ProcessReviewStarted" | "ProcessReviewCompleted" | "ProcessReviewFailed" | "ProcessRevisionApplied" | "ProcessAdjustmentStarted" | "ProcessAdjustmentFinished" | "ProcessAdjustmentSkipped" | "PlanNodeReadied" | "PlanNodeStalled" | "PlanNodeSuspended" | "PlanNodeRecovered" | "PlanNodeStarted" | "PlanNodeCandidateSubmitted" | "PlanNodeCompleted" | "PlanNodeFailed" | "PlanNodeReopened" | "PlanNodePruned" | "BranchSelected" | "BranchPruned" | "BranchSelectionInvalidated" | "RunConfigurationCaptured" | "RunStarted" | "RunSuccessorCreated" | "RunPaused" | "RunResumed" | "RunCompleted" | "RunFailed" | "RunCancelled" | "AttemptQueued" | "AttemptDispatched" | "AttemptBound" | "AttemptHeartbeatObserved" | "AttemptWaiting" | "AttemptDeadlineExtended" | "AttemptRetryScheduled" | "AttemptStarted" | "AttemptSucceeded" | "AttemptFailed" | "AttemptTimedOut" | "AttemptCancelled" | "AttemptInterrupted" | "DispatchWorkClaimed" | "EndpointHealthChanged" | "ProviderUsageRecorded" | "ArtifactCreated" | "CheckStarted" | "CheckPassed" | "CheckFailed" | "CheckInterrupted" | "GatePassed" | "GateFailed" | "CheckpointCreated" | "CheckpointRestored" | "WorkspacePreserved" | "PhaseSessionOpened" | "PhaseSessionJoined" | "PhaseContextPublished" | "AttemptHandoffConfirmed" | "NoteCreated" | "NoteMessageAdded" | "NoteDecisionStarted" | "NoteDecisionCompleted" | "NoteDecisionFailed" | "InterventionOpened" | "InterventionReplied";
+export type EventType = "ProjectCreated" | "GoalCreated" | "CompletionContractConfirmed" | "PlanRevisionProposed" | "PlanRevisionApproved" | "PlanningTurnStarted" | "PlanningTurnCompleted" | "PlanningTurnFailed" | "ProcessDraftStarted" | "ProcessDraftCompleted" | "ProcessDraftFailed" | "ProcessReviewStarted" | "ProcessReviewCompleted" | "ProcessReviewFailed" | "ProcessRevisionApplied" | "ProcessAdjustmentStarted" | "ProcessAdjustmentFinished" | "ProcessAdjustmentSkipped" | "PlanNodeReadied" | "PlanNodeStalled" | "PlanNodeSuspended" | "PlanNodeRecovered" | "PlanNodeStarted" | "PlanNodeCandidateSubmitted" | "PlanNodeCompleted" | "PlanNodeFailed" | "PlanNodeReopened" | "PlanNodePruned" | "BranchSelected" | "BranchPruned" | "BranchSelectionInvalidated" | "RunConfigurationCaptured" | "RunStarted" | "RunSuccessorCreated" | "RunPaused" | "RunResumed" | "RunCompleted" | "RunFailed" | "RunCancelled" | "AttemptStarted" | "AttemptQueued" | "AttemptDispatched" | "AttemptBound" | "AttemptHeartbeatObserved" | "AttemptWaiting" | "AttemptDeadlineExtended" | "AttemptRetryScheduled" | "AttemptSucceeded" | "AttemptFailed" | "AttemptTimedOut" | "AttemptCancelled" | "AttemptInterrupted" | "DispatchWorkClaimed" | "EndpointHealthChanged" | "ProviderUsageRecorded" | "ArtifactCreated" | "CheckStarted" | "CheckPassed" | "CheckFailed" | "CheckInterrupted" | "GatePassed" | "GateFailed" | "CheckpointCreated" | "CheckpointRestored" | "WorkspacePreserved" | "PhaseSessionOpened" | "PhaseSessionJoined" | "PhaseContextPublished" | "AttemptHandoffConfirmed" | "NoteCreated" | "WorkflowRunChanged" | "LifeTaskChanged" | "RoutineChanged" | "ConnectorCallChanged" | "ConnectorEventReceived" | "RoutingRequestChanged" | "RoutingCatalogChanged" | "RoutingCandidateCreated" | "NoteMessageAdded" | "NoteDecisionStarted" | "NoteDecisionCompleted" | "NoteDecisionFailed" | "InterventionOpened" | "InterventionReplied";
 
 export type EventEnvelope = {
   readonly id: Id;
@@ -795,18 +795,19 @@ export type RuntimeContextResponse = {
   readonly data: RuntimeContextView;
 };
 
-export type InboxKind = "intervention" | "human_check" | "worker_request" | "note";
+export type InboxKind = "intervention" | "human_check" | "worker_request" | "note" | "workflow_confirmation";
 
 export type InboxOwner = {
   readonly project_id: string;
   readonly project_name: string;
-  readonly goal_id: string;
-  readonly goal_objective: string;
+  readonly goal_id: NullableId;
+  readonly goal_objective: string | null;
   readonly run_id: NullableId;
   readonly run_status: RunStatus | null;
   readonly plan_node_id: NullableId;
   readonly node_title: NullableString;
   readonly attempt_id: NullableId;
+  readonly workflow_run_id: NullableId;
 };
 
 export type InboxEvidence = {
@@ -815,7 +816,7 @@ export type InboxEvidence = {
 };
 
 export type InboxAction = {
-  readonly operation: "reply-intervention" | "decide-human-check" | "resolve-worker-request" | "decline-worker-request" | "add-note-message" | "decide-note";
+  readonly operation: "reply-intervention" | "decide-human-check" | "resolve-worker-request" | "decline-worker-request" | "add-note-message" | "decide-note" | "decide-workflow";
   readonly label: string;
   readonly effect: string;
   readonly input_fields: ReadonlyArray<string>;
@@ -1421,6 +1422,655 @@ export type RunConfigurationResponse = {
 };
 };
 
+export type CreateRoutineRequest = {
+  readonly idempotency_key: string;
+  readonly name: string;
+  readonly interval_seconds: number;
+  readonly next_due_at: string;
+  readonly enabled?: boolean;
+};
+
+export type DecideWorkflowRequest = {
+  readonly idempotency_key: string;
+  readonly expected_version: number;
+  readonly decision: "approve" | "reject";
+  readonly actor: string;
+  readonly reason: string;
+};
+
+export type LifeReview = {
+  readonly as_of: string;
+  readonly open_tasks: ReadonlyArray<LifeTask>;
+  readonly overdue_task_ids: ReadonlyArray<string>;
+  readonly done_count: number;
+  readonly cancelled_count: number;
+};
+
+export type LifeRoutine = {
+  readonly routine_id: string;
+  readonly project_id: string;
+  readonly name: string;
+  readonly workflow?: "life.review";
+  readonly workflow_version?: 1;
+  readonly interval_seconds: number;
+  readonly next_due_at: string;
+  readonly enabled: boolean;
+  readonly version: number;
+  readonly last_workflow_run_id: string | null;
+  readonly created_at: string;
+  readonly updated_at: string;
+};
+
+export type LifeTask = {
+  readonly task_id: string;
+  readonly project_id: string;
+  readonly workflow_run_id: string;
+  readonly title: string;
+  readonly due_at: string | null;
+  readonly status: "open" | "done" | "cancelled";
+  readonly version: number;
+  readonly created_at: string;
+  readonly updated_at: string;
+};
+
+export type LifeTaskInput = {
+  readonly title: string;
+  readonly due_at?: string | null;
+};
+
+export type RoutineSchedulerStatus = {
+  readonly active: boolean;
+  readonly last_tick_at: string | null;
+  readonly last_error: string | null;
+};
+
+export type StartWorkflowRequest = {
+  readonly idempotency_key: string;
+  readonly workflow: "life.capture" | "life.review";
+  readonly source_text?: string | null;
+  readonly tasks?: ReadonlyArray<LifeTaskInput>;
+  readonly require_confirmation?: boolean;
+};
+
+export type UpdateLifeTaskRequest = {
+  readonly idempotency_key: string;
+  readonly expected_version: number;
+  readonly title: string;
+  readonly due_at: string | null;
+  readonly status: "open" | "done" | "cancelled";
+};
+
+export type UpdateRoutineRequest = {
+  readonly idempotency_key: string;
+  readonly name: string;
+  readonly interval_seconds: number;
+  readonly next_due_at: string;
+  readonly enabled?: boolean;
+  readonly expected_version: number;
+};
+
+export type WorkflowCompatibilityStatus = {
+  readonly enabled: boolean;
+  readonly registered_adapters: number;
+};
+
+export type WorkflowContractRef = {
+  readonly kind: "workflow" | "step" | "action";
+  readonly name: string;
+  readonly version: string;
+  readonly digest?: string | null;
+};
+
+export type WorkflowDecision = {
+  readonly decision: "approve" | "reject";
+  readonly actor: string;
+  readonly reason: string;
+  readonly decided_at: string;
+};
+
+export type WorkflowDefinition = {
+  readonly workflow: "life.capture" | "life.review";
+  readonly version?: 1;
+  readonly description: string;
+  readonly steps: ReadonlyArray<string>;
+};
+
+export type WorkflowExecutionRecord = {
+  readonly workflow_run_id: string;
+  readonly project_id: string;
+  readonly definition: WorkflowContractRef;
+  readonly definition_snapshot: Readonly<Record<string, JsonValue>> | null;
+  readonly status: string;
+  readonly version: number;
+  readonly inputs: Readonly<Record<string, JsonValue>>;
+  readonly result: Readonly<Record<string, JsonValue>>;
+  readonly trigger: Readonly<Record<string, JsonValue>>;
+  readonly recording_origin: "native" | "legacy_snapshot";
+  readonly created_at: string;
+  readonly completed_at: string | null;
+};
+
+export type WorkflowExecutionView = {
+  readonly run: WorkflowExecutionRecord;
+  readonly steps: ReadonlyArray<WorkflowStepExecution>;
+  readonly invocations: ReadonlyArray<WorkflowInvocationRecord>;
+  readonly waits: ReadonlyArray<WorkflowWaitRecord>;
+  readonly compatibility: WorkflowCompatibilityStatus;
+};
+
+export type WorkflowInvocationRecord = {
+  readonly invocation_id: string;
+  readonly workflow_run_id: string;
+  readonly step_execution_id: string;
+  readonly kind: "local" | "connector";
+  readonly action: WorkflowContractRef;
+  readonly status: "prepared" | "completed" | "failed" | "unknown";
+  readonly idempotency_key: string;
+  readonly inputs: Readonly<Record<string, JsonValue>>;
+  readonly output: Readonly<Record<string, JsonValue>> | null;
+  readonly external_operation_ref: string | null;
+  readonly error: string | null;
+  readonly recorded_at: string;
+  readonly completed_at: string | null;
+};
+
+export type WorkflowResponse_LifeRoutine_ = {
+  readonly data: LifeRoutine;
+};
+
+export type WorkflowResponse_LifeTask_ = {
+  readonly data: LifeTask;
+};
+
+export type WorkflowResponse_RoutineSchedulerStatus_ = {
+  readonly data: RoutineSchedulerStatus;
+};
+
+export type WorkflowResponse_WorkflowExecutionView_ = {
+  readonly data: WorkflowExecutionView;
+};
+
+export type WorkflowResponse_WorkflowRun_ = {
+  readonly data: WorkflowRun;
+};
+
+export type WorkflowResponse_list_LifeRoutine__ = {
+  readonly data: ReadonlyArray<LifeRoutine>;
+};
+
+export type WorkflowResponse_list_LifeTask__ = {
+  readonly data: ReadonlyArray<LifeTask>;
+};
+
+export type WorkflowResponse_list_WorkflowDefinition__ = {
+  readonly data: ReadonlyArray<WorkflowDefinition>;
+};
+
+export type WorkflowResponse_list_WorkflowRun__ = {
+  readonly data: ReadonlyArray<WorkflowRun>;
+};
+
+export type WorkflowRun = {
+  readonly workflow_run_id: string;
+  readonly project_id: string;
+  readonly workflow: "life.capture" | "life.review";
+  readonly workflow_version?: 1;
+  readonly status: "awaiting_confirmation" | "completed" | "rejected";
+  readonly version: number;
+  readonly source_text: string | null;
+  readonly proposed_tasks: ReadonlyArray<LifeTaskInput>;
+  readonly task_ids: ReadonlyArray<string>;
+  readonly review: LifeReview | null;
+  readonly decision: WorkflowDecision | null;
+  readonly routine_snapshot: LifeRoutine | null;
+  readonly scheduled_for: string | null;
+  readonly coalesced_occurrences: number;
+  readonly created_at: string;
+  readonly completed_at: string | null;
+};
+
+export type WorkflowStepExecution = {
+  readonly step_execution_id: string;
+  readonly workflow_run_id: string;
+  readonly node_id: string;
+  readonly execution_index: number;
+  readonly contract: WorkflowContractRef;
+  readonly status: "completed" | "waiting" | "skipped";
+  readonly inputs: Readonly<Record<string, JsonValue>>;
+  readonly output: Readonly<Record<string, JsonValue>> | null;
+  readonly recorded_at: string;
+  readonly completed_at: string | null;
+};
+
+export type WorkflowWaitRecord = {
+  readonly wait_id: string;
+  readonly workflow_run_id: string;
+  readonly step_execution_id: string;
+  readonly kind: "human" | "time" | "event";
+  readonly status: "waiting" | "resolved";
+  readonly condition: Readonly<Record<string, JsonValue>>;
+  readonly resolution: Readonly<Record<string, JsonValue>> | null;
+  readonly recorded_at: string;
+  readonly resolved_at: string | null;
+};
+
+export type ClaimConnectorCallRequest = {
+  readonly protocol_version?: 1;
+  readonly worker_id: string;
+};
+
+export type ConnectorAction_Input = {
+  readonly name: string;
+  readonly version: string;
+  readonly description: string;
+  readonly read_only: boolean;
+  readonly input_schema: Readonly<Record<string, JsonValue>>;
+  readonly output_schema: Readonly<Record<string, JsonValue>>;
+};
+
+export type ConnectorAction_Output = {
+  readonly name: string;
+  readonly version: string;
+  readonly description: string;
+  readonly read_only: boolean;
+  readonly input_schema: Readonly<Record<string, JsonValue>>;
+  readonly output_schema: Readonly<Record<string, JsonValue>>;
+};
+
+export type ConnectorCall = {
+  readonly call_id: string;
+  readonly connector_id: string;
+  readonly project_id: string;
+  readonly action: ConnectorAction_Output;
+  readonly inputs: Readonly<Record<string, JsonValue>>;
+  readonly write_authorized: boolean;
+  readonly status: "queued" | "claimed" | "completed" | "failed" | "unknown";
+  readonly output: Readonly<Record<string, JsonValue>> | null;
+  readonly error: string | null;
+  readonly external_operation_ref: string | null;
+  readonly created_at: string;
+  readonly updated_at: string;
+};
+
+export type ConnectorClaim = {
+  readonly protocol_version?: 1;
+  readonly connection: ConnectorConnection;
+  readonly call: ConnectorCall;
+  readonly claim_token: string;
+  readonly mode: "execute" | "reconcile";
+};
+
+export type ConnectorConnection = {
+  readonly connector_id: string;
+  readonly project_id: string;
+  readonly name: string;
+  readonly manifest: ConnectorManifest_Output;
+  readonly configuration: Readonly<Record<string, JsonValue>>;
+  readonly created_at: string;
+};
+
+export type ConnectorEventReceipt = {
+  readonly connector_id: string;
+  readonly project_id: string;
+  readonly event_id: string;
+  readonly core_event_id: string;
+  readonly received_at: string;
+};
+
+export type ConnectorEventType_Input = {
+  readonly name: string;
+  readonly version: string;
+  readonly data_schema: Readonly<Record<string, JsonValue>>;
+};
+
+export type ConnectorEventType_Output = {
+  readonly name: string;
+  readonly version: string;
+  readonly data_schema: Readonly<Record<string, JsonValue>>;
+};
+
+export type ConnectorManifest_Input = {
+  readonly protocol_version?: 1;
+  readonly connector_type: string;
+  readonly version: string;
+  readonly actions: ReadonlyArray<ConnectorAction_Input>;
+  readonly events?: ReadonlyArray<ConnectorEventType_Input>;
+};
+
+export type ConnectorManifest_Output = {
+  readonly protocol_version?: 1;
+  readonly connector_type: string;
+  readonly version: string;
+  readonly actions: ReadonlyArray<ConnectorAction_Output>;
+  readonly events?: ReadonlyArray<ConnectorEventType_Output>;
+};
+
+export type ConnectorResponse_ConnectorCall_ = {
+  readonly data: ConnectorCall;
+};
+
+export type ConnectorResponse_ConnectorConnection_ = {
+  readonly data: ConnectorConnection;
+};
+
+export type ConnectorResponse_ConnectorEventReceipt_ = {
+  readonly data: ConnectorEventReceipt;
+};
+
+export type ConnectorResponse_Union_ConnectorClaim__NoneType__ = {
+  readonly data: ConnectorClaim | null;
+};
+
+export type ConnectorResponse_list_ConnectorCall__ = {
+  readonly data: ReadonlyArray<ConnectorCall>;
+};
+
+export type ConnectorResponse_list_ConnectorConnection__ = {
+  readonly data: ReadonlyArray<ConnectorConnection>;
+};
+
+export type InvokeConnectorRequest = {
+  readonly idempotency_key: string;
+  readonly action: string;
+  readonly action_version: string;
+  readonly inputs: Readonly<Record<string, JsonValue>>;
+  readonly authorize_write?: boolean;
+};
+
+export type ReconcileConnectorCallRequest = {
+  readonly idempotency_key: string;
+};
+
+export type RegisterConnectorRequest = {
+  readonly idempotency_key: string;
+  readonly name: string;
+  readonly manifest: ConnectorManifest_Input;
+  readonly configuration: Readonly<Record<string, JsonValue>>;
+  readonly credential_sha256: string;
+};
+
+export type ReportConnectorResultRequest = {
+  readonly protocol_version?: 1;
+  readonly delivery_id: string;
+  readonly call_id: string;
+  readonly claim_token: string;
+  readonly status: "completed" | "failed" | "unknown";
+  readonly output?: Readonly<Record<string, JsonValue>> | null;
+  readonly error?: string | null;
+  readonly external_operation_ref?: string | null;
+};
+
+export type SubmitConnectorEventRequest = {
+  readonly protocol_version?: 1;
+  readonly event_id: string;
+  readonly event_type: string;
+  readonly schema_version: string;
+  readonly occurred_at: string;
+  readonly subject: string;
+  readonly data: Readonly<Record<string, JsonValue>>;
+};
+
+export type ConfigureRoutingFallbackRequest = {
+  readonly idempotency_key: string;
+  readonly mode: "external" | "pi";
+  readonly validation_cases: ReadonlyArray<RoutingValidationCase>;
+};
+
+export type ConfigureRoutingProjectRequest = {
+  readonly idempotency_key: string;
+  readonly api_url: string | null;
+  readonly project_id: string | null;
+};
+
+export type CreateRoutingLabRequest = {
+  readonly idempotency_key: string;
+  readonly name: string;
+  readonly connector_id: string;
+  readonly mode?: "shadow" | "read_only";
+  readonly confidence_threshold?: number;
+  readonly probability_threshold?: number;
+  readonly max_pending?: number;
+  readonly actor: string;
+  readonly approved_recipes: ReadonlyArray<RoutingRecipeInput>;
+  readonly fallback_mode?: "external" | "pi";
+};
+
+export type JevRoutingJudgement = {
+  readonly model: string;
+  readonly choice: string;
+  readonly confidence: number;
+  readonly probabilities: Readonly<Record<string, number>>;
+  readonly input_tokens?: number | null;
+  readonly output_tokens?: number | null;
+  readonly evidence_source: "typesafe" | "protocol_trial";
+  readonly template_version?: "routing-v1";
+};
+
+export type PauseRoutingRecipeRequest = {
+  readonly idempotency_key: string;
+  readonly actor: string;
+  readonly reason: string;
+};
+
+export type ProposeRoutingRecipeRequest = {
+  readonly idempotency_key: string;
+  readonly recipe: RoutingRecipeInput;
+  readonly source_request_ids: ReadonlyArray<string>;
+};
+
+export type PublishRoutingRecipeRequest = {
+  readonly idempotency_key: string;
+  readonly actor: string;
+  readonly replay_id: string;
+  readonly allow_protocol_trial?: boolean;
+};
+
+export type ResolveRoutingRequest = {
+  readonly idempotency_key: string;
+  readonly actor: string;
+  readonly response: string;
+  readonly evidence: string;
+};
+
+export type RoutingFallbackExecution = {
+  readonly attempt_id: string;
+  readonly session_id: string;
+  readonly model: string;
+  readonly configuration_hash: string;
+  readonly status: "running" | "completed" | "failed" | "interrupted";
+  readonly started_at: string;
+  readonly completed_at?: string | null;
+  readonly error?: string | null;
+  readonly candidate_id?: string | null;
+  readonly change_reason?: string | null;
+  readonly replay_id?: string | null;
+  readonly replay_error?: string | null;
+  readonly replay_cases?: ReadonlyArray<RoutingReplayCase> | null;
+  readonly project_change?: RoutingProjectChange | null;
+  readonly change_project_binding?: RoutingProjectBinding | null;
+};
+
+export type RoutingFeedback = {
+  readonly actor: string;
+  readonly outcome: "correct" | "misroute" | "execution_failed";
+  readonly explanation: string;
+  readonly recorded_at: string;
+};
+
+export type RoutingFeedbackRequest = {
+  readonly idempotency_key: string;
+  readonly actor: string;
+  readonly outcome: "correct" | "misroute" | "execution_failed";
+  readonly explanation: string;
+};
+
+export type RoutingLab = {
+  readonly lab_id: string;
+  readonly project_id: string;
+  readonly name: string;
+  readonly connector_id: string;
+  readonly mode: "shadow" | "read_only";
+  readonly confidence_threshold: number;
+  readonly probability_threshold: number;
+  readonly max_pending: number;
+  readonly catalog_version: number;
+  readonly created_at: string;
+  readonly fallback_mode?: "external" | "pi";
+  readonly fallback_validation_cases?: ReadonlyArray<RoutingValidationCase>;
+  readonly change_project?: RoutingProjectBinding | null;
+};
+
+export type RoutingLabMetrics = {
+  readonly request_count: number;
+  readonly routing_count: number;
+  readonly escalated_count: number;
+  readonly system2_resolved_count: number;
+  readonly fast_completed_count: number;
+  readonly shadow_count: number;
+  readonly reviewed_count: number;
+  readonly misroute_count: number;
+  readonly provider_judgements: number;
+  readonly protocol_trial_judgements: number;
+  readonly by_recipe: Readonly<Record<string, Readonly<Record<string, number>>>>;
+};
+
+export type RoutingLabView = {
+  readonly lab: RoutingLab;
+  readonly recipes: ReadonlyArray<RoutingRecipe>;
+};
+
+export type RoutingProjectBinding = {
+  readonly api_url: string;
+  readonly project_id: string;
+  readonly workspace: string;
+};
+
+export type RoutingProjectChange = {
+  readonly target: RoutingProjectBinding;
+  readonly objective: string;
+  readonly status: "pending" | "dispatching" | "waiting_approval" | "needs_input" | "failed" | "unknown";
+  readonly goal_id?: string | null;
+  readonly conversation_id?: string | null;
+  readonly plan_revision_id?: string | null;
+  readonly error?: string | null;
+};
+
+export type RoutingRecipe = {
+  readonly recipe_id: string;
+  readonly lab_id: string;
+  readonly project_id: string;
+  readonly name: string;
+  readonly applicability: string;
+  readonly target: "life.tasks.list" | "inbox.list";
+  readonly status: "candidate" | "active" | "paused";
+  readonly source_request_ids: ReadonlyArray<string>;
+  readonly approved_by: string | null;
+  readonly approval_evidence: string | null;
+  readonly paused_by?: string | null;
+  readonly pause_reason?: string | null;
+  readonly created_at: string;
+};
+
+export type RoutingRecipeInput = {
+  readonly name: string;
+  readonly applicability: string;
+  readonly target: "life.tasks.list" | "inbox.list";
+};
+
+export type RoutingReplay = {
+  readonly replay_id: string;
+  readonly lab_id: string;
+  readonly project_id: string;
+  readonly candidate_id: string;
+  readonly catalog_version: number;
+  readonly catalog_snapshot: ReadonlyArray<RoutingRecipe>;
+  readonly status: "pending" | "passed" | "failed";
+  readonly entries: ReadonlyArray<RoutingReplayEntry>;
+  readonly created_at: string;
+};
+
+export type RoutingReplayCase = {
+  readonly request_id: string;
+  readonly expected_choice: string;
+};
+
+export type RoutingReplayEntry = {
+  readonly request_id: string;
+  readonly message: string;
+  readonly case_role: "learning" | "validation";
+  readonly expected_choice: string;
+  readonly connector_call_id: string | null;
+  readonly judgement: JevRoutingJudgement | null;
+  readonly passed: boolean | null;
+  readonly reason: string | null;
+};
+
+export type RoutingRequest = {
+  readonly request_id: string;
+  readonly lab_id: string;
+  readonly project_id: string;
+  readonly message: string;
+  readonly case_role: "learning" | "validation";
+  readonly explicit_recipe_id: string | null;
+  readonly force_slow: boolean;
+  readonly catalog_version: number;
+  readonly catalog_snapshot: ReadonlyArray<RoutingRecipe>;
+  readonly status: "queued" | "routing" | "escalated" | "completed" | "shadow";
+  readonly route_source: "none" | "rule" | "jev" | "system2";
+  readonly reason: string | null;
+  readonly connector_call_id: string | null;
+  readonly judgement: JevRoutingJudgement | null;
+  readonly selected_recipe_id: string | null;
+  readonly result: Readonly<Record<string, JsonValue>> | null;
+  readonly feedback: RoutingFeedback | null;
+  readonly created_at: string;
+  readonly updated_at: string;
+  readonly fallback?: RoutingFallbackExecution | null;
+};
+
+export type RoutingResponse_RoutingLabMetrics_ = {
+  readonly data: RoutingLabMetrics;
+};
+
+export type RoutingResponse_RoutingLabView_ = {
+  readonly data: RoutingLabView;
+};
+
+export type RoutingResponse_RoutingRecipe_ = {
+  readonly data: RoutingRecipe;
+};
+
+export type RoutingResponse_RoutingReplay_ = {
+  readonly data: RoutingReplay;
+};
+
+export type RoutingResponse_RoutingRequest_ = {
+  readonly data: RoutingRequest;
+};
+
+export type RoutingResponse_list_RoutingRequest__ = {
+  readonly data: ReadonlyArray<RoutingRequest>;
+};
+
+export type RoutingValidationCase = {
+  readonly request_id: string;
+  readonly expected_target: "life.tasks.list" | "inbox.list" | "escalate";
+};
+
+export type StartRoutingReplayRequest = {
+  readonly idempotency_key: string;
+  readonly candidate_id: string;
+  readonly cases: ReadonlyArray<RoutingReplayCase>;
+};
+
+export type SubmitRoutingRequest = {
+  readonly idempotency_key: string;
+  readonly message: string;
+  readonly explicit_recipe_id?: string | null;
+  readonly force_slow?: boolean;
+  readonly case_role?: "learning" | "validation";
+};
+
 export type HTTPValidationError = {
   readonly detail?: ReadonlyArray<ValidationError>;
 };
@@ -1591,6 +2241,154 @@ export class EhaiApiClient {
 
   getPlannerCapacity(): Promise<PlannerCapacityResponse> {
     return this.request("/planning/capacity", "GET");
+  }
+
+  listWorkflows(): Promise<{ data: WorkflowDefinition[] }> {
+    return this.request("/workflows", "GET");
+  }
+
+  createRoutingLab(projectId: string, request: CreateRoutingLabRequest): Promise<{ data: RoutingLabView }> {
+    return this.request("/projects/" + encodeURIComponent(projectId) + "/routing-labs", "POST", request);
+  }
+
+  getRoutingLab(labId: string): Promise<{ data: RoutingLabView }> {
+    return this.request("/routing-labs/" + encodeURIComponent(labId), "GET");
+  }
+
+  configureRoutingFallback(labId: string, request: ConfigureRoutingFallbackRequest): Promise<{ data: RoutingLabView }> {
+    return this.request("/routing-labs/" + encodeURIComponent(labId) + "/fallback", "POST", request);
+  }
+
+  configureRoutingProject(labId: string, request: ConfigureRoutingProjectRequest): Promise<{ data: RoutingLabView }> {
+    return this.request("/routing-labs/" + encodeURIComponent(labId) + "/change-project", "POST", request);
+  }
+
+  submitRoutingRequest(labId: string, request: SubmitRoutingRequest): Promise<{ data: RoutingRequest }> {
+    return this.request("/routing-labs/" + encodeURIComponent(labId) + "/requests", "POST", request);
+  }
+
+  listRoutingRequests(labId: string): Promise<{ data: RoutingRequest[] }> {
+    return this.request("/routing-labs/" + encodeURIComponent(labId) + "/requests", "GET");
+  }
+
+  getRoutingRequest(requestId: string): Promise<{ data: RoutingRequest }> {
+    return this.request("/routing-requests/" + encodeURIComponent(requestId), "GET");
+  }
+
+  advanceRoutingLab(labId: string): Promise<{ data: RoutingLabMetrics }> {
+    return this.request("/routing-labs/" + encodeURIComponent(labId) + "/advance", "POST", {});
+  }
+
+  resolveRoutingRequest(requestId: string, request: ResolveRoutingRequest): Promise<{ data: RoutingRequest }> {
+    return this.request("/routing-requests/" + encodeURIComponent(requestId) + "/resolve", "POST", request);
+  }
+
+  recordRoutingFeedback(requestId: string, request: RoutingFeedbackRequest): Promise<{ data: RoutingRequest }> {
+    return this.request("/routing-requests/" + encodeURIComponent(requestId) + "/feedback", "POST", request);
+  }
+
+  proposeRoutingRecipe(labId: string, request: ProposeRoutingRecipeRequest): Promise<{ data: RoutingRecipe }> {
+    return this.request("/routing-labs/" + encodeURIComponent(labId) + "/candidates", "POST", request);
+  }
+
+  startRoutingReplay(labId: string, request: StartRoutingReplayRequest): Promise<{ data: RoutingReplay }> {
+    return this.request("/routing-labs/" + encodeURIComponent(labId) + "/replays", "POST", request);
+  }
+
+  getRoutingReplay(replayId: string): Promise<{ data: RoutingReplay }> {
+    return this.request("/routing-replays/" + encodeURIComponent(replayId), "GET");
+  }
+
+  publishRoutingRecipe(recipeId: string, request: PublishRoutingRecipeRequest): Promise<{ data: RoutingRecipe }> {
+    return this.request("/routing-recipes/" + encodeURIComponent(recipeId) + "/publish", "POST", request);
+  }
+
+  pauseRoutingRecipe(recipeId: string, request: PauseRoutingRecipeRequest): Promise<{ data: RoutingRecipe }> {
+    return this.request("/routing-recipes/" + encodeURIComponent(recipeId) + "/pause", "POST", request);
+  }
+
+  getRoutingMetrics(labId: string): Promise<{ data: RoutingLabMetrics }> {
+    return this.request("/routing-labs/" + encodeURIComponent(labId) + "/metrics", "GET");
+  }
+
+  registerConnector(projectId: string, request: RegisterConnectorRequest): Promise<{ data: ConnectorConnection }> {
+    return this.request("/projects/" + encodeURIComponent(projectId) + "/connectors", "POST", request);
+  }
+
+  listConnectors(projectId: string): Promise<{ data: ConnectorConnection[] }> {
+    return this.request("/projects/" + encodeURIComponent(projectId) + "/connectors", "GET");
+  }
+
+  getConnector(connectorId: string): Promise<{ data: ConnectorConnection }> {
+    return this.request("/connectors/" + encodeURIComponent(connectorId), "GET");
+  }
+
+  invokeConnector(connectorId: string, request: InvokeConnectorRequest): Promise<{ data: ConnectorCall }> {
+    return this.request("/connectors/" + encodeURIComponent(connectorId) + "/calls", "POST", request);
+  }
+
+  listConnectorCalls(connectorId: string): Promise<{ data: ConnectorCall[] }> {
+    return this.request("/connectors/" + encodeURIComponent(connectorId) + "/calls", "GET");
+  }
+
+  getConnectorCall(callId: string): Promise<{ data: ConnectorCall }> {
+    return this.request("/connector-calls/" + encodeURIComponent(callId), "GET");
+  }
+
+  reconcileConnectorCall(callId: string, request: ReconcileConnectorCallRequest): Promise<{ data: ConnectorCall }> {
+    return this.request("/connector-calls/" + encodeURIComponent(callId) + "/reconcile", "POST", request);
+  }
+
+  startWorkflow(projectId: string, request: StartWorkflowRequest): Promise<{ data: WorkflowRun }> {
+    return this.request("/projects/" + encodeURIComponent(projectId) + "/workflow-runs", "POST", request);
+  }
+
+  listWorkflowRuns(projectId: string): Promise<{ data: WorkflowRun[] }> {
+    return this.request("/projects/" + encodeURIComponent(projectId) + "/workflow-runs", "GET");
+  }
+
+  getWorkflowRun(workflowRunId: string): Promise<{ data: WorkflowRun }> {
+    return this.request("/workflow-runs/" + encodeURIComponent(workflowRunId), "GET");
+  }
+
+  getWorkflowExecution(workflowRunId: string): Promise<{ data: WorkflowExecutionView }> {
+    return this.request("/workflow-runs/" + encodeURIComponent(workflowRunId) + "/execution", "GET");
+  }
+
+  decideWorkflow(workflowRunId: string, request: DecideWorkflowRequest): Promise<{ data: WorkflowRun }> {
+    return this.request("/workflow-runs/" + encodeURIComponent(workflowRunId) + "/decisions", "POST", request);
+  }
+
+  listLifeTasks(projectId: string): Promise<{ data: LifeTask[] }> {
+    return this.request("/projects/" + encodeURIComponent(projectId) + "/life-tasks", "GET");
+  }
+
+  getLifeTask(taskId: string): Promise<{ data: LifeTask }> {
+    return this.request("/life-tasks/" + encodeURIComponent(taskId), "GET");
+  }
+
+  updateLifeTask(taskId: string, request: UpdateLifeTaskRequest): Promise<{ data: LifeTask }> {
+    return this.request("/life-tasks/" + encodeURIComponent(taskId), "POST", request);
+  }
+
+  createRoutine(projectId: string, request: CreateRoutineRequest): Promise<{ data: LifeRoutine }> {
+    return this.request("/projects/" + encodeURIComponent(projectId) + "/routines", "POST", request);
+  }
+
+  listRoutines(projectId: string): Promise<{ data: LifeRoutine[] }> {
+    return this.request("/projects/" + encodeURIComponent(projectId) + "/routines", "GET");
+  }
+
+  getRoutine(routineId: string): Promise<{ data: LifeRoutine }> {
+    return this.request("/routines/" + encodeURIComponent(routineId), "GET");
+  }
+
+  updateRoutine(routineId: string, request: UpdateRoutineRequest): Promise<{ data: LifeRoutine }> {
+    return this.request("/routines/" + encodeURIComponent(routineId), "POST", request);
+  }
+
+  getRoutineScheduler(): Promise<{ data: RoutineSchedulerStatus }> {
+    return this.request("/routines/scheduler", "GET");
   }
 
   createNote(request: CreateNoteRequest): Promise<NoteResponse> {

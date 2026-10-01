@@ -1,0 +1,1346 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.ehai.local/v1/workflows.schema.json",
+  "$defs": {
+    "CreateRoutineRequest": {
+      "properties": {
+        "idempotency_key": {
+          "type": "string",
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Idempotency Key"
+        },
+        "name": {
+          "type": "string",
+          "maxLength": 300,
+          "minLength": 1,
+          "title": "Name"
+        },
+        "interval_seconds": {
+          "type": "integer",
+          "maximum": 31536000.0,
+          "minimum": 60.0,
+          "title": "Interval Seconds"
+        },
+        "next_due_at": {
+          "type": "string",
+          "format": "date-time",
+          "title": "Next Due At"
+        },
+        "enabled": {
+          "type": "boolean",
+          "title": "Enabled",
+          "default": true
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "idempotency_key",
+        "name",
+        "interval_seconds",
+        "next_due_at"
+      ],
+      "title": "CreateRoutineRequest",
+      "description": "Schedule life.review v1 at a fixed interval, with no external or model side effects.\n\nnext_due_at must include a timezone offset. A past time triggers a single coalesced review\nwhen the host next ticks. enabled=false persists the routine without scheduling it."
+    },
+    "DecideWorkflowRequest": {
+      "properties": {
+        "idempotency_key": {
+          "type": "string",
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Idempotency Key"
+        },
+        "expected_version": {
+          "type": "integer",
+          "minimum": 1.0,
+          "title": "Expected Version"
+        },
+        "decision": {
+          "type": "string",
+          "enum": [
+            "approve",
+            "reject"
+          ],
+          "title": "Decision"
+        },
+        "actor": {
+          "type": "string",
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Actor"
+        },
+        "reason": {
+          "type": "string",
+          "maxLength": 10000,
+          "minLength": 1,
+          "title": "Reason"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "idempotency_key",
+        "expected_version",
+        "decision",
+        "actor",
+        "reason"
+      ],
+      "title": "DecideWorkflowRequest"
+    },
+    "LifeReview": {
+      "properties": {
+        "as_of": {
+          "type": "string",
+          "format": "date-time",
+          "title": "As Of"
+        },
+        "open_tasks": {
+          "items": {
+            "$ref": "#/$defs/LifeTask"
+          },
+          "type": "array",
+          "title": "Open Tasks"
+        },
+        "overdue_task_ids": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "title": "Overdue Task Ids"
+        },
+        "done_count": {
+          "type": "integer",
+          "title": "Done Count"
+        },
+        "cancelled_count": {
+          "type": "integer",
+          "title": "Cancelled Count"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "as_of",
+        "open_tasks",
+        "overdue_task_ids",
+        "done_count",
+        "cancelled_count"
+      ],
+      "title": "LifeReview"
+    },
+    "LifeRoutine": {
+      "properties": {
+        "routine_id": {
+          "type": "string",
+          "title": "Routine Id"
+        },
+        "project_id": {
+          "type": "string",
+          "title": "Project Id"
+        },
+        "name": {
+          "type": "string",
+          "title": "Name"
+        },
+        "workflow": {
+          "type": "string",
+          "const": "life.review",
+          "title": "Workflow",
+          "default": "life.review"
+        },
+        "workflow_version": {
+          "type": "integer",
+          "const": 1,
+          "title": "Workflow Version",
+          "default": 1
+        },
+        "interval_seconds": {
+          "type": "integer",
+          "title": "Interval Seconds"
+        },
+        "next_due_at": {
+          "type": "string",
+          "format": "date-time",
+          "title": "Next Due At"
+        },
+        "enabled": {
+          "type": "boolean",
+          "title": "Enabled"
+        },
+        "version": {
+          "type": "integer",
+          "title": "Version"
+        },
+        "last_workflow_run_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Last Workflow Run Id"
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time",
+          "title": "Created At"
+        },
+        "updated_at": {
+          "type": "string",
+          "format": "date-time",
+          "title": "Updated At"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "routine_id",
+        "project_id",
+        "name",
+        "interval_seconds",
+        "next_due_at",
+        "enabled",
+        "version",
+        "last_workflow_run_id",
+        "created_at",
+        "updated_at"
+      ],
+      "title": "LifeRoutine"
+    },
+    "LifeTask": {
+      "properties": {
+        "task_id": {
+          "type": "string",
+          "title": "Task Id"
+        },
+        "project_id": {
+          "type": "string",
+          "title": "Project Id"
+        },
+        "workflow_run_id": {
+          "type": "string",
+          "title": "Workflow Run Id"
+        },
+        "title": {
+          "type": "string",
+          "title": "Title"
+        },
+        "due_at": {
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "date-time"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Due At"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "open",
+            "done",
+            "cancelled"
+          ],
+          "title": "Status"
+        },
+        "version": {
+          "type": "integer",
+          "title": "Version"
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time",
+          "title": "Created At"
+        },
+        "updated_at": {
+          "type": "string",
+          "format": "date-time",
+          "title": "Updated At"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "task_id",
+        "project_id",
+        "workflow_run_id",
+        "title",
+        "due_at",
+        "status",
+        "version",
+        "created_at",
+        "updated_at"
+      ],
+      "title": "LifeTask"
+    },
+    "LifeTaskInput": {
+      "properties": {
+        "title": {
+          "type": "string",
+          "maxLength": 300,
+          "minLength": 1,
+          "title": "Title"
+        },
+        "due_at": {
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "date-time"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Due At"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "title"
+      ],
+      "title": "LifeTaskInput"
+    },
+    "RoutineSchedulerStatus": {
+      "properties": {
+        "active": {
+          "type": "boolean",
+          "title": "Active"
+        },
+        "last_tick_at": {
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "date-time"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Last Tick At"
+        },
+        "last_error": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Last Error"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "active",
+        "last_tick_at",
+        "last_error"
+      ],
+      "title": "RoutineSchedulerStatus"
+    },
+    "StartWorkflowRequest": {
+      "properties": {
+        "idempotency_key": {
+          "type": "string",
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Idempotency Key"
+        },
+        "workflow": {
+          "type": "string",
+          "enum": [
+            "life.capture",
+            "life.review"
+          ],
+          "title": "Workflow"
+        },
+        "source_text": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 10000,
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Source Text"
+        },
+        "tasks": {
+          "items": {
+            "$ref": "#/$defs/LifeTaskInput"
+          },
+          "type": "array",
+          "maxItems": 100,
+          "title": "Tasks"
+        },
+        "require_confirmation": {
+          "type": "boolean",
+          "title": "Require Confirmation",
+          "default": true
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "idempotency_key",
+        "workflow"
+      ],
+      "title": "StartWorkflowRequest",
+      "description": "Capture needs source_text and tasks; review reads this project and accepts neither.\n\nConfirmation applies only to capture. Omitting it means true; false explicitly creates\nthe provided tasks immediately. Neither workflow executes the described life tasks."
+    },
+    "UpdateLifeTaskRequest": {
+      "properties": {
+        "idempotency_key": {
+          "type": "string",
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Idempotency Key"
+        },
+        "expected_version": {
+          "type": "integer",
+          "minimum": 1.0,
+          "title": "Expected Version"
+        },
+        "title": {
+          "type": "string",
+          "maxLength": 300,
+          "minLength": 1,
+          "title": "Title"
+        },
+        "due_at": {
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "date-time"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Due At"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "open",
+            "done",
+            "cancelled"
+          ],
+          "title": "Status"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "idempotency_key",
+        "expected_version",
+        "title",
+        "due_at",
+        "status"
+      ],
+      "title": "UpdateLifeTaskRequest",
+      "description": "Complete replacement of task-editable fields; null explicitly clears due_at."
+    },
+    "UpdateRoutineRequest": {
+      "properties": {
+        "idempotency_key": {
+          "type": "string",
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Idempotency Key"
+        },
+        "name": {
+          "type": "string",
+          "maxLength": 300,
+          "minLength": 1,
+          "title": "Name"
+        },
+        "interval_seconds": {
+          "type": "integer",
+          "maximum": 31536000.0,
+          "minimum": 60.0,
+          "title": "Interval Seconds"
+        },
+        "next_due_at": {
+          "type": "string",
+          "format": "date-time",
+          "title": "Next Due At"
+        },
+        "enabled": {
+          "type": "boolean",
+          "title": "Enabled",
+          "default": true
+        },
+        "expected_version": {
+          "type": "integer",
+          "minimum": 1.0,
+          "title": "Expected Version"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "idempotency_key",
+        "name",
+        "interval_seconds",
+        "next_due_at",
+        "expected_version"
+      ],
+      "title": "UpdateRoutineRequest",
+      "description": "Replace scheduling fields; completed runs retain their original schedule snapshot."
+    },
+    "WorkflowCompatibilityStatus": {
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "title": "Enabled"
+        },
+        "registered_adapters": {
+          "type": "integer",
+          "title": "Registered Adapters"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "enabled",
+        "registered_adapters"
+      ],
+      "title": "WorkflowCompatibilityStatus"
+    },
+    "WorkflowContractRef": {
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": [
+            "workflow",
+            "step",
+            "action"
+          ],
+          "title": "Kind"
+        },
+        "name": {
+          "type": "string",
+          "title": "Name"
+        },
+        "version": {
+          "type": "string",
+          "title": "Version"
+        },
+        "digest": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Digest"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "kind",
+        "name",
+        "version"
+      ],
+      "title": "WorkflowContractRef"
+    },
+    "WorkflowDecision": {
+      "properties": {
+        "decision": {
+          "type": "string",
+          "enum": [
+            "approve",
+            "reject"
+          ],
+          "title": "Decision"
+        },
+        "actor": {
+          "type": "string",
+          "title": "Actor"
+        },
+        "reason": {
+          "type": "string",
+          "title": "Reason"
+        },
+        "decided_at": {
+          "type": "string",
+          "format": "date-time",
+          "title": "Decided At"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "decision",
+        "actor",
+        "reason",
+        "decided_at"
+      ],
+      "title": "WorkflowDecision"
+    },
+    "WorkflowDefinition": {
+      "properties": {
+        "workflow": {
+          "type": "string",
+          "enum": [
+            "life.capture",
+            "life.review"
+          ],
+          "title": "Workflow"
+        },
+        "version": {
+          "type": "integer",
+          "const": 1,
+          "title": "Version",
+          "default": 1
+        },
+        "description": {
+          "type": "string",
+          "title": "Description"
+        },
+        "steps": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "title": "Steps"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "workflow",
+        "description",
+        "steps"
+      ],
+      "title": "WorkflowDefinition"
+    },
+    "WorkflowExecutionRecord": {
+      "properties": {
+        "workflow_run_id": {
+          "type": "string",
+          "title": "Workflow Run Id"
+        },
+        "project_id": {
+          "type": "string",
+          "title": "Project Id"
+        },
+        "definition": {
+          "$ref": "#/$defs/WorkflowContractRef"
+        },
+        "definition_snapshot": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "$ref": "commands.schema.json#/$defs/JsonValue"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Definition Snapshot"
+        },
+        "status": {
+          "type": "string",
+          "title": "Status"
+        },
+        "version": {
+          "type": "integer",
+          "minimum": 1.0,
+          "title": "Version"
+        },
+        "inputs": {
+          "additionalProperties": {
+            "$ref": "commands.schema.json#/$defs/JsonValue"
+          },
+          "type": "object",
+          "title": "Inputs"
+        },
+        "result": {
+          "additionalProperties": {
+            "$ref": "commands.schema.json#/$defs/JsonValue"
+          },
+          "type": "object",
+          "title": "Result"
+        },
+        "trigger": {
+          "additionalProperties": {
+            "$ref": "commands.schema.json#/$defs/JsonValue"
+          },
+          "type": "object",
+          "title": "Trigger"
+        },
+        "recording_origin": {
+          "type": "string",
+          "enum": [
+            "native",
+            "legacy_snapshot"
+          ],
+          "title": "Recording Origin"
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time",
+          "title": "Created At"
+        },
+        "completed_at": {
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "date-time"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Completed At"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "workflow_run_id",
+        "project_id",
+        "definition",
+        "definition_snapshot",
+        "status",
+        "version",
+        "inputs",
+        "result",
+        "trigger",
+        "recording_origin",
+        "created_at",
+        "completed_at"
+      ],
+      "title": "WorkflowExecutionRecord"
+    },
+    "WorkflowExecutionView": {
+      "properties": {
+        "run": {
+          "$ref": "#/$defs/WorkflowExecutionRecord"
+        },
+        "steps": {
+          "items": {
+            "$ref": "#/$defs/WorkflowStepExecution"
+          },
+          "type": "array",
+          "title": "Steps"
+        },
+        "invocations": {
+          "items": {
+            "$ref": "#/$defs/WorkflowInvocationRecord"
+          },
+          "type": "array",
+          "title": "Invocations"
+        },
+        "waits": {
+          "items": {
+            "$ref": "#/$defs/WorkflowWaitRecord"
+          },
+          "type": "array",
+          "title": "Waits"
+        },
+        "compatibility": {
+          "$ref": "#/$defs/WorkflowCompatibilityStatus"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "run",
+        "steps",
+        "invocations",
+        "waits",
+        "compatibility"
+      ],
+      "title": "WorkflowExecutionView"
+    },
+    "WorkflowInvocationRecord": {
+      "properties": {
+        "invocation_id": {
+          "type": "string",
+          "title": "Invocation Id"
+        },
+        "workflow_run_id": {
+          "type": "string",
+          "title": "Workflow Run Id"
+        },
+        "step_execution_id": {
+          "type": "string",
+          "title": "Step Execution Id"
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "local",
+            "connector"
+          ],
+          "title": "Kind"
+        },
+        "action": {
+          "$ref": "#/$defs/WorkflowContractRef"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "prepared",
+            "completed",
+            "failed",
+            "unknown"
+          ],
+          "title": "Status"
+        },
+        "idempotency_key": {
+          "type": "string",
+          "title": "Idempotency Key"
+        },
+        "inputs": {
+          "additionalProperties": {
+            "$ref": "commands.schema.json#/$defs/JsonValue"
+          },
+          "type": "object",
+          "title": "Inputs"
+        },
+        "output": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "$ref": "commands.schema.json#/$defs/JsonValue"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Output"
+        },
+        "external_operation_ref": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "External Operation Ref"
+        },
+        "error": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Error"
+        },
+        "recorded_at": {
+          "type": "string",
+          "format": "date-time",
+          "title": "Recorded At"
+        },
+        "completed_at": {
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "date-time"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Completed At"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "invocation_id",
+        "workflow_run_id",
+        "step_execution_id",
+        "kind",
+        "action",
+        "status",
+        "idempotency_key",
+        "inputs",
+        "output",
+        "external_operation_ref",
+        "error",
+        "recorded_at",
+        "completed_at"
+      ],
+      "title": "WorkflowInvocationRecord"
+    },
+    "WorkflowResponse_LifeRoutine_": {
+      "properties": {
+        "data": {
+          "$ref": "#/$defs/LifeRoutine"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "data"
+      ],
+      "title": "WorkflowResponse[LifeRoutine]"
+    },
+    "WorkflowResponse_LifeTask_": {
+      "properties": {
+        "data": {
+          "$ref": "#/$defs/LifeTask"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "data"
+      ],
+      "title": "WorkflowResponse[LifeTask]"
+    },
+    "WorkflowResponse_RoutineSchedulerStatus_": {
+      "properties": {
+        "data": {
+          "$ref": "#/$defs/RoutineSchedulerStatus"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "data"
+      ],
+      "title": "WorkflowResponse[RoutineSchedulerStatus]"
+    },
+    "WorkflowResponse_WorkflowExecutionView_": {
+      "properties": {
+        "data": {
+          "$ref": "#/$defs/WorkflowExecutionView"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "data"
+      ],
+      "title": "WorkflowResponse[WorkflowExecutionView]"
+    },
+    "WorkflowResponse_WorkflowRun_": {
+      "properties": {
+        "data": {
+          "$ref": "#/$defs/WorkflowRun"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "data"
+      ],
+      "title": "WorkflowResponse[WorkflowRun]"
+    },
+    "WorkflowResponse_list_LifeRoutine__": {
+      "properties": {
+        "data": {
+          "items": {
+            "$ref": "#/$defs/LifeRoutine"
+          },
+          "type": "array",
+          "title": "Data"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "data"
+      ],
+      "title": "WorkflowResponse[list[LifeRoutine]]"
+    },
+    "WorkflowResponse_list_LifeTask__": {
+      "properties": {
+        "data": {
+          "items": {
+            "$ref": "#/$defs/LifeTask"
+          },
+          "type": "array",
+          "title": "Data"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "data"
+      ],
+      "title": "WorkflowResponse[list[LifeTask]]"
+    },
+    "WorkflowResponse_list_WorkflowDefinition__": {
+      "properties": {
+        "data": {
+          "items": {
+            "$ref": "#/$defs/WorkflowDefinition"
+          },
+          "type": "array",
+          "title": "Data"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "data"
+      ],
+      "title": "WorkflowResponse[list[WorkflowDefinition]]"
+    },
+    "WorkflowResponse_list_WorkflowRun__": {
+      "properties": {
+        "data": {
+          "items": {
+            "$ref": "#/$defs/WorkflowRun"
+          },
+          "type": "array",
+          "title": "Data"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "data"
+      ],
+      "title": "WorkflowResponse[list[WorkflowRun]]"
+    },
+    "WorkflowRun": {
+      "properties": {
+        "workflow_run_id": {
+          "type": "string",
+          "title": "Workflow Run Id"
+        },
+        "project_id": {
+          "type": "string",
+          "title": "Project Id"
+        },
+        "workflow": {
+          "type": "string",
+          "enum": [
+            "life.capture",
+            "life.review"
+          ],
+          "title": "Workflow"
+        },
+        "workflow_version": {
+          "type": "integer",
+          "const": 1,
+          "title": "Workflow Version",
+          "default": 1
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "awaiting_confirmation",
+            "completed",
+            "rejected"
+          ],
+          "title": "Status"
+        },
+        "version": {
+          "type": "integer",
+          "title": "Version"
+        },
+        "source_text": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Source Text"
+        },
+        "proposed_tasks": {
+          "items": {
+            "$ref": "#/$defs/LifeTaskInput"
+          },
+          "type": "array",
+          "title": "Proposed Tasks"
+        },
+        "task_ids": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "title": "Task Ids"
+        },
+        "review": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LifeReview"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "decision": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/WorkflowDecision"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "routine_snapshot": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LifeRoutine"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "scheduled_for": {
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "date-time"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Scheduled For"
+        },
+        "coalesced_occurrences": {
+          "type": "integer",
+          "title": "Coalesced Occurrences"
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time",
+          "title": "Created At"
+        },
+        "completed_at": {
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "date-time"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Completed At"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "workflow_run_id",
+        "project_id",
+        "workflow",
+        "status",
+        "version",
+        "source_text",
+        "proposed_tasks",
+        "task_ids",
+        "review",
+        "decision",
+        "routine_snapshot",
+        "scheduled_for",
+        "coalesced_occurrences",
+        "created_at",
+        "completed_at"
+      ],
+      "title": "WorkflowRun"
+    },
+    "WorkflowStepExecution": {
+      "properties": {
+        "step_execution_id": {
+          "type": "string",
+          "title": "Step Execution Id"
+        },
+        "workflow_run_id": {
+          "type": "string",
+          "title": "Workflow Run Id"
+        },
+        "node_id": {
+          "type": "string",
+          "title": "Node Id"
+        },
+        "execution_index": {
+          "type": "integer",
+          "minimum": 1.0,
+          "title": "Execution Index"
+        },
+        "contract": {
+          "$ref": "#/$defs/WorkflowContractRef"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "completed",
+            "waiting",
+            "skipped"
+          ],
+          "title": "Status"
+        },
+        "inputs": {
+          "additionalProperties": {
+            "$ref": "commands.schema.json#/$defs/JsonValue"
+          },
+          "type": "object",
+          "title": "Inputs"
+        },
+        "output": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "$ref": "commands.schema.json#/$defs/JsonValue"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Output"
+        },
+        "recorded_at": {
+          "type": "string",
+          "format": "date-time",
+          "title": "Recorded At"
+        },
+        "completed_at": {
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "date-time"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Completed At"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "step_execution_id",
+        "workflow_run_id",
+        "node_id",
+        "execution_index",
+        "contract",
+        "status",
+        "inputs",
+        "output",
+        "recorded_at",
+        "completed_at"
+      ],
+      "title": "WorkflowStepExecution"
+    },
+    "WorkflowWaitRecord": {
+      "properties": {
+        "wait_id": {
+          "type": "string",
+          "title": "Wait Id"
+        },
+        "workflow_run_id": {
+          "type": "string",
+          "title": "Workflow Run Id"
+        },
+        "step_execution_id": {
+          "type": "string",
+          "title": "Step Execution Id"
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "human",
+            "time",
+            "event"
+          ],
+          "title": "Kind"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "waiting",
+            "resolved"
+          ],
+          "title": "Status"
+        },
+        "condition": {
+          "additionalProperties": {
+            "$ref": "commands.schema.json#/$defs/JsonValue"
+          },
+          "type": "object",
+          "title": "Condition"
+        },
+        "resolution": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "$ref": "commands.schema.json#/$defs/JsonValue"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Resolution"
+        },
+        "recorded_at": {
+          "type": "string",
+          "format": "date-time",
+          "title": "Recorded At"
+        },
+        "resolved_at": {
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "date-time"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Resolved At"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "wait_id",
+        "workflow_run_id",
+        "step_execution_id",
+        "kind",
+        "status",
+        "condition",
+        "resolution",
+        "recorded_at",
+        "resolved_at"
+      ],
+      "title": "WorkflowWaitRecord"
+    }
+  }
+}

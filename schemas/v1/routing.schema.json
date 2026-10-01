@@ -1,0 +1,1554 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.ehai.local/v1/routing.schema.json",
+  "$defs": {
+    "ConfigureRoutingFallbackRequest": {
+      "properties": {
+        "idempotency_key": {
+          "type": "string",
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Idempotency Key"
+        },
+        "mode": {
+          "type": "string",
+          "enum": [
+            "external",
+            "pi"
+          ],
+          "title": "Mode"
+        },
+        "validation_cases": {
+          "items": {
+            "$ref": "#/$defs/RoutingValidationCase"
+          },
+          "type": "array",
+          "maxItems": 19,
+          "title": "Validation Cases"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "idempotency_key",
+        "mode",
+        "validation_cases"
+      ],
+      "title": "ConfigureRoutingFallbackRequest"
+    },
+    "ConfigureRoutingProjectRequest": {
+      "properties": {
+        "idempotency_key": {
+          "type": "string",
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Idempotency Key"
+        },
+        "api_url": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 200,
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Api Url"
+        },
+        "project_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Project Id"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "idempotency_key",
+        "api_url",
+        "project_id"
+      ],
+      "title": "ConfigureRoutingProjectRequest"
+    },
+    "CreateRoutingLabRequest": {
+      "properties": {
+        "idempotency_key": {
+          "type": "string",
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Idempotency Key"
+        },
+        "name": {
+          "type": "string",
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Name"
+        },
+        "connector_id": {
+          "type": "string",
+          "title": "Connector Id"
+        },
+        "mode": {
+          "type": "string",
+          "enum": [
+            "shadow",
+            "read_only"
+          ],
+          "title": "Mode",
+          "default": "shadow"
+        },
+        "confidence_threshold": {
+          "type": "number",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Confidence Threshold",
+          "default": 0.85
+        },
+        "probability_threshold": {
+          "type": "number",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Probability Threshold",
+          "default": 0.8
+        },
+        "max_pending": {
+          "type": "integer",
+          "maximum": 100.0,
+          "minimum": 1.0,
+          "title": "Max Pending",
+          "default": 32
+        },
+        "actor": {
+          "type": "string",
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Actor"
+        },
+        "approved_recipes": {
+          "items": {
+            "$ref": "#/$defs/RoutingRecipeInput"
+          },
+          "type": "array",
+          "maxItems": 20,
+          "minItems": 1,
+          "title": "Approved Recipes"
+        },
+        "fallback_mode": {
+          "type": "string",
+          "enum": [
+            "external",
+            "pi"
+          ],
+          "title": "Fallback Mode",
+          "default": "external"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "idempotency_key",
+        "name",
+        "connector_id",
+        "actor",
+        "approved_recipes"
+      ],
+      "title": "CreateRoutingLabRequest"
+    },
+    "JevRoutingJudgement": {
+      "properties": {
+        "model": {
+          "type": "string",
+          "title": "Model"
+        },
+        "choice": {
+          "type": "string",
+          "title": "Choice"
+        },
+        "confidence": {
+          "type": "number",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Confidence"
+        },
+        "probabilities": {
+          "additionalProperties": {
+            "type": "number",
+            "maximum": 1.0,
+            "minimum": 0.0
+          },
+          "type": "object",
+          "title": "Probabilities"
+        },
+        "input_tokens": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0.0
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Input Tokens"
+        },
+        "output_tokens": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0.0
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Output Tokens"
+        },
+        "evidence_source": {
+          "type": "string",
+          "enum": [
+            "typesafe",
+            "protocol_trial"
+          ],
+          "title": "Evidence Source"
+        },
+        "template_version": {
+          "type": "string",
+          "const": "routing-v1",
+          "title": "Template Version",
+          "default": "routing-v1"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "model",
+        "choice",
+        "confidence",
+        "probabilities",
+        "evidence_source"
+      ],
+      "title": "JevRoutingJudgement"
+    },
+    "PauseRoutingRecipeRequest": {
+      "properties": {
+        "idempotency_key": {
+          "type": "string",
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Idempotency Key"
+        },
+        "actor": {
+          "type": "string",
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Actor"
+        },
+        "reason": {
+          "type": "string",
+          "maxLength": 4000,
+          "minLength": 1,
+          "title": "Reason"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "idempotency_key",
+        "actor",
+        "reason"
+      ],
+      "title": "PauseRoutingRecipeRequest"
+    },
+    "ProposeRoutingRecipeRequest": {
+      "properties": {
+        "idempotency_key": {
+          "type": "string",
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Idempotency Key"
+        },
+        "recipe": {
+          "$ref": "#/$defs/RoutingRecipeInput"
+        },
+        "source_request_ids": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "maxItems": 20,
+          "minItems": 1,
+          "title": "Source Request Ids"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "idempotency_key",
+        "recipe",
+        "source_request_ids"
+      ],
+      "title": "ProposeRoutingRecipeRequest"
+    },
+    "PublishRoutingRecipeRequest": {
+      "properties": {
+        "idempotency_key": {
+          "type": "string",
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Idempotency Key"
+        },
+        "actor": {
+          "type": "string",
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Actor"
+        },
+        "replay_id": {
+          "type": "string",
+          "title": "Replay Id"
+        },
+        "allow_protocol_trial": {
+          "type": "boolean",
+          "title": "Allow Protocol Trial",
+          "default": false
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "idempotency_key",
+        "actor",
+        "replay_id"
+      ],
+      "title": "PublishRoutingRecipeRequest"
+    },
+    "ResolveRoutingRequest": {
+      "properties": {
+        "idempotency_key": {
+          "type": "string",
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Idempotency Key"
+        },
+        "actor": {
+          "type": "string",
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Actor"
+        },
+        "response": {
+          "type": "string",
+          "maxLength": 4000,
+          "minLength": 1,
+          "title": "Response"
+        },
+        "evidence": {
+          "type": "string",
+          "maxLength": 4000,
+          "minLength": 1,
+          "title": "Evidence"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "idempotency_key",
+        "actor",
+        "response",
+        "evidence"
+      ],
+      "title": "ResolveRoutingRequest"
+    },
+    "RoutingFallbackExecution": {
+      "properties": {
+        "attempt_id": {
+          "type": "string",
+          "title": "Attempt Id"
+        },
+        "session_id": {
+          "type": "string",
+          "title": "Session Id"
+        },
+        "model": {
+          "type": "string",
+          "title": "Model"
+        },
+        "configuration_hash": {
+          "type": "string",
+          "title": "Configuration Hash"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "running",
+            "completed",
+            "failed",
+            "interrupted"
+          ],
+          "title": "Status"
+        },
+        "started_at": {
+          "type": "string",
+          "format": "date-time",
+          "title": "Started At"
+        },
+        "completed_at": {
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "date-time"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Completed At"
+        },
+        "error": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Error"
+        },
+        "candidate_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Candidate Id"
+        },
+        "change_reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Change Reason"
+        },
+        "replay_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Replay Id"
+        },
+        "replay_error": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Replay Error"
+        },
+        "replay_cases": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/RoutingReplayCase"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Replay Cases"
+        },
+        "project_change": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RoutingProjectChange"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "change_project_binding": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RoutingProjectBinding"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "attempt_id",
+        "session_id",
+        "model",
+        "configuration_hash",
+        "status",
+        "started_at"
+      ],
+      "title": "RoutingFallbackExecution"
+    },
+    "RoutingFeedback": {
+      "properties": {
+        "actor": {
+          "type": "string",
+          "title": "Actor"
+        },
+        "outcome": {
+          "type": "string",
+          "enum": [
+            "correct",
+            "misroute",
+            "execution_failed"
+          ],
+          "title": "Outcome"
+        },
+        "explanation": {
+          "type": "string",
+          "title": "Explanation"
+        },
+        "recorded_at": {
+          "type": "string",
+          "format": "date-time",
+          "title": "Recorded At"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "actor",
+        "outcome",
+        "explanation",
+        "recorded_at"
+      ],
+      "title": "RoutingFeedback"
+    },
+    "RoutingFeedbackRequest": {
+      "properties": {
+        "idempotency_key": {
+          "type": "string",
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Idempotency Key"
+        },
+        "actor": {
+          "type": "string",
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Actor"
+        },
+        "outcome": {
+          "type": "string",
+          "enum": [
+            "correct",
+            "misroute",
+            "execution_failed"
+          ],
+          "title": "Outcome"
+        },
+        "explanation": {
+          "type": "string",
+          "maxLength": 4000,
+          "minLength": 1,
+          "title": "Explanation"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "idempotency_key",
+        "actor",
+        "outcome",
+        "explanation"
+      ],
+      "title": "RoutingFeedbackRequest"
+    },
+    "RoutingLab": {
+      "properties": {
+        "lab_id": {
+          "type": "string",
+          "title": "Lab Id"
+        },
+        "project_id": {
+          "type": "string",
+          "title": "Project Id"
+        },
+        "name": {
+          "type": "string",
+          "title": "Name"
+        },
+        "connector_id": {
+          "type": "string",
+          "title": "Connector Id"
+        },
+        "mode": {
+          "type": "string",
+          "enum": [
+            "shadow",
+            "read_only"
+          ],
+          "title": "Mode"
+        },
+        "confidence_threshold": {
+          "type": "number",
+          "title": "Confidence Threshold"
+        },
+        "probability_threshold": {
+          "type": "number",
+          "title": "Probability Threshold"
+        },
+        "max_pending": {
+          "type": "integer",
+          "title": "Max Pending"
+        },
+        "catalog_version": {
+          "type": "integer",
+          "title": "Catalog Version"
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time",
+          "title": "Created At"
+        },
+        "fallback_mode": {
+          "type": "string",
+          "enum": [
+            "external",
+            "pi"
+          ],
+          "title": "Fallback Mode",
+          "default": "external"
+        },
+        "fallback_validation_cases": {
+          "items": {
+            "$ref": "#/$defs/RoutingValidationCase"
+          },
+          "type": "array",
+          "title": "Fallback Validation Cases"
+        },
+        "change_project": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RoutingProjectBinding"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "lab_id",
+        "project_id",
+        "name",
+        "connector_id",
+        "mode",
+        "confidence_threshold",
+        "probability_threshold",
+        "max_pending",
+        "catalog_version",
+        "created_at"
+      ],
+      "title": "RoutingLab"
+    },
+    "RoutingLabMetrics": {
+      "properties": {
+        "request_count": {
+          "type": "integer",
+          "title": "Request Count"
+        },
+        "routing_count": {
+          "type": "integer",
+          "title": "Routing Count"
+        },
+        "escalated_count": {
+          "type": "integer",
+          "title": "Escalated Count"
+        },
+        "system2_resolved_count": {
+          "type": "integer",
+          "title": "System2 Resolved Count"
+        },
+        "fast_completed_count": {
+          "type": "integer",
+          "title": "Fast Completed Count"
+        },
+        "shadow_count": {
+          "type": "integer",
+          "title": "Shadow Count"
+        },
+        "reviewed_count": {
+          "type": "integer",
+          "title": "Reviewed Count"
+        },
+        "misroute_count": {
+          "type": "integer",
+          "title": "Misroute Count"
+        },
+        "provider_judgements": {
+          "type": "integer",
+          "title": "Provider Judgements"
+        },
+        "protocol_trial_judgements": {
+          "type": "integer",
+          "title": "Protocol Trial Judgements"
+        },
+        "by_recipe": {
+          "additionalProperties": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "type": "object"
+          },
+          "type": "object",
+          "title": "By Recipe"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "request_count",
+        "routing_count",
+        "escalated_count",
+        "system2_resolved_count",
+        "fast_completed_count",
+        "shadow_count",
+        "reviewed_count",
+        "misroute_count",
+        "provider_judgements",
+        "protocol_trial_judgements",
+        "by_recipe"
+      ],
+      "title": "RoutingLabMetrics"
+    },
+    "RoutingLabView": {
+      "properties": {
+        "lab": {
+          "$ref": "#/$defs/RoutingLab"
+        },
+        "recipes": {
+          "items": {
+            "$ref": "#/$defs/RoutingRecipe"
+          },
+          "type": "array",
+          "title": "Recipes"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "lab",
+        "recipes"
+      ],
+      "title": "RoutingLabView"
+    },
+    "RoutingProjectBinding": {
+      "properties": {
+        "api_url": {
+          "type": "string",
+          "title": "Api Url"
+        },
+        "project_id": {
+          "type": "string",
+          "title": "Project Id"
+        },
+        "workspace": {
+          "type": "string",
+          "title": "Workspace"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "api_url",
+        "project_id",
+        "workspace"
+      ],
+      "title": "RoutingProjectBinding"
+    },
+    "RoutingProjectChange": {
+      "properties": {
+        "target": {
+          "$ref": "#/$defs/RoutingProjectBinding"
+        },
+        "objective": {
+          "type": "string",
+          "title": "Objective"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "pending",
+            "dispatching",
+            "waiting_approval",
+            "needs_input",
+            "failed",
+            "unknown"
+          ],
+          "title": "Status"
+        },
+        "goal_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Goal Id"
+        },
+        "conversation_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Conversation Id"
+        },
+        "plan_revision_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Plan Revision Id"
+        },
+        "error": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Error"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "target",
+        "objective",
+        "status"
+      ],
+      "title": "RoutingProjectChange"
+    },
+    "RoutingRecipe": {
+      "properties": {
+        "recipe_id": {
+          "type": "string",
+          "title": "Recipe Id"
+        },
+        "lab_id": {
+          "type": "string",
+          "title": "Lab Id"
+        },
+        "project_id": {
+          "type": "string",
+          "title": "Project Id"
+        },
+        "name": {
+          "type": "string",
+          "title": "Name"
+        },
+        "applicability": {
+          "type": "string",
+          "title": "Applicability"
+        },
+        "target": {
+          "type": "string",
+          "enum": [
+            "life.tasks.list",
+            "inbox.list"
+          ],
+          "title": "Target"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "candidate",
+            "active",
+            "paused"
+          ],
+          "title": "Status"
+        },
+        "source_request_ids": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "title": "Source Request Ids"
+        },
+        "approved_by": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Approved By"
+        },
+        "approval_evidence": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Approval Evidence"
+        },
+        "paused_by": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Paused By"
+        },
+        "pause_reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Pause Reason"
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time",
+          "title": "Created At"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "recipe_id",
+        "lab_id",
+        "project_id",
+        "name",
+        "applicability",
+        "target",
+        "status",
+        "source_request_ids",
+        "approved_by",
+        "approval_evidence",
+        "created_at"
+      ],
+      "title": "RoutingRecipe"
+    },
+    "RoutingRecipeInput": {
+      "properties": {
+        "name": {
+          "type": "string",
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Name"
+        },
+        "applicability": {
+          "type": "string",
+          "maxLength": 4000,
+          "minLength": 1,
+          "title": "Applicability"
+        },
+        "target": {
+          "type": "string",
+          "enum": [
+            "life.tasks.list",
+            "inbox.list"
+          ],
+          "title": "Target"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "name",
+        "applicability",
+        "target"
+      ],
+      "title": "RoutingRecipeInput"
+    },
+    "RoutingReplay": {
+      "properties": {
+        "replay_id": {
+          "type": "string",
+          "title": "Replay Id"
+        },
+        "lab_id": {
+          "type": "string",
+          "title": "Lab Id"
+        },
+        "project_id": {
+          "type": "string",
+          "title": "Project Id"
+        },
+        "candidate_id": {
+          "type": "string",
+          "title": "Candidate Id"
+        },
+        "catalog_version": {
+          "type": "integer",
+          "title": "Catalog Version"
+        },
+        "catalog_snapshot": {
+          "items": {
+            "$ref": "#/$defs/RoutingRecipe"
+          },
+          "type": "array",
+          "title": "Catalog Snapshot"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "pending",
+            "passed",
+            "failed"
+          ],
+          "title": "Status"
+        },
+        "entries": {
+          "items": {
+            "$ref": "#/$defs/RoutingReplayEntry"
+          },
+          "type": "array",
+          "title": "Entries"
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time",
+          "title": "Created At"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "replay_id",
+        "lab_id",
+        "project_id",
+        "candidate_id",
+        "catalog_version",
+        "catalog_snapshot",
+        "status",
+        "entries",
+        "created_at"
+      ],
+      "title": "RoutingReplay"
+    },
+    "RoutingReplayCase": {
+      "properties": {
+        "request_id": {
+          "type": "string",
+          "title": "Request Id"
+        },
+        "expected_choice": {
+          "type": "string",
+          "title": "Expected Choice"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "request_id",
+        "expected_choice"
+      ],
+      "title": "RoutingReplayCase"
+    },
+    "RoutingReplayEntry": {
+      "properties": {
+        "request_id": {
+          "type": "string",
+          "title": "Request Id"
+        },
+        "message": {
+          "type": "string",
+          "title": "Message"
+        },
+        "case_role": {
+          "type": "string",
+          "enum": [
+            "learning",
+            "validation"
+          ],
+          "title": "Case Role"
+        },
+        "expected_choice": {
+          "type": "string",
+          "title": "Expected Choice"
+        },
+        "connector_call_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Connector Call Id"
+        },
+        "judgement": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/JevRoutingJudgement"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "passed": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Passed"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Reason"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "request_id",
+        "message",
+        "case_role",
+        "expected_choice",
+        "connector_call_id",
+        "judgement",
+        "passed",
+        "reason"
+      ],
+      "title": "RoutingReplayEntry"
+    },
+    "RoutingRequest": {
+      "properties": {
+        "request_id": {
+          "type": "string",
+          "title": "Request Id"
+        },
+        "lab_id": {
+          "type": "string",
+          "title": "Lab Id"
+        },
+        "project_id": {
+          "type": "string",
+          "title": "Project Id"
+        },
+        "message": {
+          "type": "string",
+          "title": "Message"
+        },
+        "case_role": {
+          "type": "string",
+          "enum": [
+            "learning",
+            "validation"
+          ],
+          "title": "Case Role"
+        },
+        "explicit_recipe_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Explicit Recipe Id"
+        },
+        "force_slow": {
+          "type": "boolean",
+          "title": "Force Slow"
+        },
+        "catalog_version": {
+          "type": "integer",
+          "title": "Catalog Version"
+        },
+        "catalog_snapshot": {
+          "items": {
+            "$ref": "#/$defs/RoutingRecipe"
+          },
+          "type": "array",
+          "title": "Catalog Snapshot"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "queued",
+            "routing",
+            "escalated",
+            "completed",
+            "shadow"
+          ],
+          "title": "Status"
+        },
+        "route_source": {
+          "type": "string",
+          "enum": [
+            "none",
+            "rule",
+            "jev",
+            "system2"
+          ],
+          "title": "Route Source"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Reason"
+        },
+        "connector_call_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Connector Call Id"
+        },
+        "judgement": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/JevRoutingJudgement"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "selected_recipe_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Selected Recipe Id"
+        },
+        "result": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "$ref": "commands.schema.json#/$defs/JsonValue"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Result"
+        },
+        "feedback": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RoutingFeedback"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time",
+          "title": "Created At"
+        },
+        "updated_at": {
+          "type": "string",
+          "format": "date-time",
+          "title": "Updated At"
+        },
+        "fallback": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RoutingFallbackExecution"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "request_id",
+        "lab_id",
+        "project_id",
+        "message",
+        "case_role",
+        "explicit_recipe_id",
+        "force_slow",
+        "catalog_version",
+        "catalog_snapshot",
+        "status",
+        "route_source",
+        "reason",
+        "connector_call_id",
+        "judgement",
+        "selected_recipe_id",
+        "result",
+        "feedback",
+        "created_at",
+        "updated_at"
+      ],
+      "title": "RoutingRequest"
+    },
+    "RoutingResponse_RoutingLabMetrics_": {
+      "properties": {
+        "data": {
+          "$ref": "#/$defs/RoutingLabMetrics"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "data"
+      ],
+      "title": "RoutingResponse[RoutingLabMetrics]"
+    },
+    "RoutingResponse_RoutingLabView_": {
+      "properties": {
+        "data": {
+          "$ref": "#/$defs/RoutingLabView"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "data"
+      ],
+      "title": "RoutingResponse[RoutingLabView]"
+    },
+    "RoutingResponse_RoutingRecipe_": {
+      "properties": {
+        "data": {
+          "$ref": "#/$defs/RoutingRecipe"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "data"
+      ],
+      "title": "RoutingResponse[RoutingRecipe]"
+    },
+    "RoutingResponse_RoutingReplay_": {
+      "properties": {
+        "data": {
+          "$ref": "#/$defs/RoutingReplay"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "data"
+      ],
+      "title": "RoutingResponse[RoutingReplay]"
+    },
+    "RoutingResponse_RoutingRequest_": {
+      "properties": {
+        "data": {
+          "$ref": "#/$defs/RoutingRequest"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "data"
+      ],
+      "title": "RoutingResponse[RoutingRequest]"
+    },
+    "RoutingResponse_list_RoutingRequest__": {
+      "properties": {
+        "data": {
+          "items": {
+            "$ref": "#/$defs/RoutingRequest"
+          },
+          "type": "array",
+          "title": "Data"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "data"
+      ],
+      "title": "RoutingResponse[list[RoutingRequest]]"
+    },
+    "RoutingValidationCase": {
+      "properties": {
+        "request_id": {
+          "type": "string",
+          "title": "Request Id"
+        },
+        "expected_target": {
+          "type": "string",
+          "enum": [
+            "life.tasks.list",
+            "inbox.list",
+            "escalate"
+          ],
+          "title": "Expected Target"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "request_id",
+        "expected_target"
+      ],
+      "title": "RoutingValidationCase"
+    },
+    "StartRoutingReplayRequest": {
+      "properties": {
+        "idempotency_key": {
+          "type": "string",
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Idempotency Key"
+        },
+        "candidate_id": {
+          "type": "string",
+          "title": "Candidate Id"
+        },
+        "cases": {
+          "items": {
+            "$ref": "#/$defs/RoutingReplayCase"
+          },
+          "type": "array",
+          "maxItems": 20,
+          "minItems": 2,
+          "title": "Cases"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "idempotency_key",
+        "candidate_id",
+        "cases"
+      ],
+      "title": "StartRoutingReplayRequest"
+    },
+    "SubmitRoutingRequest": {
+      "properties": {
+        "idempotency_key": {
+          "type": "string",
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Idempotency Key"
+        },
+        "message": {
+          "type": "string",
+          "maxLength": 4000,
+          "minLength": 1,
+          "title": "Message"
+        },
+        "explicit_recipe_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Explicit Recipe Id"
+        },
+        "force_slow": {
+          "type": "boolean",
+          "title": "Force Slow",
+          "default": false
+        },
+        "case_role": {
+          "type": "string",
+          "enum": [
+            "learning",
+            "validation"
+          ],
+          "title": "Case Role",
+          "default": "learning"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "idempotency_key",
+        "message"
+      ],
+      "title": "SubmitRoutingRequest"
+    }
+  }
+}

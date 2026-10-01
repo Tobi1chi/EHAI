@@ -23,21 +23,24 @@ from ehai.domain.execution import AttemptStatus, Run, RunStatus
 from ehai.domain.goal import Goal, Project
 from ehai.domain.planning import PlanNodeStatus
 
-InboxKind = Literal["intervention", "human_check", "worker_request", "note"]
-INBOX_KINDS = ("intervention", "human_check", "worker_request", "note")
+InboxKind = Literal[
+    "intervention", "human_check", "worker_request", "note", "workflow_confirmation"
+]
+INBOX_KINDS = ("intervention", "human_check", "worker_request", "note", "workflow_confirmation")
 
 
 @dataclass(frozen=True, slots=True)
 class InboxOwner:
     project_id: ID
     project_name: str
-    goal_id: ID
-    goal_objective: str
+    goal_id: ID | None
+    goal_objective: str | None
     run_id: ID | None
     run_status: RunStatus | None
     plan_node_id: ID | None
     node_title: str | None
     attempt_id: ID | None
+    workflow_run_id: ID | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -55,6 +58,7 @@ class InboxAction:
         "decline-worker-request",
         "add-note-message",
         "decide-note",
+        "decide-workflow",
     ]
     label: str
     effect: str
@@ -245,6 +249,10 @@ class InboxQuery:
                     self.unavailable.add(attempt.attempt_id)
         if self.include_notes:
             items.extend(self._notes(project_id, run_id))
+        if run_id is None:
+            from ehai.application.workflow_inbox import workflow_inbox_items
+
+            items.extend(workflow_inbox_items(self.session, project_id))
         return items
 
     def _notes(self, project_id: ID | None, run_id: ID | None) -> list[InboxItem]:

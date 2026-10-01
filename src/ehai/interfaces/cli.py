@@ -380,7 +380,9 @@ def create_parser() -> argparse.ArgumentParser:
         "get-inbox-item", help="read a human request and its available actions"
     )
     inbox_item.add_argument(
-        "--kind", choices=("intervention", "human_check", "worker_request"), required=True
+        "--kind",
+        choices=("intervention", "human_check", "worker_request", "note", "workflow_confirmation"),
+        required=True,
     )
     inbox_item.add_argument("--request-id", required=True)
 

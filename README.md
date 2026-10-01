@@ -18,6 +18,11 @@ EHAI（Enhanced Human-Agent Interface）是一个可本地部署的 Agent 规划
 - **调整与交付**：追踪任务块的变化、整合有效代码成果，并在重新批准后显式接续适用的旧成果。
 - **多种入口**：CLI、HTTP API 和独立 stdio MCP 共用同一个核心。
 - **多个工作区**：本机 Workspace Manager 托管独立核心，统一查询和路由；各工作区可配置自己的 Planner 与并发容量。见[多工作区用法](docs/WORKSPACE_MANAGER.md)。
+- **生活事务**：项目内录入/确认待办、管理完成状态，手动或定时保存回顾；固定流程不需要 Git 或模型调用。见[生活 Workflow 用法](docs/P4_IMPLEMENTATION_PLAN.md#使用示例)。
+- **外部 Connector**：独立进程通过标准 HTTP 协议领取动作、回传结果和事件；Google Calendar 首版提供日程读写，已通过本地协议试用，真实账号需另行 OAuth 授权。见[Connector 接入与用法](docs/CONNECTOR_PROTOCOL.md)。
+- **Jev 双反馈环实验**：批准目录内的只读路由、外部 Agent 慢环处理、候选回放/发布和纠错暂停；显式创建实验并推进，见[试用说明](docs/DUAL_FEEDBACK_EXPERIMENT.md)。独立进程通过 `--key-file` 私有文件或 `JEV_API_KEY` 环境变量读取 TypeSafe 凭证，不向核心上传密钥。
+- **固定 Pi 回退**：宿主配置 `--routing-model` 与私有 `--pi-config`，lab 显式启用后可自动从升级进入只读慢环，保存回答、可选候选和一次复测；仍需明确发布，使用步骤见上述实验说明。
+- **目标 Project 修改转交**：lab 可绑定独立项目核心，慢环将代码/分支文件修改交给该项目的正常规划、批准和执行链；独立 EHAI 源码检出也可作为目标，禁止指向运行框架和私有状态。见[边界与接口](docs/P4_WORKFLOW_REVISION_DESIGN.md)，实际验证范围见[P4 实施记录](docs/P4_IMPLEMENTATION_PLAN.md)。
 
 一次开发任务的流程：
 

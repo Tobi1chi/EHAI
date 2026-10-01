@@ -3226,7 +3226,8 @@
         "intervention",
         "human_check",
         "worker_request",
-        "note"
+        "note",
+        "workflow_confirmation"
       ]
     },
     "InboxOwner": {
@@ -3241,7 +3242,8 @@
         "run_status",
         "plan_node_id",
         "node_title",
-        "attempt_id"
+        "attempt_id",
+        "workflow_run_id"
       ],
       "properties": {
         "project_id": {
@@ -3252,11 +3254,13 @@
           "type": "string"
         },
         "goal_id": {
-          "type": "string",
-          "format": "uuid"
+          "$ref": "#/$defs/NullableId"
         },
         "goal_objective": {
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "run_id": {
           "$ref": "#/$defs/NullableId"
@@ -3278,6 +3282,9 @@
           "$ref": "#/$defs/NullableString"
         },
         "attempt_id": {
+          "$ref": "#/$defs/NullableId"
+        },
+        "workflow_run_id": {
           "$ref": "#/$defs/NullableId"
         }
       }
@@ -3317,7 +3324,8 @@
             "resolve-worker-request",
             "decline-worker-request",
             "add-note-message",
-            "decide-note"
+            "decide-note",
+            "decide-workflow"
           ]
         },
         "label": {

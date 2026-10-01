@@ -45,6 +45,7 @@
         "RunCompleted",
         "RunFailed",
         "RunCancelled",
+        "AttemptStarted",
         "AttemptQueued",
         "AttemptDispatched",
         "AttemptBound",
@@ -52,7 +53,6 @@
         "AttemptWaiting",
         "AttemptDeadlineExtended",
         "AttemptRetryScheduled",
-        "AttemptStarted",
         "AttemptSucceeded",
         "AttemptFailed",
         "AttemptTimedOut",
@@ -76,6 +76,14 @@
         "PhaseContextPublished",
         "AttemptHandoffConfirmed",
         "NoteCreated",
+        "WorkflowRunChanged",
+        "LifeTaskChanged",
+        "RoutineChanged",
+        "ConnectorCallChanged",
+        "ConnectorEventReceived",
+        "RoutingRequestChanged",
+        "RoutingCatalogChanged",
+        "RoutingCandidateCreated",
         "NoteMessageAdded",
         "NoteDecisionStarted",
         "NoteDecisionCompleted",
@@ -97,27 +105,51 @@
         "payload"
       ],
       "properties": {
-        "id": {"$ref": "common.schema.json#/$defs/Id"},
-        "type": {"$ref": "#/$defs/EventType"},
-        "occurred_at": {"$ref": "common.schema.json#/$defs/UtcDateTime"},
-        "schema_version": {"const": 1},
+        "id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "type": {
+          "$ref": "#/$defs/EventType"
+        },
+        "occurred_at": {
+          "$ref": "common.schema.json#/$defs/UtcDateTime"
+        },
+        "schema_version": {
+          "const": 1
+        },
         "run_id": {
           "oneOf": [
-            {"$ref": "common.schema.json#/$defs/Id"},
-            {"type": "null"}
+            {
+              "$ref": "common.schema.json#/$defs/Id"
+            },
+            {
+              "type": "null"
+            }
           ]
         },
-        "correlation_id": {"$ref": "common.schema.json#/$defs/Id"},
-        "payload": {"type": "object"}
+        "correlation_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "payload": {
+          "type": "object"
+        }
       }
     },
     "StoredEventRecord": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["offset", "event"],
+      "required": [
+        "offset",
+        "event"
+      ],
       "properties": {
-        "offset": {"type": "integer", "minimum": 1},
-        "event": {"$ref": "#/$defs/EventEnvelope"}
+        "offset": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "event": {
+          "$ref": "#/$defs/EventEnvelope"
+        }
       }
     }
   }

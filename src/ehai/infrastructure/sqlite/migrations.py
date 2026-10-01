@@ -9,9 +9,16 @@ from ehai.infrastructure.sqlite.p3_event_consumer_migration import EVENT_CONSUME
 from ehai.infrastructure.sqlite.p3_project_configuration_migration import (
     PROJECT_CONFIGURATION_MIGRATION,
 )
+from ehai.infrastructure.sqlite.p4_connector_migration import CONNECTOR_MIGRATION
+from ehai.infrastructure.sqlite.p4_execution_migration import (
+    WORKFLOW_EXECUTION_MIGRATION,
+    migrate_workflow_execution_records,
+)
+from ehai.infrastructure.sqlite.p4_routing_migration import ROUTING_MIGRATION
+from ehai.infrastructure.sqlite.p4_workflow_migration import WORKFLOW_MIGRATION
 
 P1_SCHEMA_VERSION = 2
-LATEST_SCHEMA_VERSION = 18
+LATEST_SCHEMA_VERSION = 22
 
 
 class SchemaVersionError(RuntimeError):
@@ -652,6 +659,10 @@ _MIGRATIONS: dict[int, Sequence[str]] = {
     16: _MIGRATION_16,
     17: EVENT_CONSUMER_MIGRATION,
     18: PROJECT_CONFIGURATION_MIGRATION,
+    19: WORKFLOW_MIGRATION,
+    20: WORKFLOW_EXECUTION_MIGRATION,
+    21: CONNECTOR_MIGRATION,
+    22: ROUTING_MIGRATION,
 }
 
 
@@ -680,6 +691,8 @@ def migrate(
         try:
             for statement in statements:
                 connection.execute(statement)
+            if version == 20:
+                migrate_workflow_execution_records(connection)
             connection.execute(f"PRAGMA user_version = {version}")
         except BaseException:
             connection.rollback()

@@ -294,7 +294,7 @@ def create_workspace_app(supervisor: WorkspaceSupervisor) -> FastAPI:
         client: httpx.AsyncClient = request.app.state.workspace_http
         headers = {
             name: request.headers[name]
-            for name in ("accept", "content-type", "last-event-id")
+            for name in ("accept", "content-type", "last-event-id", "x-ehai-connector-token")
             if name in request.headers
         }
         upstream_request = client.build_request(

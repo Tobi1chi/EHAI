@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import inspect
+import math
 from collections.abc import Sequence
 from contextlib import suppress
 from dataclasses import dataclass, replace
@@ -18,6 +19,7 @@ from fastapi import FastAPI
 
 from ehai import ID, JsonValue, json_dumps, json_loads, utc_now
 from ehai.application.async_runtime import RuntimeConnector, SingleSlotRuntime
+from ehai.application.connectors import ConnectorService
 from ehai.application.event_consumers import EventConsumerService
 from ehai.application.execution_policy import ExecutionPolicy
 from ehai.application.legacy_config import ResponsesEndpointCapabilities
@@ -27,6 +29,9 @@ from ehai.application.process_adjustments import ProcessAdjustments
 from ehai.application.project_configuration import ProjectConfigurationService
 from ehai.application.project_queries import RuntimeContextView
 from ehai.application.queries import QueryService
+from ehai.application.routing_fallback import RoutingFallbackService
+from ehai.application.routing_lab import RoutingLabService
+from ehai.application.routing_models import RoutingTarget
 from ehai.application.runtime_control import RuntimeControlService
 from ehai.application.scheduler import (
     CapacityPolicy,
@@ -38,6 +43,8 @@ from ehai.application.service import ExecutionService
 from ehai.application.session_mailbox import SessionMailbox
 from ehai.application.trajectory_reviews import TrajectoryReviewPolicy
 from ehai.application.trajectory_suspensions import TrajectorySuspensions
+from ehai.application.workflow_models import LifeTask
+from ehai.application.workflows import WorkflowService
 from ehai.domain.execution import RunStatus
 from ehai.domain.workers import (
     WorkerCapability,
@@ -49,10 +56,16 @@ from ehai.domain.workers import (
 from ehai.infrastructure.agent_traces import SQLiteAgentTraceStore
 from ehai.infrastructure.artifacts import FilesystemArtifactStore
 from ehai.infrastructure.pi_config import PiBackendConfig
+from ehai.infrastructure.pi_runtime import PiRoleRunner
+from ehai.infrastructure.routing_pi import PiRoutingFallback
+from ehai.infrastructure.routing_projects import RoutingProjectBoundary, RoutingProjectDispatcher
 from ehai.infrastructure.session_mailbox import SQLiteSessionMailboxRepository
 from ehai.infrastructure.sqlite import SQLiteDatabase
+from ehai.infrastructure.sqlite.connectors import SQLiteConnectorStore
 from ehai.infrastructure.sqlite.event_consumers import SQLiteEventConsumerRepository
 from ehai.infrastructure.sqlite.project_configuration import SQLiteProjectConfigurationStore
+from ehai.infrastructure.sqlite.routing import SQLiteRoutingStore
+from ehai.infrastructure.sqlite.workflows import SQLiteWorkflowStore
 from ehai.infrastructure.workers import (
     CodexAppServerConnector,
     PiAgentConnector,
@@ -63,7 +76,10 @@ from ehai.infrastructure.workspaces import WorkspaceManager
 from ehai.interfaces.agent_backends import resolve_planner_kind
 from ehai.interfaces.api import create_app
 from ehai.interfaces.cli import _positive_planner_capacity, build_service
+from ehai.interfaces.public_documents import public_json_value
+from ehai.interfaces.routing_host import install_routing_fallback
 from ehai.interfaces.session_host import ExecutionConfig
+from ehai.interfaces.workflows_api import install_routine_scheduler
 
 _MAX_RUNTIME_RESTARTS = 2
 _RUNTIME_RESTART_BASE_SECONDS = 0.05
@@ -121,8 +137,15 @@ def create_local_app(
     runtime_autostart: bool = True,
     endpoint_capabilities: ResponsesEndpointCapabilities | None = None,
     pi_backend: PiBackendConfig | None = None,
+    routing_model: str | None = None,
+    routing_reasoning_effort: str | None = None,
+    routing_timeout_seconds: float = 300.0,
 ) -> FastAPI:
     """Construct one Command service and, optionally, its local P2 Runtime."""
+    if routing_model is not None and (not routing_model.strip() or pi_backend is None):
+        raise ValueError("Routing fallback requires an explicit model and --pi-config")
+    if not math.isfinite(routing_timeout_seconds) or routing_timeout_seconds <= 0:
+        raise ValueError("Routing timeout must be finite and positive")
     worker_kind = worker_kind or (
         "pi" if agent_model is not None or (pi_backend is not None and p2_runtime) else "fake"
     )
@@ -194,6 +217,8 @@ def create_local_app(
     )
     database_path.parent.mkdir(parents=True, exist_ok=True)
     query_database = SQLiteDatabase(database_path)
+    workflows = WorkflowService(SQLiteWorkflowStore(query_database))
+    connectors = ConnectorService(SQLiteConnectorStore(query_database))
     notes = NoteService(query_database.unit_of_work, query_database.read_session)
     event_consumers = EventConsumerService(SQLiteEventConsumerRepository(query_database))
     project_configuration = ProjectConfigurationService(
@@ -236,6 +261,58 @@ def create_local_app(
         read_session_factory=query_database.read_session,
         builtin_session_reader=builtin_sessions,
     )
+
+    def routing_read_query(project_id: str, target: RoutingTarget) -> dict[str, JsonValue]:
+        from ehai import normalize_id
+
+        if target == "life.tasks.list":
+            return {
+                "items": [
+                    t.model_dump(mode="json")
+                    for t in workflows.list_records("task", project_id, LifeTask)
+                ]
+            }
+        # The trial view is Project-local and reads durable inbox facts; no Worker is controlled.
+        data = public_json_value(query_service.list_inbox(project_id=normalize_id(project_id)))
+        return {"inbox": data}
+
+    protected_roots = [Path(__file__).resolve().parents[2], artifact_root, database_path.parent]
+    if pi_backend is not None:
+        protected_roots.extend((pi_backend.agent_dir, pi_backend.cli.parent.parent.parent))
+    project_boundary = RoutingProjectBoundary(tuple(protected_roots))
+    routing_labs = RoutingLabService(
+        SQLiteRoutingStore(query_database),
+        connectors,
+        routing_read_query,
+        fallback_available=routing_model is not None and runtime_autostart,
+        project_resolver=project_boundary.resolve,
+    )
+
+    def install_routing(app: FastAPI) -> None:
+        if routing_model is None or pi_backend is None or not runtime_autostart:
+            return
+        workspace = artifact_root.resolve() / "routing-fallback-workspace"
+        workspace.mkdir(parents=True, exist_ok=True)
+        install_routing_fallback(
+            app,
+            PiRoutingFallback(
+                RoutingFallbackService(routing_labs),
+                PiRoleRunner(
+                    builtin_sessions,
+                    backend=pi_backend,
+                    state_root=artifact_root.resolve() / "routing-pi",
+                ),
+                execution_service.planner_capacity,
+                model=routing_model,
+                reasoning_effort=routing_reasoning_effort,
+                workspace=workspace,
+                timeout_seconds=routing_timeout_seconds,
+            ),
+            project_dispatcher=RoutingProjectDispatcher(
+                routing_labs, project_boundary, routing_timeout_seconds
+            ),
+        )
+
     if not p2_runtime:
         execution_service.recover_startup()
         app = create_app(
@@ -244,6 +321,9 @@ def create_local_app(
             notes=notes,
             event_consumers=event_consumers,
             project_configuration=project_configuration,
+            workflows=workflows,
+            connectors=connectors,
+            routing_labs=routing_labs,
             artifact_root=str(artifact_root),
             runtime_context=lambda: RuntimeContextView(
                 utc_now(),
@@ -257,6 +337,9 @@ def create_local_app(
         app.state.artifact_root = artifact_root.resolve()
         app.state.execution_service = execution_service
         app.state.query_service = query_service
+        if runtime_autostart:
+            install_routine_scheduler(app, workflows)
+        install_routing(app)
         return app
 
     connector: RuntimeConnector
@@ -528,6 +611,9 @@ def create_local_app(
         event_consumers=event_consumers,
         project_configuration=project_configuration,
         process_adjustments=process_adjustments,
+        workflows=workflows,
+        connectors=connectors,
+        routing_labs=routing_labs,
         trajectory_suspensions=trajectory_suspensions,
         execution_config_validator=validate_execution_config,
         artifact_root=str(artifact_root),
@@ -640,8 +726,10 @@ def create_local_app(
         await trajectory_suspensions.close()
 
     if runtime_autostart:
+        install_routine_scheduler(app, workflows)
         app.router.add_event_handler("startup", start_runtime)
         app.router.add_event_handler("shutdown", stop_runtime)
+    install_routing(app)
     return app
 
 
@@ -680,6 +768,12 @@ def create_parser() -> argparse.ArgumentParser:
     """Create the local API server command line."""
     parser = argparse.ArgumentParser(prog="ehai-api", description="EHAI Core HTTP API host")
     parser.add_argument("--pi-config", type=Path)
+    parser.add_argument("--routing-model", help="opt in to the fixed Pi routing fallback")
+    parser.add_argument(
+        "--routing-reasoning-effort",
+        choices=("off", "minimal", "low", "medium", "high", "xhigh", "max"),
+    )
+    parser.add_argument("--routing-timeout-seconds", type=float, default=300.0)
     parser.add_argument("--database", type=Path, default=Path(".ehai/state.sqlite3"))
     parser.add_argument("--artifacts", type=Path, default=Path(".ehai/artifacts"))
     parser.add_argument(
@@ -825,6 +919,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         command_check_timeout_seconds=args.command_check_timeout_seconds,
         semantic_required_terms=tuple(args.semantic_required_term),
         pi_backend=None if args.pi_config is None else PiBackendConfig.from_path(args.pi_config),
+        routing_model=args.routing_model,
+        routing_reasoning_effort=args.routing_reasoning_effort,
+        routing_timeout_seconds=args.routing_timeout_seconds,
     )
     uvicorn.run(app, host=args.host, port=args.port)
     return 0

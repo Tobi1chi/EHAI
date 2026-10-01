@@ -9,6 +9,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from ehai.application.plan_imports import plan_import_error_schema, plan_import_schema
+from ehai.domain.events import EventType
 from ehai.infrastructure.workspace_supervisor import WorkspaceSupervisor
 from ehai.interfaces.event_consumers_api import (
     AcknowledgeEventConsumerRequest,
@@ -63,7 +64,13 @@ queries["$defs"]["PlannerCapacityResponse"] = {
     "required": ["data"],
     "properties": {"data": {"$ref": "#/$defs/PlannerCapacity"}},
 }
-queries["$defs"]["InboxKind"]["enum"] = ["intervention", "human_check", "worker_request", "note"]
+queries["$defs"]["InboxKind"]["enum"] = [
+    "intervention",
+    "human_check",
+    "worker_request",
+    "note",
+    "workflow_confirmation",
+]
 queries["$defs"]["InboxAction"]["properties"]["operation"]["enum"] = [
     "reply-intervention",
     "decide-human-check",
@@ -71,12 +78,20 @@ queries["$defs"]["InboxAction"]["properties"]["operation"]["enum"] = [
     "decline-worker-request",
     "add-note-message",
     "decide-note",
+    "decide-workflow",
 ]
-for name in ("run_id", "plan_node_id", "attempt_id"):
+for name in ("run_id", "plan_node_id", "attempt_id", "goal_id", "workflow_run_id"):
     queries["$defs"]["InboxOwner"]["properties"][name] = {"$ref": "#/$defs/NullableId"}
 queries["$defs"]["InboxOwner"]["properties"]["run_status"] = {
     "anyOf": [{"$ref": "#/$defs/RunStatus"}, {"type": "null"}]
 }
+queries["$defs"]["InboxOwner"]["properties"]["goal_objective"] = {"type": ["string", "null"]}
+if "workflow_run_id" not in queries["$defs"]["InboxOwner"]["required"]:
+    queries["$defs"]["InboxOwner"]["required"].append("workflow_run_id")
+events_path = schema_root / "events.schema.json"
+events = json.loads(events_path.read_text(encoding="utf-8"))
+events["$defs"]["EventType"]["enum"] = [event.value for event in EventType]
+events_path.write_text(json.dumps(events, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 queries_path.write_text(json.dumps(queries, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 commands["$defs"]["IntegrateRunRequest"] = IntegrateRunRequest.model_json_schema()
 for request_type in (ApprovePlanRequest, StartRunRequest):
@@ -161,12 +176,106 @@ def manager_reference(value: object) -> object:
         return value
     result = {key: manager_reference(item) for key, item in value.items()}
     reference = result.get("$ref")
-    if isinstance(reference, str) and reference.startswith("#/components/schemas/"):
-        result["$ref"] = reference.replace("#/components/schemas/", "#/$defs/", 1)
+    if reference in {
+        "#/components/schemas/JsonValue-Input",
+        "#/components/schemas/JsonValue-Output",
+    }:
+        # FastAPI splits recursive input/output aliases; the public JSON contract is shared.
+        result["$ref"] = "commands.schema.json#/$defs/JsonValue"
+    elif isinstance(reference, str) and reference.startswith("#/components/schemas/"):
+        result["$ref"] = "#/$defs/" + reference.removeprefix("#/components/schemas/").replace(
+            "-", "_"
+        )
     return result
 
 
 existing_definitions = {}
+routing_definitions = {
+    name.replace("-", "_"): manager_reference(definition)
+    for name, definition in document["components"]["schemas"].items()
+    if "Routing" in name
+}
+(schema_root / "routing.schema.json").write_text(
+    json.dumps(
+        {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$id": "https://schemas.ehai.local/v1/routing.schema.json",
+            "$defs": routing_definitions,
+        },
+        indent=2,
+        ensure_ascii=False,
+    )
+    + "\n",
+    encoding="utf-8",
+)
+connector_definitions = {
+    name.replace("-", "_"): manager_reference(definition)
+    for name, definition in document["components"]["schemas"].items()
+    if name.startswith("Connector")
+    or name
+    in {
+        "RegisterConnectorRequest",
+        "InvokeConnectorRequest",
+        "ClaimConnectorCallRequest",
+        "ReportConnectorResultRequest",
+        "ReconcileConnectorCallRequest",
+        "SubmitConnectorEventRequest",
+    }
+}
+(schema_root / "connectors.schema.json").write_text(
+    json.dumps(
+        {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$id": "https://schemas.ehai.local/v1/connectors.schema.json",
+            "$defs": connector_definitions,
+        },
+        indent=2,
+        ensure_ascii=False,
+    )
+    + "\n",
+    encoding="utf-8",
+)
+# Collect the concrete workflow contracts from the owning production router.
+workflow_names = {
+    "WorkflowExecutionView",
+    "WorkflowExecutionRecord",
+    "WorkflowContractRef",
+    "WorkflowStepExecution",
+    "WorkflowInvocationRecord",
+    "WorkflowWaitRecord",
+    "WorkflowCompatibilityStatus",
+    "CreateRoutineRequest",
+    "DecideWorkflowRequest",
+    "LifeRoutine",
+    "LifeTask",
+    "LifeTaskInput",
+    "LifeReview",
+    "RoutineSchedulerStatus",
+    "StartWorkflowRequest",
+    "UpdateLifeTaskRequest",
+    "UpdateRoutineRequest",
+    "WorkflowDefinition",
+    "WorkflowRun",
+    "WorkflowDecision",
+}
+workflow_definitions = {
+    name: manager_reference(definition)
+    for name, definition in document["components"]["schemas"].items()
+    if name in workflow_names or name.startswith("WorkflowResponse_")
+}
+(schema_root / "workflows.schema.json").write_text(
+    json.dumps(
+        {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$id": "https://schemas.ehai.local/v1/workflows.schema.json",
+            "$defs": workflow_definitions,
+        },
+        indent=2,
+        ensure_ascii=False,
+    )
+    + "\n",
+    encoding="utf-8",
+)
 for name in (
     "common.schema.json",
     "events.schema.json",
@@ -174,6 +283,9 @@ for name in (
     "commands.schema.json",
     "notes.schema.json",
     "project-configuration.schema.json",
+    "workflows.schema.json",
+    "connectors.schema.json",
+    "routing.schema.json",
 ):
     existing = json.loads((schema_root / name).read_text(encoding="utf-8"))
     for definition in existing.get("$defs", {}):
