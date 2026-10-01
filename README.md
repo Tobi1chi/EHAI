@@ -274,18 +274,20 @@ Web 页面继续单独设计与实现；真实模型与恢复验证边界见当�
 | [产品范围](docs/PRODUCT_SCOPE.md) / [执行模型](docs/EXECUTION_MODEL.md) | 产品边界、角色职责与执行语义 |
 | [当前状态](docs/STATUS.md) / [路线图](docs/ROADMAP.md) | 已验证能力与后续工作 |
 | [开发规则](docs/DEVELOPMENT_GUIDELINES.md) / [AGENTS](AGENTS.md) | 项目结构、检查命令与协作约定 |
+| [重构与推进计划](docs/REFACTOR_PLAN.md) | 当前重构顺序、产品 E2E 覆盖范围与待决事项 |
 | [契约索引](schemas/README.md) / [TS Client](control-plane/README.md) | HTTP Schema、跨层接口与客户端生成 |
 
 Python 核心位于 `src/ehai/`，TypeScript Client 位于 `control-plane/`。
 提交问题时，请提供脱敏的版本、入口命令、预期结果、实际结果和相关错误；
 不要附带 API Key、私有配置或未经清理的模型轨迹。
 
-常用静态检查：
+常用检查（CI 会执行同样的命令，见 [重构与推进计划](docs/REFACTOR_PLAN.md)）：
 
 ```powershell
 uv run ruff check .
 uv run ruff format --check .
 uv run mypy
+uv run pytest tests/test_product_e2e.py
 ```
 
 项目采用 [Apache License 2.0](LICENSE)。
