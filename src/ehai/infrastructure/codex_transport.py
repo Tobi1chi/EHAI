@@ -9,6 +9,7 @@ import os
 import re
 import signal
 import subprocess
+import sys
 import threading
 from collections.abc import Mapping, Sequence
 from contextlib import suppress
@@ -323,7 +324,7 @@ class CodexProcessTransport:
             "stdout": asyncio.subprocess.PIPE,
             "stderr": asyncio.subprocess.PIPE,
         }
-        if os.name == "nt":
+        if sys.platform == "win32":
             options["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
         else:
             options["start_new_session"] = True
@@ -594,6 +595,8 @@ async def _wait_windows_pids(pids: tuple[int, ...]) -> tuple[str, ...]:
 def _wait_windows_pid(pid: int, timeout_seconds: float) -> str | None:
     if pid <= 0 or pid == os.getpid():
         return f"refused unsafe Windows process wait target PID {pid}"
+    if sys.platform != "win32":
+        return f"Windows process wait is unavailable on {sys.platform}"
     import ctypes
 
     kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)

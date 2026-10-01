@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import os
 import subprocess
+import sys
 from collections.abc import AsyncIterator, Callable, Mapping, Sequence
 from contextlib import suppress
 from dataclasses import dataclass, field
@@ -40,6 +41,11 @@ _WAITING_METHODS = frozenset(
         "item/permissions/requestApproval",
     }
 )
+
+_CREATION_FLAGS = 0
+if sys.platform == "win32":
+    _CREATION_FLAGS = subprocess.CREATE_NEW_PROCESS_GROUP
+
 _TERMINAL_EVENT_TYPES = frozenset({WorkerEventType.COMPLETED, WorkerEventType.FAILED})
 _APPROVAL_POLICIES = frozenset({"untrusted", "on-request", "never"})
 _SANDBOX_MODES = frozenset({"read-only", "workspace-write", "danger-full-access"})
@@ -150,7 +156,7 @@ class StdioAppServerTransport:
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
-            creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0,
+            creationflags=_CREATION_FLAGS,
         )
         self._stderr_task = asyncio.create_task(self._drain_stderr())
 

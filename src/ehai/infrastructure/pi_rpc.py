@@ -6,6 +6,7 @@ import asyncio
 import math
 import os
 import subprocess
+import sys
 from collections.abc import Mapping, Sequence
 from contextlib import suppress
 from pathlib import Path
@@ -71,11 +72,9 @@ class PiRpcProcess:
     async def __aenter__(self) -> PiRpcProcess:
         if self._process is not None or self._closed:
             raise PiRpcError("Pi RPC process cannot be reopened")
-        flags = (
-            subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP
-            if os.name == "nt"
-            else 0
-        )
+        flags = 0
+        if sys.platform == "win32":
+            flags = subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP
         self._process = await asyncio.create_subprocess_exec(
             *self.command,
             cwd=self.workspace,

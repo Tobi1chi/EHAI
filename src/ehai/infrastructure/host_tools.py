@@ -8,6 +8,7 @@ import os
 import re
 import signal
 import subprocess
+import sys
 from collections.abc import Callable, Mapping
 from contextlib import suppress
 from pathlib import Path
@@ -1118,7 +1119,7 @@ def _process_options(
         "stdout": asyncio.subprocess.PIPE,
         "stderr": asyncio.subprocess.PIPE,
     }
-    if os.name == "nt":
+    if sys.platform == "win32":
         options["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
     else:
         options["start_new_session"] = True
@@ -1219,7 +1220,7 @@ async def _terminate_process_tree(
     environment: Mapping[str, str],
 ) -> None:
     pid = getattr(process, "pid", None)
-    if os.name == "nt" and isinstance(pid, int) and pid > 0 and pid != os.getpid():
+    if sys.platform == "win32" and isinstance(pid, int) and pid > 0 and pid != os.getpid():
         system_root = environment.get("SYSTEMROOT") or environment.get("WINDIR")
         taskkill = (
             str(Path(system_root) / "System32" / "taskkill.exe") if system_root else "taskkill.exe"
@@ -1245,8 +1246,8 @@ async def _terminate_process_tree(
                     await asyncio.wait_for(helper.wait(), timeout=_WINDOWS_HELPER_TIMEOUT_SECONDS)
         except OSError:
             pass
-    elif os.name != "nt" and isinstance(pid, int) and pid > 0 and pid != os.getpid():
-        kill_process_group = os.killpg  # type: ignore[attr-defined]
+    elif sys.platform != "win32" and isinstance(pid, int) and pid > 0 and pid != os.getpid():
+        kill_process_group = os.killpg
         with suppress(OSError):
             kill_process_group(pid, signal.SIGTERM)
         await asyncio.sleep(_COMMAND_CANCEL_GRACE_SECONDS)
