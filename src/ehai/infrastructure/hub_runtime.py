@@ -31,6 +31,7 @@ from ehai.application.sanitization import redact_sensitive_text
 from ehai.hub.adapters.pi.config import PiBackendConfig
 from ehai.hub.client import HubClient, HubConnection, HubUnavailableError, default_hub
 from ehai.hub.protocol import (
+    KEEPALIVE_SECONDS,
     AssistantMessage,
     EventBatch,
     Failed,
@@ -47,7 +48,6 @@ from ehai.hub.protocol import (
 
 HARNESS = "pi"
 _EVENT_WAIT_SECONDS = 20.0
-_KEEPALIVE_SECONDS = 60.0
 
 
 class HarnessExecutionUnknownError(RuntimeError):
@@ -216,7 +216,7 @@ class HubRoleRunner:
     async def _keepalive(self, hub: HubConnection, session_id: str) -> None:
         # Long host tool calls must not let the Hub reap a session it thinks was abandoned.
         while True:
-            await asyncio.sleep(_KEEPALIVE_SECONDS)
+            await asyncio.sleep(KEEPALIVE_SECONDS)
             with suppress(HubUnavailableError):
                 await hub.inspect(session_id)
 
