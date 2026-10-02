@@ -36,6 +36,7 @@ uv run ehai-api @Server
 | `EHAI_HUB_URL` | 核心 | 设置后使用该 Hub，不再启动本机子进程 |
 | `EHAI_HUB_TOKEN` | 核心与 Hub | 共享的 Bearer 令牌；Hub 要求至少 32 个字符 |
 | `--host` / `--port` | Hub | 监听地址，默认 `127.0.0.1:8788` |
+| `--public-url` | Hub | harness 访问 MCP 端点使用的基础地址，默认取监听地址 |
 | `--session-idle-seconds` | Hub | 会话租约时长：在此时间内没有收到核心的任何请求（含心跳）即关闭会话，默认 600，最小 180 |
 
 Hub 本身只提供令牌认证，不提供 TLS；跨机器使用时应放在受控网络或 TLS 反向代理之后。
@@ -67,6 +68,20 @@ Hub 本身只提供令牌认证，不提供 TLS；跨机器使用时应放在受
 | GET `/v1/sessions/{id}` | 会话状态与最新事件序号 |
 | POST `/v1/sessions/{id}/heartbeat` | 续约：核心在调用期间每 60 秒发送一次，包括执行耗时工具时 |
 | DELETE `/v1/sessions/{id}?abort=true\|false` | 关闭会话；`abort=true` 先请求停止再结束进程 |
+
+### 每会话 MCP 端点
+
+供支持 MCP 的 harness 调用 EHAI 工具，Hub 在启动会话时把地址和令牌交给兼容层：
+
+| 项目 | 说明 |
+| --- | --- |
+| 地址 | `<public-url>/v1/mcp/`，流式 HTTP MCP；`--public-url` 默认取监听地址（`0.0.0.0` 时为 `127.0.0.1`） |
+| 认证 | 每个会话一个随机 Bearer 令牌，与 Hub 令牌分开；Hub 令牌不能访问该端点 |
+| 工具 | 只列出该会话的工具；不在其中的名称直接拒绝 |
+| 调用 | 转为 `tool_call` 事件交给核心执行和记录，核心回传的结果返回给 harness；参数由核心校验 |
+| 关闭 | 会话关闭后令牌失效（401），等待中的调用返回错误 |
+
+Pi 不支持 MCP，继续使用扩展桥。目前没有使用该端点的 harness，只用合成客户端验证过。
 
 事件类型：
 

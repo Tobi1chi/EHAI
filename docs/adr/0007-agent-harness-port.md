@@ -1,6 +1,6 @@
 # ADR 0007：经 Hub 接入多种 Agent harness
 
-- 状态：已接受（2026-10-02 修订：加入 Hub 层，Hub 为独立服务）；迁移第 1–5 步已完成，其余未实现
+- 状态：已接受（2026-10-02 修订：加入 Hub 层，Hub 为独立服务）；迁移第 1–5、7 步已完成，其余未实现
 - 日期：2026-10-01
 - 关系：细化 [ADR 0005](0005-external-agent-backends.md)（Runtime 外置）；取代
   [ADR 0003](0003-codex-cli-process-channel.md)（Codex 本地进程通道，已随 Codex 后端删除）
@@ -159,8 +159,9 @@ harness 不是沙箱。工作区隔离（EHAI 拥有的 Git worktree）、凭证
 5. 规划逻辑上移为与后端无关的 `PlannerRole`（`infrastructure/planners/role.py`，经 application 层 `RoleRunner`
    端口运行；`PiPlannerAdapter` 只注入 Pi 配置。提示词仍提到 Pi，改动需真实模型验收，2026-10-02 完成）。
 6. 能力清单；执行配置支持 `harness` 形状，旧形状保持可读与原指纹。
-7. Hub 提供每会话 MCP 端点；确认锁定版本的 Pi 是否支持 MCP，支持则改走 MCP 并确认无退化，
-   不支持则保留扩展桥。
+7. Hub 提供每会话 MCP 端点（`/v1/mcp/`，会话令牌与 Hub 令牌分开，调用转为 `tool_call` 事件）。
+   锁定版本的 Pi 按设计不支持 MCP（其 README："No MCP"），保留扩展桥。目前没有使用该端点的 harness，
+   只用合成 MCP 客户端验证；按用户决定提前实现，接入第一个 MCP harness 时可能需要调整（2026-10-02 完成）。
 8. 需要第二个 harness 时按接入清单编写兼容层（例如 Claude Code 或 Codex）。
 9. 远端执行：Pi 设置中的路径与工作区目前须在 Hub 所在机器上存在，核心仍在本机校验 Pi 配置；
    跨机器使用需先完成第 6 步，并决定工作区如何到达 Hub 一侧。
