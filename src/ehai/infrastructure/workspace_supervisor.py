@@ -15,7 +15,7 @@ from typing import BinaryIO
 import httpx
 
 from ehai import JsonValue, json_loads
-from ehai.infrastructure.pi_config import PiBackendConfig
+from ehai.hub.adapters.pi.config import PiBackendConfig
 from ehai.interfaces.workspace_models import (
     PublicRuntimeSettings,
     WorkspaceDescriptor,

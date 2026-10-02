@@ -62,9 +62,9 @@ from ehai.domain.process import (
     process_graph_definition,
 )
 from ehai.domain.workers import WorkerCapability, WorkerKind, WorkerProfile
+from ehai.hub.adapters.pi.config import PiBackendConfig
 from ehai.infrastructure.host_tools import HostToolRuntime
-from ehai.infrastructure.pi_config import PiBackendConfig
-from ehai.infrastructure.pi_runtime import PiRoleRunner
+from ehai.infrastructure.hub_runtime import HubRoleRunner
 from ehai.infrastructure.planners.plan_documents import build_planner_input
 
 _DEFAULT_PLANNER_BUDGET = ExplorationBudget(max_attempts=24, max_width=3, max_depth=4)
@@ -290,7 +290,7 @@ class PiPlannerAdapter:
             frozenset({WorkerCapability("planner.pi")}),
         )
         self._reasoning_effort = reasoning_effort
-        self._agent_runtime = PiRoleRunner(
+        self._agent_runtime = HubRoleRunner(
             session_store or MemoryAgentTraceStore(),
             backend=backend,
             state_root=backend.agent_dir / "ehai-sessions",

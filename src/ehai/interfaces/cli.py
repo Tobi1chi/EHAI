@@ -60,6 +60,8 @@ from ehai.application.workers import WorkerAdapter
 from ehai.domain.checking import CheckKind
 from ehai.domain.goal import Goal
 from ehai.domain.planning import PlanRevision
+from ehai.hub.adapters.pi.config import PiBackendConfig
+from ehai.hub.adapters.pi.rpc import PiRpcError
 from ehai.infrastructure.agent_traces import SQLiteAgentTraceStore
 from ehai.infrastructure.artifacts import FilesystemArtifactStore
 from ehai.infrastructure.checks import (
@@ -68,8 +70,7 @@ from ehai.infrastructure.checks import (
     CommandCheckAdapter,
     SemanticCheckAdapter,
 )
-from ehai.infrastructure.pi_config import PiBackendConfig
-from ehai.infrastructure.pi_rpc import PiRpcError
+from ehai.infrastructure.hub_runtime import HarnessExecutionUnknownError
 from ehai.infrastructure.planners import PiPlannerAdapter, PiPlannerError
 from ehai.infrastructure.sqlite import SQLiteDatabase
 from ehai.infrastructure.sqlite.project_configuration import SQLiteProjectConfigurationStore
@@ -688,7 +689,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(json_dumps(plan_import_schema()))
             return 0
         if args.command == "inspect-agent":
-            from ehai.interfaces.agent_backends import inspect_pi_backend
+            from ehai.hub.adapters.pi.probe import inspect_pi_backend
 
             print(json_dumps(asyncio.run(inspect_pi_backend(node=args.node, cli=args.pi_cli))))
             return 0
@@ -808,6 +809,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         RunControlError,
         SessionHostError,
         PiRpcError,
+        HarnessExecutionUnknownError,
         ValueError,
         OSError,
         sqlite3.Error,

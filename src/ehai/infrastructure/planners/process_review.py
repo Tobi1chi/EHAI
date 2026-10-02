@@ -39,7 +39,7 @@ from ehai.domain.checking import CheckRun
 from ehai.domain.process import ProcessRevision
 from ehai.infrastructure.artifacts import ArtifactIntegrityError
 from ehai.infrastructure.host_tools import HostToolRuntime
-from ehai.infrastructure.pi_runtime import PiRoleRunner
+from ehai.infrastructure.hub_runtime import HubRoleRunner
 from ehai.infrastructure.planners.plan_documents import base_plan_document
 
 _WORKSPACE_TOOL_NAMES = frozenset({"workspace_list", "workspace_read", "workspace_search"})
@@ -106,7 +106,7 @@ _REVIEWER_SYSTEM_PROMPT = "\n".join(
 async def run_process_boundary_review(
     context: ProcessReviewContext,
     *,
-    runtime: PiRoleRunner,
+    runtime: HubRoleRunner,
     model: str,
     reasoning_effort: str | None,
     session_ref_id: ID,

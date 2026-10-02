@@ -26,7 +26,7 @@ from ehai.application.routing_models import (
     RoutingTarget,
 )
 from ehai.application.sanitization import sanitize_json_object
-from ehai.infrastructure.pi_runtime import PiRoleRunner
+from ehai.infrastructure.hub_runtime import HubRoleRunner
 
 _PROMPT = """You handle EHAI's fixed read-only routing fallback, not general planning.
 First call read_routing_context, then read_routing_facts for facts needed by the CURRENT request.
@@ -69,7 +69,7 @@ class PiRoutingFallback:
     def __init__(
         self,
         service: RoutingFallbackService,
-        runner: PiRoleRunner,
+        runner: HubRoleRunner,
         capacity: PlannerCapacity,
         *,
         model: str,

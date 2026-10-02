@@ -18,7 +18,7 @@ from starlette.responses import Response
 
 from ehai import json_loads
 from ehai.domain.execution import AttemptStatus, RunStatus
-from ehai.infrastructure.pi_config import PiBackendConfig
+from ehai.hub.adapters.pi.config import PiBackendConfig
 from ehai.infrastructure.sqlite import SQLiteDatabase
 from ehai.infrastructure.workspace_supervisor import ProcessFileLock
 from ehai.interfaces.runtime import create_local_app
