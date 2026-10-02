@@ -20,7 +20,7 @@
 | 纠错 | actor、misroute / execution_failed、说明 | 暂停命中配方、增加目录版本、原请求升级；保留旧结果以供慢环修复 |
 
 批准 target 是代码枚举，Jev 不能提供命令、工具名、计划或新权限。当前没有买票、支付、
-创建日程等副作用。`inbox.list` 读取持久事实，返回 Worker 来源可用性，不控制运行中 Worker。
+创建日程等副作用。`inbox.list` 读取持久事实，不控制运行中 Worker。
 
 默认 confidence_threshold=0.85、probability_threshold=0.8，分别比较模型 confidence
 和选中项 probability；两者不是同一指标。返回的选项集合、概率总和、最大概率选择均校验。
