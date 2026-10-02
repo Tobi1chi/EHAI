@@ -34,6 +34,7 @@
 | 10-02 | Pi 角色改经独立 Hub | 0（真实 Pi 0.85.1 + 脚本化 Provider） | 7 个调用场景轨迹与改动前逐事件一致（本机子进程与独立 Hub）；Hub 停止→结果未知不重放；强杀核心 2 秒内 Hub 与 Pi 退出；`ehai-api --worker pi` 经 Worker、Reviewer、最终 Gate 完成 Run | 真实模型、Planner/过程审查/路由回退经 Hub、Windows、跨机器 | [REFACTOR_PLAN](REFACTOR_PLAN.md#2026-10-02-hub-独立服务与-pi-兼容层) |
 | 10-02 | 产品 E2E 改经 Hub 与真实 Pi | 0（脚本化模型服务） | 原场景全部通过；每节点经 Pi 调用模型并写入文件，最终 worktree commit 含全部上游文件；破坏兼容层或不写文件时 E2E 失败 | 真实模型、独立 Hub、integrate-run、Pi 非 Worker 角色 | [REFACTOR_PLAN](REFACTOR_PLAN.md#2026-10-02-产品-e2e-经-hub-与真实-pi) |
 | 10-02 | Planner 改为与 harness 无关的 PlannerRole | 0（真实 Pi + 脚本化模型服务） | discuss-plan（ask_user）与 propose-plan（raise_note）在 main 与改动后输出一致 | 真实模型、完整建图、replan/过程草稿路径 | [REFACTOR_PLAN](REFACTOR_PLAN.md#2026-10-02-adr-0007-第-5-步plannerrole) |
+| 10-02 | Hub 每会话 MCP 端点 | 0（合成 MCP harness） | 工具列表限于本会话，调用经核心执行与记录后返回；关闭后令牌失效，Hub 令牌无权访问 | 真实 MCP harness、并发会话 | [REFACTOR_PLAN](REFACTOR_PLAN.md#2026-10-02-adr-0007-第-7-步每会话-mcp-端点) |
 
 ## P3 平台后端
 

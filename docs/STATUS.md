@@ -21,7 +21,7 @@
 | 外部计划导入 | 真实验证 | 只支持尚未规划的 Goal；拒绝伪造状态/批准 | [核心](EVIDENCE.md#核心执行) |
 | CLI API 客户端 / MCP | 部分 | MCP 默认开放全部操作；只有少数工具做过模型调用 | [核心](EVIDENCE.md#核心执行) |
 | 周期轨迹审查 / 定向挂起 | 部分 | 审查只给建议，需显式采纳；不是自治纠偏 | [RECORD_R2](history/RECORD_R2.md#本批交付) |
-| Agent 后端 | 部分 | 只有 Pi；Codex 已删除；接入第二种 harness 的能力清单、执行配置形状与 MCP 端点未实现 | [ADR 0007](adr/0007-agent-harness-port.md) |
+| Agent 后端 | 部分 | 只有 Pi；Codex 已删除；Planner 与 harness 无关；Hub 已有每会话 MCP 端点（仅合成客户端验证）；能力清单与执行配置形状未实现 | [ADR 0007](adr/0007-agent-harness-port.md) |
 | Agent harness Hub | 无模型验证 | 所有 Pi 角色经独立 `ehai-hub`（默认本机子进程）；Worker 路径由产品 E2E 在 Linux/Windows CI 覆盖，未用真实模型；跨机器需同路径 | [HUB](HUB.md) · [核心](EVIDENCE.md#核心执行) |
 | 阶段上下文 | 部分 | 逻辑 Phase Session 共享；物理 Pi Session 按 Attempt 隔离 | [EXECUTION_MODEL](EXECUTION_MODEL.md#实例与会话) |
 | 批准内过程调整 / Block 清单 | 无模型验证 | 清单只描述变化，不批准、不授权复用成果 | [核心](EVIDENCE.md#核心执行) |

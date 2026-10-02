@@ -13,7 +13,7 @@ import secrets
 from pathlib import Path
 
 from ehai import JsonValue, json_dumps, json_loads
-from ehai.hub.adapters import HarnessFailure, HarnessRequestError
+from ehai.hub.adapters import HarnessFailure, HarnessRequestError, McpEndpoint
 from ehai.hub.adapters.pi.config import PI_VERSION, PiBackendConfig, check_node_version
 from ehai.hub.adapters.pi.rpc import PiRpcError, PiRpcProcess
 from ehai.hub.protocol import StartSession, ToolResult
@@ -192,7 +192,9 @@ class PiAdapter:
     kind = "pi"
     version = PI_VERSION
 
-    async def launch(self, request: StartSession) -> PiSession:
+    async def launch(self, request: StartSession, mcp: McpEndpoint) -> PiSession:
+        # Pi has no MCP support by design; its business-tool bridge carries the same calls.
+        del mcp
         settings = dict(request.harness.settings)
         state_root = settings.pop("state_root", None)
         try:
