@@ -70,7 +70,14 @@ jobs:
       - uses: astral-sh/setup-uv@v6
         with:
           python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: agent-backends/pi/package-lock.json
       - name: Sync environment
         run: uv sync --frozen
+      - name: Install the pinned Pi
+        run: npm ci --prefix agent-backends/pi --ignore-scripts --no-audit --no-fund
       - name: Run the product E2E
         run: uv run pytest tests/test_product_e2e.py

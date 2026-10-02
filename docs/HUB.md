@@ -102,4 +102,5 @@ Hub 本身只提供令牌认证，不提供 TLS；跨机器使用时应放在受
 ## 验证
 
 见 [EVIDENCE](EVIDENCE.md#核心执行) 2026-10-02 一行与 [重构计划执行记录](REFACTOR_PLAN.md#执行记录)。
-产品 E2E 使用 scripted Worker，不经过 Hub；Scripted 兼容层接入 E2E 是 ADR 0007 迁移第 4 步。
+产品 E2E 的每个 Worker 节点都经本机 Hub 与真实 Pi 运行（模型为脚本化服务），由 CI 在 Linux 与 Windows 上执行；
+独立 Hub 模式不在 E2E 中。

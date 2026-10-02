@@ -284,6 +284,7 @@ uv run ruff check .
 uv run ruff format --check .
 uv run lint-imports
 uv run mypy
+npm ci --prefix agent-backends/pi --ignore-scripts --no-audit --no-fund  # E2E 需要锁定版本的 Pi
 uv run pytest tests/test_product_e2e.py
 ```
 

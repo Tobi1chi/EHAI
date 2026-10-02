@@ -1,6 +1,6 @@
 # ADR 0007：经 Hub 接入多种 Agent harness
 
-- 状态：已接受（2026-10-02 修订：加入 Hub 层，Hub 为独立服务）；迁移第 1–3 步已完成，其余未实现
+- 状态：已接受（2026-10-02 修订：加入 Hub 层，Hub 为独立服务）；迁移第 1–4 步已完成，其余未实现
 - 日期：2026-10-01
 - 关系：细化 [ADR 0005](0005-external-agent-backends.md)（Runtime 外置）；取代
   [ADR 0003](0003-codex-cli-process-channel.md)（Codex 本地进程通道，已随 Codex 后端删除）
@@ -28,7 +28,7 @@ EHAI 核心（Orchestrator / Scheduler / Gate / 授权 / 角色定义 / 工具�
    │ ① Hub 接口：核心唯一依赖的接入面
 Hub（会话生命周期、每会话 MCP 端点、事件归一化、取消与恢复、能力汇总、配置隔离）
    │ ② 兼容层接口：每种 harness 实现一份
-Pi 兼容层 │ Scripted 兼容层（E2E）│ 以后的 Claude Code / Codex / OpenCode 兼容层
+Pi 兼容层 │ 以后的 Claude Code / Codex / OpenCode 兼容层
    │ 只用公开 CLI/SDK、配置文件与控制接口
 原样不动的 harness
 ```
@@ -141,7 +141,8 @@ harness 不是沙箱。工作区隔离（EHAI 拥有的 Git worktree）、凭证
 
 ### 10. 验收
 
-- Scripted 兼容层实现同一兼容层接口（包括经 MCP 端点调用工具），产品 E2E 改走 Hub，使 Hub 本身受 CI 保护。
+- 产品 E2E 经 Hub 运行真实 Pi，模型替换为脚本化的 OpenAI 兼容服务，使 Hub 与 Pi 兼容层受 CI 保护
+  （2026-10-02 用户决定，取代原先的 Scripted 兼容层方案）。
 - 每个真实 harness 按接入清单手动验收：工具 Schema 被 Provider 接受、实际工具调用、结束确认、
   取消、恢复、权限翻译与拒绝。结果在 [EVIDENCE](../EVIDENCE.md) 记一行。
 - 不建立永久多 harness 测试矩阵（AGENTS.md 规定）；如需放宽由用户决定。
@@ -154,10 +155,10 @@ harness 不是沙箱。工作区隔离（EHAI 拥有的 Git worktree）、凭证
 2. 删除 Codex 后端与运行中 Worker 请求路径；保留历史记录可读与已授权配置指纹（重构第二步，已完成）。
 3. 建立 `hub/` 包、Hub 服务与两层接口；Pi 相关代码（`pi_runtime` 的进程一半、`pi_rpc`、`pi_config`、
    扩展桥）移入 Pi 兼容层；所有角色调用点改为经 Hub；加入导入方向检查。保持行为（2026-10-02 完成）。
-4. 新增 Scripted 兼容层，产品 E2E 改走 Hub。
+4. 产品 E2E 经 Hub 与真实 Pi 运行，模型为脚本化服务（2026-10-02 完成）。
 5. 规划逻辑上移为与后端无关的 `PlannerRole`。
 6. 能力清单；执行配置支持 `harness` 形状，旧形状保持可读与原指纹。
-7. Hub 提供每会话 MCP 端点，Scripted 先用；确认锁定版本的 Pi 是否支持 MCP，支持则改走 MCP 并确认无退化，
+7. Hub 提供每会话 MCP 端点；确认锁定版本的 Pi 是否支持 MCP，支持则改走 MCP 并确认无退化，
    不支持则保留扩展桥。
 8. 需要第二个 harness 时按接入清单编写兼容层（例如 Claude Code 或 Codex）。
 9. 远端执行：Pi 设置中的路径与工作区目前须在 Hub 所在机器上存在，核心仍在本机校验 Pi 配置；

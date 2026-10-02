@@ -22,14 +22,14 @@
 | CLI API 客户端 / MCP | 部分 | MCP 默认开放全部操作；只有少数工具做过模型调用 | [核心](EVIDENCE.md#核心执行) |
 | 周期轨迹审查 / 定向挂起 | 部分 | 审查只给建议，需显式采纳；不是自治纠偏 | [RECORD_R2](history/RECORD_R2.md#本批交付) |
 | Agent 后端 | 部分 | 只有 Pi；Codex 已删除；接入第二种 harness 的能力清单、执行配置形状与 MCP 端点未实现 | [ADR 0007](adr/0007-agent-harness-port.md) |
-| Agent harness Hub | 无模型验证 | 所有 Pi 角色经独立 `ehai-hub`（默认本机子进程）；真实 Pi + 脚本化 Provider 验证，未用真实模型；跨机器需同路径 | [HUB](HUB.md) · [核心](EVIDENCE.md#核心执行) |
+| Agent harness Hub | 无模型验证 | 所有 Pi 角色经独立 `ehai-hub`（默认本机子进程）；Worker 路径由产品 E2E 在 Linux/Windows CI 覆盖，未用真实模型；跨机器需同路径 | [HUB](HUB.md) · [核心](EVIDENCE.md#核心执行) |
 | 阶段上下文 | 部分 | 逻辑 Phase Session 共享；物理 Pi Session 按 Attempt 隔离 | [EXECUTION_MODEL](EXECUTION_MODEL.md#实例与会话) |
 | 批准内过程调整 / Block 清单 | 无模型验证 | 清单只描述变化，不批准、不授权复用成果 | [核心](EVIDENCE.md#核心执行) |
 | Git 自动整合 | 无模型验证 | 用历史真实成果整合；冲突路径未实跑 | [核心](EVIDENCE.md#核心执行) |
 | 跨批准后继 Run | 真实验证 | 单次接续通过；基线变化重执行、多次接续、崩溃未验证 | [核心](EVIDENCE.md#核心执行) |
 | 长任务可靠性 | 部分 | 强杀、写入中断、长链接续未系统验证 | [未决问题](EVIDENCE.md#已知未决问题) |
 | Token / 费用硬限额 | 暂缓 | 2026-09-16 决定暂不实现；用量记录保留 | — |
-| 产品 E2E | 无模型验证 | scripted Worker；不覆盖真实 Pi、worktree、integrate-run、MCP | [REFACTOR_PLAN](REFACTOR_PLAN.md#产品-e2e) |
+| 产品 E2E | 无模型验证 | 真实 Pi 经本机 Hub、Git worktree，模型为脚本化服务；不覆盖真实模型、独立 Hub、integrate-run、MCP | [REFACTOR_PLAN](REFACTOR_PLAN.md#产品-e2e) |
 | CI | 无模型验证 | 静态检查、两平台 mypy、契约比对、TS 构建、Linux/Windows E2E | [REFACTOR_PLAN](REFACTOR_PLAN.md#执行记录) |
 | P2 总验收 | 未实现 | 真实 Pi 手动验收按重构计划第 4 步进行 | [REFACTOR_PLAN](REFACTOR_PLAN.md#四步顺序) |
 
