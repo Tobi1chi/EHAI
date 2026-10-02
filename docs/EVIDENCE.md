@@ -35,6 +35,7 @@
 | 10-02 | 产品 E2E 改经 Hub 与真实 Pi | 0（脚本化模型服务） | 原场景全部通过；每节点经 Pi 调用模型并写入文件，最终 worktree commit 含全部上游文件；破坏兼容层或不写文件时 E2E 失败 | 真实模型、独立 Hub、integrate-run、Pi 非 Worker 角色 | [REFACTOR_PLAN](REFACTOR_PLAN.md#2026-10-02-产品-e2e-经-hub-与真实-pi) |
 | 10-02 | Planner 改为与 harness 无关的 PlannerRole | 0（真实 Pi + 脚本化模型服务） | discuss-plan（ask_user）与 propose-plan（raise_note）在 main 与改动后输出一致 | 真实模型、完整建图、replan/过程草稿路径 | [REFACTOR_PLAN](REFACTOR_PLAN.md#2026-10-02-adr-0007-第-5-步plannerrole) |
 | 10-02 | Hub 每会话 MCP 端点 | 0（合成 MCP harness） | 工具列表限于本会话，调用经核心执行与记录后返回；关闭后令牌失效，Hub 令牌无权访问 | 真实 MCP harness、并发会话 | [REFACTOR_PLAN](REFACTOR_PLAN.md#2026-10-02-adr-0007-第-7-步每会话-mcp-端点) |
+| 10-02 | propose-plan 只得到便签时的 HTTP 500 | 0（真实 Pi + 脚本化模型服务） | 复现 500 后修复：返回 422 `planner_failed` 且便签保存；Hub 不可达时返回 502 `harness_outcome_unknown` | 真实模型 | [REFACTOR_PLAN](REFACTOR_PLAN.md#2026-10-02-adr-0007-第-5-步plannerrole) |
 
 ## P3 平台后端
 
@@ -70,5 +71,4 @@
 - 目标为整个 EHAI 仓库时，Planner 调查范围过大、未收敛（09-25）。
 - 较长 Provider 工具流间歇停顿/中断，根因未确认（09-25、09-27）。
 - 干预回复未做真实模型后端闭环（09-22）；运行中 Worker 请求路径已于 10-02 删除。
-- propose-plan 只得到 Planner 便签时 HTTP 返回 500（API 未映射 Planner 错误），应明确报无方案（10-02）。
 - 强杀、写入中断与长链接续的恢复未系统验证；产品 E2E 只覆盖人工等待期间（无 Pi 进程运行时）的强杀重启。

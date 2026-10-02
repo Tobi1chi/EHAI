@@ -222,7 +222,8 @@ Reviewer/Gate → 人工验收 → `integrate-run`，并在执行中强杀一次
   （模型调用 ask_user）与 propose-plan（模型调用 raise_note），在 main 与本分支各跑一次，输出除路径外一致：
   讨论回复正确返回，便签正确保存。产品 E2E、ruff、format、mypy（两个平台）、lint-imports 通过。
 - 顺带发现（main 上已存在，未在本步修复）：propose-plan 只得到便签时 HTTP 返回 500，因为 API 没有
-  Planner 错误的处理器；USAGE 描述应为明确报无方案。已记入 [EVIDENCE 未决问题](EVIDENCE.md#已知未决问题)。
+  Planner 错误的处理器；USAGE 描述应为明确报无方案。随后单独修复：Planner 错误返回 422 `planner_failed`，
+  harness 结果未知返回 502 `harness_outcome_unknown`；修复前后用同一诊断确认（500 → 422，便签仍保存）。
 
 ### 2026-10-02 ADR 0007 第 7 步：每会话 MCP 端点
 
