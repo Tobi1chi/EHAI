@@ -17,7 +17,8 @@
   主路径需要新覆盖时扩展该场景，不新建测试文件。真实 Pi 验收手动进行。
 - 仅对真实失败在仓库外写最小诊断，不提交、不移回仓库，不扩建常驻测试。
 - 静态命令：uv run ruff check .；uv run ruff format --check .；uv run mypy；
-  uv run mypy --platform win32。平台专属 API 用 sys.platform 判断，不用 os.name。
+  uv run mypy --platform win32；uv run lint-imports。平台专属 API 用 sys.platform 判断，不用 os.name。
+  核心只经 `ehai.hub.protocol` / `ehai.hub.client` 使用 Hub；Hub 与兼容层不导入核心模块。
 - CI（.github/workflows/ci.yml）执行上述检查、契约重新生成比对，并在 Linux/Windows 运行产品 E2E。
 - 契约生成：uv run control-plane/scripts/generate-api-schema.py；然后 control-plane 的
   npm.cmd run generate、typecheck、build。生成 Client 不手改。

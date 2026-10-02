@@ -1,6 +1,6 @@
 # 当前能力与验证
 
-更新：2026-10-01。每项能力一行：实现状态、关键边界、证据位置。
+更新：2026-10-02。每项能力一行：实现状态、关键边界、证据位置。
 证据摘要见 [EVIDENCE](EVIDENCE.md)，产品边界见 [PRODUCT_SCOPE](PRODUCT_SCOPE.md)，后续顺序见 [ROADMAP](ROADMAP.md)。
 
 **状态含义**：`真实验证` 有真实模型的正常入口证据；`无模型验证` 只有 scripted/fake 或协议级证据；
@@ -21,7 +21,8 @@
 | 外部计划导入 | 真实验证 | 只支持尚未规划的 Goal；拒绝伪造状态/批准 | [核心](EVIDENCE.md#核心执行) |
 | CLI API 客户端 / MCP | 部分 | MCP 默认开放全部操作；只有少数工具做过模型调用 | [核心](EVIDENCE.md#核心执行) |
 | 周期轨迹审查 / 定向挂起 | 部分 | 审查只给建议，需显式采纳；不是自治纠偏 | [RECORD_R2](history/RECORD_R2.md#本批交付) |
-| Agent 后端 | 部分 | 只有 Pi；Codex 已删除，经 Hub 与兼容层接入多 harness 的设计见 [ADR 0007](adr/0007-agent-harness-port.md)，未实现 | [ADR 0007](adr/0007-agent-harness-port.md) |
+| Agent 后端 | 部分 | 只有 Pi；Codex 已删除；接入第二种 harness 的能力清单、执行配置形状与 MCP 端点未实现 | [ADR 0007](adr/0007-agent-harness-port.md) |
+| Agent harness Hub | 无模型验证 | 所有 Pi 角色经独立 `ehai-hub`（默认本机子进程）；真实 Pi + 脚本化 Provider 验证，未用真实模型；跨机器需同路径 | [HUB](HUB.md) · [核心](EVIDENCE.md#核心执行) |
 | 阶段上下文 | 部分 | 逻辑 Phase Session 共享；物理 Pi Session 按 Attempt 隔离 | [EXECUTION_MODEL](EXECUTION_MODEL.md#实例与会话) |
 | 批准内过程调整 / Block 清单 | 无模型验证 | 清单只描述变化，不批准、不授权复用成果 | [核心](EVIDENCE.md#核心执行) |
 | Git 自动整合 | 无模型验证 | 用历史真实成果整合；冲突路径未实跑 | [核心](EVIDENCE.md#核心执行) |

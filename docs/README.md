@@ -1,6 +1,6 @@
 # 文档索引
 
-更新：2026-10-01。每个结论只写在一个地方，其余文档链接过去。
+更新：2026-10-02。每个结论只写在一个地方，其余文档链接过去。
 
 ## 按角色阅读
 
@@ -24,6 +24,7 @@
 | 用法 | [USAGE](USAGE.md) | 核心编码流程的命令与契约 |
 | 用法 | [WORKFLOWS](WORKFLOWS.md) | 生活 Workflow 与 Routine |
 | 用法 | [WORKSPACE_MANAGER](WORKSPACE_MANAGER.md) | 多工作区管理与 Planner 容量 |
+| 用法 | [HUB](HUB.md) | Agent harness Hub：本机/独立运行、协议 v1、失败处理 |
 | 用法 | [CONNECTOR_PROTOCOL](CONNECTOR_PROTOCOL.md) | 外部 Connector 协议与 Google Calendar |
 | 用法 | [DUAL_FEEDBACK_EXPERIMENT](DUAL_FEEDBACK_EXPERIMENT.md) | Jev 双反馈环实验与固定 Pi 回退 |
 | 设计 | [P4_WORKFLOW_DESIGN](P4_WORKFLOW_DESIGN.md) | 自定义 Workflow 目标设计（未实现） |

@@ -96,6 +96,16 @@ $env:OPENAI_API_KEY = Read-Host '模型 API Key' -MaskInput
 使用其他 Provider 时，相应调整环境变量与 `environment_names`。密钥留在宿主环境，
 不写入计划、执行配置或 Git。EHAI 不自动继承用户全局的 Pi 扩展和认证文件。
 
+Pi 经 Agent harness Hub 运行。默认由宿主自动启动一个本机 Hub 子进程，不需要额外配置。
+如需单独运行 Hub（例如放到另一台机器上），设置以下变量，详见 [Hub](docs/HUB.md)：
+
+| 变量 | 设置位置 | 含义 |
+| --- | --- | --- |
+| `EHAI_HUB_URL` | 启动宿主的终端 | 使用该地址的 `ehai-hub`，不再启动本机子进程 |
+| `EHAI_HUB_TOKEN` | 宿主与 `ehai-hub` 两侧 | 共享令牌，至少 32 个字符；不要提交到 Git |
+
+使用独立 Hub 时，模型凭证要设在运行 `ehai-hub` 的环境中。
+
 ### 3. 启动项目宿主
 
 在 EHAI 源码目录启动服务；将 `<model-id>` 替换为执行配置中的同一个模型 ID：
@@ -272,6 +282,7 @@ Python 核心位于 `src/ehai/`，TypeScript Client 位于 `control-plane/`。
 ```powershell
 uv run ruff check .
 uv run ruff format --check .
+uv run lint-imports
 uv run mypy
 uv run pytest tests/test_product_e2e.py
 ```
