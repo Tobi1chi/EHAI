@@ -125,6 +125,8 @@ Reviewer/Gate → 人工验收 → `integrate-run`，并在执行中强杀一次
   HTTP 执行配置只接受 `worker_kind: pi`，但仍接受无执行效果的 `codex_server` 块：
   `get-workspace-execution-config` 返回的规范文档带有该块，需能原样用于 start-run（评审发现）。
 - 验证：ruff、format、mypy（两个平台）、Schema/Client 重新生成两次结果一致、TS 构建、E2E 通过。
+- 用户要求核心只访问一个 Hub 模块，由 Hub 加各 harness 的兼容层适配多种 harness。ADR 0007 据此修订：
+  三层结构、两层接口、Hub 无持久状态、先进程内并按进程外设计边界；迁移顺序改为先建 Hub 并搬迁 Pi。
 
 ## 待决事项
 
