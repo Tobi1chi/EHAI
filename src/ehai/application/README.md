@@ -6,7 +6,7 @@ CLI、HTTP、MCP、工作台和未来 Routine 复用这些用例，不各自实�
 
 | 区域 | 文件 | 职责 |
 | --- | --- | --- |
-| 事务与查询 | [service.py](service.py)（门面，命令按职责在 [execution_service/](execution_service/)）、[commands.py](commands.py)、[queries.py](queries.py) | Command 幂等、事务入口与查询投影 |
+| 事务与查询 | [service.py](service.py)（门面，命令按职责在 [execution_service/](execution_service/)）、[commands.py](commands.py)、[idempotency.py](idempotency.py)、[queries.py](queries.py) | 事务入口、查询投影；所有入口共用的幂等回执 |
 | 规划与导入 | [planner.py](planner.py)、[planning_dialogue.py](planning_dialogue.py)、[plan_graph_tools.py](plan_graph_tools.py) | 讨论、方案版本和共享图构建契约；Planner 不派发 Worker |
 | 执行语义 | [orchestrator.py](orchestrator.py)（门面，职责在 [orchestration/](orchestration/)）、[evaluation.py](evaluation.py)、[checks.py](checks.py) | 候选、节点/分支推进、Check/Gate 与 Checkpoint |
 | 调度与宿主 | [scheduler.py](scheduler.py)、[async_runtime.py](async_runtime.py)、[runtime_control.py](runtime_control.py) | Endpoint、容量、隔离与租约、持久派发和执行事件 |
