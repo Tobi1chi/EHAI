@@ -67,15 +67,12 @@ queries["$defs"]["PlannerCapacityResponse"] = {
 queries["$defs"]["InboxKind"]["enum"] = [
     "intervention",
     "human_check",
-    "worker_request",
     "note",
     "workflow_confirmation",
 ]
 queries["$defs"]["InboxAction"]["properties"]["operation"]["enum"] = [
     "reply-intervention",
     "decide-human-check",
-    "resolve-worker-request",
-    "decline-worker-request",
     "add-note-message",
     "decide-note",
     "decide-workflow",

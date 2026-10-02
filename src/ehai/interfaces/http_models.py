@@ -150,12 +150,6 @@ ExecutionText = Annotated[
 ]
 
 
-class ExecutionCodexServerRequest(_StrictRequest):
-    executable: list[ExecutionText] = Field(min_length=1)
-    approval_policy: Literal["untrusted", "on-request", "never"]
-    sandbox: Literal["read-only", "workspace-write", "danger-full-access"]
-
-
 class ProcessAdjustmentPolicyRequest(_StrictRequest):
     max_per_goal: Annotated[int, Field(strict=True, ge=1)]
     model: ExecutionText
@@ -185,7 +179,7 @@ class ExecutionConfigRequest(_StrictRequest):
     """Explicit confirmation of the host's credential-free execution settings."""
 
     config_version: Annotated[int, Field(strict=True, ge=1, le=1)]
-    worker_kind: Literal["pi", "codex-server"]
+    worker_kind: Literal["pi"]
     model: ExecutionText
     reasoning_effort: ExecutionText | None
     capacity: Annotated[int, Field(strict=True, ge=1)]
@@ -203,7 +197,6 @@ class ExecutionConfigRequest(_StrictRequest):
     ]
     endpoint_capabilities: ExecutionEndpointCapabilitiesRequest
     command_timeout_seconds: Annotated[float, Field(strict=True, gt=0, allow_inf_nan=False)]
-    codex_server: ExecutionCodexServerRequest | None = None
     process_adjustment: ProcessAdjustmentPolicyRequest | None = None
     goal_worker_budget: GoalWorkerBudgetRequest | None = None
     trajectory_review: TrajectoryReviewPolicyRequest | None = None
@@ -286,11 +279,6 @@ class ExtendAttemptDeadlineRequest(_StrictRequest):
     @field_serializer("deadline_at")
     def serialize_deadline(self, value: datetime) -> str:
         return format_utc_datetime(value)
-
-
-class ResolveWorkerRequestRequest(_StrictRequest):
-    idempotency_key: NonBlank
-    resolution: dict[str, JsonValue]
 
 
 class DataResponse(BaseModel):

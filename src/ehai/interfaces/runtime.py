@@ -66,11 +66,7 @@ from ehai.infrastructure.sqlite.event_consumers import SQLiteEventConsumerReposi
 from ehai.infrastructure.sqlite.project_configuration import SQLiteProjectConfigurationStore
 from ehai.infrastructure.sqlite.routing import SQLiteRoutingStore
 from ehai.infrastructure.sqlite.workflows import SQLiteWorkflowStore
-from ehai.infrastructure.workers import (
-    CodexAppServerConnector,
-    PiAgentConnector,
-    WorkerAdapterConnector,
-)
+from ehai.infrastructure.workers import PiAgentConnector, WorkerAdapterConnector
 from ehai.infrastructure.workers.code import CodeRuntimeConnector
 from ehai.infrastructure.workspaces import WorkspaceManager
 from ehai.interfaces.agent_backends import resolve_planner_kind
@@ -121,8 +117,6 @@ def create_local_app(
     command_check_timeout_seconds: float = 30.0,
     worker_timeout_seconds: float = 300.0,
     attempt_deadline_seconds: float | None = None,
-    codex_model: str | None = None,
-    codex_reasoning_effort: str | None = None,
     agent_model: str | None = None,
     agent_reasoning_effort: str | None = None,
     agent_allowed_commands: Sequence[Sequence[str]] = (),
@@ -130,9 +124,6 @@ def create_local_app(
     git_permissions: Sequence[str] = (),
     worker_capacity: int = 1,
     trajectory_review: TrajectoryReviewPolicy | None = None,
-    codex_server_executable: str | Sequence[str] = "codex",
-    codex_server_approval_policy: str = "on-request",
-    codex_server_sandbox: str = "workspace-write",
     p2_runtime: bool = False,
     runtime_autostart: bool = True,
     endpoint_capabilities: ResponsesEndpointCapabilities | None = None,
@@ -160,13 +151,11 @@ def create_local_app(
     configured_kind = _canonical_runtime_worker_kind(worker_kind)
     if trajectory_review is not None and (not p2_runtime or configured_kind != "pi"):
         raise ValueError("trajectory review requires a Pi Worker with --p2-runtime")
-    if p2_runtime and configured_kind in {"pi", "codex-server"}:
+    if p2_runtime and configured_kind == "pi":
         host_execution_config = ExecutionConfig(
             worker_kind=configured_kind,
-            model=(agent_model if configured_kind == "pi" else codex_model) or "",
-            reasoning_effort=(
-                agent_reasoning_effort if configured_kind == "pi" else codex_reasoning_effort
-            ),
+            model=agent_model or "",
+            reasoning_effort=agent_reasoning_effort,
             capacity=worker_capacity,
             allowed_commands=_normalize_allowed_command_argv(agent_allowed_commands),
             available_shells=tuple(available_shells),
@@ -176,31 +165,17 @@ def create_local_app(
             command_timeout_seconds=command_check_timeout_seconds,
             pi_backend=pi_backend,
             trajectory_review=trajectory_review,
-            codex_server_executable=(
-                (codex_server_executable,)
-                if isinstance(codex_server_executable, str)
-                else tuple(codex_server_executable)
-            ),
-            codex_server_approval_policy=codex_server_approval_policy,
-            codex_server_sandbox=codex_server_sandbox,
         )
         # Use the same canonical values for execution and later authorization.
         worker_kind = host_execution_config.worker_kind
         worker_workspace = host_execution_config.workspace
-        if worker_kind == "pi":
-            agent_model = host_execution_config.model
-            agent_reasoning_effort = host_execution_config.reasoning_effort
-        else:
-            codex_model = host_execution_config.model
-            codex_reasoning_effort = host_execution_config.reasoning_effort
+        agent_model = host_execution_config.model
+        agent_reasoning_effort = host_execution_config.reasoning_effort
         agent_allowed_commands = host_execution_config.allowed_commands
         available_shells = host_execution_config.available_shells
         git_permissions = tuple(sorted(host_execution_config.git_permissions))
         endpoint_capabilities = host_execution_config.endpoint_capabilities
         command_check_timeout_seconds = host_execution_config.command_timeout_seconds
-        codex_server_executable = host_execution_config.codex_server_executable
-        codex_server_approval_policy = host_execution_config.codex_server_approval_policy
-        codex_server_sandbox = host_execution_config.codex_server_sandbox
     if planner_model is not None:
         planner_model = planner_model.strip()
     if planner_reasoning_effort is not None:
@@ -227,10 +202,8 @@ def create_local_app(
         workspace=worker_workspace or Path.cwd(),
         role_configuration={
             "worker_kind": worker_kind,
-            "model": agent_model if worker_kind == "pi" else codex_model,
-            "reasoning_effort": agent_reasoning_effort
-            if worker_kind == "pi"
-            else codex_reasoning_effort,
+            "model": agent_model if worker_kind == "pi" else None,
+            "reasoning_effort": agent_reasoning_effort if worker_kind == "pi" else None,
         },
     )
     execution_service = build_service(
@@ -247,8 +220,6 @@ def create_local_app(
         semantic_required_terms=semantic_required_terms,
         command_check_timeout_seconds=command_check_timeout_seconds,
         worker_timeout_seconds=worker_timeout_seconds,
-        codex_model=codex_model,
-        codex_reasoning_effort=codex_reasoning_effort,
         background_start=p2_runtime,
         endpoint_capabilities=endpoint_capabilities,
         pi_backend=pi_backend,
@@ -375,29 +346,6 @@ def create_local_app(
                 },
             ),
         )
-    elif worker_kind == "codex-server":
-        if codex_model is None or not codex_model.strip():
-            raise ValueError("--codex-model is required for the Codex App Server Worker")
-        profile = WorkerProfile(
-            "local-codex-server",
-            WorkerKind.CODEX_APP_SERVER,
-            codex_model,
-            frozenset(
-                {
-                    WorkerCapability("worker.codex-app-server"),
-                    WorkerCapability("workspace.read"),
-                    WorkerCapability("workspace.write"),
-                }
-            ),
-            worker_profile_id=_stable_runtime_id(
-                "profile",
-                {
-                    "kind": WorkerKind.CODEX_APP_SERVER.value,
-                    "model": codex_model,
-                    "workspace": str((worker_workspace or Path.cwd()).resolve()),
-                },
-            ),
-        )
     elif worker_kind == "fake":
         worker_kind_value = WorkerKind.BUILTIN
         profile = WorkerProfile(
@@ -410,23 +358,8 @@ def create_local_app(
             ),
         )
     else:
-        worker_kind_value = WorkerKind.CODEX_CLI
-        profile = WorkerProfile(
-            "local-codex",
-            WorkerKind.CODEX_CLI,
-            codex_model or "codex-cli",
-            worker_profile_id=_stable_runtime_id(
-                "profile",
-                {
-                    "kind": WorkerKind.CODEX_CLI.value,
-                    "model": codex_model or "codex-cli",
-                    "workspace": str((worker_workspace or Path.cwd()).resolve()),
-                },
-            ),
-        )
-    if worker_kind == "codex-server":
-        worker_kind_value = WorkerKind.CODEX_APP_SERVER
-    endpoint_capacity = worker_capacity if worker_kind in {"pi", "codex-server"} else 1
+        raise ValueError(f"unsupported Worker: {worker_kind}")
+    endpoint_capacity = worker_capacity if worker_kind == "pi" else 1
     workspace = (worker_workspace or Path.cwd()).resolve(strict=True)
     endpoint = WorkerEndpoint(
         f"local-{worker_kind}",
@@ -484,23 +417,6 @@ def create_local_app(
             trajectory_review=trajectory_review,
         )
         base_connector = connector
-    elif worker_kind == "codex-server":
-        artifact_store = FilesystemArtifactStore(artifact_root)
-        workspace_manager = WorkspaceManager(
-            database=query_database,
-            base_workspace=workspace,
-            owned_root=artifact_root.parent / "worktrees",
-            preserve_completed=True,
-        )
-        base_connector = CodexAppServerConnector(
-            workspace=workspace,
-            model=codex_model or "codex",
-            executable=codex_server_executable,
-            approval_policy=codex_server_approval_policy,
-            sandbox=codex_server_sandbox,
-            reasoning_effort=codex_reasoning_effort,
-        )
-        connector = base_connector
     else:
         base_connector = WorkerAdapterConnector(execution_service.orchestrator.worker)
         connector = base_connector
@@ -518,7 +434,7 @@ def create_local_app(
             connector.prepare_adoption_verification,
             connector.adoption_inputs_are_applicable,
         )
-    if worker_kind in {"pi", "codex-server"}:
+    if worker_kind == "pi":
         capacity = CapacityPolicy(
             endpoint_capacity,
             endpoint_capacity,
@@ -735,8 +651,8 @@ def create_local_app(
 
 def _canonical_runtime_worker_kind(value: str) -> str:
     normalized = value.strip().casefold().replace("_", "-")
-    if normalized == "codex-app-server":
-        return "codex-server"
+    if normalized in {"codex", "codex-server", "codex-app-server"}:
+        raise ValueError("The Codex backend was removed; see docs/adr/0007-agent-harness-port.md")
     return normalized
 
 
@@ -778,14 +694,14 @@ def create_parser() -> argparse.ArgumentParser:
     parser.add_argument("--artifacts", type=Path, default=Path(".ehai/artifacts"))
     parser.add_argument(
         "--worker",
-        choices=("fake", "pi", "codex", "codex-server"),
+        choices=("fake", "pi"),
         default=None,
         help="Worker backend (Pi with --agent-model or --pi-config --p2-runtime)",
     )
     parser.add_argument("--worker-workspace", type=Path)
     parser.add_argument(
         "--planner",
-        choices=("single", "exploration", "codex", "pi"),
+        choices=("single", "exploration", "pi"),
         default=None,
         help="Planner backend (Pi when --pi-config/--planner-model is supplied)",
     )
@@ -811,22 +727,6 @@ def create_parser() -> argparse.ArgumentParser:
             "opt-in absolute Attempt deadline; by default no wall-clock deadline "
             "terminates a long-running high-reasoning model execution early"
         ),
-    )
-    parser.add_argument("--codex-model")
-    parser.add_argument(
-        "--codex-reasoning-effort",
-        choices=("none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"),
-    )
-    parser.add_argument("--codex-server-executable", action="append")
-    parser.add_argument(
-        "--codex-server-approval-policy",
-        choices=("untrusted", "on-request", "never"),
-        default="on-request",
-    )
-    parser.add_argument(
-        "--codex-server-sandbox",
-        choices=("read-only", "workspace-write", "danger-full-access"),
-        default="workspace-write",
     )
     parser.add_argument("--agent-model")
     parser.add_argument(
@@ -896,8 +796,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         planner_capacity=args.planner_capacity,
         worker_timeout_seconds=args.worker_timeout_seconds,
         attempt_deadline_seconds=args.attempt_deadline_seconds,
-        codex_model=args.codex_model,
-        codex_reasoning_effort=args.codex_reasoning_effort,
         agent_model=args.agent_model,
         trajectory_review=(
             TrajectoryReviewPolicy(args.trajectory_review_seconds, args.trajectory_review_steps)
@@ -909,11 +807,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         available_shells=tuple(args.agent_available_shell),
         git_permissions=tuple(args.agent_git_permission),
         worker_capacity=args.worker_capacity,
-        codex_server_executable=(
-            "codex" if args.codex_server_executable is None else tuple(args.codex_server_executable)
-        ),
-        codex_server_approval_policy=args.codex_server_approval_policy,
-        codex_server_sandbox=args.codex_server_sandbox,
         p2_runtime=args.p2_runtime,
         command_check_argv=_parse_command_argv(args.command_check_argv),
         command_check_timeout_seconds=args.command_check_timeout_seconds,

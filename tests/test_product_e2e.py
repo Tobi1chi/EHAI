@@ -307,7 +307,7 @@ def test_product_e2e(tmp_path: Path) -> None:
             "approve",
         )
         assert approved["status"] == "approved"
-        # The CLI client requires an explicit Pi/Codex execution configuration; the
+        # The CLI client requires an explicit Pi execution configuration; the
         # scripted host accepts the HTTP start without one.
         run = host.http(
             "POST",

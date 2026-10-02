@@ -10,23 +10,16 @@ from ehai import ID, JsonValue, normalize_id, parse_utc_datetime, utc_now
 from ehai.application.interventions import list_interventions, validate_intervention_reply_context
 from ehai.application.ports import ReadSession
 from ehai.application.queries import QueryNotFoundError
-from ehai.application.runtime_control import (
-    RuntimeControlError,
-    RuntimeControlService,
-    WorkerRequestDetail,
-)
+from ehai.application.runtime_control import RuntimeControlService
 from ehai.application.sanitization import redact_sensitive_text
-from ehai.application.worker_request_forms import WorkerRequestForm
 from ehai.domain.checking import CheckRun, CheckRunStatus
 from ehai.domain.events import EventType
-from ehai.domain.execution import AttemptStatus, Run, RunStatus
+from ehai.domain.execution import Run, RunStatus
 from ehai.domain.goal import Goal, Project
 from ehai.domain.planning import PlanNodeStatus
 
-InboxKind = Literal[
-    "intervention", "human_check", "worker_request", "note", "workflow_confirmation"
-]
-INBOX_KINDS = ("intervention", "human_check", "worker_request", "note", "workflow_confirmation")
+InboxKind = Literal["intervention", "human_check", "note", "workflow_confirmation"]
+INBOX_KINDS = ("intervention", "human_check", "note", "workflow_confirmation")
 
 
 @dataclass(frozen=True, slots=True)
@@ -54,8 +47,6 @@ class InboxAction:
     operation: Literal[
         "reply-intervention",
         "decide-human-check",
-        "resolve-worker-request",
-        "decline-worker-request",
         "add-note-message",
         "decide-note",
         "decide-workflow",
@@ -83,22 +74,13 @@ class InboxItem:
     request_token: str | None
     actions: tuple[InboxAction, ...]
     next_step: str
-    worker_form: WorkerRequestForm | None
     disposition: dict[str, JsonValue] | None
-
-
-@dataclass(frozen=True, slots=True)
-class InboxWorkerSource:
-    observed_at: datetime
-    status: Literal["available", "partial", "unavailable"]
-    unavailable_attempt_ids: tuple[ID, ...]
 
 
 @dataclass(frozen=True, slots=True)
 class InboxListView:
     observed_at: datetime
     event_offset: int
-    worker_requests: InboxWorkerSource
     items: tuple[InboxItem, ...]
 
 
@@ -106,7 +88,6 @@ class InboxListView:
 class InboxDetailView:
     observed_at: datetime
     event_offset: int
-    worker_requests: InboxWorkerSource
     item: InboxItem
 
 
@@ -123,7 +104,6 @@ class InboxQuery:
         self.include_notes = include_notes
         self.offset = session.events.latest_offset()
         self.observed_at = utc_now()
-        self.unavailable: set[ID] = set()
         self.dispositions: dict[tuple[str, str, str], dict[str, JsonValue]] = {}
         for stored in session.events.list_events():
             if stored.event.type is not EventType.PLAN_REVISION_APPROVED:
@@ -145,23 +125,11 @@ class InboxQuery:
                     "plan_revision_id": stored.event.correlation_id,
                 }
 
-    def source(self) -> InboxWorkerSource:
-        return InboxWorkerSource(
-            utc_now(),
-            "unavailable"
-            if self.runtime is None or not self.runtime.runtime_health().loop_active
-            else "partial"
-            if self.unavailable
-            else "available",
-            tuple(sorted(self.unavailable)),
-        )
-
     def list_items(self, project_id: ID | None, run_id: ID | None) -> InboxListView:
         items = self._items(project_id, run_id)
         return InboxListView(
             self.observed_at,
             self.offset,
-            self.source(),
             tuple(
                 sorted(
                     (i for i in items if i.pending),
@@ -178,20 +146,9 @@ class InboxQuery:
         if kind not in INBOX_KINDS:
             raise ValueError("Unknown inbox request kind")
         request_id = normalize_id(request_id)
-        # Runtime IDs only live for this host process, including its response receipts.
-        if kind == "worker_request" and self.runtime is not None:
-            detail = self.runtime.get_worker_request_detail(request_id)
-            if detail is not None:
-                attempt = self.session.states.get_attempt(detail.request.attempt_id)
-                if attempt is not None:
-                    owner = self._owners(None, attempt.run_id)[0]
-                    item = self._worker(*owner, detail)
-                    if not detail.available and detail.request.status.value == "pending":
-                        self.unavailable.add(attempt.attempt_id)
-                    return InboxDetailView(self.observed_at, self.offset, self.source(), item)
         for item in self._items(None, None):
             if item.kind == kind and item.request_id == request_id:
-                return InboxDetailView(self.observed_at, self.offset, self.source(), item)
+                return InboxDetailView(self.observed_at, self.offset, item)
         raise QueryNotFoundError("InboxRequest", request_id)
 
     def _owners(self, project_id: ID | None, run_id: ID | None) -> list[tuple[Project, Goal, Run]]:
@@ -232,21 +189,6 @@ class InboxQuery:
                 for c in self.session.states.list_check_runs(run.run_id)
                 if c.human_request is not None
             )
-            for attempt in self.session.states.list_attempts(run.run_id):
-                if attempt.status is not AttemptStatus.RUNNING:
-                    continue
-                if self.runtime is None or not self.runtime.worker_requests_available(attempt):
-                    self.unavailable.add(attempt.attempt_id)
-                    continue
-                try:
-                    for request in self.runtime.list_waiting_requests(attempt.attempt_id):
-                        detail = self.runtime.get_worker_request_detail(request.worker_request_id)
-                        if detail is not None:
-                            if not detail.available:
-                                self.unavailable.add(attempt.attempt_id)
-                            items.append(self._worker(project, goal, run, detail))
-                except (RuntimeControlError, ValueError, KeyError):
-                    self.unavailable.add(attempt.attempt_id)
         if self.include_notes:
             items.extend(self._notes(project_id, run_id))
         if run_id is None:
@@ -323,7 +265,6 @@ class InboxQuery:
                     str(note["request_token"]),
                     actions,
                     "Read and decide explicitly; discussion never unblocks execution",
-                    None,
                     cast(dict[str, JsonValue] | None, note["decision"]),
                 )
             )
@@ -432,7 +373,6 @@ class InboxQuery:
             token,
             actions,
             _next_step(run),
-            None,
             disposition,
         )
 
@@ -527,59 +467,7 @@ class InboxQuery:
             request.request_token,
             actions,
             _next_step(run),
-            None,
             disposition,
-        )
-
-    def _worker(
-        self, project: Project, goal: Goal, run: Run, detail: WorkerRequestDetail
-    ) -> InboxItem:
-        request = detail.request
-        attempt = self.session.states.get_attempt(request.attempt_id)
-        if attempt is None:
-            raise QueryNotFoundError("Attempt", request.attempt_id)
-        reason = self._baseline_reason(goal, run, attempt.plan_node_id)
-        pending = request.status.value == "pending" and reason is None and detail.available
-        reason = reason or detail.unavailable_reason
-        actions: list[InboxAction] = []
-        if pending and detail.available and reason is None:
-            if detail.form.resolution_schema is not None:
-                actions.append(
-                    InboxAction(
-                        "resolve-worker-request",
-                        "Respond",
-                        "Answer this live Worker request within its displayed scope",
-                        ("idempotency_key", "resolution"),
-                        {"worker_request_id": request.worker_request_id},
-                    )
-                )
-            actions.append(
-                InboxAction(
-                    "decline-worker-request",
-                    "Decline",
-                    "Decline only this Worker request",
-                    ("idempotency_key",),
-                    {"worker_request_id": request.worker_request_id},
-                )
-            )
-        return InboxItem(
-            "worker_request",
-            request.worker_request_id,
-            self._owner(project, goal, run, attempt.plan_node_id, attempt.attempt_id),
-            request.status.value,
-            pending,
-            bool(actions),
-            reason,
-            None,
-            detail.first_observed_at,
-            request.summary,
-            None,
-            (),
-            None,
-            tuple(actions),
-            _next_step(run),
-            detail.form,
-            None,
         )
 
 

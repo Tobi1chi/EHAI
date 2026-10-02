@@ -66,7 +66,6 @@ def workflow_inbox_items(session: ReadSession, project_id: ID | None) -> list[In
                 next_step="Read proposed_tasks on the workflow run, then approve or reject"
                 if pending
                 else "Read the workflow result and its task_ids",
-                worker_form=None,
                 disposition=None if run.decision is None else run.decision.model_dump(mode="json"),
             )
         )

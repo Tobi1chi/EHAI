@@ -2281,45 +2281,6 @@
         }
       }
     },
-    "WorkerRequest": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "worker_request_id",
-        "attempt_id",
-        "kind",
-        "summary",
-        "status"
-      ],
-      "properties": {
-        "worker_request_id": {
-          "$ref": "common.schema.json#/$defs/Id"
-        },
-        "attempt_id": {
-          "$ref": "common.schema.json#/$defs/Id"
-        },
-        "kind": {
-          "enum": [
-            "command_approval",
-            "file_change_approval",
-            "user_input",
-            "permission_approval"
-          ]
-        },
-        "summary": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 500
-        },
-        "status": {
-          "enum": [
-            "pending",
-            "resolved",
-            "declined"
-          ]
-        }
-      }
-    },
     "InterventionBaseline": {
       "type": "object",
       "additionalProperties": false,
@@ -2604,12 +2565,6 @@
         "$ref": "#/$defs/WorkerEndpoint"
       }
     },
-    "WorkerRequestList": {
-      "type": "array",
-      "items": {
-        "$ref": "#/$defs/WorkerRequest"
-      }
-    },
     "CheckSpecList": {
       "type": "array",
       "items": {
@@ -2847,30 +2802,6 @@
       "properties": {
         "data": {
           "$ref": "#/$defs/AttemptRuntime"
-        }
-      }
-    },
-    "WorkerRequestListResponse": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "data"
-      ],
-      "properties": {
-        "data": {
-          "$ref": "#/$defs/WorkerRequestList"
-        }
-      }
-    },
-    "WorkerRequestResponse": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "data"
-      ],
-      "properties": {
-        "data": {
-          "$ref": "#/$defs/WorkerRequest"
         }
       }
     },
@@ -3225,7 +3156,6 @@
       "enum": [
         "intervention",
         "human_check",
-        "worker_request",
         "note",
         "workflow_confirmation"
       ]
@@ -3321,8 +3251,6 @@
           "enum": [
             "reply-intervention",
             "decide-human-check",
-            "resolve-worker-request",
-            "decline-worker-request",
             "add-note-message",
             "decide-note",
             "decide-workflow"
@@ -3346,35 +3274,6 @@
         }
       }
     },
-    "WorkerRequestForm": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "context",
-        "resolution_schema",
-        "unavailable_reason"
-      ],
-      "properties": {
-        "context": {
-          "type": "object",
-          "additionalProperties": true
-        },
-        "resolution_schema": {
-          "anyOf": [
-            {
-              "type": "object",
-              "additionalProperties": true
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "unavailable_reason": {
-          "$ref": "#/$defs/NullableString"
-        }
-      }
-    },
     "InboxItem": {
       "type": "object",
       "additionalProperties": false,
@@ -3394,7 +3293,6 @@
         "request_token",
         "actions",
         "next_step",
-        "worker_form",
         "disposition"
       ],
       "properties": {
@@ -3450,16 +3348,6 @@
         "next_step": {
           "type": "string"
         },
-        "worker_form": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/WorkerRequestForm"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
         "disposition": {
           "anyOf": [
             {
@@ -3473,38 +3361,12 @@
         }
       }
     },
-    "InboxWorkerSource": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "observed_at",
-        "status",
-        "unavailable_attempt_ids"
-      ],
-      "properties": {
-        "observed_at": {
-          "type": "string",
-          "format": "date-time"
-        },
-        "status": {
-          "enum": [
-            "available",
-            "partial",
-            "unavailable"
-          ]
-        },
-        "unavailable_attempt_ids": {
-          "$ref": "#/$defs/IdList"
-        }
-      }
-    },
     "InboxListView": {
       "type": "object",
       "additionalProperties": false,
       "required": [
         "observed_at",
         "event_offset",
-        "worker_requests",
         "items"
       ],
       "properties": {
@@ -3515,9 +3377,6 @@
         "event_offset": {
           "type": "integer",
           "minimum": 0
-        },
-        "worker_requests": {
-          "$ref": "#/$defs/InboxWorkerSource"
         },
         "items": {
           "type": "array",
@@ -3533,7 +3392,6 @@
       "required": [
         "observed_at",
         "event_offset",
-        "worker_requests",
         "item"
       ],
       "properties": {
@@ -3544,9 +3402,6 @@
         "event_offset": {
           "type": "integer",
           "minimum": 0
-        },
-        "worker_requests": {
-          "$ref": "#/$defs/InboxWorkerSource"
         },
         "item": {
           "$ref": "#/$defs/InboxItem"

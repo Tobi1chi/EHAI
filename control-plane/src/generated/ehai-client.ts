@@ -543,14 +543,6 @@ export type AttemptRuntime = {
   readonly diagnostics: ReadonlyArray<string>;
 };
 
-export type WorkerRequest = {
-  readonly worker_request_id: Id;
-  readonly attempt_id: Id;
-  readonly kind: "command_approval" | "file_change_approval" | "user_input" | "permission_approval";
-  readonly summary: string;
-  readonly status: "pending" | "resolved" | "declined";
-};
-
 export type InterventionBaseline = {
   readonly run_id: Id;
   readonly plan_revision_id: Id;
@@ -617,8 +609,6 @@ export type ResultAdoptionList = ReadonlyArray<ResultAdoption>;
 export type WorkerProfileList = ReadonlyArray<WorkerProfile>;
 
 export type WorkerEndpointList = ReadonlyArray<WorkerEndpoint>;
-
-export type WorkerRequestList = ReadonlyArray<WorkerRequest>;
 
 export type CheckSpecList = ReadonlyArray<CheckSpec>;
 
@@ -698,14 +688,6 @@ export type RuntimeHealthResponse = {
 
 export type AttemptRuntimeResponse = {
   readonly data: AttemptRuntime;
-};
-
-export type WorkerRequestListResponse = {
-  readonly data: WorkerRequestList;
-};
-
-export type WorkerRequestResponse = {
-  readonly data: WorkerRequest;
 };
 
 export type InterventionListResponse = {
@@ -795,7 +777,7 @@ export type RuntimeContextResponse = {
   readonly data: RuntimeContextView;
 };
 
-export type InboxKind = "intervention" | "human_check" | "worker_request" | "note" | "workflow_confirmation";
+export type InboxKind = "intervention" | "human_check" | "note" | "workflow_confirmation";
 
 export type InboxOwner = {
   readonly project_id: string;
@@ -816,17 +798,11 @@ export type InboxEvidence = {
 };
 
 export type InboxAction = {
-  readonly operation: "reply-intervention" | "decide-human-check" | "resolve-worker-request" | "decline-worker-request" | "add-note-message" | "decide-note" | "decide-workflow";
+  readonly operation: "reply-intervention" | "decide-human-check" | "add-note-message" | "decide-note" | "decide-workflow";
   readonly label: string;
   readonly effect: string;
   readonly input_fields: ReadonlyArray<string>;
   readonly arguments: Readonly<Record<string, unknown>>;
-};
-
-export type WorkerRequestForm = {
-  readonly context: Readonly<Record<string, unknown>>;
-  readonly resolution_schema: Readonly<Record<string, unknown>> | null;
-  readonly unavailable_reason: NullableString;
 };
 
 export type InboxItem = {
@@ -845,27 +821,18 @@ export type InboxItem = {
   readonly request_token: NullableString;
   readonly actions: ReadonlyArray<InboxAction>;
   readonly next_step: string;
-  readonly worker_form: WorkerRequestForm | null;
   readonly disposition: Readonly<Record<string, unknown>> | null;
-};
-
-export type InboxWorkerSource = {
-  readonly observed_at: string;
-  readonly status: "available" | "partial" | "unavailable";
-  readonly unavailable_attempt_ids: IdList;
 };
 
 export type InboxListView = {
   readonly observed_at: string;
   readonly event_offset: number;
-  readonly worker_requests: InboxWorkerSource;
   readonly items: ReadonlyArray<InboxItem>;
 };
 
 export type InboxDetailView = {
   readonly observed_at: string;
   readonly event_offset: number;
-  readonly worker_requests: InboxWorkerSource;
   readonly item: InboxItem;
 };
 
@@ -1012,19 +979,13 @@ export type ApprovePlanRequest = {
   readonly supersession?: SupersessionRequest | null;
 };
 
-export type ExecutionCodexServerRequest = {
-  readonly executable: ReadonlyArray<string>;
-  readonly approval_policy: "untrusted" | "on-request" | "never";
-  readonly sandbox: "read-only" | "workspace-write" | "danger-full-access";
-};
-
 export type GoalWorkerBudgetRequest = {
   readonly max_worker_attempts: number;
 };
 
 export type ExecutionConfigRequest = {
   readonly config_version: number;
-  readonly worker_kind: "pi" | "codex-server";
+  readonly worker_kind: "pi";
   readonly model: string;
   readonly reasoning_effort: string | null;
   readonly capacity: number;
@@ -1034,7 +995,6 @@ export type ExecutionConfigRequest = {
   readonly git_permissions: ReadonlyArray<"git.read" | "git.local_write" | "git.remote_write" | "git.dangerous">;
   readonly endpoint_capabilities: ExecutionEndpointCapabilitiesRequest;
   readonly command_timeout_seconds: number;
-  readonly codex_server?: ExecutionCodexServerRequest | null;
   readonly process_adjustment?: ProcessAdjustmentPolicyRequest | null;
   readonly goal_worker_budget?: GoalWorkerBudgetRequest | null;
   readonly trajectory_review?: TrajectoryReviewPolicyRequest | null;
@@ -1095,13 +1055,6 @@ export type ExtendAttemptDeadlineRequest = {
   readonly idempotency_key: IdempotencyKey;
   readonly deadline_at: UtcDateTime;
 };
-
-export type ResolveWorkerRequestRequest = {
-  readonly idempotency_key: IdempotencyKey;
-  readonly resolution: Readonly<Record<string, JsonValue>>;
-};
-
-export type DeclineWorkerRequestRequest = RunActionRequest;
 
 export type CancelAttemptRequest = RunActionRequest;
 
@@ -2607,35 +2560,6 @@ export class EhaiApiClient {
 
   getAttemptRuntime(attemptId: string): Promise<AttemptRuntimeResponse> {
     return this.request(`/attempts/${encodeURIComponent(attemptId)}/runtime`, "GET");
-  }
-
-  listWorkerRequests(attemptId: string): Promise<WorkerRequestListResponse> {
-    return this.request(
-      `/attempts/${encodeURIComponent(attemptId)}/worker-requests`,
-      "GET",
-    );
-  }
-
-  resolveWorkerRequest(
-    workerRequestId: string,
-    request: ResolveWorkerRequestRequest,
-  ): Promise<WorkerRequestResponse> {
-    return this.request(
-      `/worker-requests/${encodeURIComponent(workerRequestId)}/resolve`,
-      "POST",
-      request,
-    );
-  }
-
-  declineWorkerRequest(
-    workerRequestId: string,
-    request: DeclineWorkerRequestRequest,
-  ): Promise<WorkerRequestResponse> {
-    return this.request(
-      `/worker-requests/${encodeURIComponent(workerRequestId)}/decline`,
-      "POST",
-      request,
-    );
   }
 
   extendAttemptDeadline(

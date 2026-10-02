@@ -70,15 +70,10 @@ from ehai.infrastructure.checks import (
 )
 from ehai.infrastructure.pi_config import PiBackendConfig
 from ehai.infrastructure.pi_rpc import PiRpcError
-from ehai.infrastructure.planners import (
-    CodexPlannerAdapter,
-    CodexPlannerError,
-    PiPlannerAdapter,
-    PiPlannerError,
-)
+from ehai.infrastructure.planners import PiPlannerAdapter, PiPlannerError
 from ehai.infrastructure.sqlite import SQLiteDatabase
 from ehai.infrastructure.sqlite.project_configuration import SQLiteProjectConfigurationStore
-from ehai.infrastructure.workers import CodexWorkerAdapter, FakeWorker
+from ehai.infrastructure.workers import FakeWorker
 from ehai.interfaces.backend_cli import register_backend_commands
 from ehai.interfaces.cli_api import API_ONLY_COMMANDS, ApiCommandError, dispatch_api
 from ehai.interfaces.public_documents import public_json_value
@@ -142,8 +137,6 @@ def build_service(
     semantic_required_terms: Sequence[str] = (),
     command_check_timeout_seconds: float = 30.0,
     worker_timeout_seconds: float = 300.0,
-    codex_model: str | None = None,
-    codex_reasoning_effort: str | None = None,
     background_start: bool = False,
     endpoint_capabilities: ResponsesEndpointCapabilities | None = None,
     pi_backend: PiBackendConfig | None = None,
@@ -171,24 +164,15 @@ def build_service(
         workspace=worker_workspace or Path.cwd(),
         role_configuration={
             "worker_kind": worker_kind,
-            "model": planner_model if worker_kind == "pi" else codex_model,
-            "reasoning_effort": planner_reasoning_effort
-            if worker_kind == "pi"
-            else codex_reasoning_effort,
+            "model": planner_model if worker_kind == "pi" else None,
+            "reasoning_effort": planner_reasoning_effort if worker_kind == "pi" else None,
         },
     )
     artifact_store = FilesystemArtifactStore(artifact_root)
     worker: WorkerAdapter | None
     if worker_kind == "fake":
         worker = FakeWorker()
-    elif worker_kind == "codex":
-        worker = CodexWorkerAdapter(
-            workspace=worker_workspace or Path.cwd(),
-            timeout_seconds=worker_timeout_seconds,
-            model=codex_model,
-            reasoning_effort=codex_reasoning_effort,
-        )
-    elif worker_kind in {"pi", "codex-server"}:
+    elif worker_kind == "pi":
         if not background_start:
             raise ValueError("this Worker requires the P2 background Runtime")
         worker = None
@@ -199,11 +183,6 @@ def build_service(
         planner = DeterministicPlanner()
     elif planner_kind == "exploration":
         planner = _ExplorationPlannerAdapter()
-    elif planner_kind == "codex":
-        planner = CodexPlannerAdapter(
-            workspace=worker_workspace or Path.cwd(),
-            timeout_seconds=planner_timeout_seconds,
-        )
     elif planner_kind == "pi":
         assert pi_backend is not None and planner_model is not None
         planner = PiPlannerAdapter(
@@ -303,7 +282,7 @@ def create_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--worker",
-        choices=("fake", "codex", "codex-server", "pi"),
+        choices=("fake", "pi"),
         default="fake",
         help="Worker Adapter (default: fake)",
     )
@@ -314,7 +293,7 @@ def create_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--planner",
-        choices=("single", "exploration", "codex", "pi"),
+        choices=("single", "exploration", "pi"),
         default=None,
         help="Planner implementation (Pi when --pi-config/--planner-model is supplied)",
     )
@@ -322,7 +301,7 @@ def create_parser() -> argparse.ArgumentParser:
         "--planner-timeout-seconds",
         type=float,
         default=120.0,
-        help="Codex Planner wall-clock timeout (default: 120)",
+        help="Planner model-call wall-clock timeout (default: 120)",
     )
     parser.add_argument("--planner-model", help="exact native Pi model ID for the Planner")
     parser.add_argument(
@@ -340,19 +319,13 @@ def create_parser() -> argparse.ArgumentParser:
         "--worker-timeout-seconds",
         type=float,
         default=300.0,
-        help="Codex Worker wall-clock timeout (default: 300)",
+        help="accepted for compatibility; no current Worker uses it (default: 300)",
     )
     parser.add_argument(
         "--command-check-timeout-seconds",
         type=float,
         default=30.0,
         help="host Command Check timeout (default: 30)",
-    )
-    parser.add_argument("--codex-model", help="Codex model override for Worker invocations")
-    parser.add_argument(
-        "--codex-reasoning-effort",
-        choices=("none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"),
-        help="Codex reasoning effort override for Worker invocations",
     )
     parser.add_argument(
         "--command-check-argv",
@@ -381,7 +354,7 @@ def create_parser() -> argparse.ArgumentParser:
     )
     inbox_item.add_argument(
         "--kind",
-        choices=("intervention", "human_check", "worker_request", "note", "workflow_confirmation"),
+        choices=("intervention", "human_check", "note", "workflow_confirmation"),
         required=True,
     )
     inbox_item.add_argument("--request-id", required=True)
@@ -644,7 +617,6 @@ def create_parser() -> argparse.ArgumentParser:
         commands.add_parser(name, help=help_text + " (requires --api-url)")
     for name, help_text in (
         ("get-attempt-runtime", "read one Attempt's runtime state"),
-        ("get-worker-requests", "read pending requests for one Attempt"),
         ("cancel-attempt", "cancel one Attempt on its owning API host"),
         ("suspend-attempt", "adopt a trajectory review and suspend only its Worker"),
         ("extend-attempt-deadline", "explicitly extend one Attempt's deadline"),
@@ -660,12 +632,6 @@ def create_parser() -> argparse.ArgumentParser:
             item.add_argument("--reason", required=True)
         if name == "extend-attempt-deadline":
             item.add_argument("--deadline-at", required=True, help="ISO 8601 time with timezone")
-    for name in ("resolve-worker-request", "decline-worker-request"):
-        item = commands.add_parser(name, help="answer a Worker request (requires --api-url)")
-        item.add_argument("--worker-request-id", required=True)
-        item.add_argument("--idempotency-key", required=True)
-        if name == "resolve-worker-request":
-            item.add_argument("--resolution-file", type=Path, required=True)
     return parser
 
 
@@ -685,8 +651,6 @@ def main(argv: Sequence[str] | None = None) -> int:
             args.planner,
             args.planner_model,
             args.planner_reasoning_effort,
-            args.codex_model,
-            args.codex_reasoning_effort,
             args.command_check_argv,
         )
         if (
@@ -767,8 +731,6 @@ def main(argv: Sequence[str] | None = None) -> int:
             semantic_required_terms=tuple(args.semantic_required_term),
             command_check_timeout_seconds=args.command_check_timeout_seconds,
             worker_timeout_seconds=args.worker_timeout_seconds,
-            codex_model=args.codex_model,
-            codex_reasoning_effort=args.codex_reasoning_effort,
             pi_backend=None
             if args.pi_config is None or args.command == "import-plan"
             else PiBackendConfig.from_path(args.pi_config),
@@ -840,7 +802,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         ApplicationError,
         StateConflictError,
         PiPlannerError,
-        CodexPlannerError,
         OrchestrationError,
         QueryNotFoundError,
         RecoveryError,
@@ -941,13 +902,6 @@ def _build_foreground_app(
         available_shells=config.available_shells,
         git_permissions=tuple(config.git_permissions),
         worker_capacity=config.capacity,
-        codex_model=config.model if config.worker_kind == "codex-server" else None,
-        codex_reasoning_effort=(
-            config.reasoning_effort if config.worker_kind == "codex-server" else None
-        ),
-        codex_server_executable=config.codex_server_executable,
-        codex_server_approval_policy=config.codex_server_approval_policy,
-        codex_server_sandbox=config.codex_server_sandbox,
         endpoint_capabilities=config.endpoint_capabilities,
         pi_backend=config.pi_backend,
         p2_runtime=True,

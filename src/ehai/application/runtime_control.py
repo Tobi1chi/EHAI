@@ -1,4 +1,4 @@
-"""P2 commands for active Attempts and explicit Worker interaction requests."""
+"""P2 commands for active Attempts and Runtime health."""
 
 from __future__ import annotations
 
@@ -6,31 +6,15 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
 from datetime import datetime
 from enum import StrEnum
-from hashlib import sha256
 from typing import Protocol, runtime_checkable
 
-from ehai import ID, JsonValue, format_utc_datetime, json_dumps, new_id, normalize_id, utc_now
+from ehai import ID, format_utc_datetime, normalize_id, utc_now
 from ehai.application.async_runtime import ConnectorExecution, RuntimeConnector
 from ehai.application.interventions import WorkerBlocker
 from ehai.application.orchestrator import Orchestrator
 from ehai.application.ports import UnitOfWork
-from ehai.application.sanitization import redact_sensitive_text
-from ehai.application.worker_request_forms import WorkerRequestForm, worker_request_form
 from ehai.domain.events import Event, EventType
 from ehai.domain.execution import Attempt, AttemptStatus, Run
-
-
-class WorkerRequestKind(StrEnum):
-    COMMAND_APPROVAL = "command_approval"
-    FILE_CHANGE_APPROVAL = "file_change_approval"
-    USER_INPUT = "user_input"
-    PERMISSION_APPROVAL = "permission_approval"
-
-
-class WorkerRequestStatus(StrEnum):
-    PENDING = "pending"
-    RESOLVED = "resolved"
-    DECLINED = "declined"
 
 
 class RuntimeHealthStatus(StrEnum):
@@ -52,53 +36,8 @@ class RuntimeHealthView:
     last_error: str | None = None
 
 
-@dataclass(frozen=True, slots=True)
-class WaitingWorkerRequestView:
-    """Sanitized request metadata with no provider transcript or internal path."""
-
-    worker_request_id: ID
-    attempt_id: ID
-    kind: WorkerRequestKind
-    summary: str
-    status: WorkerRequestStatus = WorkerRequestStatus.PENDING
-
-
 class RuntimeControlError(RuntimeError):
     """A P2 Runtime command could not be applied to current execution state."""
-
-
-@dataclass(frozen=True, slots=True)
-class WorkerRequestDetail:
-    request: WaitingWorkerRequestView
-    first_observed_at: datetime
-    form: WorkerRequestForm
-    available: bool
-    unavailable_reason: str | None
-
-
-class _PendingProviderRequest(Protocol):
-    request_id: int | str
-    method: str
-    thread_id: str
-    turn_id: str
-    item_id: str
-
-    @property
-    def params(self) -> dict[str, JsonValue]: ...
-
-
-@runtime_checkable
-class InteractiveRuntimeConnector(Protocol):
-    def pending_requests(
-        self,
-        execution: ConnectorExecution | None = None,
-    ) -> tuple[_PendingProviderRequest, ...]: ...
-
-    async def resolve_request(
-        self,
-        request_id: int | str,
-        result: Mapping[str, JsonValue],
-    ) -> None: ...
 
 
 class ControllableRuntime(Protocol):
@@ -142,12 +81,6 @@ class RuntimeControlService:
         self._orchestrator = orchestrator
         self._runtimes = {normalize_id(key): value for key, value in runtimes.items()}
         self._clock = clock
-        self._public_ids: dict[tuple[ID, str, str], ID] = {}
-        self._bindings: dict[ID, tuple[InteractiveRuntimeConnector, int | str]] = {}
-        self._views: dict[ID, WaitingWorkerRequestView] = {}
-        self._request_details: dict[ID, WorkerRequestDetail] = {}
-        self._worker_response_inputs: dict[str, str] = {}
-        self._worker_response_in_flight: set[ID] = set()
         self._command_results: dict[str, tuple[str, object]] = {}
         self._runtime_health = RuntimeHealthView(
             RuntimeHealthStatus.STARTING,
@@ -222,149 +155,6 @@ class RuntimeControlService:
             seen.add(id(runtime))
             if isinstance(runtime, DispatchReleasingRuntime):
                 runtime.release_run_dispatch(run_id)
-
-    def list_waiting_requests(self, attempt_id: ID) -> tuple[WaitingWorkerRequestView, ...]:
-        attempt = self._attempt(attempt_id)
-        if attempt.status is not AttemptStatus.RUNNING or attempt.worker_endpoint_id is None:
-            return ()
-        runtime = self._runtimes.get(attempt.worker_endpoint_id)
-        if runtime is None:
-            return ()
-        connector = runtime.connector_for(attempt.worker_endpoint_id)
-        if connector is None:
-            return ()
-        if not isinstance(connector, InteractiveRuntimeConnector):
-            return ()
-        execution = self._execution(attempt)
-        views: list[WaitingWorkerRequestView] = []
-        for request in connector.pending_requests(execution):
-            fingerprint = sha256(json_dumps(request.params).encode("utf-8")).hexdigest()
-            key = (attempt.attempt_id, str(request.request_id), fingerprint)
-            public_id = self._public_ids.setdefault(key, new_id())
-            view = WaitingWorkerRequestView(
-                public_id,
-                attempt.attempt_id,
-                _request_kind(request.method),
-                redact_sensitive_text(_request_summary(request)),
-            )
-            self._bindings[public_id] = (connector, request.request_id)
-            self._views[public_id] = view
-            previous = self._request_details.get(public_id)
-            self._request_details[public_id] = WorkerRequestDetail(
-                view,
-                self._clock() if previous is None else previous.first_observed_at,
-                worker_request_form(view.kind.value, request.params),
-                True,
-                None,
-            )
-            views.append(view)
-        return tuple(views)
-
-    def worker_requests_available(self, attempt: Attempt) -> bool:
-        """Distinguish an unavailable owner from a reachable non-interactive connector."""
-        if attempt.status is not AttemptStatus.RUNNING:
-            return True
-        endpoint = attempt.worker_endpoint_id
-        runtime = None if endpoint is None else self._runtimes.get(endpoint)
-        return (
-            runtime is not None
-            and endpoint is not None
-            and runtime.connector_for(endpoint) is not None
-            and self._runtime_health.loop_active
-        )
-
-    def get_worker_request_detail(self, worker_request_id: ID) -> WorkerRequestDetail | None:
-        """Re-observe live binding; retain an unavailable view after the request disappears."""
-        request_id = normalize_id(worker_request_id)
-        detail = self._request_details.get(request_id)
-        if detail is None:
-            return None
-        if request_id in self._worker_response_in_flight:
-            return replace(
-                detail,
-                available=False,
-                unavailable_reason="Worker response is in flight or its outcome is unknown",
-            )
-        attempt = self._attempt(detail.request.attempt_id)
-        if not self.worker_requests_available(attempt):
-            return replace(detail, available=False, unavailable_reason="Worker host is unavailable")
-        current = self.list_waiting_requests(attempt.attempt_id)
-        if any(item.worker_request_id == request_id for item in current):
-            return self._request_details[request_id]
-        return replace(
-            detail,
-            request=self._views[request_id],
-            available=False,
-            unavailable_reason="Worker request is no longer pending; inspect the Run",
-        )
-
-    def _current_worker_binding(
-        self, request_id: ID
-    ) -> tuple[WaitingWorkerRequestView, InteractiveRuntimeConnector, int | str]:
-        detail = self.get_worker_request_detail(request_id)
-        binding = self._bindings.get(request_id)
-        if detail is None or not detail.available or binding is None:
-            raise RuntimeControlError("Worker request is no longer available; refresh its source")
-        return detail.request, *binding
-
-    async def resolve_worker_request(
-        self,
-        worker_request_id: ID,
-        resolution: Mapping[str, JsonValue],
-        *,
-        idempotency_key: str | None = None,
-    ) -> WaitingWorkerRequestView:
-        self._check_worker_response_input(idempotency_key, worker_request_id, dict(resolution))
-        cached = self._cached(idempotency_key, "ResolveWorkerRequest", WaitingWorkerRequestView)
-        if cached is not None:
-            return cached
-        request_id = normalize_id(worker_request_id)
-        view, connector, provider_request_id = self._current_worker_binding(request_id)
-        self._worker_response_in_flight.add(request_id)
-        await connector.resolve_request(provider_request_id, resolution)
-        self._worker_response_in_flight.discard(request_id)
-        resolved = replace(view, status=WorkerRequestStatus.RESOLVED)
-        self._views[request_id] = resolved
-        del self._bindings[request_id]
-        self._remember(idempotency_key, "ResolveWorkerRequest", resolved)
-        return resolved
-
-    async def decline_worker_request(
-        self,
-        worker_request_id: ID,
-        *,
-        idempotency_key: str | None = None,
-    ) -> WaitingWorkerRequestView:
-        self._check_worker_response_input(idempotency_key, worker_request_id, None)
-        cached = self._cached(idempotency_key, "DeclineWorkerRequest", WaitingWorkerRequestView)
-        if cached is not None:
-            return cached
-        request_id = normalize_id(worker_request_id)
-        view, connector, provider_request_id = self._current_worker_binding(request_id)
-        result = _decline_result(view.kind)
-        self._worker_response_in_flight.add(request_id)
-        await connector.resolve_request(provider_request_id, result)
-        self._worker_response_in_flight.discard(request_id)
-        declined = replace(view, status=WorkerRequestStatus.DECLINED)
-        self._views[request_id] = declined
-        del self._bindings[request_id]
-        self._remember(idempotency_key, "DeclineWorkerRequest", declined)
-        return declined
-
-    def _check_worker_response_input(
-        self, key: str | None, request_id: ID, resolution: JsonValue
-    ) -> None:
-        if key is None:
-            return
-        fingerprint = sha256(
-            json_dumps({"request_id": normalize_id(request_id), "resolution": resolution}).encode()
-        ).hexdigest()
-        previous = self._worker_response_inputs.get(key)
-        if previous is not None and previous != fingerprint:
-            raise RuntimeControlError(
-                "Idempotency key was already used for a different Worker response"
-            )
-        self._worker_response_inputs[key] = fingerprint
 
     def extend_deadline(
         self,
@@ -489,39 +279,3 @@ class RuntimeControlService:
     def _remember(self, key: str | None, command_name: str, result: object) -> None:
         if key is not None:
             self._command_results[key] = (command_name, result)
-
-
-def _request_kind(method: str) -> WorkerRequestKind:
-    return {
-        "item/commandExecution/requestApproval": WorkerRequestKind.COMMAND_APPROVAL,
-        "item/fileChange/requestApproval": WorkerRequestKind.FILE_CHANGE_APPROVAL,
-        "item/tool/requestUserInput": WorkerRequestKind.USER_INPUT,
-        "item/permissions/requestApproval": WorkerRequestKind.PERMISSION_APPROVAL,
-    }[method]
-
-
-def _request_summary(request: _PendingProviderRequest) -> str:
-    if request.method == "item/tool/requestUserInput":
-        questions = request.params.get("questions")
-        if isinstance(questions, list):
-            text = " ".join(
-                str(question.get("question", ""))
-                for question in questions
-                if isinstance(question, dict)
-            ).strip()
-            if text:
-                return text[:500]
-    return {
-        "item/commandExecution/requestApproval": "command execution approval required",
-        "item/fileChange/requestApproval": "file change approval required",
-        "item/tool/requestUserInput": "user input required",
-        "item/permissions/requestApproval": "additional permissions approval required",
-    }[request.method]
-
-
-def _decline_result(kind: WorkerRequestKind) -> dict[str, JsonValue]:
-    if kind in {WorkerRequestKind.COMMAND_APPROVAL, WorkerRequestKind.FILE_CHANGE_APPROVAL}:
-        return {"decision": "decline"}
-    if kind is WorkerRequestKind.PERMISSION_APPROVAL:
-        return {"permissions": {}}
-    return {"answers": {}}

@@ -21,7 +21,6 @@ from ehai.application.async_runtime import (
 )
 from ehai.application.handoffs import AttemptHandoffs, HandoffSubmission, handoff_id_for
 from ehai.application.ports import ArtifactStore
-from ehai.application.runtime_control import InteractiveRuntimeConnector, _PendingProviderRequest
 from ehai.application.workers import (
     AdoptedResultInputs,
     ArtifactInputSnapshot,
@@ -951,18 +950,6 @@ class CodeRuntimeConnector:
         if execution is not None:
             self._executions[execution.attempt_id] = execution
         return execution
-
-    def pending_requests(
-        self, execution: ConnectorExecution | None = None
-    ) -> tuple[_PendingProviderRequest, ...]:
-        if isinstance(self.connector, InteractiveRuntimeConnector):
-            return self.connector.pending_requests(execution)
-        return ()
-
-    async def resolve_request(self, request_id: int | str, result: Mapping[str, JsonValue]) -> None:
-        if not isinstance(self.connector, InteractiveRuntimeConnector):
-            raise ValueError("This Worker has no interactive requests")
-        await self.connector.resolve_request(request_id, result)
 
     async def close(self) -> None:
         if isinstance(self.connector, _ClosableConnector):

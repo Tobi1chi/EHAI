@@ -387,15 +387,15 @@ def verify_result(args: argparse.Namespace) -> None:
         port = listener.getsockname()[1]
     base_url = f"http://127.0.0.1:{port}"
     log_path = evidence / "server.log"
-    # Directly launch the installed version's normal API entry point. The real
-    # Codex adapter is dormant: this server only queries the completed fixture.
+    # Directly launch the installed version's normal API entry point. The scripted
+    # Worker stays idle: this server only queries the completed fixture.
     argv = [
         python,
         "-c",
         "from ehai.interfaces.runtime import main;raise SystemExit(main())",
         *cli_args,
         "--worker",
-        "codex",
+        "fake",
         "--host",
         "127.0.0.1",
         "--port",
