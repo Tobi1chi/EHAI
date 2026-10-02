@@ -26,8 +26,15 @@ from fastapi.responses import JSONResponse
 from pydantic import TypeAdapter
 
 from ehai import JsonValue
-from ehai.hub.adapters import HarnessAdapter, HarnessFailure, HarnessRequestError, HarnessSession
+from ehai.hub.adapters import (
+    HarnessAdapter,
+    HarnessFailure,
+    HarnessRequestError,
+    HarnessSession,
+    McpEndpoint,
+)
 from ehai.hub.adapters.pi.adapter import PiAdapter
+from ehai.hub.mcp_endpoint import SessionToolEndpoint, new_session_token
 from ehai.hub.protocol import (
     MIN_SESSION_IDLE_SECONDS,
     TOKEN_ENVIRONMENT,
@@ -42,6 +49,7 @@ from ehai.hub.protocol import (
     StartSession,
     SteerMessages,
     ToolResult,
+    ToolSpec,
 )
 
 _EVENT = TypeAdapter[HubEvent](HubEvent)
@@ -66,6 +74,36 @@ class _Session:
     touched: float = field(default_factory=time.monotonic)
     changed: asyncio.Condition = field(default_factory=asyncio.Condition)
     pump: asyncio.Task[None] | None = None
+    tools: list[ToolSpec] = field(default_factory=list)
+    mcp_token: str = ""
+    mcp_pending: dict[str, asyncio.Future[ToolResult]] = field(default_factory=dict)
+
+    async def call_tool_via_mcp(self, name: str, arguments: dict[str, JsonValue]) -> ToolResult:
+        """Hand an MCP tool call to the core as a tool_call event and wait for its result."""
+        if self.state != "running":
+            raise RuntimeError("EHAI tool session is no longer running")
+        call_id = "mcp-" + uuid.uuid4().hex
+        result: asyncio.Future[ToolResult] = asyncio.get_running_loop().create_future()
+        self.mcp_pending[call_id] = result
+        try:
+            self.touched = time.monotonic()
+            await self.append(
+                {
+                    "type": "tool_call",
+                    "call_id": call_id,
+                    "name": name,
+                    "arguments": arguments,
+                    "batch_call_ids": [call_id],
+                }
+            )
+            return await result
+        finally:
+            self.mcp_pending.pop(call_id, None)
+
+    def fail_pending(self, reason: str) -> None:
+        for pending in self.mcp_pending.values():
+            if not pending.done():
+                pending.set_exception(RuntimeError(reason))
 
     async def append(self, body: Mapping[str, JsonValue]) -> None:
         event = _EVENT.validate_python({**body, "seq": len(self.events) + 1})
@@ -88,6 +126,14 @@ class Hub:
         self.adapters = dict(adapters)
         self.idle_seconds = idle_seconds
         self.sessions: dict[str, _Session] = {}
+        self.by_mcp_token: dict[str, str] = {}
+        # Set once the server is listening; harnesses reach the MCP endpoint through it.
+        self.public_url = ""
+
+    def session_for_mcp_token(self, token: str) -> _Session | None:
+        session_id = self.by_mcp_token.get(token) if token else None
+        session = None if session_id is None else self.sessions.get(session_id)
+        return session if session is not None and session.state == "running" else None
 
     def require(self, session_id: str) -> _Session:
         session = self.sessions.get(session_id)
@@ -100,15 +146,20 @@ class Hub:
         adapter = self.adapters.get(request.harness.kind)
         if adapter is None:
             raise HubError(422, "invalid_request", "Harness kind is not installed in this Hub")
+        token = new_session_token()
+        endpoint = McpEndpoint(url=f"{self.public_url}/v1/mcp/", token=token)
         try:
-            native = await adapter.launch(request)
+            native = await adapter.launch(request, endpoint)
         except HarnessRequestError as error:
             raise HubError(422, "invalid_request", str(error)) from error
         except HarnessFailure as error:
             raise HubError(502, "harness_failed", str(error)) from error
-        session = _Session(uuid.uuid4().hex, adapter.kind, native)
+        session = _Session(
+            uuid.uuid4().hex, adapter.kind, native, tools=list(request.tools), mcp_token=token
+        )
         session.pump = asyncio.create_task(session.run_pump())
         self.sessions[session.session_id] = session
+        self.by_mcp_token[token] = session.session_id
         return SessionStarted(session_id=session.session_id, native_session=native.native_session)
 
     async def control(self, session: _Session, action: str, value: object = None) -> None:
@@ -123,7 +174,12 @@ class Hub:
                 await session.native.prompt(value.message)
             elif action == "tool_result":
                 assert isinstance(value, ToolResult)
-                await session.native.tool_result(value)
+                pending = session.mcp_pending.get(value.call_id)
+                if pending is not None:
+                    if not pending.done():
+                        pending.set_result(value)
+                else:
+                    await session.native.tool_result(value)
             else:
                 await session.native.cancel()
         except HarnessFailure as error:
@@ -143,6 +199,8 @@ class Hub:
         session = self.sessions.pop(session_id, None)
         if session is None:
             return
+        self.by_mcp_token.pop(session.mcp_token, None)
+        session.fail_pending("EHAI tool session closed")
         async with session.changed:
             session.state = "closed"
             session.changed.notify_all()
@@ -167,20 +225,27 @@ class Hub:
         )
 
 
-def create_app(token: str, *, idle_seconds: float = 600.0) -> FastAPI:
+def create_app(
+    token: str,
+    *,
+    idle_seconds: float = 600.0,
+    adapters: Mapping[str, HarnessAdapter] | None = None,
+) -> FastAPI:
     if len(token) < 32:
         raise ValueError("Hub token must have at least 32 characters")
     if not idle_seconds >= MIN_SESSION_IDLE_SECONDS:
         raise ValueError(
             f"Session idle timeout must be at least {MIN_SESSION_IDLE_SECONDS:g} seconds"
         )
-    hub = Hub({"pi": PiAdapter()}, idle_seconds=idle_seconds)
+    hub = Hub(adapters or {"pi": PiAdapter()}, idle_seconds=idle_seconds)
+    tool_endpoint = SessionToolEndpoint(hub.session_for_mcp_token)
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         reaper = asyncio.create_task(hub.reap())
         try:
-            yield
+            async with tool_endpoint.manager.run():
+                yield
         finally:
             reaper.cancel()
             await asyncio.gather(reaper, return_exceptions=True)
@@ -195,6 +260,8 @@ def create_app(token: str, *, idle_seconds: float = 600.0) -> FastAPI:
         title="EHAI Hub", lifespan=lifespan, dependencies=[Depends(authorize)], docs_url=None
     )
     app.state.hub = hub
+    # Harnesses authenticate with their session token, never with the Hub token.
+    app.mount("/v1/mcp", tool_endpoint)
 
     @app.exception_handler(HubError)
     async def hub_error(_: Request, error: HubError) -> JSONResponse:
@@ -280,13 +347,16 @@ def _watch_stdin(server: uvicorn.Server) -> None:
     os._exit(1)
 
 
-async def _serve(server: uvicorn.Server, *, announce: bool) -> None:
+async def _serve(server: _HubServer, *, announce: bool, public_url: str | None, host: str) -> None:
     task = asyncio.create_task(server.serve())
     while not server.started and not task.done():
         await asyncio.sleep(0.05)
-    if announce and server.started:
+    if server.started:
         port = server.servers[0].sockets[0].getsockname()[1]
-        print(f"{LISTENING_PREFIX}{port}", flush=True)
+        local = "127.0.0.1" if host in ("0.0.0.0", "::", "") else host
+        server.hub.public_url = (public_url or f"http://{local}:{port}").rstrip("/")
+        if announce:
+            print(f"{LISTENING_PREFIX}{port}", flush=True)
     await task
 
 
@@ -295,6 +365,10 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8788)
     parser.add_argument("--session-idle-seconds", type=float, default=600.0)
+    parser.add_argument(
+        "--public-url",
+        help="base URL at which harnesses reach this Hub's MCP endpoint (default: listen address)",
+    )
     parser.add_argument("--sidecar", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
     token = os.environ.get(TOKEN_ENVIRONMENT, "")
@@ -312,7 +386,7 @@ def main(argv: list[str] | None = None) -> None:
     )
     if args.sidecar:
         threading.Thread(target=_watch_stdin, args=(server,), daemon=True).start()
-    asyncio.run(_serve(server, announce=args.sidecar))
+    asyncio.run(_serve(server, announce=args.sidecar, public_url=args.public_url, host=args.host))
 
 
 if __name__ == "__main__":

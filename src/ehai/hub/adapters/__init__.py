@@ -7,10 +7,19 @@ It owns no EHAI business rules and never executes EHAI tools itself.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Protocol
 
 from ehai import JsonValue
 from ehai.hub.protocol import StartSession, ToolResult
+
+
+@dataclass(frozen=True, slots=True)
+class McpEndpoint:
+    """This session's MCP endpoint; a layer whose harness speaks MCP points it here."""
+
+    url: str
+    token: str
 
 
 class HarnessRequestError(ValueError):
@@ -47,6 +56,10 @@ class HarnessAdapter(Protocol):
     @property
     def version(self) -> str: ...
 
-    async def launch(self, request: StartSession) -> HarnessSession:
-        """Start and verify a session; raise HarnessRequestError or HarnessFailure."""
+    async def launch(self, request: StartSession, mcp: McpEndpoint) -> HarnessSession:
+        """Start and verify a session; raise HarnessRequestError or HarnessFailure.
+
+        ``mcp`` serves exactly this session's tools. Layers whose harness has no MCP
+        support (such as Pi) ignore it and use their own bridge with the same semantics.
+        """
         ...
