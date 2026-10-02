@@ -243,6 +243,11 @@ def create_app(token: str, *, idle_seconds: float = 600.0) -> FastAPI:
     async def tool_result(session_id: str, body: ToolResult) -> None:
         await hub.control(hub.require(session_id), "tool_result", body)
 
+    @app.post("/v1/sessions/{session_id}/heartbeat", status_code=204)
+    async def heartbeat(session_id: str) -> None:
+        # Every request renews the session lease; this one exists only to renew it.
+        hub.require(session_id)
+
     @app.post("/v1/sessions/{session_id}/cancel", status_code=204)
     async def cancel(session_id: str) -> None:
         await hub.control(hub.require(session_id), "cancel")
@@ -298,7 +303,7 @@ def main(argv: list[str] | None = None) -> None:
     if not args.session_idle_seconds >= MIN_SESSION_IDLE_SECONDS:
         parser.error(
             f"--session-idle-seconds must be at least {MIN_SESSION_IDLE_SECONDS:g} "
-            f"(three core keepalive intervals)"
+            f"(three core heartbeat intervals)"
         )
     app = create_app(token, idle_seconds=args.session_idle_seconds)
     server = _HubServer(
