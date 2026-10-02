@@ -1,6 +1,6 @@
 # 生活 Workflow 与 Routine
 
-更新：2026-10-01。本页是已实现的两个固定生活流程的用法与契约。
+更新：2026-10-02。本页是已实现的两个固定生活流程的用法与契约。
 自定义流程、条件分支和事件触发尚未实现，目标设计见 [自定义 Workflow 设计](P4_WORKFLOW_DESIGN.md)；
 运行证据见 [EVIDENCE](EVIDENCE.md#p4-生活事务与外部连接)。
 
@@ -127,10 +127,10 @@ compatibility 状态，来自同一只读数据库快照。读取不会创建记
 
 | 记录 | 内容 | 语义 |
 | --- | --- | --- |
-| Run | Project 归属、定义版本/快照、inputs/result/trigger、状态和来源 | 原生活 Workflow DTO 由它投影，只有一个状态来源 |
+| Workflow Run | Project 归属、定义版本/快照、inputs/result/trigger、状态和来源 | 原生活 Workflow DTO 由它投影，只有一个状态来源 |
 | 步骤 | 定义节点 node_id 与该次 step_execution_id 分离，执行序号、输入输出、等待/完成/跳过 | 与业务写入在同一事务保存；人工决定沿用原步骤 ID |
-| 调用 | invocation_id 关联 Run 和步骤，动作契约、幂等身份、结果与种类 | 当前只记录本地业务动作；外部意图/未知结果字段是结构预留 |
-| 等待 | wait_id 关联 Run 和步骤，等待条件与明确决定收据 | 人工等待跨重启可读；完成后原 wait_id 标记 resolved |
+| 调用 | invocation_id 关联 Workflow Run 和步骤，动作契约、幂等身份、结果与种类 | 当前只记录本地业务动作；外部意图/未知结果字段是结构预留 |
+| 等待 | wait_id 关联 Workflow Run 和步骤，等待条件与明确决定收据 | 人工等待跨重启可读；完成后原 wait_id 标记 resolved |
 
 schema 19 的旧运行在首次打开时迁移，标记 `recording_origin=legacy_snapshot`，
 不补造当时没有记录的定义全文和步骤轨迹；之后发生的决定与本地动作才写入子记录。

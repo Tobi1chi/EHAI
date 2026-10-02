@@ -30,7 +30,7 @@
 | 步骤 | 用户结果 | 完成条件 | 状态 |
 | --- | --- | --- | --- |
 | 1. 安全网 | 每次修改都能自动确认主路径未被破坏 | 产品 E2E 入库；CI 在 Linux 跑静态检查、契约生成比对和 E2E，并在 Windows 跑 E2E | 完成：E2E 与 CI 已入库，首次 CI 全部通过（含 Windows E2E） |
-| 2. 低风险清理 | 代码只保留实际使用的后端和清晰命名 | Codex 去留已决定并执行；图 IR、脱敏工具移到中性模块；`legacy_config.py` 处置；Run/Routine 命名冲突有决定 | 进行中：Codex 已删除（选项 A），图 IR 与脱敏已移出；`legacy_config.py` 与命名冲突未处理 |
+| 2. 低风险清理 | 代码只保留实际使用的后端和清晰命名 | Codex 去留已决定并执行；图 IR、脱敏工具移到中性模块；`legacy_config.py` 处置；Run/Routine 命名冲突有决定 | 完成：Codex 已删除（选项 A）；图 IR 与脱敏已移出；`legacy_config.py` 已删除；命名决定为不改名、统一术语 |
 | 3. 拆分大文件 | 新贡献者能按职责定位代码 | Orchestrator 拆为门面与若干职责模块；Repository/Service 按聚合拆分；幂等回执合并为一个机制；E2E 全程通过 | 未开始 |
 | 4. 收尾 P2 | 在真实项目上完成一次可核对的开发任务 | 真实 Pi 按[手动验收](#真实-pi-手动验收)完成并记录；随后在 P3.3 与 P4 通用 Workflow 中选一项 | 未开始 |
 
@@ -158,6 +158,17 @@ Reviewer/Gate → 人工验收 → `integrate-run`，并在执行中强杀一次
   心跳失败不中断正在执行的工具（用户决定保持），见 [HUB](HUB.md#失败处理)。
 - 未覆盖：真实模型；Pi Planner、过程审查、轨迹审查、路由回退经 Hub 的实际运行（共用同一个运行器，未单独跑）；
   Windows 上的本机子进程与 Pi；跨机器部署。产品 E2E 不经过 Hub，待 Scripted 兼容层（ADR 0007 第 4 步）。
+
+### 2026-10-02 第二步收尾
+
+- `legacy_config.py` 只剩已退役自研 Responses 运行时的 `ResponsesEndpointCapabilities`，对执行没有影响，
+  但每份执行配置规范文档都带有 `endpoint_capabilities`，参与授权指纹。处置与 `codex_server` 相同：
+  类移到 `session_host.py` 并注明仅为指纹保留，删除 `legacy_config.py`；HTTP 执行配置中该块改为可选，
+  省略时按原默认值计入规范文档；示例配置去掉该块。Schema 与 TS Client 重新生成。
+- 验证（仓库外诊断）：经 HTTP 请求模型解析，省略该块与写出默认值得到相同的规范文档与指纹；
+  非默认值仍得到不同文档。ruff、format、mypy（两个平台）、lint-imports、TS 类型检查、产品 E2E 通过。
+- Run / Workflow Run / Routine 命名：用户决定不改名（接口已用 `workflow-run` 前缀区分，改名牵动数据库与全部接口）。
+  [文档索引](README.md#术语)新增术语表；WORKFLOWS 与 P4 设计中单独写 "Run" 指 Workflow Run 的 5 处改为全称。
 
 ## 待决事项
 
