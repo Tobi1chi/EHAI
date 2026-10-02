@@ -995,6 +995,7 @@ export type ExecutionConfigRequest = {
   readonly git_permissions: ReadonlyArray<"git.read" | "git.local_write" | "git.remote_write" | "git.dangerous">;
   readonly endpoint_capabilities: ExecutionEndpointCapabilitiesRequest;
   readonly command_timeout_seconds: number;
+  readonly codex_server?: ExecutionCodexServerRequest | null;
   readonly process_adjustment?: ProcessAdjustmentPolicyRequest | null;
   readonly goal_worker_budget?: GoalWorkerBudgetRequest | null;
   readonly trajectory_review?: TrajectoryReviewPolicyRequest | null;
@@ -1220,6 +1221,12 @@ export type ReadEventConsumerBatchRequest = {
 
 export type AcknowledgeEventConsumerRequest = {
   readonly batch_token: string;
+};
+
+export type ExecutionCodexServerRequest = {
+  readonly executable: ReadonlyArray<string>;
+  readonly approval_policy: "untrusted" | "on-request" | "never";
+  readonly sandbox: "read-only" | "workspace-write" | "danger-full-access";
 };
 
 export type NoteSource = {

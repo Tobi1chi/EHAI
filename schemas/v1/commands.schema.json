@@ -561,6 +561,17 @@
           "title": "Command Timeout Seconds",
           "type": "number"
         },
+        "codex_server": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ExecutionCodexServerRequest"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "process_adjustment": {
           "anyOf": [
             {
@@ -1750,6 +1761,47 @@
         "batch_token"
       ],
       "title": "AcknowledgeEventConsumerRequest",
+      "type": "object"
+    },
+    "ExecutionCodexServerRequest": {
+      "additionalProperties": false,
+      "description": "Legacy block kept in every canonical execution document; it has no execution effect.\n\nAccepting it keeps configurations returned by get-workspace-execution-config usable\nfor start-run after the Codex backend was removed.",
+      "properties": {
+        "executable": {
+          "items": {
+            "minLength": 1,
+            "pattern": "^[^\\x00]*[^\\s\\x00][^\\x00]*$",
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Executable",
+          "type": "array"
+        },
+        "approval_policy": {
+          "enum": [
+            "untrusted",
+            "on-request",
+            "never"
+          ],
+          "title": "Approval Policy",
+          "type": "string"
+        },
+        "sandbox": {
+          "enum": [
+            "read-only",
+            "workspace-write",
+            "danger-full-access"
+          ],
+          "title": "Sandbox",
+          "type": "string"
+        }
+      },
+      "required": [
+        "executable",
+        "approval_policy",
+        "sandbox"
+      ],
+      "title": "ExecutionCodexServerRequest",
       "type": "object"
     }
   }

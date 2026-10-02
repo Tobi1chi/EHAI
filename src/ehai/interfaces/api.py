@@ -538,6 +538,8 @@ def create_app(
                 )
             )
         document = request.execution_config.model_dump(mode="json")
+        if document.get("codex_server") is None:
+            document.pop("codex_server", None)
         try:
             config = ExecutionConfig.from_document(document)
         except OSError as error:
