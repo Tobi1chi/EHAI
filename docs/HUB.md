@@ -36,7 +36,7 @@ uv run ehai-api @Server
 | `EHAI_HUB_URL` | 核心 | 设置后使用该 Hub，不再启动本机子进程 |
 | `EHAI_HUB_TOKEN` | 核心与 Hub | 共享的 Bearer 令牌；Hub 要求至少 32 个字符 |
 | `--host` / `--port` | Hub | 监听地址，默认 `127.0.0.1:8788` |
-| `--session-idle-seconds` | Hub | 会话在此时间内没有任何请求即被关闭，默认 600；核心运行期间每 60 秒保活一次 |
+| `--session-idle-seconds` | Hub | 会话在此时间内没有任何请求即被关闭，默认 600，最小 180；核心运行期间（包括执行耗时工具时）每 60 秒保活一次 |
 
 Hub 本身只提供令牌认证，不提供 TLS；跨机器使用时应放在受控网络或 TLS 反向代理之后。
 

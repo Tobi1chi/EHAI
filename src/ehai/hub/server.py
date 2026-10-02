@@ -29,6 +29,7 @@ from ehai import JsonValue
 from ehai.hub.adapters import HarnessAdapter, HarnessFailure, HarnessRequestError, HarnessSession
 from ehai.hub.adapters.pi.adapter import PiAdapter
 from ehai.hub.protocol import (
+    MIN_SESSION_IDLE_SECONDS,
     TOKEN_ENVIRONMENT,
     ErrorBody,
     EventBatch,
@@ -169,6 +170,10 @@ class Hub:
 def create_app(token: str, *, idle_seconds: float = 600.0) -> FastAPI:
     if len(token) < 32:
         raise ValueError("Hub token must have at least 32 characters")
+    if not idle_seconds >= MIN_SESSION_IDLE_SECONDS:
+        raise ValueError(
+            f"Session idle timeout must be at least {MIN_SESSION_IDLE_SECONDS:g} seconds"
+        )
     hub = Hub({"pi": PiAdapter()}, idle_seconds=idle_seconds)
 
     @asynccontextmanager
@@ -290,6 +295,11 @@ def main(argv: list[str] | None = None) -> None:
     token = os.environ.get(TOKEN_ENVIRONMENT, "")
     if not token:
         parser.error(f"{TOKEN_ENVIRONMENT} must hold the shared Hub token")
+    if not args.session_idle_seconds >= MIN_SESSION_IDLE_SECONDS:
+        parser.error(
+            f"--session-idle-seconds must be at least {MIN_SESSION_IDLE_SECONDS:g} "
+            f"(three core keepalive intervals)"
+        )
     app = create_app(token, idle_seconds=args.session_idle_seconds)
     server = _HubServer(
         uvicorn.Config(app, host=args.host, port=args.port, log_level="warning", access_log=False),
