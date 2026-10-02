@@ -282,7 +282,7 @@ class PlannerRole:
         self._budget = budget or _DEFAULT_PLANNER_BUDGET
         if not isinstance(self._budget, ExplorationBudget):
             raise TypeError("budget must be an ExplorationBudget")
-        self._model = model
+        self._model = model.strip()
         self._completion_event_type = completion_event_type
         self._reasoning_effort = reasoning_effort
         self._agent_runtime = runner
