@@ -47,10 +47,10 @@ from ehai.domain.workers import (
     WorkerKind,
     WorkerProfile,
 )
+from ehai.hub.adapters.pi.config import PiBackendConfig
 from ehai.infrastructure.host_tools import HostToolRuntime
+from ehai.infrastructure.hub_runtime import HarnessExecutionUnknownError, HubRoleRunner
 from ehai.infrastructure.mcp_tools import MCPToolProvider
-from ehai.infrastructure.pi_config import PiBackendConfig
-from ehai.infrastructure.pi_runtime import PiExecutionUnknownError, PiRoleRunner
 from ehai.infrastructure.skill_loader import SkillToolProvider
 from ehai.infrastructure.trajectory_review import TrajectoryReviewer
 from ehai.infrastructure.web_tools import WebToolProvider
@@ -183,7 +183,7 @@ class PiAgentConnector:
         self._terminal_outcomes: dict[ID, tuple[str | None, str]] = {}
         self._blocked_outcomes: dict[ID, WorkerBlocker] = {}
         self._cancellations: dict[ID, CancellationToken] = {}
-        self._runtime = PiRoleRunner(
+        self._runtime = HubRoleRunner(
             session_store,
             backend=backend,
             state_root=backend.agent_dir / "ehai-sessions",
@@ -265,7 +265,7 @@ class PiAgentConnector:
         except _ReportedBlocker as error:
             yield _blocked_event(execution.attempt_id, error.blocker)
             return
-        except PiExecutionUnknownError as error:
+        except HarnessExecutionUnknownError as error:
             yield _blocked_event(execution.attempt_id, _external_blocker(_failure_reason(error)))
             return
         except Exception as error:
@@ -555,7 +555,7 @@ class PiAgentConnector:
                 "Pi Agent execution was cancelled",
                 "cancelled",
             )
-        except PiExecutionUnknownError as error:
+        except HarnessExecutionUnknownError as error:
             self._blocked_outcomes[attempt_id] = _external_blocker(_failure_reason(error))
         except _ReportedBlocker as error:
             self._blocked_outcomes[attempt_id] = error.blocker

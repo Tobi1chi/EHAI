@@ -27,8 +27,8 @@ from ehai.domain.events import Event, EventType
 from ehai.domain.execution import AttemptStatus, Run, RunStatus
 from ehai.domain.runtime import DispatchWork, DispatchWorkStatus
 from ehai.domain.workers import AttemptActivity
+from ehai.hub.adapters.pi.config import PiBackendConfig
 from ehai.infrastructure.agent_traces import SQLiteAgentTraceStore
-from ehai.infrastructure.pi_config import PiBackendConfig
 from ehai.infrastructure.sqlite import SQLiteDatabase
 from ehai.interfaces.public_documents import public_json_value
 

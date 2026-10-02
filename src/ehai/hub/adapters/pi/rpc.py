@@ -98,9 +98,14 @@ class PiRpcProcess:
         exc: BaseException | None,
         traceback: TracebackType | None,
     ) -> None:
+        await self.shutdown(abort=exc_type is not None)
+
+    async def shutdown(self, *, abort: bool) -> None:
+        """Close the owned process, first asking Pi to stop when the caller failed."""
+
         # Do not leave a live child behind when the caller is cancelled.
         async def stop() -> None:
-            if exc_type is not None and self._failure is None:
+            if abort and self._failure is None:
                 # Acknowledgements are not a safe-pause claim. Bound graceful shutdown,
                 # then close the owned process even if the native loop does not settle.
                 try:

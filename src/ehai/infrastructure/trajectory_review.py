@@ -21,7 +21,7 @@ from ehai.application.agent_trace import AgentTrace, AgentTraceEvent
 from ehai.application.agent_trace import AgentTraceEventType as T
 from ehai.application.sanitization import redact_sensitive_text
 from ehai.application.trajectory_reviews import TrajectoryReviewPolicy
-from ehai.infrastructure.pi_runtime import PiRoleRunner
+from ehai.infrastructure.hub_runtime import HubRoleRunner
 
 _VERDICTS = ("continue", "refocus", "suggest_suspend", "insufficient_evidence")
 _PROMPT = """You are an independent, advisory-only EHAI trajectory reviewer.
@@ -72,7 +72,7 @@ def _window(events: tuple[AgentTraceEvent, ...]) -> dict[str, JsonValue]:
 
 
 class TrajectoryReviewer:
-    def __init__(self, runner: PiRoleRunner, policy: TrajectoryReviewPolicy) -> None:
+    def __init__(self, runner: HubRoleRunner, policy: TrajectoryReviewPolicy) -> None:
         self.runner = runner
         self.policy = policy
 

@@ -22,6 +22,7 @@ dependencies = [
 ehai = "ehai.interfaces.cli:main"
 ehai-api = "ehai.interfaces.runtime:main"
 ehai-mcp = "ehai.interfaces.mcp_server:main"
+ehai-hub = "ehai.hub.server:main"
 ehai-manager = "ehai.interfaces.workspace_api:main"
 ehai-google-calendar = "ehai.connectors.google_calendar_cli:main"
 ehai-jev = "ehai.connectors.jev:main"
@@ -32,6 +33,7 @@ dev = [
     "types-jsonschema>=4.25,<5",
     "pytest>=8.4,<9",
     "ruff>=0.12,<1",
+    "import-linter>=2.1,<3",
 ]
 
 [tool.hatch.build.targets.wheel]
@@ -53,3 +55,38 @@ select = ["B", "E", "F", "I", "RUF", "SIM", "UP"]
 python_version = "3.12"
 files = ["src"]
 strict = true
+
+[tool.importlinter]
+root_package = "ehai"
+
+[[tool.importlinter.contracts]]
+name = "The Hub and its compatibility layers do not depend on the core"
+type = "forbidden"
+source_modules = ["ehai.hub"]
+forbidden_modules = [
+    "ehai.application",
+    "ehai.connectors",
+    "ehai.domain",
+    "ehai.infrastructure",
+    "ehai.interfaces",
+]
+ignore_imports = ["ehai.hub.adapters.pi.rpc -> ehai.application.sanitization"]
+
+[[tool.importlinter.contracts]]
+name = "The core reaches the Hub only through its client and protocol"
+type = "forbidden"
+source_modules = [
+    "ehai.application",
+    "ehai.connectors",
+    "ehai.domain",
+    "ehai.infrastructure",
+    "ehai.interfaces",
+]
+forbidden_modules = ["ehai.hub.server", "ehai.hub.adapters"]
+allow_indirect_imports = true
+# Transitional until execution configuration uses the harness shape (ADR 0007, step 6).
+ignore_imports = [
+    "ehai.** -> ehai.hub.adapters.pi.config",
+    "ehai.interfaces.cli -> ehai.hub.adapters.pi.probe",
+    "ehai.interfaces.cli -> ehai.hub.adapters.pi.rpc",
+]

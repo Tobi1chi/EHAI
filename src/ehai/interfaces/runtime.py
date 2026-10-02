@@ -53,10 +53,10 @@ from ehai.domain.workers import (
     WorkerKind,
     WorkerProfile,
 )
+from ehai.hub.adapters.pi.config import PiBackendConfig
 from ehai.infrastructure.agent_traces import SQLiteAgentTraceStore
 from ehai.infrastructure.artifacts import FilesystemArtifactStore
-from ehai.infrastructure.pi_config import PiBackendConfig
-from ehai.infrastructure.pi_runtime import PiRoleRunner
+from ehai.infrastructure.hub_runtime import HubRoleRunner
 from ehai.infrastructure.routing_pi import PiRoutingFallback
 from ehai.infrastructure.routing_projects import RoutingProjectBoundary, RoutingProjectDispatcher
 from ehai.infrastructure.session_mailbox import SQLiteSessionMailboxRepository
@@ -268,7 +268,7 @@ def create_local_app(
             app,
             PiRoutingFallback(
                 RoutingFallbackService(routing_labs),
-                PiRoleRunner(
+                HubRoleRunner(
                     builtin_sessions,
                     backend=pi_backend,
                     state_root=artifact_root.resolve() / "routing-pi",

@@ -40,6 +40,8 @@ jobs:
         run: uv run mypy
       - name: Mypy (Windows platform)
         run: uv run mypy --platform win32
+      - name: Import direction (core / Hub)
+        run: uv run lint-imports
       - name: Install control-plane dependencies
         working-directory: control-plane
         run: npm ci
