@@ -72,8 +72,8 @@ def _free_port() -> int:
 class ScriptedProvider:
     """An OpenAI-compatible streaming endpoint that answers like a minimal Agent.
 
-    Each role call submits one candidate through the role's finish tool: a text result for
-    work nodes and a passing ``review.json`` that cites every input Artifact for reviewers.
+    A work node first writes one file named after its node into its worktree, then submits
+    a text candidate; a reviewer submits a passing ``review.json`` citing every input.
     """
 
     def __init__(self) -> None:
@@ -110,13 +110,20 @@ class ScriptedProvider:
             }
 
         tools = {tool["function"]["name"] for tool in body.get("tools", [])}
-        if "submit_candidate" not in tools or body["messages"][-1]["role"] == "tool":
+        called = [
+            call["function"]["name"]
+            for message in body["messages"]
+            if message["role"] == "assistant"
+            for call in message.get("tool_calls") or ()
+        ]
+        if "submit_candidate" not in tools or "submit_candidate" in called:
             return [chunk({"role": "assistant", "content": "Done."}), chunk({}, "stop")]
         prompt = next(message for message in body["messages"] if message["role"] == "user")
         content = prompt["content"]
         text = content if isinstance(content, str) else content[0]["text"]
         context = json.loads(text)["context"]
         scope = context["execution_scope"]
+        name = "submit_candidate"
         if scope["kind"] == "reviewer":
             review = {
                 "summary": f"{scope['title']}: inputs reviewed",
@@ -131,6 +138,15 @@ class ScriptedProvider:
                 "media_type": "application/json",
                 "content": json.dumps(review),
             }
+        elif "workspace_write" not in called:
+            name, arguments = (
+                "workspace_write",
+                {
+                    "path": _node_file(scope["title"]),
+                    "content": f"{scope['title']}\n",
+                    "overwrite": True,
+                },
+            )
         else:
             arguments = {
                 "name": "result.txt",
@@ -141,7 +157,7 @@ class ScriptedProvider:
             "index": 0,
             "id": f"call-{self.requests}",
             "type": "function",
-            "function": {"name": "submit_candidate", "arguments": json.dumps(arguments)},
+            "function": {"name": name, "arguments": json.dumps(arguments)},
         }
         return [chunk({"role": "assistant", "tool_calls": [call]}), chunk({}, "tool_calls")]
 
@@ -152,6 +168,10 @@ class ScriptedProvider:
     def __exit__(self, *exc: object) -> None:
         self.server.shutdown()
         self.server.server_close()
+
+
+def _node_file(title: str) -> str:
+    return title.lower().replace(" ", "-") + ".txt"
 
 
 def _pi_backend(root: Path, provider: ScriptedProvider) -> Path:
@@ -193,7 +213,14 @@ def _pi_backend(root: Path, provider: ScriptedProvider) -> Path:
 def _git_workspace(path: Path) -> None:
     path.mkdir(parents=True)
     (path / "README.md").write_text("E2E workspace\n", encoding="utf-8")
-    identity = ("-c", "user.name=EHAI E2E", "-c", "user.email=e2e@example.invalid")
+    identity = (
+        "-c",
+        "user.name=EHAI E2E",
+        "-c",
+        "user.email=e2e@example.invalid",
+        "-c",
+        "commit.gpgsign=false",
+    )
     for argv in (["init", "-q"], ["add", "README.md"], [*identity, "commit", "-qm", "init"]):
         subprocess.run(["git", "-C", str(path), *argv], check=True, capture_output=True)
 
@@ -530,8 +557,18 @@ def test_product_e2e(tmp_path: Path) -> None:
         result = host.cli("get-result", "--run-id", run_id)["result"]
         checks = result["check_result"]["checks"]
         assert checks and all(check["status"] == "completed" for check in checks)
-        # The code result is a commit captured from an EHAI-owned worktree.
-        assert result["commit"] and result["diff_artifact_ids"]
+        # The code result is a new commit captured from an EHAI-owned worktree. It carries the
+        # file each work node wrote, so upstream results reached the join, and a non-empty patch.
+        assert result["commit"] != result["base_commit"] and result["diff_artifact_ids"]
+        tree = subprocess.run(
+            ["git", "-C", result["workspace"], "ls-tree", "-r", "--name-only", result["commit"]],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.split()
+        expected = {_node_file(title) for title in ("Task A", "Task B", "Join A and B")}
+        assert expected <= set(tree)
+        assert Path(result["diff_path"]).read_text(encoding="utf-8").strip()
         # Every node ran through Pi: A, B, the join and the Reviewer each asked the model once.
         assert provider.requests >= 4
         project_view = host.cli("get-project", "--project-id", project["project_id"])
