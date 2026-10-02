@@ -1,0 +1,97 @@
+# Agent harness Hub
+
+更新：2026-10-02。Hub 是 EHAI 核心运行 Agent harness 的唯一入口，作为独立进程 `ehai-hub` 运行。
+设计依据见 [ADR 0007](adr/0007-agent-harness-port.md)；当前只有 Pi 兼容层。
+
+## 分工
+
+| 部分 | 负责 | 不负责 |
+| --- | --- | --- |
+| 核心（`ehai-api`、`ehai` 本地命令） | 轨迹记录、工具执行与持久化、注入消息、判断本轮是否以合法结果结束 | 启动 harness、解析原生输出 |
+| Hub（`ehai-hub`） | 启动和关闭 harness 会话、转发事件与工具结果、取消、空闲回收 | 任何 EHAI 事实；不执行工具，不判定完成 |
+| Pi 兼容层（`ehai.hub.adapters.pi`） | 以 RPC 模式启动未修改的 Pi、隔离配置目录、业务工具桥、事件归一化 | 工具语义与业务规则 |
+
+## 使用方式
+
+**默认（本机子进程）**：不需要任何配置。核心第一次运行 Pi 角色时启动一个只监听 `127.0.0.1`
+随机端口的 Hub 子进程，使用随机令牌；核心退出（包括被强杀）后，Hub 和 Pi 随之退出。
+命令行与原来相同，见 [USAGE](USAGE.md)。
+
+**独立 Hub**：先启动 Hub，再让核心指向它。
+
+```powershell
+$env:EHAI_HUB_TOKEN = '<至少 32 个字符的随机令牌>'
+$env:OPENAI_API_KEY = Read-Host '模型 API Key' -MaskInput   # 凭证只设在 Hub 一侧
+uv run ehai-hub --host 127.0.0.1 --port 8788
+```
+
+```powershell
+$env:EHAI_HUB_URL = 'http://127.0.0.1:8788'
+$env:EHAI_HUB_TOKEN = '<同一个令牌>'
+uv run ehai-api @Server
+```
+
+| 变量 / 参数 | 位置 | 含义 |
+| --- | --- | --- |
+| `EHAI_HUB_URL` | 核心 | 设置后使用该 Hub，不再启动本机子进程 |
+| `EHAI_HUB_TOKEN` | 核心与 Hub | 共享的 Bearer 令牌；Hub 要求至少 32 个字符 |
+| `--host` / `--port` | Hub | 监听地址，默认 `127.0.0.1:8788` |
+| `--session-idle-seconds` | Hub | 会话在此时间内没有任何请求即被关闭，默认 600；核心运行期间每 60 秒保活一次 |
+
+Hub 本身只提供令牌认证，不提供 TLS；跨机器使用时应放在受控网络或 TLS 反向代理之后。
+
+### 当前限制
+
+- harness 凭证从 **Hub 进程**的环境读取（按 Pi 配置中的 `environment_names`），不经协议传输。
+- Pi 配置中的路径（`node`、`cli`、`agent_dir`）、Pi 会话状态目录和工作区路径，目前必须在 Hub
+  所在机器上存在；核心仍在本机校验 Pi 配置并计算授权指纹。真正跨机器执行需要先完成
+  ADR 0007 迁移第 6 步，并决定工作区如何到达 Hub 一侧。
+- [多工作区管理器](WORKSPACE_MANAGER.md)按白名单传递环境变量，工作区宿主不继承 `EHAI_HUB_URL`，
+  各自使用本机 Hub 子进程。
+- Pi 使用 `--no-builtin-tools`，文件、命令和 Git 操作都是核心执行的业务工具，因此 Pi 本身不直接读写工作区。
+
+## 协议 v1
+
+全部接口在 `/v1` 下，要求 `Authorization: Bearer <EHAI_HUB_TOKEN>`。消息为 JSON，
+定义在 `src/ehai/hub/protocol.py`。核心发起全部连接。
+
+| 接口 | 请求 → 响应 |
+| --- | --- |
+| GET `/v1/health` | → 协议版本、已安装的 harness 及版本 |
+| POST `/v1/sessions` | 调用身份、状态键、原生会话 ID、harness `{kind, settings}`、是否全新会话、系统提示词、工具清单、模型、推理强度、工作区 → `session_id`、原生会话引用。启动并核对会话，但不发送任务 |
+| POST `/v1/sessions/{id}/steer` | 要注入的用户消息 |
+| POST `/v1/sessions/{id}/prompt` | 任务消息（指令与上下文） |
+| GET `/v1/sessions/{id}/events?after=N&wait=S` | 长轮询，返回序号大于 N 的事件和会话状态，最多等待 30 秒 |
+| POST `/v1/sessions/{id}/tool-results` | `call_id`、结果、是否错误、是否结束本轮 |
+| POST `/v1/sessions/{id}/cancel` | 请求 harness 停止当前轮 |
+| GET `/v1/sessions/{id}` | 会话状态与最新事件序号（也用于保活） |
+| DELETE `/v1/sessions/{id}?abort=true\|false` | 关闭会话；`abort=true` 先请求停止再结束进程 |
+
+事件类型：
+
+| 事件 | 含义 |
+| --- | --- |
+| `input_prepared` | harness 即将把这些用户输入（SHA-256）发给模型，核心据此确认注入消息已送达 |
+| `assistant_message` | 模型可见文本、停止原因、归一化用量 |
+| `tool_call` | 一次工具调用及同一批次的调用 ID；核心执行后经 `tool-results` 回传 |
+| `lifecycle` | harness 生命周期事件（开始、轮结束、压缩、重试等） |
+| `settled` | harness 报告本轮已结束；是否成功仍由核心按结束工具判断 |
+| `failed` | 控制通道失败；进行中的结果未知 |
+
+错误响应为 `{code, message}`：`invalid_request`（未启动任何东西，核心按普通配置错误处理）、
+`harness_failed`、`not_found`、`unauthorized`。除 `invalid_request` 外，核心一律把这次调用记为结果未知，
+不换会话重放。
+
+## 失败处理
+
+| 情况 | 结果 |
+| --- | --- |
+| Hub 中途停止或不可达 | 核心记录 `backend/error`（unknown），抛出结果未知；不重放 |
+| 核心被强杀 | 本机子进程 Hub 在 stdin 关闭后先关闭所有会话再退出；独立 Hub 在空闲超时后回收 |
+| Hub 关闭（SIGTERM / Ctrl-C） | 先关闭所有会话并唤醒等待中的事件轮询，再停止服务 |
+| 远端 Hub 缺少凭证或配置无效 | 返回 `invalid_request`，不启动 harness，不写轨迹 |
+
+## 验证
+
+见 [EVIDENCE](EVIDENCE.md#核心执行) 2026-10-02 一行与 [重构计划执行记录](REFACTOR_PLAN.md#执行记录)。
+产品 E2E 使用 scripted Worker，不经过 Hub；Scripted 兼容层接入 E2E 是 ADR 0007 迁移第 4 步。

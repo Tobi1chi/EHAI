@@ -1,6 +1,6 @@
 # 重构与推进计划
 
-更新：2026-10-01。本文定义当前重构的顺序、边界和完成条件；
+更新：2026-10-02。本文定义当前重构的顺序、边界和完成条件；
 能力现状见 [STATUS](STATUS.md)，产品顺序见 [路线图](ROADMAP.md)。
 
 ## 为什么现在重构
@@ -127,6 +127,32 @@ Reviewer/Gate → 人工验收 → `integrate-run`，并在执行中强杀一次
 - 验证：ruff、format、mypy（两个平台）、Schema/Client 重新生成两次结果一致、TS 构建、E2E 通过。
 - 用户要求核心只访问一个 Hub 模块，由 Hub 加各 harness 的兼容层适配多种 harness。ADR 0007 据此修订：
   三层结构、两层接口、Hub 无持久状态、先进程内并按进程外设计边界；迁移顺序改为先建 Hub 并搬迁 Pi。
+
+### 2026-10-02 Hub 独立服务与 Pi 兼容层
+
+- 用户决定 Hub 一开始就是独立服务，为远端执行做准备；ADR 0007 第 6 条随之修订，并完成其迁移第 3 步。
+  这是 ADR 0007 的迁移工作，不属于本计划四步中的任何一步，按同样的"保持行为"规则执行。
+- 新增 `src/ehai/hub/`：协议 v1、`ehai-hub` 服务、核心侧客户端（未配置 `EHAI_HUB_URL` 时启动本机子进程）、
+  兼容层接口和 Pi 兼容层。`pi_config`、`pi_rpc`、扩展桥移入 Pi 兼容层；原 `PiRoleRunner` 拆为
+  核心侧 `HubRoleRunner`（轨迹、工具执行、消息注入、结束判断）与 Hub 侧的 Pi 会话（启动、核对、事件归一化）。
+  Planner、Worker、过程审查、轨迹审查和路由回退的调用点只换了类名。
+- 导入方向用 import-linter 检查（新开发依赖，CI 静态任务新增一步）；核心读取 Pi 配置和探查是记录在案的过渡期例外。
+- 可见变化：结果未知的异常改名为 `HarnessExecutionUnknownError`，CLI 以 JSON 错误报告（原为 `PiExecutionUnknownError`）；
+  错误文字中的 "Pi invocation" 改为 "Harness invocation"；`inspect_pi_backend` 移到 `ehai.hub.adapters.pi.probe`。
+- 验证（仓库外诊断，未提交）：
+  - 在临时目录安装锁定的 Pi 0.85.1，接一个脚本化的 OpenAI 兼容 Provider（无真实模型调用），
+    直接驱动角色运行器跑 7 个场景：新会话（含注入消息）、续用原生会话、可恢复工具错误、结束工具与其他工具同批被拒、
+    Provider 500、取消、已完成调用的重放。改动前后结果一致，轨迹除随机会话路径外逐事件相同；
+    同一组场景经单独启动的 `ehai-hub` 再跑一次，结果相同。
+  - 独立 Hub 缺少凭证时返回 invalid_request，不启动 Pi、不写轨迹。
+  - Hub 在调用中途收到 SIGTERM：核心记录 backend/error（unknown）并报告结果未知，Pi 进程被关闭。
+  - 强杀核心：首次实测本机 Hub 约 15 秒后才退出（正常关闭要等待事件长轮询结束）。改为关闭开始时先关闭会话、
+    唤醒轮询后，Hub 与 Pi 在 2 秒内退出。
+  - 正常入口：`ehai-api --worker pi --pi-config ... --p2-runtime` 导入一个任务节点加 Reviewer 阶段的计划，
+    经 HTTP 启动 Run；Worker 提交候选、Reviewer 提交 review.json、最终 Gate 通过，Run completed，代码成果来自 Git worktree。
+  - ruff、format、mypy（两个平台）、lint-imports、产品 E2E 通过。
+- 未覆盖：真实模型；Pi Planner、过程审查、轨迹审查、路由回退经 Hub 的实际运行（共用同一个运行器，未单独跑）；
+  Windows 上的本机子进程与 Pi；跨机器部署。产品 E2E 不经过 Hub，待 Scripted 兼容层（ADR 0007 第 4 步）。
 
 ## 待决事项
 

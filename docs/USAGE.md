@@ -30,6 +30,9 @@ environment_names 是允许传入 Pi 的模型凭证环境变量名。settings/m
 当前禁用隐式资源发现和自动模型重试；配置指纹随执行授权保存，变更时不能静默恢复旧授权。
 模型 ID/推理等级须精确匹配 Provider。示例占位符必须替换，不保证任意模型可用。
 
+Pi 由 Agent harness Hub 启动：默认宿主自动启动本机 Hub 子进程，无需配置；设置 EHAI_HUB_URL 与
+EHAI_HUB_TOKEN 后改用单独运行的 `ehai-hub`，此时凭证须设在 Hub 一侧。见 [HUB](HUB.md)。
+
 旧自研 Runtime 与 --builtin-* / --responses-* 用法已退役；旧执行授权不能直接当作 Pi 授权。
 恢复旧数据时使用当前代码的迁移流程，不按历史文档中的数据库版本号手工降级。
 

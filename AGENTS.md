@@ -22,6 +22,7 @@ Use `uv`; never use bare `pip`.
 - `uv run ruff check .` — lint the project.
 - `uv run ruff format --check .` — verify formatting; omit `--check` to apply.
 - `uv run mypy` and `uv run mypy --platform win32` — type-check for Linux and Windows; guard platform-only APIs with `sys.platform`, not `os.name`.
+- `uv run lint-imports` — check the core/Hub import direction (`pyproject.toml` contracts; see `docs/HUB.md`).
 
 CI (`.github/workflows/ci.yml`) runs these checks, regenerates schemas and the TypeScript client and fails on drift, and runs the product E2E on Linux and Windows.
 

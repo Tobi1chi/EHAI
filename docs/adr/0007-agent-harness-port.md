@@ -1,6 +1,6 @@
 # ADR 0007：经 Hub 接入多种 Agent harness
 
-- 状态：已接受（2026-10-02 修订：加入 Hub 层）；按下文迁移顺序实施，尚未实现
+- 状态：已接受（2026-10-02 修订：加入 Hub 层，Hub 为独立服务）；迁移第 1–3 步已完成，其余未实现
 - 日期：2026-10-01
 - 关系：细化 [ADR 0005](0005-external-agent-backends.md)（Runtime 外置）；取代
   [ADR 0003](0003-codex-cli-process-channel.md)（Codex 本地进程通道，已随 Codex 后端删除）
@@ -14,7 +14,7 @@ EHAI 计划接入多种 Agent harness（Pi、Codex、Claude Code、OpenCode 等�
 | --- | --- | --- |
 | `RuntimeConnector`（start / events / inspect / cancel / recover）与 `WorkerEvent` | `application/async_runtime.py` | 与后端无关，但只用于 Worker |
 | `AgentRoleConfig`、`ToolRegistry`、`ToolDefinition`、`ToolExecutor` | `application/agent_roles.py`、`agent_contracts.py` | 角色、工具集和唯一结束工具已与后端无关 |
-| `PiRoleRunner`、`PiPlannerAdapter` | `infrastructure/pi_runtime.py`、`planners/pi.py` | Planner、Worker、Reviewer、过程/轨迹审查、路由回退都直接调用 Pi |
+| `PiRoleRunner`、`PiPlannerAdapter` | `infrastructure/pi_runtime.py`（已拆入 Hub）、`planners/pi.py` | Planner、Worker、Reviewer、过程/轨迹审查、路由回退都直接调用 Pi |
 | `pi_business_tools.mjs` | Pi 扩展 | 业务工具经 Pi 专用 RPC 通知通道注入 |
 | `WorkerKind` 枚举、执行配置的 `worker_kind` 与后端专属字段 | domain、`ExecutionConfig` | 新后端需改核心枚举、配置结构和校验 |
 | 运行中 Worker 请求（中途审批/输入） | 仅 Codex app-server 实现 | 单一后端的能力被做成全局功能；已随 Codex 删除 |
@@ -52,11 +52,15 @@ Planner、Worker、Reviewer、Evaluator、过程/轨迹审查、路由回退等�
 | `recover` | 按核心传回的持久引用重新接上会话；接不上时明确报告，不猜测 |
 | `capabilities` | 各兼容层能力清单的汇总，供 Dispatcher 匹配 |
 
-- 核心启动时向 Hub 注册**工具执行回调**。工具调用路径是 harness → Hub 的 MCP 端点 → 回调到核心执行并持久化 → 结果原路返回。Hub 只转交。
+- 工具调用以 `tool_call` 事件交给核心，核心执行并持久化后回传结果，Hub 再交还 harness；Hub 只转交。
+  每会话 MCP 端点（第 4 条）实现后，MCP 调用也转成同样的事件。
+- 协议 v1 已实现 start、steer、prompt、events、tool-results、cancel、inspect、close（见 [HUB](../HUB.md)）；
+  `recover` 与 `capabilities` 尚未实现。
 - 接口参数只用可序列化数据（角色规格由核心从 `AgentRoleConfig` 转换得到），不传对象引用，
-  使 Hub 以后可以不改核心就拆成独立进程（见第 6 条）。
-- Hub 不持久化：原生会话引用和恢复句柄随事件返回，由核心记录在 Attempt 或角色调用上，
-  `recover` 时再交给 Hub。Hub 重启只丢失进程表，不丢失事实。
+  使 Hub 可以运行在另一个进程或另一台机器上（见第 6 条）。
+- Hub 不持久化 EHAI 事实：原生会话引用和恢复句柄随响应和事件返回，由核心记录在 Attempt 或角色调用上，
+  `recover` 时再交给 Hub。Hub 重启只丢失进程表，不丢失事实。harness 自己的原生历史（如 Pi 会话文件）
+  属于 harness，留在 Hub 一侧的状态目录。
 - 不提供"重新发送 prompt"的通用操作。完成只认结束工具，并在兼容层确认本轮已结束后由核心校验；
   自然语言表示"完成"不算完成。结果未知时保留未知状态，不换会话盲目重放（沿用 ADR 0005 与执行模型）。
 
@@ -96,13 +100,20 @@ Planner、Worker、Reviewer、Evaluator、过程/轨迹审查、路由回退等�
 运行中 Worker 请求是可选能力，不是全局功能。未来某个 harness 支持时，经该能力接回 Inbox；
 Inbox 不感知具体后端。
 
-### 6. 进程形态：先进程内，边界按进程外设计
+### 6. 进程形态：Hub 是独立服务
 
-- 第一阶段 Hub 是 `src/ehai/hub/` 包，与核心同进程。导入方向由 CI 检查：核心只能导入 Hub 接口模块，
-  不能导入任何兼容层；Hub 与兼容层不导入核心的 application/domain 内部模块。
-- 需要时再把 Hub 拆为独立进程，经版本化协议通信（形式参照 [Connector 协议](../CONNECTOR_PROTOCOL.md)）。
-  拆分的触发条件是实际出现以下需求之一：兼容层需要用 Node 等其他语言实现、harness 崩溃需要与核心隔离、
-  Hub 需要部署到另一台机器。没有这些需求时不拆。
+2026-10-02 用户决定 Hub 一开始就作为独立服务，为远端执行留出位置（原方案为先进程内）。
+
+- Hub 是 `ehai-hub` 进程，代码在 `src/ehai/hub/`，经 HTTP 上的版本化协议（v1）与核心通信，
+  见 [HUB](../HUB.md)。核心发起全部连接：启动、长轮询事件、回传工具结果、取消、关闭，
+  因此 Hub 可以在另一台机器上，核心不需要对外开放端口。
+- 未配置远端 Hub 时，核心按需启动一个只监听本机的 Hub 子进程（随机令牌），并在核心退出时一起退出；
+  使用方式与原来相同。配置 `EHAI_HUB_URL` 与 `EHAI_HUB_TOKEN` 后改用该 Hub。
+- harness 凭证只从 Hub 进程自己的环境读取，不经协议传输。
+- 导入方向由 CI（`lint-imports`）检查：核心只导入 `ehai.hub.protocol` 与 `ehai.hub.client`；
+  Hub 与兼容层不导入核心模块（唯一例外是纯函数 `application.sanitization`）。
+  过渡期例外：核心仍直接读取 Pi 配置（`ehai.hub.adapters.pi.config`、`probe`）做授权指纹与本机探查，
+  在第 6 步执行配置改为 `harness` 形状后移除。
 
 ### 7. 失败处理
 
@@ -141,21 +152,23 @@ harness 不是沙箱。工作区隔离（EHAI 拥有的 Git worktree）、凭证
 
 1. 抽出共用部分：规划图结构离开 Codex 模块，脱敏函数改为中性名称（重构第二步，已完成）。
 2. 删除 Codex 后端与运行中 Worker 请求路径；保留历史记录可读与已授权配置指纹（重构第二步，已完成）。
-3. 建立 `hub/` 包与两层接口；Pi 相关代码（`pi_runtime`、`pi_rpc`、`pi_config`、扩展桥）原样移入
-   Pi 兼容层；所有角色调用点改为经 Hub；加入导入方向检查。只搬迁，不改行为。
+3. 建立 `hub/` 包、Hub 服务与两层接口；Pi 相关代码（`pi_runtime` 的进程一半、`pi_rpc`、`pi_config`、
+   扩展桥）移入 Pi 兼容层；所有角色调用点改为经 Hub；加入导入方向检查。保持行为（2026-10-02 完成）。
 4. 新增 Scripted 兼容层，产品 E2E 改走 Hub。
 5. 规划逻辑上移为与后端无关的 `PlannerRole`。
 6. 能力清单；执行配置支持 `harness` 形状，旧形状保持可读与原指纹。
 7. Hub 提供每会话 MCP 端点，Scripted 先用；确认锁定版本的 Pi 是否支持 MCP，支持则改走 MCP 并确认无退化，
    不支持则保留扩展桥。
 8. 需要第二个 harness 时按接入清单编写兼容层（例如 Claude Code 或 Codex）。
-9. 出现第 6 条的触发条件时，把 Hub 拆为独立进程。
+9. 远端执行：Pi 设置中的路径与工作区目前须在 Hub 所在机器上存在，核心仍在本机校验 Pi 配置；
+   跨机器使用需先完成第 6 步，并决定工作区如何到达 Hub 一侧。
 
 ## 后果
 
 - 新增 harness 只需编写兼容层、登记能力与配置 Schema，不改 Orchestrator、Scheduler、Hub 接口或执行配置核心。
 - 核心只依赖 Hub 接口一处；harness 的升级、故障和协议差异止于兼容层。
 - Hub 无持久状态，恢复依赖核心记录的引用；兼容层必须能从这些引用续上会话，否则如实报告无法恢复。
+- 多一个进程和一次 HTTP 往返；本机子进程模式下由核心管理其生命周期，强杀核心后 Hub 与 harness 随之退出。
 - 删除 Codex 后，短期内只有 Pi 一个真实后端；第二个后端通过兼容层重新接入，而不是恢复旧适配器。
 - 运行中 Worker 请求的 CLI/HTTP/MCP 入口与 Inbox 类型随 Codex 删除；需要时作为可选能力重新设计。
 - 每会话 MCP 端点增加端口与令牌管理成本，需在第 7 步验证启动、清理和令牌隔离。

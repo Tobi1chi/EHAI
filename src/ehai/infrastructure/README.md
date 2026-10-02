@@ -5,8 +5,7 @@
 
 | 文件或目录 | 职责 |
 | --- | --- |
-| [pi_rpc.py](pi_rpc.py)、[pi_runtime.py](pi_runtime.py)、[pi_config.py](pi_config.py) | Pi 公共 RPC、角色调用、显式配置与指纹 |
-| [pi_business_tools.mjs](pi_business_tools.mjs) | Pi 扩展与宿主业务工具之间的 notification 桥 |
+| [hub_runtime.py](hub_runtime.py) | 经 Hub 运行角色：轨迹、工具执行、消息注入与结束判断；Pi 进程与 RPC 在 [ehai.hub](../hub/README.md) |
 | [host_tools.py](host_tools.py)、[agent_traces.py](agent_traces.py) | 宿主工具、受控执行与轨迹持久化 |
 | [sqlite/](sqlite/) | Migration、Unit of Work、Repository、事件与 codec |
 | [artifacts/](artifacts/)、[checks/](checks/) | Artifact 内容存储及 Check Adapter |

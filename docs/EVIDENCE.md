@@ -1,6 +1,6 @@
 # 运行证据
 
-更新：2026-10-01。本页把每次正常入口试用压缩为一行：做了什么、结果、哪些没有覆盖。
+更新：2026-10-02。本页把每次正常入口试用压缩为一行：做了什么、结果、哪些没有覆盖。
 能力结论见 [STATUS](STATUS.md)；原始叙述（Run ID、用量明细、临时证据目录）保留在下列归档：
 
 - [RECORD_R2](history/RECORD_R2.md)：核心执行、导入/MCP、Git 整合、后继 Run 与模型工具契约（2026-09-14 ~ 09-27）
@@ -31,6 +31,7 @@
 | 09-16 | 跨批准后继 Run | 真实（源 Run） | 新 Run 零 Worker Attempt 接续旧成果，新人工 Gate 后 completed 并整合 | 基线变化后重执行、多次接续、崩溃注入 | [R2](history/RECORD_R2.md#2026-09-16跨批准后继-run) |
 | 09-27 | Pi Planner 超时接线修复 | 诊断 + 真实 Go | 8 秒挂起端点 409 且不重派；真实调用 300 秒按时失败、进程退出 | 上游传输停顿根因 | [R2](history/RECORD_R2.md#2026-09-27pi-planner-超时配置接线) |
 | 10-01 | 产品 E2E（scripted Worker） | 0 | 导入、批准、并发与人工挂起、强杀重启、事件补领、人工判定、成果查询；Linux/Windows CI 通过 | 真实 Pi、Git worktree、integrate-run、MCP | [REFACTOR_PLAN](REFACTOR_PLAN.md#执行记录) |
+| 10-02 | Pi 角色改经独立 Hub | 0（真实 Pi 0.85.1 + 脚本化 Provider） | 7 个调用场景轨迹与改动前逐事件一致（本机子进程与独立 Hub）；Hub 停止→结果未知不重放；强杀核心 2 秒内 Hub 与 Pi 退出；`ehai-api --worker pi` 经 Worker、Reviewer、最终 Gate 完成 Run | 真实模型、Planner/过程审查/路由回退经 Hub、Windows、跨机器 | [REFACTOR_PLAN](REFACTOR_PLAN.md#2026-10-02-hub-独立服务与-pi-兼容层) |
 
 ## P3 平台后端
 
