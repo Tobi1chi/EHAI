@@ -63,7 +63,8 @@ uv run pytest tests/test_product_e2e.py
 它启动真实 `ehai-api` 宿主进程（Pi Worker、`single` Planner、`--p2-runtime`），
 只通过 `ehai` CLI 与 HTTP API 操作，不读写数据库。每个节点都经本机 Hub、Pi 兼容层和锁定版本的
 真实 Pi 运行，代码成果来自 EHAI 管理的 Git worktree；只有模型被替换为 E2E 内置的脚本化
-OpenAI 兼容服务（工作节点提交文本成果，Reviewer 提交引用全部输入的通过 review.json），没有真实模型调用。
+OpenAI 兼容服务（工作节点先用 workspace_write 写一个以节点命名的文件再提交成果，Reviewer 提交引用全部输入的
+通过 review.json），没有真实模型调用。
 
 | 覆盖 | 内容 |
 | --- | --- |
@@ -74,7 +75,7 @@ OpenAI 兼容服务（工作节点提交文本成果，Reviewer 提交引用全�
 | 崩溃恢复 | 强杀宿主后在同一数据库重启；Run、节点状态、请求 token 保持不变 |
 | 事件消费 | 未确认批次在重启后以相同 token 和事件重新返回，确认后前进 |
 | 人工决定 | CLI 判定通过后 Run completed；同一幂等键重复判定被接受且不产生新请求 |
-| 成果查询 | get-result 的 Check 均完成、成果带 worktree commit 与 diff；get-project 只列出该 Run 并带已验证成果 |
+| 成果查询 | get-result 的 Check 均完成；成果是新的 worktree commit，包含 A、B 与汇合节点各自写入的文件，patch 非空；get-project 只列出该 Run 并带已验证成果 |
 | Hub 与 Pi | 每个节点经本机 Hub 与真实 Pi 调用脚本化模型；强杀重启后，汇合与 Reviewer 节点经重新启动的本机 Hub 完成 |
 
 不覆盖：真实模型调用与模型行为、Pi Planner/过程审查/轨迹审查/路由回退、独立 Hub、`integrate-run`、
@@ -168,10 +169,14 @@ Reviewer/Gate → 人工验收 → `integrate-run`，并在执行中强杀一次
 - ADR 0007 第 4 步。用户在三种方式中选择"真实 Pi + 脚本化模型服务"：E2E 宿主改用 `--worker pi`，
   E2E 内置 OpenAI 兼容的脚本化服务，CI 安装 Node 与锁定版本的 Pi。原计划的 Scripted 兼容层不再需要，
   它需要新增 Worker 类型并改执行配置契约，且只能测到替身；执行配置的 `harness` 形状留到接入第二个 harness 时做。
-- 场景结构不变，新增断言：成果带 worktree commit 与 diff，脚本化模型至少被调用 4 次（A、B、汇合、Reviewer）。
+- 场景结构不变，新增断言：脚本化模型至少被调用 4 次（A、B、汇合、Reviewer）；最终成果是新 commit，
+  包含三个工作节点各自写入的文件（上游成果确实传到汇合节点），patch 非空。
   `--worker fake` 保留，E2E 不再使用。
 - 验证：本地 Linux 连续 4 次通过（约 24 秒），每次结束后都没有遗留的宿主、Hub 或 Pi 进程；
   把 Pi 兼容层回传工具结果的 nonce 改坏后 E2E 失败（等待人工请求超时），恢复后通过。
+- 评审发现（Codex）：最初的脚本化模型不写文件，成果 commit 等于基线，commit/diff 断言形同虚设；
+  夹具仓库提交未关闭签名。修复：工作节点先写文件，断言改为新 commit、文件齐全、patch 非空，
+  夹具提交加 `commit.gpgsign=false`。让脚本化模型不写文件时 E2E 在 commit 断言处失败。
   Windows 由 CI 验证。
 
 ## 待决事项
