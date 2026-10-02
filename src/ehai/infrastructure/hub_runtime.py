@@ -12,7 +12,6 @@ import hashlib
 from collections.abc import Mapping
 from contextlib import suppress
 from pathlib import Path
-from typing import Protocol
 
 from ehai import ID, JsonValue, json_dumps
 from ehai.application.agent_contracts import (
@@ -24,7 +23,12 @@ from ehai.application.agent_contracts import (
     ToolExecutor,
     ToolSet,
 )
-from ehai.application.agent_roles import AgentRoleConfig, BeforeStepMessages, ToolRegistry
+from ehai.application.agent_roles import (
+    AgentRoleConfig,
+    BeforeStepMessages,
+    RoleExecution,
+    ToolRegistry,
+)
 from ehai.application.agent_trace import AgentTrace, AgentTraceStore
 from ehai.application.agent_trace import AgentTraceEventType as TraceType
 from ehai.application.sanitization import redact_sensitive_text
@@ -56,11 +60,6 @@ class HarnessExecutionUnknownError(RuntimeError):
 
 class HarnessProtocolError(RuntimeError):
     """The harness reported something that cannot belong to this invocation."""
-
-
-class RoleExecution(Protocol):
-    @property
-    def attempt_id(self) -> ID: ...
 
 
 class HubRoleRunner:
