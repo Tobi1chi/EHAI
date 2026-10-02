@@ -5,9 +5,12 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
+from pathlib import Path
+from typing import Protocol
 
 from ehai import ID, JsonValue, new_id, normalize_id
 from ehai.application.agent_contracts import (
+    CancellationToken,
     ModelMessage,
     ToolDefinition,
     ToolExecutor,
@@ -133,3 +136,31 @@ class MemoryAgentTraceStore:
         if len(current) != expected_sequence:
             raise RuntimeError("Agent trace optimistic sequence mismatch")
         self._events[session_id] = current + tuple(events)
+
+
+class RoleExecution(Protocol):
+    @property
+    def attempt_id(self) -> ID: ...
+
+
+class RoleRunner(Protocol):
+    """Run one role invocation through an Agent harness; roles depend only on this port."""
+
+    def create_session(self, agent_session_ref_id: ID | None = None) -> AgentTrace: ...
+
+    async def run(
+        self,
+        *,
+        config: AgentRoleConfig,
+        registry: ToolRegistry,
+        session: AgentTrace,
+        execution: RoleExecution,
+        instruction: str,
+        context: Mapping[str, JsonValue],
+        model: str,
+        reasoning_effort: str | None,
+        workspace: Path,
+        cancellation: CancellationToken | None = None,
+        before_step_messages: BeforeStepMessages | None = None,
+        native_session_id: str | None = None,
+    ) -> str: ...
