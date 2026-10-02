@@ -3,16 +3,14 @@
 import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager
-from hashlib import sha256
 
 from ehai import JsonValue, json_loads, normalize_id
 from ehai.application.connector_models import ConnectorModel
-from ehai.application.ports import StateConflictError
 from ehai.application.queries import QueryNotFoundError
 from ehai.application.routing_store import RoutingDocumentKind, RoutingTransaction
 from ehai.domain.events import Event
 from ehai.infrastructure.sqlite.database import SQLiteDatabase
-from ehai.infrastructure.sqlite.repository import SQLiteEventLog
+from ehai.infrastructure.sqlite.repository import SQLiteCommandReceiptStore, SQLiteEventLog
 
 
 class SQLiteRoutingStore:
@@ -63,23 +61,9 @@ class _Transaction:
             (entity_id, kind, value["project_id"], value["lab_id"], document.model_dump_json()),
         )
 
-    def receipt(self, scope: str, key: str, fingerprint: str) -> dict[str, JsonValue] | None:
-        row = self.db.execute(
-            "SELECT fingerprint,response_json FROM routing_receipts "
-            "WHERE scope=? AND receipt_key=?",
-            (scope, key),
-        ).fetchone()
-        if row is None:
-            return None
-        if row[0] != sha256(fingerprint.encode()).hexdigest():
-            raise StateConflictError("Routing idempotency key belongs to different content")
-        return _document(row[1])
-
-    def remember(self, scope: str, key: str, fingerprint: str, result: ConnectorModel) -> None:
-        self.db.execute(
-            "INSERT INTO routing_receipts VALUES (?,?,?,?)",
-            (scope, key, sha256(fingerprint.encode()).hexdigest(), result.model_dump_json()),
-        )
+    @property
+    def receipts(self) -> SQLiteCommandReceiptStore:
+        return SQLiteCommandReceiptStore(self.db)
 
     def emit(self, event: Event) -> None:
         SQLiteEventLog(self.db).append(event)

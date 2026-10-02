@@ -7,10 +7,11 @@ public operations; this service never embeds a second Planner or grants write au
 from collections.abc import Callable
 from typing import TypeVar
 
-from ehai import JsonValue, json_dumps, new_id, normalize_id, utc_now
+from ehai import JsonValue, new_id, normalize_id, utc_now
 from ehai.application.connector_models import ConnectorModel, InvokeConnectorRequest
 from ehai.application.connectors import ConnectorService
-from ehai.application.ports import StateConflictError
+from ehai.application.idempotency import content_fingerprint, record_result, recorded_result
+from ehai.application.ports import CommandReceipt, StateConflictError
 from ehai.application.routing_models import (
     ConfigureRoutingFallbackRequest,
     ConfigureRoutingProjectRequest,
@@ -44,6 +45,11 @@ _ESCALATE = (
     "No approved recipe fits, or this request needs writing, planning, "
     "clarification or human judgement."
 )
+
+
+def _receipt_conflict(receipt: CommandReceipt) -> Exception:
+    del receipt
+    return StateConflictError("Routing idempotency key belongs to different content")
 
 
 class RoutingLabService:
@@ -89,13 +95,30 @@ class RoutingLabService:
         model: type[T],
         action: Callable[[RoutingTransaction], T],
     ) -> T:
-        fingerprint = json_dumps(request.model_dump(mode="json"))
+        """``scope`` is "<operation>:<target>"; a key is unique within it."""
+        operation = scope.partition(":")[0]
+        fingerprint = content_fingerprint(request.model_dump(mode="json"))
         with self.store.transaction(write=True) as tx:
-            old = tx.receipt(scope, key, fingerprint)
+            old = recorded_result(
+                tx.receipts,
+                key,
+                operation,
+                fingerprint,
+                conflict=_receipt_conflict,
+                scope="routing:" + scope,
+            )
             if old is not None:
                 return model.model_validate(old)
             result = action(tx)
-            tx.remember(scope, key, fingerprint, result)
+            record_result(
+                tx.receipts,
+                key,
+                operation,
+                fingerprint,
+                result.model_dump(mode="json"),
+                created_at=utc_now(),
+                scope="routing:" + scope,
+            )
             return result
 
     def get(self, kind: RoutingDocumentKind, entity_id: str, model: type[T]) -> T:

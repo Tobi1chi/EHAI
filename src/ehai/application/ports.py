@@ -47,14 +47,23 @@ class StoredEvent:
             raise ValueError("stored event must contain an Event")
 
 
+COMMAND_RECEIPT_SCOPE = "command"
+"""The key namespace of core Commands; other callers name their own scope."""
+
+
 @dataclass(frozen=True, slots=True, init=False)
 class CommandReceipt:
-    """The durable result of one idempotent application Command."""
+    """The durable result of one idempotent application Command.
+
+    A key identifies a receipt only within its ``scope``. ``created_at`` is ``None`` only for
+    receipts migrated from tables that never recorded a time.
+    """
 
     idempotency_key: str
     command_name: str
     command_fingerprint: str
-    created_at: datetime
+    created_at: datetime | None
+    scope: str
     _result_json: str = field(repr=False)
 
     def __init__(
@@ -64,25 +73,31 @@ class CommandReceipt:
         command_name: str,
         command_fingerprint: str,
         result: Mapping[str, JsonValue],
-        created_at: datetime,
+        created_at: datetime | None,
+        scope: str = COMMAND_RECEIPT_SCOPE,
     ) -> None:
+        if not isinstance(scope, str) or not scope.strip():
+            raise ValueError("scope must not be empty")
         if not isinstance(idempotency_key, str) or not idempotency_key.strip():
             raise ValueError("idempotency_key must not be empty")
         if not isinstance(command_name, str) or not command_name.strip():
             raise ValueError("command_name must not be empty")
         if not isinstance(command_fingerprint, str) or not command_fingerprint.strip():
             raise ValueError("command_fingerprint must not be empty")
-        if not isinstance(created_at, datetime):
-            raise ValueError("CommandReceipt created_at must be a datetime")
-        if created_at.tzinfo is None or created_at.utcoffset() is None:
-            raise ValueError("CommandReceipt created_at must include a UTC offset")
+        if created_at is not None:
+            if not isinstance(created_at, datetime):
+                raise ValueError("CommandReceipt created_at must be a datetime")
+            if created_at.tzinfo is None or created_at.utcoffset() is None:
+                raise ValueError("CommandReceipt created_at must include a UTC offset")
+            created_at = created_at.astimezone(UTC)
         if not isinstance(result, Mapping):
             raise ValueError("CommandReceipt result must be a JSON object")
 
+        object.__setattr__(self, "scope", scope)
         object.__setattr__(self, "idempotency_key", idempotency_key)
         object.__setattr__(self, "command_name", command_name)
         object.__setattr__(self, "command_fingerprint", command_fingerprint)
-        object.__setattr__(self, "created_at", created_at.astimezone(UTC))
+        object.__setattr__(self, "created_at", created_at)
         object.__setattr__(self, "_result_json", json_dumps(dict(result)))
 
     @property
@@ -461,8 +476,10 @@ class CommandReceiptStore(Protocol):
         """Persist a receipt, rejecting a key with a different fingerprint."""
         ...
 
-    def get(self, idempotency_key: str) -> CommandReceipt | None:
-        """Return the previously committed receipt for an idempotency key."""
+    def get(
+        self, idempotency_key: str, *, scope: str = COMMAND_RECEIPT_SCOPE
+    ) -> CommandReceipt | None:
+        """Return the previously committed receipt for an idempotency key in one scope."""
         ...
 
 
