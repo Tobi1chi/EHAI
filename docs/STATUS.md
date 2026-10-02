@@ -21,6 +21,7 @@
 | 外部计划导入 | 真实验证 | 只支持尚未规划的 Goal；拒绝伪造状态/批准 | [核心](EVIDENCE.md#核心执行) |
 | CLI API 客户端 / MCP | 部分 | MCP 默认开放全部操作；只有少数工具做过模型调用 | [核心](EVIDENCE.md#核心执行) |
 | 周期轨迹审查 / 定向挂起 | 部分 | 审查只给建议，需显式采纳；不是自治纠偏 | [RECORD_R2](history/RECORD_R2.md#本批交付) |
+| Agent 后端 | 部分 | 只有 Pi；Codex 已删除，多 harness 统一端口见 [ADR 0007](adr/0007-agent-harness-port.md)，未实现 | [ADR 0007](adr/0007-agent-harness-port.md) |
 | 阶段上下文 | 部分 | 逻辑 Phase Session 共享；物理 Pi Session 按 Attempt 隔离 | [EXECUTION_MODEL](EXECUTION_MODEL.md#实例与会话) |
 | 批准内过程调整 / Block 清单 | 无模型验证 | 清单只描述变化，不批准、不授权复用成果 | [核心](EVIDENCE.md#核心执行) |
 | Git 自动整合 | 无模型验证 | 用历史真实成果整合；冲突路径未实跑 | [核心](EVIDENCE.md#核心执行) |
@@ -36,7 +37,7 @@
 | 能力 | 状态 | 关键边界 | 证据 |
 | --- | --- | --- | --- |
 | P3.1 项目总览 | 无模型验证 | 按来源宿主查询，不做跨宿主聚合 | [P3](EVIDENCE.md#p3-平台后端) |
-| P3.2 统一人工待办 | 部分 | 人工 Gate 闭环通过；运行期 Worker 回答未做真实后端试用 | [P3](EVIDENCE.md#p3-平台后端) |
+| P3.2 统一人工待办 | 无模型验证 | 人工 Gate 闭环通过；类型为干预、人工验收、便签与生活确认（运行中 Worker 请求已删除） | [P3](EVIDENCE.md#p3-平台后端) |
 | P3.2 便签 | 真实验证 | 便签→修订→执行→人工验收通过；propose_process 路径未验证 | [P3](EVIDENCE.md#p3-平台后端) |
 | P3.3 薄 Web 工作台 | 未实现 | 后端先行，页面单独设计 | [ROADMAP](ROADMAP.md#p3从多项目管理到日常工作台) |
 | P3.4 事件消费 | 无模型验证 | 重启后补领与确认通过；不自动唤醒、不执行业务动作 | [P3](EVIDENCE.md#p3-平台后端) |

@@ -169,9 +169,8 @@ get-trace、get-result；候选 Artifact、Reviewer 结论和最终 Gate 是不�
 - propose-process --run-id --reason；review-process --draft-id；apply-process --review-id；
   写入均需幂等键。API 提案/审查为异步受理，get-process-draft/get-process-review 查询真实状态。
   不改变需求、对外接口、Gate、权限；不等于跨批准后继 Run 已交付。
-- get-attempt-runtime / get-worker-requests：--attempt-id。
-- resolve-worker-request：--worker-request-id、--resolution-file JSON 对象、--idempotency-key；
-  decline-worker-request 使用同目标和幂等键。
+- get-attempt-runtime：--attempt-id。Worker 一轮中途需要人工输入时走 Intervention（挂起 → reply-intervention）；
+  运行中 Worker 请求接口已随 Codex 后端删除，见 [ADR 0007](adr/0007-agent-harness-port.md)。
 - cancel-attempt：--attempt-id、--idempotency-key。取消不是人工 suspend。
 - extend-attempt-deadline：--attempt-id、--deadline-at（含时区）、--idempotency-key。
 
@@ -207,12 +206,12 @@ uv run ehai @Api get-inbox-item --kind human_check --request-id '<check-run-id>'
 HTTP 为 `GET /api/v1/inbox?project_id=...&run_id=...` 和
 `GET /api/v1/inbox/{kind}/{request_id}`。两种筛选均可省略，同时提供时必须符合归属，
 否则 422；不存在的项目、Run 或待办返回 404。首版返回该宿主范围内的完整当前待办列表，
-没有分页或新的待办存储。`kind` 包含 `intervention`、`human_check`、`worker_request`、`note`。
+没有分页或新的待办存储。`kind` 包含 `intervention`、`human_check`、`note`、`workflow_confirmation`。
 运行前便签可以只有项目/目标归属，因此 owner 的 Run、节点、Attempt 和 Run 状态允许 null。
 
 每项包含 `owner` 归属、问题、证据、源状态、`pending`、`actionable`、不可处理原因、
-`actions` 和 `next_step`。`request_token` 保留人工干预/验收原请求版本；Worker 请求为 null。
-列表按创建时间排序；Worker 请求没有持久创建时间，`created_at=null`，按宿主首次观察时间排序。
+`actions` 和 `next_step`。`request_token` 保留人工干预/验收原请求版本。
+列表按创建时间排序。
 历史详情可查询已处理或被后续批准明确处置的请求，`disposition` 保留操作者、原因和批准来源；
 这些旧请求不会重新进入当前列表，也不会被改写为旧 Gate 通过。
 
@@ -223,8 +222,6 @@ HTTP 为 `GET /api/v1/inbox?project_id=...&run_id=...` 和
 | --- | --- |
 | reply-intervention | POST /api/v1/interventions/{intervention_id}/reply |
 | decide-human-check | POST /api/v1/check-runs/{check_run_id}/decision |
-| resolve-worker-request | POST /api/v1/worker-requests/{worker_request_id}/resolve |
-| decline-worker-request | POST /api/v1/worker-requests/{worker_request_id}/decline |
 | add-note-message | POST /api/v1/notes/{note_id}/messages |
 | decide-note | POST /api/v1/notes/{note_id}/decisions |
 
@@ -233,20 +230,8 @@ HTTP 为 `GET /api/v1/inbox?project_id=...&run_id=...` 和
 回复干预不扩大批准，人工 Check 决定由核心继续评估 Gate。提交后重读待办和 Run；
 Run 已暂停时，普通回复不隐式恢复；人工 Check 需先明确恢复 Run 才能作出决定。
 
-外层 `observed_at` / `event_offset` 描述持久事实的只读快照；`worker_requests` 单独给出
-运行期观察时间及 `available` / `partial` / `unavailable`，并列出无法读取的 Attempt。
-它们不是同一原子快照。空列表且 Worker 来源不可用，不表示没有任何人工请求。
-本地 `--database` / `--artifacts` 模式可查询持久待办，Worker 来源明确为 unavailable。
-
-Worker 详情的 `worker_form.context` 只包含选定的请求字段，`resolution_schema` 给出
-发送到原 resolve 接口的 `resolution` 对象格式。输入问题保留问题 ID、选项和自由输入/秘密输入提示；
-命令批准只建议本次 accept，权限批准只建议明确列出的权限及 turn 范围。
-上下文缺失、脱敏/截断或仅提供不支持的授权范围时，表单给出不可回答原因，仍可明确拒绝。
-表单是该待办建议的回答子集，不覆盖原 Provider 的全部可选响应；旧 resolve 接口继续承担传输。
-
-Worker 请求 ID 和处理回执只在当前宿主进程有效。回答前重新核对源请求；相同幂等键不能用于
-不同的请求或答案。回答发送中或发送失败后结果未知时，详情禁用后续回答并要求核对 Run；
-不自动重发。宿主重启后的旧 Worker ID 不可用于重放，需重新查询当前请求。
+外层 `observed_at` / `event_offset` 描述持久事实的只读快照。
+本地 `--database` / `--artifacts` 模式同样可查询持久待办。
 
 MCP 对应 `list_inbox(project_id, run_id)`（不筛选时参数显式为 null）及
 `get_inbox_item(kind, request_id)`。TS Client 对应 `listInbox({ projectId, runId })`、

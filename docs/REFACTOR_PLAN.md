@@ -30,7 +30,7 @@
 | 步骤 | 用户结果 | 完成条件 | 状态 |
 | --- | --- | --- | --- |
 | 1. 安全网 | 每次修改都能自动确认主路径未被破坏 | 产品 E2E 入库；CI 在 Linux 跑静态检查、契约生成比对和 E2E，并在 Windows 跑 E2E | 完成：E2E 与 CI 已入库，首次 CI 全部通过（含 Windows E2E） |
-| 2. 低风险清理 | 代码只保留实际使用的后端和清晰命名 | Codex 去留已决定并执行；图 IR、脱敏工具移到中性模块；`legacy_config.py` 处置；Run/Routine 命名冲突有决定 | 未开始，Codex 去留待用户决定 |
+| 2. 低风险清理 | 代码只保留实际使用的后端和清晰命名 | Codex 去留已决定并执行；图 IR、脱敏工具移到中性模块；`legacy_config.py` 处置；Run/Routine 命名冲突有决定 | 进行中：Codex 已删除（选项 A），图 IR 与脱敏已移出；`legacy_config.py` 与命名冲突未处理 |
 | 3. 拆分大文件 | 新贡献者能按职责定位代码 | Orchestrator 拆为门面与若干职责模块；Repository/Service 按聚合拆分；幂等回执合并为一个机制；E2E 全程通过 | 未开始 |
 | 4. 收尾 P2 | 在真实项目上完成一次可核对的开发任务 | 真实 Pi 按[手动验收](#真实-pi-手动验收)完成并记录；随后在 P3.3 与 P4 通用 Workflow 中选一项 | 未开始 |
 
@@ -111,10 +111,24 @@ Reviewer/Gate → 人工验收 → `integrate-run`，并在执行中强杀一次
 - P4 记录中的现行用法与契约移到 [WORKFLOWS](WORKFLOWS.md)；USAGE 按任务重排并加目录，内容不变。
 - 顶层文档（含 README、AGENTS）由约 3500 行减到约 2400 行；链接检查除历史快照原有的 12 个失效链接外无错误。
 
+### 2026-10-02 第二步：删除 Codex 后端
+
+- 用户选择 A：删除 Codex，同时删除只有 Codex app-server 实现的运行中 Worker 请求路径。
+  多 harness 的后续设计记为 [ADR 0007](adr/0007-agent-harness-port.md)，ADR 0003 标为已取代。
+- 先抽出共用部分：规划图文档移到 `planners/plan_documents.py`，宿主工具改用
+  `sanitization.redact_secret_bytes`（额外覆盖 authorization 头和 TypeSafe 密钥）。
+- 删除 6 个 Codex 模块、`--codex-*` 启动参数、`--worker codex|codex-server`、`--planner codex`，
+  以及 `worker_request_forms.py`、`get/resolve/decline-worker-request`、Inbox 的 `worker_request` 类型、
+  `worker_form` 与 `worker_requests` 来源字段。Schema 与 TS Client 重新生成。
+- 兼容：执行配置的规范文档仍带 `codex_server` 块，已授权 Run 的指纹不变；`codex-server`
+  与 `builtin` 的历史配置仍可解析、不可执行；`WorkerKind` 保留 codex 值以读取历史记录。
+  HTTP 执行配置只接受 `worker_kind: pi`。
+- 验证：ruff、format、mypy（两个平台）、Schema/Client 重新生成两次结果一致、TS 构建、E2E 通过。
+
 ## 待决事项
 
 | 事项 | 说明 |
 | --- | --- |
-| Codex 后端去留 | 删除或保留为第二后端；保留则需与 Pi 相同的验收要求 |
-| CLI 启动 scripted 宿主 Run | `ehai --api-url ... start-run` 要求 `--execution-config`，而执行配置只接受 pi/codex-server；scripted 宿主只能经 HTTP 启动。E2E 暂用 HTTP，是否调整 CLI 待定 |
+| `--worker-timeout-seconds` | 原只用于 Codex Worker，现无使用方；参数与多工作区登记字段保留以免破坏接口，是否删除待定 |
+| CLI 启动 scripted 宿主 Run | `ehai --api-url ... start-run` 要求 `--execution-config`，而执行配置只接受 pi；scripted 宿主只能经 HTTP 启动。E2E 暂用 HTTP，是否调整 CLI 待定 |
 | 幂等重放返回值 | 重复人工判定返回当前 Run 状态而非原回执；如需原回执语义需单独设计 |
