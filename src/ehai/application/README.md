@@ -6,15 +6,18 @@ CLI、HTTP、MCP、工作台和未来 Routine 复用这些用例，不各自实�
 
 | 区域 | 文件 | 职责 |
 | --- | --- | --- |
-| 事务与查询 | [service.py](service.py)、[commands.py](commands.py)、[queries.py](queries.py) | Command 幂等、事务入口与查询投影 |
+| 事务与查询 | [service.py](service.py)（门面，命令按职责在 [execution_service/](execution_service/)）、[commands.py](commands.py)、[queries.py](queries.py) | Command 幂等、事务入口与查询投影 |
 | 规划与导入 | [planner.py](planner.py)、[planning_dialogue.py](planning_dialogue.py)、[plan_graph_tools.py](plan_graph_tools.py) | 讨论、方案版本和共享图构建契约；Planner 不派发 Worker |
-| 执行语义 | [orchestrator.py](orchestrator.py)、[evaluation.py](evaluation.py)、[checks.py](checks.py) | 候选、节点/分支推进、Check/Gate 与 Checkpoint |
+| 执行语义 | [orchestrator.py](orchestrator.py)（门面，职责在 [orchestration/](orchestration/)）、[evaluation.py](evaluation.py)、[checks.py](checks.py) | 候选、节点/分支推进、Check/Gate 与 Checkpoint |
 | 调度与宿主 | [scheduler.py](scheduler.py)、[async_runtime.py](async_runtime.py)、[runtime_control.py](runtime_control.py) | Endpoint、容量、隔离与租约、持久派发和执行事件 |
 | Agent Harness | [agent_roles.py](agent_roles.py)、[agent_contracts.py](agent_contracts.py)、[agent_trace.py](agent_trace.py) | 角色提示、工具契约、结果与轨迹；模型循环归 Pi |
 | 过程调整 | [process_adjustments.py](process_adjustments.py)、[process_reviews.py](process_reviews.py) | 批准范围内的提案、审查与过程应用 |
 | 人工控制 | [run_control.py](run_control.py)、[interventions.py](interventions.py) | Run 控制、定向挂起和人工回复 |
 | 接续与恢复 | [checkpointing.py](checkpointing.py)、[phase_sessions.py](phase_sessions.py)、[run_results.py](run_results.py) | 恢复依据、逻辑阶段上下文与成果查询 |
 | 边界与 Port | [execution_policy.py](execution_policy.py)、[sanitization.py](sanitization.py)、[ports.py](ports.py) | 执行授权、数据清理、仓储和外部服务接口 |
+
+`orchestration/`、`execution_service/` 中的 mixin 以同目录 `host.py` 的 Protocol 为 `self` 类型；
+新增被其他 mixin 调用的方法时同步加入该 Protocol。
 
 Orchestrator 决定业务状态，Scheduler 分配资源，Connector 返回执行观察；三者不互相替代。
 候选已持久化的中间交接不等于最终 Gate 通过或 Run 完成，成果必须绑定实际执行来源。

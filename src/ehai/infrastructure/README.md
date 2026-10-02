@@ -7,7 +7,7 @@
 | --- | --- |
 | [hub_runtime.py](hub_runtime.py) | 经 Hub 运行角色：轨迹、工具执行、消息注入与结束判断；Pi 进程与 RPC 在 [ehai.hub](../hub/README.md) |
 | [host_tools.py](host_tools.py)、[agent_traces.py](agent_traces.py) | 宿主工具、受控执行与轨迹持久化 |
-| [sqlite/](sqlite/) | Migration、Unit of Work、Repository、事件与 codec |
+| [sqlite/](sqlite/) | Migration、Unit of Work、Repository（当前状态按聚合拆在 `sqlite/state/`）、事件与 codec |
 | [artifacts/](artifacts/)、[checks/](checks/) | Artifact 内容存储及 Check Adapter |
 | [workers/](workers/)、[planners/](planners/) | Worker/Planner 后端适配；当前首选 Pi |
 | [workers/code.py](workers/code.py) | Worker 工作区准备与实际代码候选捕获 |

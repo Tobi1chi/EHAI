@@ -31,7 +31,7 @@
 | --- | --- | --- | --- |
 | 1. 安全网 | 每次修改都能自动确认主路径未被破坏 | 产品 E2E 入库；CI 在 Linux 跑静态检查、契约生成比对和 E2E，并在 Windows 跑 E2E | 完成：E2E 与 CI 已入库，首次 CI 全部通过（含 Windows E2E） |
 | 2. 低风险清理 | 代码只保留实际使用的后端和清晰命名 | Codex 去留已决定并执行；图 IR、脱敏工具移到中性模块；`legacy_config.py` 处置；Run/Routine 命名冲突有决定 | 完成：Codex 已删除（选项 A）；图 IR 与脱敏已移出；`legacy_config.py` 已删除；命名决定为不改名、统一术语 |
-| 3. 拆分大文件 | 新贡献者能按职责定位代码 | Orchestrator 拆为门面与若干职责模块；Repository/Service 按聚合拆分；幂等回执合并为一个机制；E2E 全程通过 | 未开始 |
+| 3. 拆分大文件 | 新贡献者能按职责定位代码 | Orchestrator 拆为门面与若干职责模块；Repository/Service 按聚合拆分；幂等回执合并为一个机制；E2E 全程通过 | 进行中：三个大文件已拆分（2026-10-02）；幂等回执合并未开始 |
 | 4. 收尾 P2 | 在真实项目上完成一次可核对的开发任务 | 真实 Pi 按[手动验收](#真实-pi-手动验收)完成并记录；随后在 P3.3 与 P4 通用 Workflow 中选一项 | 未开始 |
 
 ### 步骤 3 的拆分方向
@@ -40,14 +40,14 @@ Orchestrator 按代码中已存在的边界拆分，保留 `Orchestrator` 作为
 
 | 模块 | 内容 |
 | --- | --- |
-| 图就绪判断 | `ready_nodes`、分支终态/失败判断等纯函数，移入 `domain/` |
+| 图就绪判断 | `ready_nodes`、分支终态/失败判断等纯函数（因抛出应用层 `OrchestrationError`，留在 `application/orchestration/readiness.py`，未移入 `domain/`） |
 | Attempt 生命周期 | queue / start / retry / timeout / interrupt / fail |
 | 校验与 Gate | Check 执行、`finish_pending_gate`、人工判定 |
 | 分支评估 | Evaluator 候选校验、`_record_branch_selection` |
 | 采纳与接续 | adoption、`accept_adopted_result` |
 | 人工介入 | intervention、`waiting_for_*` |
 
-`sqlite/repository.py` 与 `application/service.py` 按 plan / run / note / workflow / connector 聚合拆分。
+`sqlite/repository.py` 与 `application/service.py` 按聚合拆分（note / workflow / connector 本来就在独立模块中）。
 幂等回执当前至少有三处实现（Workflow、Connector 的 `receipt/remember` 与核心 `CommandReceipt`），
 合并为一个共用机制，供后续自定义 Workflow 复用。
 
@@ -189,6 +189,24 @@ Reviewer/Gate → 人工验收 → `integrate-run`，并在执行中强杀一次
   非默认值仍得到不同文档。ruff、format、mypy（两个平台）、lint-imports、TS 类型检查、产品 E2E 通过。
 - Run / Workflow Run / Routine 命名：用户决定不改名（接口已用 `workflow-run` 前缀区分，改名牵动数据库与全部接口）。
   [文档索引](README.md#术语)新增术语表；WORKFLOWS 与 P4 设计中单独写 "Run" 指 Workflow Run 的 5 处改为全称。
+
+### 2026-10-02 第三步：拆分三个大文件
+
+- 方式：大类的方法原样移入按职责划分的 mixin 模块，原类保留为门面并继承这些 mixin，公开导入路径不变。
+  mixin 方法的 `self` 标注为从原类自动生成的宿主 Protocol（mypy 官方的 mixin 写法），
+  因此跨 mixin 调用仍受类型检查，且在原类上调用 mixin 方法时 mypy 会核对原类满足该 Protocol。
+  新增方法若被其他 mixin 调用，需同时加入对应的宿主 Protocol。
+- `application/orchestrator.py` 4133 → 243 行：`application/orchestration/` 下 attempts、worker_context、
+  candidates、verification、branches、adoption、interventions、readiness、common、host。
+- `infrastructure/sqlite/repository.py` 2931 → 198 行：`sqlite/state/` 下 planning、process、adoptions、runs、
+  checks、common、host；事件日志与命令回执留在 repository.py。
+- `application/service.py` 2242 → 140 行：`application/execution_service/` 下 planning、process、runs、common、host。
+- 唯一非搬移改动：Orchestrator 中 4 处经类名调用的静态方法改为经 `AdoptionMixin` 调用。
+- 验证（仓库外脚本，未提交）：逐个对比原文件与新模块中每个函数、方法和类的 AST，忽略 `self` 标注与上述限定名，
+  三个文件共 297 个定义全部一致；运行时三个类的 201 个方法都可解析。ruff、format、mypy（两个平台）、
+  lint-imports、产品 E2E 每次拆分后均通过。
+- 未做：幂等回执合并（会改行为，单独进行）；其余超过 1000 行的文件（plan_graph_tools、planner、host_tools、
+  queries 等）不在本步范围。
 
 ## 待决事项
 
