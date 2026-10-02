@@ -260,15 +260,17 @@ Reviewer/Gate → 人工验收 → `integrate-run`，并在执行中强杀一次
   升级后的数据库不能再由旧版本程序打开。
 - 未改动：StartRun 重放（含历史 CLI 授权的兼容分支）和定向挂起的专用判断仍直接读取回执；`worker_event_receipts`
   是事件去重，不属于命令回执。
-- 验证（仓库外诊断，未提交）：先在改动前的 main 上启动 `ehai-api`，经 HTTP 执行 18 个操作，在四张表各写入回执
-  （核心 5、Workflow 4、Connector 5、路由 2 行），并保存每个操作的首次响应、同键同内容重放、同键不同内容的响应；
-  再用改动后的程序打开该数据库的副本（迁移到 schema 23），重复全部重放与误用：18 个操作的状态码与响应体与改动前逐一相同，
-  包括同一个键分别用于核心命令和 Workflow 互不影响。迁移后旧表不存在，新表 16 行；之后的新命令及其重放正常。
-  把迁移中 Workflow 指纹的哈希去掉后，同一诊断在 4 个 Workflow 重放处失败。
-  产品 E2E、ruff、format、mypy（两个平台）、lint-imports 通过；API Schema 重新生成无差异。
-  本次在 macOS 上运行，此前的证据来自 Linux 与 Windows。
-- 未覆盖：真实使用中的旧数据库（只验证了诊断生成的 schema 22 数据库）；便签的 add-message / decide、Workflow 的
-  update_task / update_routine、路由实验其余 8 个命令的重放（与已验证的命令共用同一段代码，未逐个运行）。
+- 验证（仓库外诊断，未提交）：先在改动前的 main 上启动 `ehai-api`，经 HTTP 执行 25 个操作，在四张表各写入回执
+  （核心 7、Workflow 6、Connector 5、路由 5 行）：核心的创建项目/目标，便签的创建/回复/决定，Workflow 的全部 5 个命令，
+  Connector 的全部 5 个命令，路由实验的 create / pause / change-project / fallback / submit，以及同一个键用于另一条命令、
+  同一个键分别用于核心命令和 Workflow。然后把这个数据库复制两份，分别用改动前和改动后的程序打开（后者迁移到 schema 23），
+  对每个操作做同键同内容重放和同键不同内容的误用：两边的状态码与响应体逐字节相同。迁移后旧表不存在，新表 23 行；
+  之后的新命令及其重放正常。把迁移中 Workflow 指纹的哈希去掉后，诊断在 Workflow 重放处失败。
+  产品 E2E（连续 3 次，无遗留进程）、ruff、format、mypy（两个平台）、lint-imports 通过；API Schema 与 TS Client
+  重新生成无差异，TS 类型检查与构建通过。本次在 macOS 上运行，此前的证据来自 Linux 与 Windows；
+  PR 的 CI（静态检查与契约、Linux E2E、Windows E2E）通过。
+- 未覆盖：真实使用中的旧数据库（只验证了诊断生成的 schema 22 数据库）；路由实验的 resolve / feedback / propose /
+  replay / publish 五个命令的重放（需要 Jev 连接器的实际往返，与已验证的命令共用同一段代码）。
 
 ## 待决事项
 
@@ -278,4 +280,4 @@ Reviewer/Gate → 人工验收 → `integrate-run`，并在执行中强杀一次
 | CLI 启动 scripted 宿主 Run | `ehai --api-url ... start-run` 要求 `--execution-config`，而执行配置只接受 pi；scripted 宿主只能经 HTTP 启动。E2E 暂用 HTTP，是否调整 CLI 待定 |
 | 幂等重放返回值 | 重复人工判定返回当前 Run 状态而非原回执；如需原回执语义需单独设计 |
 | 幂等键冲突的错误码 | 同一个键用于不同内容时，核心命令返回 409 `conflict`，Workflow/Connector/路由返回 409 `state_conflict`，便签返回 422 `invalid_request`；回执合并时按"保持行为"原样保留，是否统一待定 |
-| create-note 重放的响应 | 首次响应含 `stale_reason: null`，同键重放的响应没有该字段（合并前已如此）；是否对齐待定 |
+| 便签命令重放的响应 | create-note / add-note-message / decide-note 同键重放返回便签的当前状态，不是当时的响应：没有首次响应中的 `stale_reason: null`，便签之后有回复或决定时内容也随之不同（合并前已如此）；与上一条同类，是否改为原回执语义待定 |
