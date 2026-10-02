@@ -3,16 +3,14 @@
 import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager
-from hashlib import sha256
 
-from ehai import JsonValue, json_dumps, json_loads, normalize_id
+from ehai import normalize_id
 from ehai.application.connector_models import ConnectorCall, ConnectorConnection
 from ehai.application.connectors import ConnectorTransaction
-from ehai.application.ports import StateConflictError
 from ehai.application.queries import QueryNotFoundError
 from ehai.domain.events import Event
 from ehai.infrastructure.sqlite.database import SQLiteDatabase
-from ehai.infrastructure.sqlite.repository import SQLiteEventLog
+from ehai.infrastructure.sqlite.repository import SQLiteCommandReceiptStore, SQLiteEventLog
 
 
 class SQLiteConnectorStore:
@@ -92,28 +90,9 @@ class _Transaction:
             (call.call_id, call.connector_id, owner, token, call.model_dump_json()),
         )
 
-    def receipt(self, scope: str, key: str, fingerprint: str) -> dict[str, JsonValue] | None:
-        row = self.db.execute(
-            "SELECT fingerprint,response_json FROM connector_receipts "
-            "WHERE scope=? AND receipt_key=?",
-            (scope, key),
-        ).fetchone()
-        if row is None:
-            return None
-        if row[0] != sha256(fingerprint.encode()).hexdigest():
-            raise StateConflictError("Connector receipt ID already belongs to different content")
-        document = json_loads(row[1])
-        if not isinstance(document, dict):
-            raise RuntimeError("Connector receipt must be an object")
-        return document
-
-    def remember(
-        self, scope: str, key: str, fingerprint: str, result: dict[str, JsonValue]
-    ) -> None:
-        self.db.execute(
-            "INSERT INTO connector_receipts VALUES (?,?,?,?)",
-            (scope, key, sha256(fingerprint.encode()).hexdigest(), json_dumps(result)),
-        )
+    @property
+    def receipts(self) -> SQLiteCommandReceiptStore:
+        return SQLiteCommandReceiptStore(self.db)
 
     def emit(self, event: Event) -> None:
         SQLiteEventLog(self.db).append(event)

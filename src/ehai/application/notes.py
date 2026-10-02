@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
-from hashlib import sha256
 from typing import TYPE_CHECKING, cast
 
-from ehai import ID, JsonValue, format_utc_datetime, json_dumps, new_id, normalize_id, utc_now
-from ehai.application.ports import CommandReceipt, ReadSession, UnitOfWork
+from ehai import ID, JsonValue, format_utc_datetime, new_id, normalize_id, utc_now
+from ehai.application.idempotency import content_fingerprint, record_result, recorded_result
+from ehai.application.ports import ReadSession, UnitOfWork
 from ehai.application.queries import QueryNotFoundError
 from ehai.application.sanitization import redact_sensitive_text
 from ehai.domain.events import Event, EventType
@@ -443,28 +443,25 @@ class NoteService:
     @staticmethod
     def _replay(uow: UnitOfWork, key: str, name: str, payload: NoteDocument) -> NoteDocument | None:
         _text(key, "idempotency_key", 500)
-        receipt = uow.command_receipts.get(key)
-        if receipt is None:
-            return None
-        if (
-            receipt.command_name != name
-            or receipt.command_fingerprint != sha256(json_dumps(payload).encode()).hexdigest()
-        ):
-            raise ValueError("Idempotency key was used with different content")
-        return receipt.result
+        return recorded_result(
+            uow.command_receipts,
+            key,
+            name,
+            content_fingerprint(payload),
+            conflict=lambda _: ValueError("Idempotency key was used with different content"),
+        )
 
     @staticmethod
     def _receipt(
         uow: UnitOfWork, key: str, name: str, payload: NoteDocument, result: NoteDocument
     ) -> None:
-        uow.command_receipts.put(
-            CommandReceipt(
-                idempotency_key=key,
-                command_name=name,
-                command_fingerprint=sha256(json_dumps(payload).encode()).hexdigest(),
-                result=result,
-                created_at=utc_now(),
-            )
+        record_result(
+            uow.command_receipts,
+            key,
+            name,
+            content_fingerprint(payload),
+            result,
+            created_at=utc_now(),
         )
 
 

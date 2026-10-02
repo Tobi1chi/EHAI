@@ -8,7 +8,8 @@ from datetime import UTC, datetime, timedelta
 from typing import Literal, Protocol, TypeVar
 
 from ehai import JsonValue, new_id, utc_now
-from ehai.application.ports import StateConflictError
+from ehai.application.idempotency import content_fingerprint, record_result, recorded_result
+from ehai.application.ports import CommandReceipt, CommandReceiptStore, StateConflictError
 from ehai.application.queries import QueryNotFoundError
 from ehai.application.workflow_compatibility import WorkflowCompatibility
 from ehai.application.workflow_execution_models import (
@@ -36,6 +37,7 @@ from ehai.application.workflow_recording import WorkflowRecordStore, record_work
 from ehai.domain.events import Event, EventType
 
 WorkflowEntity = Literal["run", "task", "routine"]
+_RECEIPT_SCOPE = "workflow"
 T = TypeVar("T", bound=WorkflowModel)
 
 
@@ -44,9 +46,14 @@ class WorkflowTransaction(WorkflowRecordStore, Protocol):
     def get(self, kind: WorkflowEntity, entity_id: str) -> dict[str, JsonValue]: ...
     def list(self, kind: WorkflowEntity, project_id: str | None) -> list[dict[str, JsonValue]]: ...
     def save(self, kind: WorkflowEntity, entity_id: str, value: WorkflowModel) -> None: ...
-    def receipt(self, key: str, request: str) -> dict[str, JsonValue] | None: ...
-    def remember(self, key: str, request: str, result: WorkflowModel) -> None: ...
+    @property
+    def receipts(self) -> CommandReceiptStore: ...
     def emit(self, event: Event) -> None: ...
+
+
+def _receipt_conflict(receipt: CommandReceipt) -> Exception:
+    del receipt
+    return StateConflictError("idempotency_key already belongs to another workflow command")
 
 
 class WorkflowStore(Protocol):
@@ -126,9 +133,7 @@ class WorkflowService:
         model: type[T],
         action: Callable[[WorkflowTransaction], T],
     ) -> T:
-        from ehai import json_dumps
-
-        fingerprint = json_dumps(
+        fingerprint = content_fingerprint(
             {
                 "operation": operation,
                 "target": target,
@@ -136,11 +141,26 @@ class WorkflowService:
             }
         )
         with self.store.transaction(write=True) as tx:
-            receipt = tx.receipt(key, fingerprint)
-            if receipt is not None:
-                return model.model_validate(receipt)
+            recorded = recorded_result(
+                tx.receipts,
+                key,
+                operation,
+                fingerprint,
+                conflict=_receipt_conflict,
+                scope=_RECEIPT_SCOPE,
+            )
+            if recorded is not None:
+                return model.model_validate(recorded)
             result = action(tx)
-            tx.remember(key, fingerprint, result)
+            record_result(
+                tx.receipts,
+                key,
+                operation,
+                fingerprint,
+                result.model_dump(mode="json"),
+                created_at=utc_now(),
+                scope=_RECEIPT_SCOPE,
+            )
             return result
 
     def start(self, project_id: str, request: StartWorkflowRequest) -> WorkflowRun:

@@ -22,7 +22,8 @@ from ehai.application.connector_models import (
     ReportConnectorResultRequest,
     SubmitConnectorEventRequest,
 )
-from ehai.application.ports import StateConflictError
+from ehai.application.idempotency import record_result, recorded_result
+from ehai.application.ports import CommandReceipt, CommandReceiptStore, StateConflictError
 from ehai.application.queries import QueryNotFoundError
 from ehai.domain.events import Event, EventType
 
@@ -39,15 +40,46 @@ class ConnectorTransaction(Protocol):
     def call(self, call_id: str) -> tuple[ConnectorCall, str | None, str | None]: ...
     def calls(self, connector_id: str) -> list[ConnectorCall]: ...
     def save_call(self, call: ConnectorCall, owner: str | None, token: str | None) -> None: ...
-    def receipt(self, scope: str, key: str, fingerprint: str) -> dict[str, JsonValue] | None: ...
-    def remember(
-        self, scope: str, key: str, fingerprint: str, result: dict[str, JsonValue]
-    ) -> None: ...
+    @property
+    def receipts(self) -> CommandReceiptStore: ...
     def emit(self, event: Event) -> None: ...
 
 
 class ConnectorStore(Protocol):
     def transaction(self, *, write: bool) -> AbstractContextManager[ConnectorTransaction]: ...
+
+
+def _receipt_conflict(receipt: CommandReceipt) -> Exception:
+    del receipt
+    return StateConflictError("Connector receipt ID already belongs to different content")
+
+
+def _receipt(
+    tx: ConnectorTransaction, scope: str, key: str, content: str
+) -> dict[str, JsonValue] | None:
+    """``scope`` is "<operation>" or "<operation>:<target>"; ``content`` is the request JSON."""
+    return recorded_result(
+        tx.receipts,
+        key,
+        scope.partition(":")[0],
+        hashlib.sha256(content.encode()).hexdigest(),
+        conflict=_receipt_conflict,
+        scope="connector:" + scope,
+    )
+
+
+def _remember(
+    tx: ConnectorTransaction, scope: str, key: str, content: str, result: dict[str, JsonValue]
+) -> None:
+    record_result(
+        tx.receipts,
+        key,
+        scope.partition(":")[0],
+        hashlib.sha256(content.encode()).hexdigest(),
+        result,
+        created_at=utc_now(),
+        scope="connector:" + scope,
+    )
 
 
 def validate_connector_schema(schema: dict[str, JsonValue]) -> None:
@@ -103,7 +135,7 @@ class ConnectorService:
             validate_connector_schema(event.data_schema)
         fingerprint = json_dumps({"project_id": project_id, **request.model_dump(mode="json")})
         with self.store.transaction(write=True) as tx:
-            old = tx.receipt("register", request.idempotency_key, fingerprint)
+            old = _receipt(tx, "register", request.idempotency_key, fingerprint)
             if old is not None:
                 return ConnectorConnection.model_validate(old)
             tx.require_project(project_id)
@@ -116,8 +148,12 @@ class ConnectorService:
                 created_at=utc_now(),
             )
             tx.save_connection(connection, request.credential_sha256)
-            tx.remember(
-                "register", request.idempotency_key, fingerprint, connection.model_dump(mode="json")
+            _remember(
+                tx,
+                "register",
+                request.idempotency_key,
+                fingerprint,
+                connection.model_dump(mode="json"),
             )
             return connection
 
@@ -142,7 +178,7 @@ class ConnectorService:
     def invoke(self, connector_id: str, request: InvokeConnectorRequest) -> ConnectorCall:
         fingerprint = json_dumps(request.model_dump(mode="json"))
         with self.store.transaction(write=True) as tx:
-            old = tx.receipt("invoke:" + connector_id, request.idempotency_key, fingerprint)
+            old = _receipt(tx, "invoke:" + connector_id, request.idempotency_key, fingerprint)
             if old is not None:
                 return ConnectorCall.model_validate(old)
             connection, _ = tx.connection(connector_id)
@@ -178,7 +214,8 @@ class ConnectorService:
             )
             tx.save_call(call, None, None)
             self._call_event(tx, call)
-            tx.remember(
+            _remember(
+                tx,
                 "invoke:" + connector_id,
                 request.idempotency_key,
                 fingerprint,
@@ -199,7 +236,7 @@ class ConnectorService:
     def reconcile(self, call_id: str, request: ReconcileConnectorCallRequest) -> ConnectorCall:
         fingerprint = json_dumps(request.model_dump(mode="json"))
         with self.store.transaction(write=True) as tx:
-            old = tx.receipt("reconcile:" + call_id, request.idempotency_key, fingerprint)
+            old = _receipt(tx, "reconcile:" + call_id, request.idempotency_key, fingerprint)
             if old is not None:
                 return ConnectorCall.model_validate(old)
             call, owner, token = tx.call(call_id)
@@ -208,7 +245,8 @@ class ConnectorService:
             call = call.model_copy(update={"status": "claimed", "updated_at": utc_now()})
             tx.save_call(call, owner, token)
             self._call_event(tx, call)
-            tx.remember(
+            _remember(
+                tx,
                 "reconcile:" + call_id,
                 request.idempotency_key,
                 fingerprint,
@@ -247,7 +285,7 @@ class ConnectorService:
         fingerprint = json_dumps(request.model_dump(mode="json"))
         with self.store.transaction(write=True) as tx:
             self._authorize(tx, connector_id, token)
-            old = tx.receipt("report:" + connector_id, request.delivery_id, fingerprint)
+            old = _receipt(tx, "report:" + connector_id, request.delivery_id, fingerprint)
             if old is not None:
                 return ConnectorCall.model_validate(old)
             call, owner, claim_token = tx.call(str(normalize_id(request.call_id)))
@@ -272,7 +310,8 @@ class ConnectorService:
             )
             tx.save_call(call, owner, claim_token)
             self._call_event(tx, call)
-            tx.remember(
+            _remember(
+                tx,
                 "report:" + connector_id,
                 request.delivery_id,
                 fingerprint,
@@ -286,7 +325,7 @@ class ConnectorService:
         fingerprint = json_dumps(request.model_dump(mode="json"))
         with self.store.transaction(write=True) as tx:
             connection = self._authorize(tx, connector_id, token)
-            old = tx.receipt("event:" + connector_id, request.event_id, fingerprint)
+            old = _receipt(tx, "event:" + connector_id, request.event_id, fingerprint)
             if old is not None:
                 return ConnectorEventReceipt.model_validate(old)
             contract = next(
@@ -317,7 +356,8 @@ class ConnectorService:
                 core_event_id=str(event.id),
                 received_at=event.occurred_at,
             )
-            tx.remember(
+            _remember(
+                tx,
                 "event:" + connector_id,
                 request.event_id,
                 fingerprint,

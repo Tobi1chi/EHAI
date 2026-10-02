@@ -16,9 +16,10 @@ from ehai.infrastructure.sqlite.p4_execution_migration import (
 )
 from ehai.infrastructure.sqlite.p4_routing_migration import ROUTING_MIGRATION
 from ehai.infrastructure.sqlite.p4_workflow_migration import WORKFLOW_MIGRATION
+from ehai.infrastructure.sqlite.receipt_migration import RECEIPT_MIGRATION, merge_receipt_tables
 
 P1_SCHEMA_VERSION = 2
-LATEST_SCHEMA_VERSION = 22
+LATEST_SCHEMA_VERSION = 23
 
 
 class SchemaVersionError(RuntimeError):
@@ -663,6 +664,7 @@ _MIGRATIONS: dict[int, Sequence[str]] = {
     20: WORKFLOW_EXECUTION_MIGRATION,
     21: CONNECTOR_MIGRATION,
     22: ROUTING_MIGRATION,
+    23: RECEIPT_MIGRATION,
 }
 
 
@@ -693,6 +695,8 @@ def migrate(
                 connection.execute(statement)
             if version == 20:
                 migrate_workflow_execution_records(connection)
+            if version == 23:
+                merge_receipt_tables(connection)
             connection.execute(f"PRAGMA user_version = {version}")
         except BaseException:
             connection.rollback()

@@ -5,7 +5,7 @@ from __future__ import annotations
 import sqlite3
 
 from ehai import ID, format_utc_datetime, json_dumps, json_loads, parse_utc_datetime
-from ehai.application.ports import CommandReceipt, StoredEvent
+from ehai.application.ports import COMMAND_RECEIPT_SCOPE, CommandReceipt, StoredEvent
 from ehai.domain.events import Event
 from ehai.infrastructure.sqlite.state.adoptions import AdoptionStateMixin
 from ehai.infrastructure.sqlite.state.checks import CheckStateMixin
@@ -111,13 +111,13 @@ class SQLiteEventLog:
 
 
 class SQLiteCommandReceiptStore:
-    """Durable idempotency receipts sharing the Unit of Work transaction."""
+    """Durable idempotency receipts of every scope, sharing the caller's transaction."""
 
     def __init__(self, connection: sqlite3.Connection) -> None:
         self._connection = connection
 
     def put(self, receipt: CommandReceipt) -> None:
-        existing = self.get(receipt.idempotency_key)
+        existing = self.get(receipt.idempotency_key, scope=receipt.scope)
         if existing is not None:
             if (
                 existing.command_name != receipt.command_name
@@ -133,26 +133,29 @@ class SQLiteCommandReceiptStore:
         self._connection.execute(
             """
             INSERT INTO command_receipts(
-                idempotency_key, command_name, command_fingerprint,
+                scope, idempotency_key, command_name, command_fingerprint,
                 result_json, created_at
-            ) VALUES (?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?)
             """,
             (
+                receipt.scope,
                 receipt.idempotency_key,
                 receipt.command_name,
                 receipt.command_fingerprint,
                 json_dumps(receipt.result),
-                format_utc_datetime(receipt.created_at),
+                None if receipt.created_at is None else format_utc_datetime(receipt.created_at),
             ),
         )
 
-    def get(self, idempotency_key: str) -> CommandReceipt | None:
+    def get(
+        self, idempotency_key: str, *, scope: str = COMMAND_RECEIPT_SCOPE
+    ) -> CommandReceipt | None:
         row = self._connection.execute(
             """
             SELECT command_name, command_fingerprint, result_json, created_at
-            FROM command_receipts WHERE idempotency_key = ?
+            FROM command_receipts WHERE scope = ? AND idempotency_key = ?
             """,
-            (idempotency_key,),
+            (scope, idempotency_key),
         ).fetchone()
         if row is None:
             return None
@@ -160,11 +163,16 @@ class SQLiteCommandReceiptStore:
         if not isinstance(result, dict):  # pragma: no cover - SQL CHECK and writer guarantee this
             raise RuntimeError("stored Command receipt result is not an object")
         return CommandReceipt(
+            scope=scope,
             idempotency_key=idempotency_key,
             command_name=_row_string(row, "command_name"),
             command_fingerprint=_row_string(row, "command_fingerprint"),
             result=result,
-            created_at=parse_utc_datetime(_row_string(row, "created_at")),
+            created_at=(
+                None
+                if row["created_at"] is None
+                else parse_utc_datetime(_row_string(row, "created_at"))
+            ),
         )
 
 
