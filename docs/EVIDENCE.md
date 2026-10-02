@@ -36,6 +36,7 @@
 | 10-02 | Planner 改为与 harness 无关的 PlannerRole | 0（真实 Pi + 脚本化模型服务） | discuss-plan（ask_user）与 propose-plan（raise_note）在 main 与改动后输出一致 | 真实模型、完整建图、replan/过程草稿路径 | [REFACTOR_PLAN](REFACTOR_PLAN.md#2026-10-02-adr-0007-第-5-步plannerrole) |
 | 10-02 | Hub 每会话 MCP 端点 | 0（合成 MCP harness） | 工具列表限于本会话，调用经核心执行与记录后返回；关闭后令牌失效，Hub 令牌无权访问 | 真实 MCP harness、并发会话 | [REFACTOR_PLAN](REFACTOR_PLAN.md#2026-10-02-adr-0007-第-7-步每会话-mcp-端点) |
 | 10-02 | propose-plan 只得到便签时的 HTTP 500 | 0（真实 Pi + 脚本化模型服务） | 复现 500 后修复：返回 422 `planner_failed` 且便签保存；Hub 不可达时返回 502 `harness_outcome_unknown` | 真实模型 | [REFACTOR_PLAN](REFACTOR_PLAN.md#2026-10-02-adr-0007-第-5-步plannerrole) |
+| 10-02 | 幂等回执合并为一张表（schema 22→23） | 0 | 改动前生成的数据库迁移后，18 个操作的重放与同键不同内容的响应与改动前逐一相同；键的命名空间互不影响；新命令及重放正常 | 真实旧数据库、部分命令的重放 | [REFACTOR_PLAN](REFACTOR_PLAN.md#2026-10-02-第三步幂等回执合并) |
 
 ## P3 平台后端
 
