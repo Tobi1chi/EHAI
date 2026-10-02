@@ -77,14 +77,22 @@ class _Session:
     tools: list[ToolSpec] = field(default_factory=list)
     mcp_token: str = ""
     mcp_pending: dict[str, asyncio.Future[ToolResult]] = field(default_factory=dict)
+    # MCP carries no model-turn grouping. Calls since the harness last reported a model
+    # message count as one batch, so the core can tell whether a finish tool came alone.
+    mcp_turn_calls: list[str] = field(default_factory=list)
+    finished: bool = False
 
     async def call_tool_via_mcp(self, name: str, arguments: dict[str, JsonValue]) -> ToolResult:
         """Hand an MCP tool call to the core as a tool_call event and wait for its result."""
         if self.state != "running":
             raise RuntimeError("EHAI tool session is no longer running")
+        if self.finished:
+            # Same rule as the native bridge: nothing runs after an accepted result.
+            raise RuntimeError("EHAI result already submitted; no further tools allowed")
         call_id = "mcp-" + uuid.uuid4().hex
         result: asyncio.Future[ToolResult] = asyncio.get_running_loop().create_future()
         self.mcp_pending[call_id] = result
+        self.mcp_turn_calls.append(call_id)
         try:
             self.touched = time.monotonic()
             await self.append(
@@ -93,7 +101,7 @@ class _Session:
                     "call_id": call_id,
                     "name": name,
                     "arguments": arguments,
-                    "batch_call_ids": [call_id],
+                    "batch_call_ids": list(self.mcp_turn_calls),
                 }
             )
             return await result
@@ -107,6 +115,10 @@ class _Session:
 
     async def append(self, body: Mapping[str, JsonValue]) -> None:
         event = _EVENT.validate_python({**body, "seq": len(self.events) + 1})
+        if event.type == "assistant_message" or (
+            event.type == "lifecycle" and event.name == "turn_end"
+        ):
+            self.mcp_turn_calls.clear()
         async with self.changed:
             self.events.append(event)
             if event.type == "failed":
@@ -121,16 +133,29 @@ class _Session:
             await self.append({"type": "failed", "reason": str(error) or "Harness failed"})
 
 
+@dataclass
+class _StartingTools:
+    """Tools of a session whose harness is still launching; calls must wait for the prompt."""
+
+    tools: list[ToolSpec]
+
+    async def call_tool_via_mcp(self, name: str, arguments: dict[str, JsonValue]) -> ToolResult:
+        raise RuntimeError("EHAI tool session is still starting")
+
+
 class Hub:
     def __init__(self, adapters: Mapping[str, HarnessAdapter], *, idle_seconds: float) -> None:
         self.adapters = dict(adapters)
         self.idle_seconds = idle_seconds
         self.sessions: dict[str, _Session] = {}
         self.by_mcp_token: dict[str, str] = {}
+        self.starting_tools: dict[str, _StartingTools] = {}
         # Set once the server is listening; harnesses reach the MCP endpoint through it.
         self.public_url = ""
 
-    def session_for_mcp_token(self, token: str) -> _Session | None:
+    def session_for_mcp_token(self, token: str) -> _Session | _StartingTools | None:
+        if token in self.starting_tools:
+            return self.starting_tools[token]
         session_id = self.by_mcp_token.get(token) if token else None
         session = None if session_id is None else self.sessions.get(session_id)
         return session if session is not None and session.state == "running" else None
@@ -148,12 +173,17 @@ class Hub:
             raise HubError(422, "invalid_request", "Harness kind is not installed in this Hub")
         token = new_session_token()
         endpoint = McpEndpoint(url=f"{self.public_url}/v1/mcp/", token=token)
+        # A harness may connect to its MCP server while it starts, so the token resolves
+        # (tools listed, calls refused) before launch returns.
+        self.starting_tools[token] = _StartingTools(list(request.tools))
         try:
             native = await adapter.launch(request, endpoint)
         except HarnessRequestError as error:
             raise HubError(422, "invalid_request", str(error)) from error
         except HarnessFailure as error:
             raise HubError(502, "harness_failed", str(error)) from error
+        finally:
+            self.starting_tools.pop(token, None)
         session = _Session(
             uuid.uuid4().hex, adapter.kind, native, tools=list(request.tools), mcp_token=token
         )
@@ -176,6 +206,8 @@ class Hub:
                 assert isinstance(value, ToolResult)
                 pending = session.mcp_pending.get(value.call_id)
                 if pending is not None:
+                    if value.finish:
+                        session.finished = True
                     if not pending.done():
                         pending.set_result(value)
                 else:

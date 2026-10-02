@@ -59,7 +59,11 @@ class HarnessAdapter(Protocol):
     async def launch(self, request: StartSession, mcp: McpEndpoint) -> HarnessSession:
         """Start and verify a session; raise HarnessRequestError or HarnessFailure.
 
-        ``mcp`` serves exactly this session's tools. Layers whose harness has no MCP
+        ``mcp`` serves exactly this session's tools and already resolves while launch runs
+        (listing works; calls are refused until the prompt). Layers whose harness has no MCP
         support (such as Pi) ignore it and use their own bridge with the same semantics.
+        A layer that uses it must emit ``assistant_message`` for each model message before
+        that message's tool calls run: MCP calls since the last one form one batch, which
+        the core needs to check that a finish tool came alone.
         """
         ...
