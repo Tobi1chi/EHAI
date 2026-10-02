@@ -59,6 +59,8 @@ from ehai.domain.checking import InvalidCheckRunTransition
 from ehai.domain.execution import InvalidAttemptTransition, InvalidRunTransition, RunStatus
 from ehai.domain.goal import GoalInvariantError
 from ehai.domain.planning import PlanInvariantError, PlanTransitionError
+from ehai.infrastructure.hub_runtime import HarnessExecutionUnknownError
+from ehai.infrastructure.planners.role import PlannerError
 from ehai.interfaces.connectors_api import build_connectors_router
 from ehai.interfaces.event_consumers_api import build_event_consumers_router
 from ehai.interfaces.http_models import (
@@ -1059,6 +1061,19 @@ def _install_error_handlers(app: FastAPI) -> None:
     async def invalid_value(request: Request, error: ValueError) -> JSONResponse:
         del request
         return _error_response(422, "invalid_request", str(error))
+
+    @app.exception_handler(PlannerError)
+    async def planner_failed(request: Request, error: PlannerError) -> JSONResponse:
+        # The Planner ran but produced no plan, e.g. it only raised a note for a decision.
+        del request
+        return _error_response(422, "planner_failed", str(error))
+
+    @app.exception_handler(HarnessExecutionUnknownError)
+    async def harness_outcome_unknown(
+        request: Request, error: HarnessExecutionUnknownError
+    ) -> JSONResponse:
+        del request
+        return _error_response(502, "harness_outcome_unknown", str(error))
 
     @app.exception_handler(Exception)
     async def internal_error(request: Request, error: Exception) -> JSONResponse:

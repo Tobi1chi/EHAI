@@ -290,7 +290,9 @@ Planner 工具生成的 origin=planner 和 actor=planner 由宿主固定。
 源请求/批准/过程已失效时，新执行决定拒绝；历史仍可读，关闭讨论不等于把旧执行结果改成成功。
 
 Pi Planner 已接入 `raise_note(question,evidence)`，发现差距或取舍可生成持久便签并结束本轮规划。
-建议通过 discuss-plan 使用这一能力；直接 propose-plan 仍要求返回方案，只有便签时会保留便签并报无方案。
+建议通过 discuss-plan 使用这一能力；直接 propose-plan 仍要求返回方案，只有便签时会保留便签并报无方案
+（HTTP 422，`error.code` 为 `planner_failed`；Planner 超时或校验重试用尽同样返回该错误码）。
+规划时 harness 结果未知（如 Hub 不可达）返回 HTTP 502 `harness_outcome_unknown`，不重放。
 它不赋予 Planner 任意暂停执行的权限；运行期阻塞继续沿现有 Intervention 和核心挂起语义。
 MCP 工具对应 create_note/list_notes/get_note/add_note_message/decide_note，写入仍用 request_json。
 
