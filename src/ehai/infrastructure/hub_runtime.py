@@ -31,7 +31,7 @@ from ehai.application.sanitization import redact_sensitive_text
 from ehai.hub.adapters.pi.config import PiBackendConfig
 from ehai.hub.client import HubClient, HubConnection, HubUnavailableError, default_hub
 from ehai.hub.protocol import (
-    KEEPALIVE_SECONDS,
+    HEARTBEAT_SECONDS,
     AssistantMessage,
     EventBatch,
     Failed,
@@ -158,7 +158,7 @@ class HubRoleRunner:
                 started = await hub.start(request)
                 invocation.attach(hub, started.session_id)
                 failed = False
-                keepalive = asyncio.create_task(self._keepalive(hub, started.session_id))
+                heartbeat = asyncio.create_task(self._heartbeat(hub, started.session_id))
                 try:
                     invocation.record(
                         TraceType.TURN_STARTED,
@@ -184,8 +184,8 @@ class HubRoleRunner:
                     failed = True
                     raise
                 finally:
-                    keepalive.cancel()
-                    await asyncio.gather(keepalive, return_exceptions=True)
+                    heartbeat.cancel()
+                    await asyncio.gather(heartbeat, return_exceptions=True)
                     # Do not leave the harness running, even when this caller is cancelled.
                     cleanup = asyncio.create_task(
                         self._close(hub, started.session_id, abort=failed)
@@ -213,12 +213,14 @@ class HubRoleRunner:
         finally:
             await executor.aclose()
 
-    async def _keepalive(self, hub: HubConnection, session_id: str) -> None:
+    async def _heartbeat(self, hub: HubConnection, session_id: str) -> None:
         # Long host tool calls must not let the Hub reap a session it thinks was abandoned.
+        # A failed heartbeat does not interrupt a running tool; the next Hub request reports
+        # the failure and the invocation becomes an unknown outcome.
         while True:
-            await asyncio.sleep(KEEPALIVE_SECONDS)
+            await asyncio.sleep(HEARTBEAT_SECONDS)
             with suppress(HubUnavailableError):
-                await hub.inspect(session_id)
+                await hub.heartbeat(session_id)
 
     async def _close(self, hub: HubConnection, session_id: str, *, abort: bool) -> None:
         # An unreachable Hub reaps the session itself after its idle timeout.

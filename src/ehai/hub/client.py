@@ -185,6 +185,9 @@ class HubConnection:
     async def tool_result(self, session_id: str, result: ToolResult) -> None:
         await self._call("POST", f"/v1/sessions/{session_id}/tool-results", body=result)
 
+    async def heartbeat(self, session_id: str) -> None:
+        await self._call("POST", f"/v1/sessions/{session_id}/heartbeat")
+
     async def cancel(self, session_id: str) -> None:
         await self._call("POST", f"/v1/sessions/{session_id}/cancel")
 

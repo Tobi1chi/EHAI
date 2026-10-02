@@ -16,10 +16,12 @@ from ehai import JsonValue
 PROTOCOL_VERSION: Literal[1] = 1
 TOKEN_ENVIRONMENT = "EHAI_HUB_TOKEN"
 URL_ENVIRONMENT = "EHAI_HUB_URL"
-# The core touches each running session at least this often, even during long host tools.
-KEEPALIVE_SECONDS = 60.0
-# A Hub must tolerate a missed keepalive before treating a session as abandoned.
-MIN_SESSION_IDLE_SECONDS = 3 * KEEPALIVE_SECONDS
+# The core sends a heartbeat for each running session this often, even during long host
+# tools. Heartbeats renew the core's lease on the session; the Hub closes sessions whose
+# lease expires because their harness would otherwise run with nobody to serve it.
+HEARTBEAT_SECONDS = 60.0
+# A Hub must tolerate a missed heartbeat before treating a session as abandoned.
+MIN_SESSION_IDLE_SECONDS = 3 * HEARTBEAT_SECONDS
 
 Text = Annotated[str, Field(min_length=1)]
 

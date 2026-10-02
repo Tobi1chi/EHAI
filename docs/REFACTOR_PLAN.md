@@ -151,6 +151,11 @@ Reviewer/Gate → 人工验收 → `integrate-run`，并在执行中强杀一次
   - 正常入口：`ehai-api --worker pi --pi-config ... --p2-runtime` 导入一个任务节点加 Reviewer 阶段的计划，
     经 HTTP 启动 Run；Worker 提交候选、Reviewer 提交 review.json、最终 Gate 通过，Run completed，代码成果来自 Git worktree。
   - ruff、format、mypy（两个平台）、lint-imports、产品 E2E 通过。
+- 评审发现（Codex）：独立 Hub 的闲置时限若短于核心心跳间隔，核心执行耗时工具期间会话会被回收。
+  修复：心跳间隔与最小闲置时限（3 个间隔，180 秒）放入协议模块，`ehai-hub` 拒绝更短的设置。
+  随后按用户要求把心跳改为明确的 `POST /v1/sessions/{id}/heartbeat`（原借用状态查询）。
+  验证：独立 Hub 闲置时限 180 秒、工具执行 200 秒，调用正常完成；关闭心跳的对照组同一场景结果未知。
+  心跳失败不中断正在执行的工具（用户决定保持），见 [HUB](HUB.md#失败处理)。
 - 未覆盖：真实模型；Pi Planner、过程审查、轨迹审查、路由回退经 Hub 的实际运行（共用同一个运行器，未单独跑）；
   Windows 上的本机子进程与 Pi；跨机器部署。产品 E2E 不经过 Hub，待 Scripted 兼容层（ADR 0007 第 4 步）。
 
