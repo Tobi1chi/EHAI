@@ -122,7 +122,8 @@ Reviewer/Gate → 人工验收 → `integrate-run`，并在执行中强杀一次
   `worker_form` 与 `worker_requests` 来源字段。Schema 与 TS Client 重新生成。
 - 兼容：执行配置的规范文档仍带 `codex_server` 块，已授权 Run 的指纹不变；`codex-server`
   与 `builtin` 的历史配置仍可解析、不可执行；`WorkerKind` 保留 codex 值以读取历史记录。
-  HTTP 执行配置只接受 `worker_kind: pi`。
+  HTTP 执行配置只接受 `worker_kind: pi`，但仍接受无执行效果的 `codex_server` 块：
+  `get-workspace-execution-config` 返回的规范文档带有该块，需能原样用于 start-run（评审发现）。
 - 验证：ruff、format、mypy（两个平台）、Schema/Client 重新生成两次结果一致、TS 构建、E2E 通过。
 
 ## 待决事项

@@ -7111,6 +7111,47 @@
         ],
         "title": "ErrorResponse"
       },
+      "ExecutionCodexServerRequest": {
+        "properties": {
+          "executable": {
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "^[^\\x00]*[^\\s\\x00][^\\x00]*$"
+            },
+            "type": "array",
+            "minItems": 1,
+            "title": "Executable"
+          },
+          "approval_policy": {
+            "type": "string",
+            "enum": [
+              "untrusted",
+              "on-request",
+              "never"
+            ],
+            "title": "Approval Policy"
+          },
+          "sandbox": {
+            "type": "string",
+            "enum": [
+              "read-only",
+              "workspace-write",
+              "danger-full-access"
+            ],
+            "title": "Sandbox"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "executable",
+          "approval_policy",
+          "sandbox"
+        ],
+        "title": "ExecutionCodexServerRequest",
+        "description": "Legacy block kept in every canonical execution document; it has no execution effect.\n\nAccepting it keeps configurations returned by get-workspace-execution-config usable\nfor start-run after the Codex backend was removed."
+      },
       "ExecutionConfigRequest": {
         "properties": {
           "config_version": {
@@ -7200,6 +7241,16 @@
             "type": "number",
             "exclusiveMinimum": 0.0,
             "title": "Command Timeout Seconds"
+          },
+          "codex_server": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ExecutionCodexServerRequest"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "process_adjustment": {
             "anyOf": [

@@ -175,6 +175,18 @@ class PiBackendConfigRequest(_StrictRequest):
     configuration_hash: ExecutionText | None = None
 
 
+class ExecutionCodexServerRequest(_StrictRequest):
+    """Legacy block kept in every canonical execution document; it has no execution effect.
+
+    Accepting it keeps configurations returned by get-workspace-execution-config usable
+    for start-run after the Codex backend was removed.
+    """
+
+    executable: list[ExecutionText] = Field(min_length=1)
+    approval_policy: Literal["untrusted", "on-request", "never"]
+    sandbox: Literal["read-only", "workspace-write", "danger-full-access"]
+
+
 class ExecutionConfigRequest(_StrictRequest):
     """Explicit confirmation of the host's credential-free execution settings."""
 
@@ -197,6 +209,7 @@ class ExecutionConfigRequest(_StrictRequest):
     ]
     endpoint_capabilities: ExecutionEndpointCapabilitiesRequest
     command_timeout_seconds: Annotated[float, Field(strict=True, gt=0, allow_inf_nan=False)]
+    codex_server: ExecutionCodexServerRequest | None = None
     process_adjustment: ProcessAdjustmentPolicyRequest | None = None
     goal_worker_budget: GoalWorkerBudgetRequest | None = None
     trajectory_review: TrajectoryReviewPolicyRequest | None = None
