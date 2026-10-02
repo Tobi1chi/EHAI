@@ -79,7 +79,6 @@ from ehai.interfaces.http_models import (
     ProposeProcessRequest,
     ReplanPlanRequest,
     ReplyInterventionRequest,
-    ResolveWorkerRequestRequest,
     ReviewProcessRequest,
     RunActionRequest,
     StartRunRequest,
@@ -539,8 +538,6 @@ def create_app(
                 )
             )
         document = request.execution_config.model_dump(mode="json")
-        if document.get("codex_server") is None:
-            document.pop("codex_server", None)
         try:
             config = ExecutionConfig.from_document(document)
         except OSError as error:
@@ -747,50 +744,6 @@ def create_app(
     )
     def get_attempt_runtime(attempt_id: UuidInput) -> DataResponse:
         return _response(query_service.get_attempt_runtime(_id(str(attempt_id))))
-
-    @router.get(
-        "/attempts/{attempt_id}/worker-requests",
-        response_model=DataResponse,
-        responses=_read_responses("WorkerRequestListResponse", "Pending Worker requests"),
-    )
-    def list_worker_requests(attempt_id: UuidInput) -> DataResponse:
-        control = _required_runtime_control(runtime_control)
-        return _response(control.list_waiting_requests(_id(str(attempt_id))))
-
-    @router.post(
-        "/worker-requests/{worker_request_id}/resolve",
-        response_model=DataResponse,
-        responses=_read_responses("WorkerRequestResponse", "Resolved Worker request"),
-    )
-    async def resolve_worker_request(
-        worker_request_id: UuidInput,
-        request: ResolveWorkerRequestRequest,
-    ) -> DataResponse:
-        control = _required_runtime_control(runtime_control)
-        return _response(
-            await control.resolve_worker_request(
-                _id(str(worker_request_id)),
-                request.resolution,
-                idempotency_key=request.idempotency_key,
-            )
-        )
-
-    @router.post(
-        "/worker-requests/{worker_request_id}/decline",
-        response_model=DataResponse,
-        responses=_read_responses("WorkerRequestResponse", "Declined Worker request"),
-    )
-    async def decline_worker_request(
-        worker_request_id: UuidInput,
-        request: RunActionRequest,
-    ) -> DataResponse:
-        control = _required_runtime_control(runtime_control)
-        return _response(
-            await control.decline_worker_request(
-                _id(str(worker_request_id)),
-                idempotency_key=request.idempotency_key,
-            )
-        )
 
     @router.post(
         "/attempts/{attempt_id}/deadline",

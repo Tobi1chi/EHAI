@@ -18,6 +18,7 @@ class WorkerKind(StrEnum):
 
     BUILTIN = "builtin"
     PI = "pi"
+    # Legacy kinds kept so historical profiles and endpoints still load; not assembled.
     CODEX_CLI = "codex_cli"
     CODEX_APP_SERVER = "codex_app_server"
 

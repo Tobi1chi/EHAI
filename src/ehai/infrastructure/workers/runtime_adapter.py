@@ -19,7 +19,7 @@ from ehai.domain.workers import AttemptActivity
 
 
 class WorkerAdapterConnector:
-    """Keep Codex CLI process-per-Attempt semantics behind the P2 Connector Port."""
+    """Run an in-process WorkerAdapter, such as the scripted Worker, behind the Connector Port."""
 
     def __init__(self, adapter: WorkerAdapter) -> None:
         if not isinstance(adapter, WorkerAdapter):

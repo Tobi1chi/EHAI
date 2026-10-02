@@ -48,7 +48,6 @@ _QUERIES = {
     "get-worker-profiles": "/workers/profiles",
     "get-worker-endpoints": "/workers/endpoints",
     "get-attempt-runtime": "/attempts/{attempt_id}/runtime",
-    "get-worker-requests": "/attempts/{attempt_id}/worker-requests",
 }
 _COMMANDS: dict[str, tuple[str, tuple[str, ...]]] = {
     **COMMAND_ROUTES,
@@ -81,8 +80,6 @@ _COMMANDS: dict[str, tuple[str, tuple[str, ...]]] = {
     ),
     "cancel-attempt": ("/attempts/{attempt_id}/cancel", ()),
     "extend-attempt-deadline": ("/attempts/{attempt_id}/deadline", ("deadline_at",)),
-    "resolve-worker-request": ("/worker-requests/{worker_request_id}/resolve", ()),
-    "decline-worker-request": ("/worker-requests/{worker_request_id}/decline", ()),
 }
 
 API_ONLY_COMMANDS = frozenset(
@@ -94,12 +91,9 @@ API_ONLY_COMMANDS = frozenset(
         "get-worker-profiles",
         "get-worker-endpoints",
         "get-attempt-runtime",
-        "get-worker-requests",
         "suspend-attempt",
         "cancel-attempt",
         "extend-attempt-deadline",
-        "resolve-worker-request",
-        "decline-worker-request",
     }
 )
 
@@ -196,8 +190,6 @@ def _request_arguments(args: argparse.Namespace) -> tuple[str, str, dict[str, Js
             body["result_adoptions"] = adoptions
     if command == "approve-plan" and args.supersession_file is not None:
         body["supersession"] = _object_file(args.supersession_file)
-    if command == "resolve-worker-request":
-        body["resolution"] = _object_file(args.resolution_file)
     if command == "import-plan":
         body["plan"] = _object_file(args.file)
     return "POST", path.format_map(values), body

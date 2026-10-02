@@ -39,6 +39,8 @@ if TYPE_CHECKING:
 
 _CONFIG_VERSION = 1
 _TERMINAL_RUN_STATUSES = {RunStatus.COMPLETED, RunStatus.FAILED, RunStatus.CANCELLED}
+# "builtin" and "codex-server" remain readable so historical authorizations still parse;
+# neither can be assembled for execution any more.
 _WORKER_KINDS = {"builtin", "pi", "codex-server"}
 _APPROVAL_POLICIES = {"untrusted", "on-request", "never"}
 _SANDBOX_MODES = {"read-only", "workspace-write", "danger-full-access"}
@@ -86,6 +88,8 @@ class ExecutionConfig:
     workspace: Path
     endpoint_capabilities: ResponsesEndpointCapabilities
     command_timeout_seconds: float = 30.0
+    # Legacy Codex App Server settings. The backend was removed, but every canonical
+    # document has always carried them, so they stay to keep stored fingerprints stable.
     codex_server_executable: tuple[str, ...] = ("codex",)
     codex_server_approval_policy: str = "on-request"
     codex_server_sandbox: str = "workspace-write"

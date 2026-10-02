@@ -13,7 +13,6 @@
 | [workers/](workers/)、[planners/](planners/) | Worker/Planner 后端适配；当前首选 Pi |
 | [workers/code.py](workers/code.py) | Worker 工作区准备与实际代码候选捕获 |
 | [code_workspaces.py](code_workspaces.py)、[workspaces.py](workspaces.py) | EHAI-owned 工作区、固定基线、上游成果合并与隔离 |
-| [codex_transport.py](codex_transport.py) | 仍保留的 Codex 子进程传输适配 |
 
 代码成果来自真实工作区快照，不能由模型文字冒充。Git 冲突或上游缺失应返回明确问题；
 候选、整合 commit 与 Gate 证据保留对应关系。用户工作区和隐式换行转换的处理见执行模型。

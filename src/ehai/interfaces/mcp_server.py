@@ -97,14 +97,11 @@ async def serve(api_url: str, *, timeout: float | None) -> None:
             )
             if name == "list_notes":
                 properties["include_resolved"] = {"type": "boolean"}
-            description += (
-                "Pass null for unfiltered ID parameters. "
-                "Check worker_requests availability before interpreting an empty list. "
-            )
+            description += "Pass null for unfiltered ID parameters. "
         if name == "get_inbox_item":
             description += (
                 "Read actions and required inputs. Submit through the corresponding source tool, "
-                "then re-read this item and its Run. Worker IDs are scoped to this host process. "
+                "then re-read this item and its Run. "
             )
         if method == "POST":
             properties["request_json"] = {"type": "string", "minLength": 2, "maxLength": 1000000}

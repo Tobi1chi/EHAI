@@ -6,7 +6,7 @@
 P3.1 已提供 `listProjects()`、`getProject(projectId)`、`getRuntimeContext()`，
 返回按宿主的项目总览、目标/Run/有效 Gate 成果与当前执行上下文。
 P3.2 已提供 `listInbox({ projectId, runId })`、`getInboxItem(kind, requestId)`；
-根据待办 actions 调用既有源操作，提交后重读详情及 Run，并显示 Worker 来源可用性。
+根据待办 actions 调用既有源操作，提交后重读详情及 Run。
 便签、持久事件消费、项目配置已提供正式契约与生成 Client，新增方法包括 createNote/addNoteMessage/decideNote、
 registerEventConsumer/readConsumerEvents/acknowledgeConsumerEvents、configureProject/getRunConfiguration。
 薄 Web 工作台之后单独设计与实现，不承担便签决定、批准或执行接续的业务编排。

@@ -95,9 +95,6 @@ const requiredOperations = [
   "list_worker_profiles_api_v1_workers_profiles_get",
   "list_worker_endpoints_api_v1_workers_endpoints_get",
   "get_attempt_runtime_api_v1_attempts__attempt_id__runtime_get",
-  "list_worker_requests_api_v1_attempts__attempt_id__worker_requests_get",
-  "resolve_worker_request_api_v1_worker_requests__worker_request_id__resolve_post",
-  "decline_worker_request_api_v1_worker_requests__worker_request_id__decline_post",
   "extend_attempt_deadline_api_v1_attempts__attempt_id__deadline_post",
   "cancel_attempt_api_v1_attempts__attempt_id__cancel_post",
   "event_stream_api_v1_events_stream_get",
@@ -623,35 +620,6 @@ export class EhaiApiClient {
 
   getAttemptRuntime(attemptId: string): Promise<AttemptRuntimeResponse> {
     return this.request(\`/attempts/\${encodeURIComponent(attemptId)}/runtime\`, "GET");
-  }
-
-  listWorkerRequests(attemptId: string): Promise<WorkerRequestListResponse> {
-    return this.request(
-      \`/attempts/\${encodeURIComponent(attemptId)}/worker-requests\`,
-      "GET",
-    );
-  }
-
-  resolveWorkerRequest(
-    workerRequestId: string,
-    request: ResolveWorkerRequestRequest,
-  ): Promise<WorkerRequestResponse> {
-    return this.request(
-      \`/worker-requests/\${encodeURIComponent(workerRequestId)}/resolve\`,
-      "POST",
-      request,
-    );
-  }
-
-  declineWorkerRequest(
-    workerRequestId: string,
-    request: DeclineWorkerRequestRequest,
-  ): Promise<WorkerRequestResponse> {
-    return this.request(
-      \`/worker-requests/\${encodeURIComponent(workerRequestId)}/decline\`,
-      "POST",
-      request,
-    );
   }
 
   extendAttemptDeadline(
