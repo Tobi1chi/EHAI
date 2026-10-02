@@ -8,13 +8,6 @@
   "allowed_commands": [["uv", "run", "pytest"]],
   "available_shells": [],
   "git_permissions": ["git.read"],
-  "endpoint_capabilities": {
-    "supports_background": true,
-    "supports_unique_items": true,
-    "supports_idempotent_create": null,
-    "supports_previous_response_id": true,
-    "supports_response_retrieval": true
-  },
   "command_timeout_seconds": 60.0,
   "pi": {
     "node": "C:/replace-with-node-installation/node.exe",
