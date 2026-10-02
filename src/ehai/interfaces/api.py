@@ -112,6 +112,10 @@ _WRITE_RESPONSES: dict[int | str, dict[str, Any]] = {
     404: {"model": ErrorResponse},
     **_CREATE_RESPONSES,
 }
+# Routes that run the Planner: an unknown harness outcome surfaces as 502 (no replay).
+_PLANNER_RESPONSES: dict[int | str, dict[str, Any]] = {
+    502: {"model": ErrorResponse},
+}
 _READ_RESPONSES: dict[int | str, dict[str, Any]] = {
     404: {"model": ErrorResponse},
     422: {"model": ErrorResponse},
@@ -361,7 +365,7 @@ def create_app(
     @router.post(
         "/plans/propose",
         response_model=DataResponse,
-        responses=_PLAN_CREATED_RESPONSES,
+        responses={**_PLAN_CREATED_RESPONSES, **_PLANNER_RESPONSES},
         status_code=201,
     )
     def propose_plan(request: ProposePlanRequest) -> DataResponse:
@@ -383,6 +387,7 @@ def create_app(
                 "queries.schema.json#/$defs/PlanningConversationResponse", "Planning discussion"
             ),
             **_WRITE_RESPONSES,
+            **_PLANNER_RESPONSES,
         },
     )
     def discuss_plan(request: DiscussPlanRequest) -> DataResponse:
@@ -412,7 +417,7 @@ def create_app(
     @router.post(
         "/plans/replan",
         response_model=DataResponse,
-        responses=_PLAN_CREATED_RESPONSES,
+        responses={**_PLAN_CREATED_RESPONSES, **_PLANNER_RESPONSES},
         status_code=201,
     )
     def replan_plan(request: ReplanPlanRequest) -> DataResponse:
@@ -436,6 +441,7 @@ def create_app(
                 "Process draft request",
             ),
             **_WRITE_RESPONSES,
+            **_PLANNER_RESPONSES,
         },
         operation_id="proposeProcess",
     )
@@ -458,6 +464,7 @@ def create_app(
                 "Process review",
             ),
             **_WRITE_RESPONSES,
+            **_PLANNER_RESPONSES,
         },
         operation_id="reviewProcess",
     )
