@@ -993,7 +993,7 @@ export type ExecutionConfigRequest = {
   readonly allowed_commands: ReadonlyArray<ReadonlyArray<string>>;
   readonly available_shells: ReadonlyArray<string>;
   readonly git_permissions: ReadonlyArray<"git.read" | "git.local_write" | "git.remote_write" | "git.dangerous">;
-  readonly endpoint_capabilities: ExecutionEndpointCapabilitiesRequest;
+  readonly endpoint_capabilities?: ExecutionEndpointCapabilitiesRequest | null;
   readonly command_timeout_seconds: number;
   readonly codex_server?: ExecutionCodexServerRequest | null;
   readonly process_adjustment?: ProcessAdjustmentPolicyRequest | null;
