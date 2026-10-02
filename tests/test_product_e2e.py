@@ -3,7 +3,13 @@
 The driver only uses public entry points: the ``ehai-api`` host process, the ``ehai``
 CLI client and the HTTP API. It never writes domain records or reads SQLite.
 
-Scenario (no model calls; the host runs the built-in scripted Worker):
+The host runs the production Pi Worker: every role goes through the Hub (a loopback
+``ehai-hub`` child), the Pi compatibility layer and the pinned upstream Pi, and code
+results come from EHAI-owned Git worktrees. Only the model is replaced: Pi talks to a
+scripted OpenAI-compatible provider started by this driver, so there are no real model
+calls. Install Pi first with ``npm ci --prefix agent-backends/pi --ignore-scripts``.
+
+Scenario:
 
 1. Import an external plan with two independent tasks, a join and a Reviewer phase.
    Task A carries a human acceptance Gate; the final Gate runs a host command.
@@ -14,8 +20,8 @@ Scenario (no model calls; the host runs the built-in scripted Worker):
 4. Decide the human Check through the CLI. The Run completes; repeating the decision
    with the same idempotency key is accepted without reopening any request.
 
-The real Pi path (model calls, Git worktrees, integrate-run) is outside this
-deterministic E2E and is verified manually; see docs/REFACTOR_PLAN.md.
+Real model calls and integrate-run are outside this deterministic E2E and are
+verified manually; see docs/REFACTOR_PLAN.md.
 """
 
 from __future__ import annotations
@@ -27,9 +33,11 @@ import signal
 import socket
 import subprocess
 import sys
+import threading
 import time
 from collections.abc import Callable, Iterator
 from contextlib import closing, contextmanager
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 
@@ -37,7 +45,13 @@ import httpx
 import pytest
 
 POLL_SECONDS = 0.2
-WAIT_SECONDS = 60.0
+WAIT_SECONDS = 90.0
+REPOSITORY = Path(__file__).resolve().parent.parent
+PI_CLI = (
+    REPOSITORY / "agent-backends/pi/node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js"
+)
+MODEL = "scripted-model"
+PROVIDER_KEY = "EHAI_E2E_PROVIDER_KEY"
 
 
 def _script(name: str) -> str:
@@ -55,12 +69,142 @@ def _free_port() -> int:
         return int(sock.getsockname()[1])
 
 
+class ScriptedProvider:
+    """An OpenAI-compatible streaming endpoint that answers like a minimal Agent.
+
+    Each role call submits one candidate through the role's finish tool: a text result for
+    work nodes and a passing ``review.json`` that cites every input Artifact for reviewers.
+    """
+
+    def __init__(self) -> None:
+        provider = self
+        self.requests = 0
+
+        class Handler(BaseHTTPRequestHandler):
+            def log_message(self, *args: object) -> None:
+                pass
+
+            def do_POST(self) -> None:
+                body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+                provider.requests += 1
+                self.send_response(200)
+                self.send_header("Content-Type", "text/event-stream")
+                self.end_headers()
+                for chunk in provider.answer(body):
+                    self.wfile.write(f"data: {json.dumps(chunk)}\n\n".encode())
+                self.wfile.write(b"data: [DONE]\n\n")
+
+        self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self.url = f"http://127.0.0.1:{self.server.server_address[1]}/v1"
+        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+
+    def answer(self, body: dict[str, Any]) -> list[dict[str, Any]]:
+        def chunk(delta: dict[str, Any], finish: str | None = None) -> dict[str, Any]:
+            return {
+                "id": "scripted",
+                "object": "chat.completion.chunk",
+                "created": 0,
+                "model": body["model"],
+                "choices": [{"index": 0, "delta": delta, "finish_reason": finish}],
+                "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
+            }
+
+        tools = {tool["function"]["name"] for tool in body.get("tools", [])}
+        if "submit_candidate" not in tools or body["messages"][-1]["role"] == "tool":
+            return [chunk({"role": "assistant", "content": "Done."}), chunk({}, "stop")]
+        prompt = next(message for message in body["messages"] if message["role"] == "user")
+        content = prompt["content"]
+        text = content if isinstance(content, str) else content[0]["text"]
+        context = json.loads(text)["context"]
+        scope = context["execution_scope"]
+        if scope["kind"] == "reviewer":
+            review = {
+                "summary": f"{scope['title']}: inputs reviewed",
+                "findings": [],
+                "evidence_artifact_ids": [
+                    artifact["artifact_id"] for artifact in context["input_artifacts"]
+                ],
+                "recommended_action": "pass",
+            }
+            arguments = {
+                "name": "review.json",
+                "media_type": "application/json",
+                "content": json.dumps(review),
+            }
+        else:
+            arguments = {
+                "name": "result.txt",
+                "media_type": "text/plain",
+                "content": f"{scope['title']} result",
+            }
+        call = {
+            "index": 0,
+            "id": f"call-{self.requests}",
+            "type": "function",
+            "function": {"name": "submit_candidate", "arguments": json.dumps(arguments)},
+        }
+        return [chunk({"role": "assistant", "tool_calls": [call]}), chunk({}, "tool_calls")]
+
+    def __enter__(self) -> ScriptedProvider:
+        self.thread.start()
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        self.server.shutdown()
+        self.server.server_close()
+
+
+def _pi_backend(root: Path, provider: ScriptedProvider) -> Path:
+    """Write an isolated Pi configuration that points at the scripted provider."""
+    node = shutil.which("node")
+    if node is None or not PI_CLI.is_file():
+        pytest.fail(
+            "The E2E needs Node >=22.19 and the pinned Pi: "
+            "npm ci --prefix agent-backends/pi --ignore-scripts --no-audit --no-fund"
+        )
+    agent_dir = root / "pi"
+    agent_dir.mkdir()
+    settings = {"retry": {"enabled": False, "provider": {"maxRetries": 0}}}
+    (agent_dir / "settings.json").write_text(json.dumps(settings), encoding="utf-8")
+    models = {
+        "providers": {
+            "scripted": {
+                "baseUrl": provider.url,
+                "api": "openai-completions",
+                "apiKey": f"${PROVIDER_KEY}",
+                "compat": {"supportsDeveloperRole": False, "supportsReasoningEffort": False},
+                "models": [{"id": MODEL}],
+            }
+        }
+    }
+    (agent_dir / "models.json").write_text(json.dumps(models), encoding="utf-8")
+    backend = {
+        "node": str(Path(node).resolve()),
+        "cli": str(PI_CLI),
+        "agent_dir": str(agent_dir.resolve()),
+        "provider": "scripted",
+        "environment_names": [PROVIDER_KEY],
+    }
+    path = root / "pi-backend.json"
+    path.write_text(json.dumps(backend), encoding="utf-8")
+    return path
+
+
+def _git_workspace(path: Path) -> None:
+    path.mkdir(parents=True)
+    (path / "README.md").write_text("E2E workspace\n", encoding="utf-8")
+    identity = ("-c", "user.name=EHAI E2E", "-c", "user.email=e2e@example.invalid")
+    for argv in (["init", "-q"], ["add", "README.md"], [*identity, "commit", "-qm", "init"]):
+        subprocess.run(["git", "-C", str(path), *argv], check=True, capture_output=True)
+
+
 class Host:
     """One ``ehai-api`` process bound to a fixed database, artifacts and workspace."""
 
-    def __init__(self, root: Path, port: int) -> None:
+    def __init__(self, root: Path, port: int, pi_backend: Path) -> None:
         self.root = root
         self.port = port
+        self.pi_backend = pi_backend
         self.url = f"http://127.0.0.1:{port}"
         self.process: subprocess.Popen[bytes] | None = None
         self.starts = 0
@@ -75,7 +219,11 @@ class Host:
             "--artifacts",
             str(self.root / "state" / "artifacts"),
             "--worker",
-            "fake",
+            "pi",
+            "--pi-config",
+            str(self.pi_backend),
+            "--agent-model",
+            MODEL,
             "--planner",
             "single",
             "--worker-workspace",
@@ -85,7 +233,11 @@ class Host:
             str(self.port),
         ]
         self.process = subprocess.Popen(
-            argv, stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT
+            argv,
+            stdin=subprocess.DEVNULL,
+            stdout=log,
+            stderr=subprocess.STDOUT,
+            env={**os.environ, PROVIDER_KEY: "scripted"},
         )
         log.close()
         _wait(lambda: self._healthy(), "host to become healthy", self)
@@ -183,9 +335,9 @@ def _wait(predicate: Callable[[], bool], what: str, host: Host) -> None:
 
 
 @contextmanager
-def _host(root: Path) -> Iterator[Host]:
-    (root / "workspace").mkdir(parents=True)
-    host = Host(root, _free_port())
+def _host(root: Path, provider: ScriptedProvider) -> Iterator[Host]:
+    _git_workspace(root / "workspace")
+    host = Host(root, _free_port(), _pi_backend(root, provider))
     try:
         host.start()
         yield host
@@ -267,7 +419,7 @@ def _human_checks(host: Host, run_id: str) -> list[dict[str, Any]]:
 
 
 def test_product_e2e(tmp_path: Path) -> None:
-    with _host(tmp_path) as host:
+    with ScriptedProvider() as provider, _host(tmp_path, provider) as host:
         assert host.cli("get-runtime-health")["status"] == "healthy"
         consumer = host.cli("register-event-consumer", "--consumer-id", "e2e-observer")
         assert consumer["consumer_id"] == "e2e-observer"
@@ -307,8 +459,7 @@ def test_product_e2e(tmp_path: Path) -> None:
             "approve",
         )
         assert approved["status"] == "approved"
-        # The CLI client requires an explicit Pi execution configuration; the
-        # scripted host accepts the HTTP start without one.
+        # The HTTP start uses the host's own execution configuration.
         run = host.http(
             "POST",
             "/runs/start",
@@ -379,6 +530,10 @@ def test_product_e2e(tmp_path: Path) -> None:
         result = host.cli("get-result", "--run-id", run_id)["result"]
         checks = result["check_result"]["checks"]
         assert checks and all(check["status"] == "completed" for check in checks)
+        # The code result is a commit captured from an EHAI-owned worktree.
+        assert result["commit"] and result["diff_artifact_ids"]
+        # Every node ran through Pi: A, B, the join and the Reviewer each asked the model once.
+        assert provider.requests >= 4
         project_view = host.cli("get-project", "--project-id", project["project_id"])
         runs = [item for goal_view in project_view["goals"] for item in goal_view["runs"]]
         assert [item["run"]["run_id"] for item in runs] == [run_id]
