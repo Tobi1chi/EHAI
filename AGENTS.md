@@ -17,7 +17,7 @@ The 2026-09-16 product direction is core-first, incremental platform delivery. P
 Use `uv`; never use bare `pip`.
 
 - `uv sync` — synchronize the environment.
-- `uv run pytest tests/test_product_e2e.py` — run the product E2E (no model calls).
+- `uv run pytest tests/test_product_e2e.py` — run the product E2E (pinned Pi, scripted model; no real model calls).
 - `uv run pytest <external-temporary-test.py>` — diagnose a concrete observed failure outside the repository.
 - `uv run ruff check .` — lint the project.
 - `uv run ruff format --check .` — verify formatting; omit `--check` to apply.
@@ -36,7 +36,7 @@ Python follows `pyproject.toml`: four spaces, typed public APIs, `snake_case` fu
 
 ## Testing Guidelines
 
-Expose normal CLI/API capabilities first. The single product E2E is `tests/test_product_e2e.py`: it starts a real `ehai-api` host with the scripted Worker and drives it only through the `ehai` CLI and HTTP API, with no model calls. It is the only permanent test code intended for this repository; extend its one scenario when a refactor or fix needs coverage of the main path, instead of adding new test files. It does not verify Pi, Git worktrees or `integrate-run`; real Pi acceptance stays manual, as described in `docs/REFACTOR_PLAN.md`. Legacy unit, integration, contract, smoke, and prototype E2E files are retired, not requirements to restore; `tests/test_self_hosting.py` is a historic driver.
+Expose normal CLI/API capabilities first. The single product E2E is `tests/test_product_e2e.py`: it starts a real `ehai-api` host with the Pi Worker, whose roles run through the Hub and the pinned upstream Pi against a scripted OpenAI-compatible provider started by the test, and drives it only through the `ehai` CLI and HTTP API, with no real model calls. Install Pi first with `npm ci --prefix agent-backends/pi --ignore-scripts --no-audit --no-fund`. It is the only permanent test code intended for this repository; extend its one scenario when a refactor or fix needs coverage of the main path, instead of adding new test files. It covers the Hub, Pi and Git worktrees but not real model behavior, a separately started Hub or `integrate-run`; real-model acceptance stays manual, as described in `docs/REFACTOR_PLAN.md`. Legacy unit, integration, contract, smoke, and prototype E2E files are retired, not requirements to restore; `tests/test_self_hosting.py` is a historic driver.
 
 If actual use or the E2E fails, create only the necessary diagnostic test in an external temporary directory and run it with `uv`. After fixing the issue, retry the original failing path. Do not commit temporary tests, copy them into another repository folder, or automatically promote them to regression tests. Do not create speculative tests, test matrices, or a parallel smoke suite. Static lint, formatting, type checks, and client generation/build remain applicable. The product E2E passing does not prove capabilities it does not exercise.
 

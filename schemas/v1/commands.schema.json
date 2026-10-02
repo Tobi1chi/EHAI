@@ -554,7 +554,15 @@
           "type": "array"
         },
         "endpoint_capabilities": {
-          "$ref": "#/$defs/ExecutionEndpointCapabilitiesRequest"
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ExecutionEndpointCapabilitiesRequest"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "command_timeout_seconds": {
           "exclusiveMinimum": 0,
@@ -627,7 +635,6 @@
         "allowed_commands",
         "available_shells",
         "git_permissions",
-        "endpoint_capabilities",
         "command_timeout_seconds"
       ],
       "title": "ExecutionConfigRequest",

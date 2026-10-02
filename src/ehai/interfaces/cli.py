@@ -33,7 +33,6 @@ from ehai.application.commands import (
     ReviewProcess,
     StartRun,
 )
-from ehai.application.legacy_config import ResponsesEndpointCapabilities
 from ehai.application.notes import NoteService
 from ehai.application.orchestrator import OrchestrationError, Orchestrator
 from ehai.application.plan_imports import PlanImportError, plan_import_schema
@@ -81,6 +80,7 @@ from ehai.interfaces.public_documents import public_json_value
 from ehai.interfaces.session_host import (
     ExecutionConfig,
     ForegroundSessionHost,
+    ResponsesEndpointCapabilities,
     SessionHostError,
     get_result_document,
     load_execution_config,

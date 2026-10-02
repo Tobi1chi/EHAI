@@ -538,8 +538,9 @@ def create_app(
                 )
             )
         document = request.execution_config.model_dump(mode="json")
-        if document.get("codex_server") is None:
-            document.pop("codex_server", None)
+        for legacy in ("codex_server", "endpoint_capabilities"):
+            if document.get(legacy) is None:
+                document.pop(legacy, None)
         try:
             config = ExecutionConfig.from_document(document)
         except OSError as error:

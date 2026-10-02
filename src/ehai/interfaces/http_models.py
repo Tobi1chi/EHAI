@@ -207,7 +207,8 @@ class ExecutionConfigRequest(_StrictRequest):
     git_permissions: list[
         Literal["git.read", "git.local_write", "git.remote_write", "git.dangerous"]
     ]
-    endpoint_capabilities: ExecutionEndpointCapabilitiesRequest
+    # Legacy, no execution effect; omitted means the defaults every host has always used.
+    endpoint_capabilities: ExecutionEndpointCapabilitiesRequest | None = None
     command_timeout_seconds: Annotated[float, Field(strict=True, gt=0, allow_inf_nan=False)]
     codex_server: ExecutionCodexServerRequest | None = None
     process_adjustment: ProcessAdjustmentPolicyRequest | None = None

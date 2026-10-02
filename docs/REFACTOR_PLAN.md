@@ -30,7 +30,7 @@
 | 步骤 | 用户结果 | 完成条件 | 状态 |
 | --- | --- | --- | --- |
 | 1. 安全网 | 每次修改都能自动确认主路径未被破坏 | 产品 E2E 入库；CI 在 Linux 跑静态检查、契约生成比对和 E2E，并在 Windows 跑 E2E | 完成：E2E 与 CI 已入库，首次 CI 全部通过（含 Windows E2E） |
-| 2. 低风险清理 | 代码只保留实际使用的后端和清晰命名 | Codex 去留已决定并执行；图 IR、脱敏工具移到中性模块；`legacy_config.py` 处置；Run/Routine 命名冲突有决定 | 进行中：Codex 已删除（选项 A），图 IR 与脱敏已移出；`legacy_config.py` 与命名冲突未处理 |
+| 2. 低风险清理 | 代码只保留实际使用的后端和清晰命名 | Codex 去留已决定并执行；图 IR、脱敏工具移到中性模块；`legacy_config.py` 处置；Run/Routine 命名冲突有决定 | 完成：Codex 已删除（选项 A）；图 IR 与脱敏已移出；`legacy_config.py` 已删除；命名决定为不改名、统一术语 |
 | 3. 拆分大文件 | 新贡献者能按职责定位代码 | Orchestrator 拆为门面与若干职责模块；Repository/Service 按聚合拆分；幂等回执合并为一个机制；E2E 全程通过 | 进行中：三个大文件已拆分（2026-10-02）；幂等回执合并未开始 |
 | 4. 收尾 P2 | 在真实项目上完成一次可核对的开发任务 | 真实 Pi 按[手动验收](#真实-pi-手动验收)完成并记录；随后在 P3.3 与 P4 通用 Workflow 中选一项 | 未开始 |
 
@@ -56,11 +56,15 @@ Orchestrator 按代码中已存在的边界拆分，保留 `Orchestrator` 作为
 唯一产品 E2E 为 [tests/test_product_e2e.py](../tests/test_product_e2e.py)，运行：
 
 ```powershell
+npm ci --prefix agent-backends/pi --ignore-scripts --no-audit --no-fund   # 首次，需要 Node >=22.19
 uv run pytest tests/test_product_e2e.py
 ```
 
-它启动真实 `ehai-api` 宿主进程（scripted Worker、`single` Planner、`--p2-runtime`），
-只通过 `ehai` CLI 与 HTTP API 操作，不读写数据库，不调用模型。
+它启动真实 `ehai-api` 宿主进程（Pi Worker、`single` Planner、`--p2-runtime`），
+只通过 `ehai` CLI 与 HTTP API 操作，不读写数据库。每个节点都经本机 Hub、Pi 兼容层和锁定版本的
+真实 Pi 运行，代码成果来自 EHAI 管理的 Git worktree；只有模型被替换为 E2E 内置的脚本化
+OpenAI 兼容服务（工作节点先用 workspace_write 写一个以节点命名的文件再提交成果，Reviewer 提交引用全部输入的
+通过 review.json），没有真实模型调用。
 
 | 覆盖 | 内容 |
 | --- | --- |
@@ -71,10 +75,11 @@ uv run pytest tests/test_product_e2e.py
 | 崩溃恢复 | 强杀宿主后在同一数据库重启；Run、节点状态、请求 token 保持不变 |
 | 事件消费 | 未确认批次在重启后以相同 token 和事件重新返回，确认后前进 |
 | 人工决定 | CLI 判定通过后 Run completed；同一幂等键重复判定被接受且不产生新请求 |
-| 成果查询 | get-result 的 Check 均完成；get-project 只列出该 Run 并带已验证成果 |
+| 成果查询 | get-result 的 Check 均完成；成果是新的 worktree commit，包含 A、B 与汇合节点各自写入的文件，patch 非空；get-project 只列出该 Run 并带已验证成果 |
+| Hub 与 Pi | 每个节点经本机 Hub 与真实 Pi 调用脚本化模型；强杀重启后，汇合与 Reviewer 节点经重新启动的本机 Hub 完成 |
 
-不覆盖：真实模型调用、Pi Planner、Git worktree 与 `integrate-run`、MCP、生活 Workflow、
-Connector 和 Jev 实验。这些不能由本 E2E 推断已验证。
+不覆盖：真实模型调用与模型行为、Pi Planner/过程审查/轨迹审查/路由回退、独立 Hub、`integrate-run`、
+MCP、生活 Workflow、Connector 和 Jev 实验。这些不能由本 E2E 推断已验证。
 
 ### 真实 Pi 手动验收
 
@@ -157,7 +162,33 @@ Reviewer/Gate → 人工验收 → `integrate-run`，并在执行中强杀一次
   验证：独立 Hub 闲置时限 180 秒、工具执行 200 秒，调用正常完成；关闭心跳的对照组同一场景结果未知。
   心跳失败不中断正在执行的工具（用户决定保持），见 [HUB](HUB.md#失败处理)。
 - 未覆盖：真实模型；Pi Planner、过程审查、轨迹审查、路由回退经 Hub 的实际运行（共用同一个运行器，未单独跑）；
-  Windows 上的本机子进程与 Pi；跨机器部署。产品 E2E 不经过 Hub，待 Scripted 兼容层（ADR 0007 第 4 步）。
+  Windows 上的本机子进程与 Pi；跨机器部署。产品 E2E 不经过 Hub（后由 ADR 0007 第 4 步解决，见下一条记录）。
+
+### 2026-10-02 产品 E2E 经 Hub 与真实 Pi
+
+- ADR 0007 第 4 步。用户在三种方式中选择"真实 Pi + 脚本化模型服务"：E2E 宿主改用 `--worker pi`，
+  E2E 内置 OpenAI 兼容的脚本化服务，CI 安装 Node 与锁定版本的 Pi。原计划的 Scripted 兼容层不再需要，
+  它需要新增 Worker 类型并改执行配置契约，且只能测到替身；执行配置的 `harness` 形状留到接入第二个 harness 时做。
+- 场景结构不变，新增断言：脚本化模型至少被调用 4 次（A、B、汇合、Reviewer）；最终成果是新 commit，
+  包含三个工作节点各自写入的文件（上游成果确实传到汇合节点），patch 非空。
+  `--worker fake` 保留，E2E 不再使用。
+- 验证：本地 Linux 连续 4 次通过（约 24 秒），每次结束后都没有遗留的宿主、Hub 或 Pi 进程；
+  把 Pi 兼容层回传工具结果的 nonce 改坏后 E2E 失败（等待人工请求超时），恢复后通过。
+- 评审发现（Codex）：最初的脚本化模型不写文件，成果 commit 等于基线，commit/diff 断言形同虚设；
+  夹具仓库提交未关闭签名。修复：工作节点先写文件，断言改为新 commit、文件齐全、patch 非空，
+  夹具提交加 `commit.gpgsign=false`。让脚本化模型不写文件时 E2E 在 commit 断言处失败。
+  Windows 由 CI 验证。
+
+### 2026-10-02 第二步收尾
+
+- `legacy_config.py` 只剩已退役自研 Responses 运行时的 `ResponsesEndpointCapabilities`，对执行没有影响，
+  但每份执行配置规范文档都带有 `endpoint_capabilities`，参与授权指纹。处置与 `codex_server` 相同：
+  类移到 `session_host.py` 并注明仅为指纹保留，删除 `legacy_config.py`；HTTP 执行配置中该块改为可选，
+  省略时按原默认值计入规范文档；示例配置去掉该块。Schema 与 TS Client 重新生成。
+- 验证（仓库外诊断）：经 HTTP 请求模型解析，省略该块与写出默认值得到相同的规范文档与指纹；
+  非默认值仍得到不同文档。ruff、format、mypy（两个平台）、lint-imports、TS 类型检查、产品 E2E 通过。
+- Run / Workflow Run / Routine 命名：用户决定不改名（接口已用 `workflow-run` 前缀区分，改名牵动数据库与全部接口）。
+  [文档索引](README.md#术语)新增术语表；WORKFLOWS 与 P4 设计中单独写 "Run" 指 Workflow Run 的 5 处改为全称。
 
 ### 2026-10-02 第三步：拆分三个大文件
 

@@ -22,7 +22,6 @@ from ehai.application.async_runtime import RuntimeConnector, SingleSlotRuntime
 from ehai.application.connectors import ConnectorService
 from ehai.application.event_consumers import EventConsumerService
 from ehai.application.execution_policy import ExecutionPolicy
-from ehai.application.legacy_config import ResponsesEndpointCapabilities
 from ehai.application.notes import NoteService
 from ehai.application.ports import StateConflictError
 from ehai.application.process_adjustments import ProcessAdjustments
@@ -74,7 +73,7 @@ from ehai.interfaces.api import create_app
 from ehai.interfaces.cli import _positive_planner_capacity, build_service
 from ehai.interfaces.public_documents import public_json_value
 from ehai.interfaces.routing_host import install_routing_fallback
-from ehai.interfaces.session_host import ExecutionConfig
+from ehai.interfaces.session_host import ExecutionConfig, ResponsesEndpointCapabilities
 from ehai.interfaces.workflows_api import install_routine_scheduler
 
 _MAX_RUNTIME_RESTARTS = 2

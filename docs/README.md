@@ -35,6 +35,17 @@
 
 契约与客户端见 [schemas](../schemas/README.md) 与 [control-plane](../control-plane/README.md)。
 
+## 术语
+
+| 词 | 只指 | 不要混用 |
+| --- | --- | --- |
+| Run | 核心的计划执行：批准一个计划修订后启动的一次执行（`get-run`、`run_id`） | 不用来指生活 Workflow 的执行 |
+| Workflow Run | 固定生活 Workflow 的一次执行（`get-workflow-run`、`workflow_run_id`） | 文档中始终写全称 |
+| Routine | 按固定间隔触发 Workflow 的规则，每次触发产生一个 Workflow Run | 不是计划、Run 或调度器本身 |
+| Attempt | 计划节点的一次执行尝试，属于某个 Run | — |
+
+2026-10-02 决定：不重命名代码或接口，接口已用 `workflow-run` 前缀区分；文档按上表书写。
+
 ## 维护规则
 
 - 用法只写已实现的命令和状态值；目标设计写在设计文档并标明未实现。

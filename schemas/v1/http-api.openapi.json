@@ -7235,7 +7235,14 @@
             "title": "Git Permissions"
           },
           "endpoint_capabilities": {
-            "$ref": "#/components/schemas/ExecutionEndpointCapabilitiesRequest"
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ExecutionEndpointCapabilitiesRequest"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "command_timeout_seconds": {
             "type": "number",
@@ -7305,7 +7312,6 @@
           "allowed_commands",
           "available_shells",
           "git_permissions",
-          "endpoint_capabilities",
           "command_timeout_seconds"
         ],
         "title": "ExecutionConfigRequest",

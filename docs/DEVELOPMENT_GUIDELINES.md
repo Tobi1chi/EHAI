@@ -13,7 +13,8 @@
 - 模型工具同步核对注册/角色、Schema、参数、Handler、结果和持久化；不使用 uniqueItems，
   不靠关闭 strict、静默换模型或盲目重试解决不明失败。
 - 在授权内以隔离正常入口验证模型工具，区分定义接受、实际执行、保存和产品验收。
-- 唯一产品 E2E：uv run pytest tests/test_product_e2e.py（scripted Worker，无模型调用）；
+- 唯一产品 E2E：uv run pytest tests/test_product_e2e.py（真实 Pi 经 Hub，脚本化模型，无真实模型调用；
+  先执行 npm ci --prefix agent-backends/pi --ignore-scripts --no-audit --no-fund）；
   主路径需要新覆盖时扩展该场景，不新建测试文件。真实 Pi 验收手动进行。
 - 仅对真实失败在仓库外写最小诊断，不提交、不移回仓库，不扩建常驻测试。
 - 静态命令：uv run ruff check .；uv run ruff format --check .；uv run mypy；

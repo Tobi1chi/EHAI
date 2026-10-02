@@ -15,7 +15,6 @@ from ehai import ID, JsonValue, json_dumps, json_loads, new_id, normalize_id, ut
 from ehai.application.agent_trace import AgentTraceEventType
 from ehai.application.commands import PauseRun, ResumeRun, StartRun
 from ehai.application.goal_budgets import GoalWorkerBudget, validate_goal_worker_budget
-from ehai.application.legacy_config import ResponsesEndpointCapabilities
 from ehai.application.pause_causes import PauseCause
 from ehai.application.process_adjustments import ProcessAdjustmentPolicy
 from ehai.application.queries import QueryService
@@ -72,6 +71,34 @@ _CODE_DELIVERY_FIELDS = (
 
 class SessionHostError(RuntimeError):
     """A foreground session could not be created or resumed safely."""
+
+
+@dataclass(frozen=True, slots=True)
+class ResponsesEndpointCapabilities:
+    """Legacy block from the retired built-in Responses runtime; it has no execution effect.
+
+    Every canonical execution document has always carried it, so it stays to keep stored
+    authorization fingerprints stable. Requests may omit it; the defaults below apply.
+    """
+
+    supports_background: bool = True
+    supports_idempotent_create: bool | None = None
+    supports_unique_items: bool = True
+    supports_previous_response_id: bool = True
+    supports_response_retrieval: bool = True
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.supports_background, bool):
+            raise ValueError("supports_background must be a boolean")
+        if self.supports_idempotent_create is not None and not isinstance(
+            self.supports_idempotent_create, bool
+        ):
+            raise ValueError("supports_idempotent_create must be a boolean")
+        if not isinstance(self.supports_unique_items, bool):
+            raise ValueError("supports_unique_items must be a boolean")
+        for name in ("supports_previous_response_id", "supports_response_retrieval"):
+            if not isinstance(getattr(self, name), bool):
+                raise ValueError(f"{name} must be a boolean")
 
 
 @dataclass(frozen=True, slots=True)
