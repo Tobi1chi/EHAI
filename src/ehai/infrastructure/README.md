@@ -9,7 +9,7 @@
 | [host_tools.py](host_tools.py)、[agent_traces.py](agent_traces.py) | 宿主工具、受控执行与轨迹持久化 |
 | [sqlite/](sqlite/) | Migration、Unit of Work、Repository（当前状态按聚合拆在 `sqlite/state/`）、事件与 codec |
 | [artifacts/](artifacts/)、[checks/](checks/) | Artifact 内容存储及 Check Adapter |
-| [workers/](workers/)、[planners/](planners/) | Worker/Planner 后端适配；当前首选 Pi |
+| [workers/](workers/)、[planners/](planners/) | Worker 后端适配；与 harness 无关的 `PlannerRole`（[planners/role.py](planners/role.py)）及其 Pi 适配 |
 | [workers/code.py](workers/code.py) | Worker 工作区准备与实际代码候选捕获 |
 | [code_workspaces.py](code_workspaces.py)、[workspaces.py](workspaces.py) | EHAI-owned 工作区、固定基线、上游成果合并与隔离 |
 

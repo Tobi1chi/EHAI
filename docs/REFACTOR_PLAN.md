@@ -208,6 +208,22 @@ Reviewer/Gate → 人工验收 → `integrate-run`，并在执行中强杀一次
 - 未做：幂等回执合并（会改行为，单独进行）；其余超过 1000 行的文件（plan_graph_tools、planner、host_tools、
   queries 等）不在本步范围。
 
+### 2026-10-02 ADR 0007 第 5 步：PlannerRole
+
+- 规划逻辑（图工具、校验重试、`raise_note`、讨论、重新规划、过程草稿）原样移到 `infrastructure/planners/role.py`
+  的 `PlannerRole`，只依赖新的 application 层端口 `RoleRunner`（`agent_roles.py`）；`HubRoleRunner` 与过程审查改用
+  该端口与共用的 `RoleExecution`。`PiPlannerAdapter` 只负责用 Pi 配置构造 Hub 运行器，并传入已持久化的事件类型
+  `planner.pi.completed`。
+- 留在 infrastructure 而非 application：只读工作区工具（`HostToolRuntime`）和过程审查实现在 infrastructure，
+  上移需要再抽象两个端口，目前没有第二个调用方。
+- 提示词一字未改（其中仍有 "Pi"）：改动会改变模型输入，需要真实模型验收。错误信息改为 "Planner"，
+  CLI 的 error_type 变为 `PlannerError`（`PiPlannerError` 保留为别名）。
+- 验证（仓库外诊断）：`ehai-api --planner pi` + 锁定版本的 Pi + 脚本化模型服务，经 CLI 执行 discuss-plan
+  （模型调用 ask_user）与 propose-plan（模型调用 raise_note），在 main 与本分支各跑一次，输出除路径外一致：
+  讨论回复正确返回，便签正确保存。产品 E2E、ruff、format、mypy（两个平台）、lint-imports 通过。
+- 顺带发现（main 上已存在，未在本步修复）：propose-plan 只得到便签时 HTTP 返回 500，因为 API 没有
+  Planner 错误的处理器；USAGE 描述应为明确报无方案。已记入 [EVIDENCE 未决问题](EVIDENCE.md#已知未决问题)。
+
 ## 待决事项
 
 | 事项 | 说明 |
