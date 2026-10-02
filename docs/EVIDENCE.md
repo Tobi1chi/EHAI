@@ -32,6 +32,7 @@
 | 09-27 | Pi Planner 超时接线修复 | 诊断 + 真实 Go | 8 秒挂起端点 409 且不重派；真实调用 300 秒按时失败、进程退出 | 上游传输停顿根因 | [R2](history/RECORD_R2.md#2026-09-27pi-planner-超时配置接线) |
 | 10-01 | 产品 E2E（scripted Worker） | 0 | 导入、批准、并发与人工挂起、强杀重启、事件补领、人工判定、成果查询；Linux/Windows CI 通过 | 真实 Pi、Git worktree、integrate-run、MCP | [REFACTOR_PLAN](REFACTOR_PLAN.md#执行记录) |
 | 10-02 | Pi 角色改经独立 Hub | 0（真实 Pi 0.85.1 + 脚本化 Provider） | 7 个调用场景轨迹与改动前逐事件一致（本机子进程与独立 Hub）；Hub 停止→结果未知不重放；强杀核心 2 秒内 Hub 与 Pi 退出；`ehai-api --worker pi` 经 Worker、Reviewer、最终 Gate 完成 Run | 真实模型、Planner/过程审查/路由回退经 Hub、Windows、跨机器 | [REFACTOR_PLAN](REFACTOR_PLAN.md#2026-10-02-hub-独立服务与-pi-兼容层) |
+| 10-02 | 产品 E2E 改经 Hub 与真实 Pi | 0（脚本化模型服务） | 原场景全部通过，另验证 worktree 成果与每节点经 Pi 调用模型；破坏兼容层后 E2E 失败 | 真实模型、独立 Hub、integrate-run、Pi 非 Worker 角色 | [REFACTOR_PLAN](REFACTOR_PLAN.md#2026-10-02-产品-e2e-经-hub-与真实-pi) |
 
 ## P3 平台后端
 
@@ -67,4 +68,4 @@
 - 目标为整个 EHAI 仓库时，Planner 调查范围过大、未收敛（09-25）。
 - 较长 Provider 工具流间歇停顿/中断，根因未确认（09-25、09-27）。
 - 干预回复未做真实模型后端闭环（09-22）；运行中 Worker 请求路径已于 10-02 删除。
-- 强杀、写入中断与长链接续的恢复未系统验证；产品 E2E 只覆盖 scripted Worker 的强杀重启。
+- 强杀、写入中断与长链接续的恢复未系统验证；产品 E2E 只覆盖人工等待期间（无 Pi 进程运行时）的强杀重启。
