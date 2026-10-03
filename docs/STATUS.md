@@ -1,6 +1,6 @@
 # 当前能力与验证
 
-更新：2026-10-02。每项能力一行：实现状态、关键边界、证据位置。
+更新：2026-10-03。每项能力一行：实现状态、关键边界、证据位置。
 证据摘要见 [EVIDENCE](EVIDENCE.md)，产品边界见 [PRODUCT_SCOPE](PRODUCT_SCOPE.md)，后续顺序见 [ROADMAP](ROADMAP.md)。
 
 **状态含义**：`真实验证` 有真实模型的正常入口证据；`无模型验证` 只有 scripted/fake 或协议级证据；
@@ -27,11 +27,11 @@
 | 批准内过程调整 / Block 清单 | 无模型验证 | 清单只描述变化，不批准、不授权复用成果 | [核心](EVIDENCE.md#核心执行) |
 | Git 自动整合 | 无模型验证 | 用历史真实成果整合；冲突路径未实跑 | [核心](EVIDENCE.md#核心执行) |
 | 跨批准后继 Run | 真实验证 | 单次接续通过；基线变化重执行、多次接续、崩溃未验证 | [核心](EVIDENCE.md#核心执行) |
-| 长任务可靠性 | 部分 | 强杀、写入中断、长链接续未系统验证 | [未决问题](EVIDENCE.md#已知未决问题) |
+| 长任务可靠性 | 部分 | Worker/Reviewer 运行中强杀后可恢复（重启后等旧租约过期，最长 5 分钟，10-03 真实验证）；写入中断、长链接续未系统验证 | [未决问题](EVIDENCE.md#已知未决问题) |
 | Token / 费用硬限额 | 暂缓 | 2026-09-16 决定暂不实现；用量记录保留 | — |
 | 产品 E2E | 无模型验证 | 真实 Pi 经本机 Hub、Git worktree，模型为脚本化服务；不覆盖真实模型、独立 Hub、integrate-run、MCP | [REFACTOR_PLAN](REFACTOR_PLAN.md#产品-e2e) |
 | CI | 无模型验证 | 静态检查、两平台 mypy、契约比对、TS 构建、Linux/Windows E2E | [REFACTOR_PLAN](REFACTOR_PLAN.md#执行记录) |
-| P2 总验收 | 未实现 | 真实 Pi 手动验收按重构计划第 4 步进行 | [REFACTOR_PLAN](REFACTOR_PLAN.md#四步顺序) |
+| P2 总验收 | 部分 | 真实 Pi 手动验收一次通过（导入路径、单个小仓库、macOS，10-03）；Pi Planner 规划路径与 Windows 未做 | [REFACTOR_PLAN](REFACTOR_PLAN.md#四步顺序) |
 
 ## 平台后端（P3）
 
