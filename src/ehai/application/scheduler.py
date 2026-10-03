@@ -388,6 +388,7 @@ class ConcurrentRuntime:
         terminal: dict[ID, Run] = {}
         while works or tasks:
             works.update(self._claim_all_work())
+            self._recover_unowned_attempts(works, tasks)
             for run_id in sorted(works):
                 self._orchestrator.advance_ready_adoptions(run_id)
             with self._uow_factory() as uow:
@@ -477,6 +478,42 @@ class ConcurrentRuntime:
         works.update(self._claim_all_work())
         for run_id in works:
             self._orchestrator.recover_candidate_results(run_id)
+        self._recover_unowned_attempts(works, tasks)
+        if not tasks:
+            return ()
+        completed = await asyncio.gather(*tasks, return_exceptions=True)
+        terminal: dict[ID, Run] = {}
+        first_error: BaseException | None = None
+        for task, result in zip(tasks, completed, strict=True):
+            active = tasks[task]
+            self._active_helpers.pop(active.attempt.attempt_id, None)
+            self._active_tasks.pop(active.attempt.attempt_id, None)
+            try:
+                if isinstance(result, BaseException):
+                    if first_error is None:
+                        first_error = result
+                    continue
+                if result.status is not RunStatus.RUNNING:
+                    active.helper.finish_dispatch_work(active.work)
+                    terminal[result.run_id] = result
+            finally:
+                if active.workspace is not None and self._workspace_manager is not None:
+                    self._workspace_manager.cleanup(active.workspace)
+        if first_error is not None:
+            raise first_error
+        return tuple(terminal[key] for key in sorted(terminal))
+
+    def _recover_unowned_attempts(
+        self,
+        works: Mapping[ID, DispatchWork],
+        tasks: dict[asyncio.Task[Run], _ActiveExecution],
+    ) -> None:
+        """Start recovery for running Attempts of claimed work that no task here executes.
+
+        At startup that is every running Attempt. Later it is an Attempt left by a process
+        that stopped before its dispatch lease expired: startup recovery could not claim that
+        work, and the scheduling loop reclaims it only after the lease runs out.
+        """
         with self._uow_factory() as uow:
             for work in works.values():
                 run = uow.states.get_run(work.run_id)
@@ -486,7 +523,10 @@ class ConcurrentRuntime:
                 if goal is None:
                     raise RuntimeError(f"Run {run.run_id} Goal is missing")
                 for attempt in uow.states.list_attempts(run.run_id):
-                    if attempt.status is not AttemptStatus.RUNNING:
+                    if (
+                        attempt.status is not AttemptStatus.RUNNING
+                        or attempt.attempt_id in self._active_tasks
+                    ):
                         continue
                     assignment = self._persisted_assignment(attempt)
                     connector = self._connectors.get(assignment.endpoint.worker_endpoint_id)
@@ -521,29 +561,6 @@ class ConcurrentRuntime:
                     tasks[task] = active
                     self._active_helpers[attempt.attempt_id] = helper
                     self._active_tasks[attempt.attempt_id] = task
-        if not tasks:
-            return ()
-        completed = await asyncio.gather(*tasks, return_exceptions=True)
-        terminal: dict[ID, Run] = {}
-        first_error: BaseException | None = None
-        for task, result in zip(tasks, completed, strict=True):
-            active = tasks[task]
-            self._active_helpers.pop(active.attempt.attempt_id, None)
-            self._active_tasks.pop(active.attempt.attempt_id, None)
-            try:
-                if isinstance(result, BaseException):
-                    if first_error is None:
-                        first_error = result
-                    continue
-                if result.status is not RunStatus.RUNNING:
-                    active.helper.finish_dispatch_work(active.work)
-                    terminal[result.run_id] = result
-            finally:
-                if active.workspace is not None and self._workspace_manager is not None:
-                    self._workspace_manager.cleanup(active.workspace)
-        if first_error is not None:
-            raise first_error
-        return tuple(terminal[key] for key in sorted(terminal))
 
     async def _converge_scheduler_error(
         self,
