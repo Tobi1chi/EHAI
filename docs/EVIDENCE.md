@@ -1,6 +1,6 @@
 # 运行证据
 
-更新：2026-10-02。本页把每次正常入口试用压缩为一行：做了什么、结果、哪些没有覆盖。
+更新：2026-10-03。本页把每次正常入口试用压缩为一行：做了什么、结果、哪些没有覆盖。
 能力结论见 [STATUS](STATUS.md)；原始叙述（Run ID、用量明细、临时证据目录）保留在下列归档：
 
 - [RECORD_R2](history/RECORD_R2.md)：核心执行、导入/MCP、Git 整合、后继 Run 与模型工具契约（2026-09-14 ~ 09-27）
@@ -37,6 +37,8 @@
 | 10-02 | Hub 每会话 MCP 端点 | 0（合成 MCP harness） | 工具列表限于本会话，调用经核心执行与记录后返回；关闭后令牌失效，Hub 令牌无权访问 | 真实 MCP harness、并发会话 | [REFACTOR_PLAN](REFACTOR_PLAN.md#2026-10-02-adr-0007-第-7-步每会话-mcp-端点) |
 | 10-02 | propose-plan 只得到便签时的 HTTP 500 | 0（真实 Pi + 脚本化模型服务） | 复现 500 后修复：返回 422 `planner_failed` 且便签保存；Hub 不可达时返回 502 `harness_outcome_unknown` | 真实模型 | [REFACTOR_PLAN](REFACTOR_PLAN.md#2026-10-02-adr-0007-第-5-步plannerrole) |
 | 10-02 | 幂等回执合并为一张表（schema 22→23） | 0 | 同一个改动前生成的数据库，分别由改动前后的程序重放 25 个操作（含同键不同内容），响应逐字节相同；键的命名空间互不影响；迁移后新命令及重放正常 | 真实旧数据库、路由实验 5 个命令的重放 | [REFACTOR_PLAN](REFACTOR_PLAN.md#2026-10-02-第三步幂等回执合并) |
+| 10-03 | 真实 Pi 手动验收（导入 → 并发写代码 → Reviewer → 命令与人工 Gate → integrate-run） | 真实 OpenCode Go DeepSeek V4.1 Flash（25 个响应） | Run completed，成果只改两个模块文件，integrate-run 重试得到同一 commit；Reviewer 运行中强杀后 Run 卡住，见下一行 | Pi Planner、Windows、写入中途崩溃 | [REFACTOR_PLAN](REFACTOR_PLAN.md#2026-10-03-第四步真实-pi-手动验收与强杀恢复) |
+| 10-03 | 强杀后重启卡住的修复 | 真实 OpenCode Go DeepSeek V4.1 Flash（26 个响应） | 修复前：租约未过期时重启，running Attempt 永不恢复；修复后：两个写代码节点运行中强杀并立即重启，旧租约到期时自动中断并重试，Run 完成并整合；恢复受容量限制（脚本化诊断：修复前一次恢复超出容量 2，修复后不超出） | 多次连续崩溃、独立 Hub、Windows | [REFACTOR_PLAN](REFACTOR_PLAN.md#2026-10-03-第四步真实-pi-手动验收与强杀恢复) |
 
 ## P3 平台后端
 
@@ -71,5 +73,5 @@
 - Planner 可能生成语义重复的 human Check（09-27）。
 - 目标为整个 EHAI 仓库时，Planner 调查范围过大、未收敛（09-25）。
 - 较长 Provider 工具流间歇停顿/中断，根因未确认（09-25、09-27）。
-- 干预回复未做真实模型后端闭环（09-22）；运行中 Worker 请求路径已于 10-02 删除。
-- 强杀、写入中断与长链接续的恢复未系统验证；产品 E2E 只覆盖人工等待期间（无 Pi 进程运行时）的强杀重启。
+- 干预回复的真实模型闭环只有 10-03 一例（恢复时打开的外部影响干预，回复后新的 Reviewer Attempt 完成）；运行中 Worker 请求路径已于 10-02 删除。
+- 写入中断与长链接续的恢复未系统验证。强杀：产品 E2E 覆盖人工等待期间的强杀重启；10-03 的真实运行覆盖 Worker 与 Reviewer 运行中的强杀（修复后重启的宿主在旧派发租约过期后自动恢复，最长等待 5 分钟）。

@@ -1,6 +1,6 @@
 # 重构与推进计划
 
-更新：2026-10-02。本文定义当前重构的顺序、边界和完成条件；
+更新：2026-10-03。本文定义当前重构的顺序、边界和完成条件；
 能力现状见 [STATUS](STATUS.md)，产品顺序见 [路线图](ROADMAP.md)。
 
 ## 为什么现在重构
@@ -32,7 +32,7 @@
 | 1. 安全网 | 每次修改都能自动确认主路径未被破坏 | 产品 E2E 入库；CI 在 Linux 跑静态检查、契约生成比对和 E2E，并在 Windows 跑 E2E | 完成：E2E 与 CI 已入库，首次 CI 全部通过（含 Windows E2E） |
 | 2. 低风险清理 | 代码只保留实际使用的后端和清晰命名 | Codex 去留已决定并执行；图 IR、脱敏工具移到中性模块；`legacy_config.py` 处置；Run/Routine 命名冲突有决定 | 完成：Codex 已删除（选项 A）；图 IR 与脱敏已移出；`legacy_config.py` 已删除；命名决定为不改名、统一术语 |
 | 3. 拆分大文件 | 新贡献者能按职责定位代码 | Orchestrator 拆为门面与若干职责模块；Repository/Service 按聚合拆分；幂等回执合并为一个机制；E2E 全程通过 | 完成：三个大文件已拆分，幂等回执已合并为一个机制（2026-10-02） |
-| 4. 收尾 P2 | 在真实项目上完成一次可核对的开发任务 | 真实 Pi 按[手动验收](#真实-pi-手动验收)完成并记录；随后在 P3.3 与 P4 通用 Workflow 中选一项 | 未开始 |
+| 4. 收尾 P2 | 在真实项目上完成一次可核对的开发任务 | 真实 Pi 按[手动验收](#真实-pi-手动验收)完成并记录；随后在 P3.3 与 P4 通用 Workflow 中选一项 | 进行中：手动验收已完成一次（2026-10-03，见[执行记录](#2026-10-03-第四步真实-pi-手动验收与强杀恢复)），P3.3 与 P4 的选择待定 |
 
 ### 步骤 3 的拆分方向
 
@@ -271,6 +271,43 @@ Reviewer/Gate → 人工验收 → `integrate-run`，并在执行中强杀一次
   PR 的 CI（静态检查与契约、Linux E2E、Windows E2E）通过。
 - 未覆盖：真实使用中的旧数据库（只验证了诊断生成的 schema 22 数据库）；路由实验的 resolve / feedback / propose /
   replay / publish 五个命令的重放（需要 Jev 连接器的实际往返，与已验证的命令共用同一段代码）。
+
+### 2026-10-03 第四步：真实 Pi 手动验收与强杀恢复
+
+- 环境：macOS；锁定的 Pi 0.85.1；模型为 OpenCode Go 的 `deepseek-v4.1-flash`（用户为测试单独提供的凭证，只经宿主环境变量
+  `OPENCODE_API_KEY` 传入）。该模型不在锁定 Pi 的内置清单里，在隔离 `agent_dir` 的 `models.json` 中向内置的 `opencode-go`
+  Provider 补了一条模型定义（参数照抄内置的 `deepseek-v4-flash`）。OpenCode Go 要求 `x-opencode-session` 请求头，Pi 对该
+  Provider 会自动携带。
+- 目标仓库：仓库外的一个小 Python 项目，`textkit/slug.py` 与 `textkit/roman.py` 各有一个未实现的函数和现成的 unittest。
+  计划经 `import-plan` 导入：两个独立的写代码节点、一个 Reviewer 阶段；最终 Gate 先运行 `verify.py`，再提人工验收问题。
+  授权命令只有三条 unittest argv，Git 权限为 `git.read`。全部操作经 `ehai` CLI：create-project → create-goal → import-plan →
+  approve-plan → `start-run --execution-config ... --authorize` → list-inbox → reply-intervention → decide-human-check →
+  integrate-run。
+- 第一次运行（PR #11 分支，调度器与 main 相同）：两个节点并发完成，Reviewer 运行中 `kill -9` 宿主，Hub 与 Pi 随之退出；
+  约 1 分钟内重启后 **Run 一直卡住**：被打断的 Reviewer Attempt 停在 running，Attempt 心跳租约过期后也没有新事件或待办。
+  - 原因：派发工作由进程认领，租约 5 分钟，认领者 ID 每个进程不同。并发调度器只在启动时执行一次恢复
+    （`recover_startup` → `recover_attempt`）；重启时旧租约未到期，启动恢复认领不到这项工作。租约到期后，调度循环
+    （`_claim_all_work`）会重新认领，但只调度新的 Attempt，不恢复绑定在已退出进程上的 running Attempt。
+    单槽运行时（`--worker-capacity 1`）每次认领都走 `_recover_work`，没有这个缺口。产品 E2E 只在人工等待期间强杀
+    （没有 running Attempt），因此没有暴露。
+  - 当时的绕过：租约过期后再重启一次宿主，启动恢复打开干预（Reviewer 运行过命令，需要确认外部影响后才继续，
+    不盲目重放）；核对轨迹（只读文件、只读 git 和本地 unittest）后经 reply-intervention 回复，新的 Reviewer Attempt
+    完成，`verify.py` 通过，人工验收后 Run completed；integrate-run 得到只改两个模块文件的 commit，重试得到同一 commit。
+- 修复：调度循环每次认领后，对已认领工作中处于 running、但本进程没有任务在执行的 Attempt 走与启动恢复相同的
+  `recover_attempt`（`ConcurrentRuntime._recover_unowned_attempts`，启动恢复也改用它）。本进程正在执行的 Attempt 都登记在
+  `_active_tasks` 中，不会被重复恢复。租约语义不变：重启的宿主仍要等旧租约过期（最长 5 分钟）才接手，但不再需要第二次重启。
+- 评审发现（Codex）：循环中的恢复一次启动该工作的全部孤儿 Attempt，不经过 `_schedule` 使用的全局/项目/Run/Profile/Endpoint
+  容量和共享工作区写入规则；重启后的宿主若已用新工作占满容量，某个任务结束的那一刻就会超出容量。修复：`Dispatcher.admits`
+  按 `select` 的同一组限制检查已确定的分配，工作区冲突规则合为一个方法供两处使用；放不下的恢复等待，循环在调度新工作前
+  重试。诊断（仓库外，脚本化模型，`--worker-capacity 2`）：Run 1 的两个节点被挂起时强杀并立即重启，Run 2 的两个挂起节点占满容量；
+  Run 1 租约到期后放行 Run 2 的一个节点。修复前的提交在一次恢复中把本进程任务数从 1 推到 3；修复后分两次各恢复一个，始终不超过 2，
+  Run 1 最终完成。（Run 2 被人为挂起约 5 分钟的那个请求按结果未知打开干预，属预期，与本修复无关。）
+- 修复后复测（全新状态与仓库）：两个写代码节点都在运行时 `kill -9` 宿主，20 秒内重启，此后不再重启。旧租约到期的同一秒，
+  宿主重新认领并把两个 Attempt 标为中断（崩溃前尚未提交候选），按本地回滚规则重试；新 Attempt 成功，Reviewer 完成，
+  `verify.py` 通过，人工验收后 Run completed，integrate-run 成功。产品 E2E、ruff、format、mypy（两个平台）、lint-imports 通过。
+- 用量（Pi 上报，非账单）：第一次 25 个模型响应、约 16 万 token（其中约 12 万为缓存命中）；复测 26 个响应、约 15 万 token。
+- 未覆盖：Pi Planner 规划（本次用导入）；Windows；写入中途崩溃（崩溃时尚未提交候选）；多次连续崩溃；独立 Hub；
+  租约未过期前的等待时间（最长 5 分钟）是否需要缩短，按现有租约设计保留。
 
 ## 待决事项
 

@@ -131,25 +131,21 @@ class Dispatcher:
         workspace_conflict: bool,
         endpoint_health: Mapping[ID, EndpointHealthStatus] | None = None,
     ) -> DispatchDecision:
-        if workspace_conflict:
-            return DispatchDecision(None, "workspace conflict")
-        if usage.total >= self.capacity.global_capacity:
-            return DispatchDecision(None, "global capacity exhausted")
-        if usage.projects.get(project_id, 0) >= self.capacity.project_capacity:
-            return DispatchDecision(None, "Project capacity exhausted")
-        if usage.runs.get(run_id, 0) >= self.capacity.run_capacity:
-            return DispatchDecision(None, "Run capacity exhausted")
+        reason = self._limit_reason(
+            project_id=project_id,
+            run_id=run_id,
+            usage=usage,
+            workspace_conflict=workspace_conflict,
+        )
+        if reason is not None:
+            return DispatchDecision(None, reason)
         profiles = sorted(
             (
                 profile
                 for profile in self.profiles
                 if node.required_capabilities.issubset(profile.capabilities)
                 and node.session_policy is profile.session_policy
-                and usage.profiles.get(profile.worker_profile_id, 0)
-                < self.capacity.profile_capacity.get(
-                    profile.worker_profile_id,
-                    self.capacity.global_capacity,
-                )
+                and self._profile_has_capacity(profile, usage)
             ),
             key=lambda item: (-item.priority, item.worker_profile_id),
         )
@@ -165,20 +161,67 @@ class Dispatcher:
                         EndpointHealthStatus.UNKNOWN,
                     )
                     is not EndpointHealthStatus.UNHEALTHY
-                    and usage.endpoints.get(endpoint.worker_endpoint_id, 0)
-                    < min(
-                        endpoint.capacity,
-                        self.capacity.endpoint_capacity.get(
-                            endpoint.worker_endpoint_id,
-                            endpoint.capacity,
-                        ),
-                    )
+                    and self._endpoint_has_capacity(endpoint, usage)
                 ),
                 key=lambda item: item.worker_endpoint_id,
             )
             if endpoints:
                 return DispatchDecision(DispatchAssignment(profile, endpoints[0]), None)
         return DispatchDecision(None, "no eligible WorkerProfile/Endpoint capacity")
+
+    def admits(
+        self,
+        assignment: DispatchAssignment,
+        *,
+        project_id: ID,
+        run_id: ID,
+        usage: CapacityUsage,
+        workspace_conflict: bool,
+    ) -> bool:
+        """Whether an already chosen assignment fits the limits ``select`` applies."""
+        return (
+            self._limit_reason(
+                project_id=project_id,
+                run_id=run_id,
+                usage=usage,
+                workspace_conflict=workspace_conflict,
+            )
+            is None
+            and self._profile_has_capacity(assignment.profile, usage)
+            and self._endpoint_has_capacity(assignment.endpoint, usage)
+        )
+
+    def _limit_reason(
+        self,
+        *,
+        project_id: ID,
+        run_id: ID,
+        usage: CapacityUsage,
+        workspace_conflict: bool,
+    ) -> str | None:
+        if workspace_conflict:
+            return "workspace conflict"
+        if usage.total >= self.capacity.global_capacity:
+            return "global capacity exhausted"
+        if usage.projects.get(project_id, 0) >= self.capacity.project_capacity:
+            return "Project capacity exhausted"
+        if usage.runs.get(run_id, 0) >= self.capacity.run_capacity:
+            return "Run capacity exhausted"
+        return None
+
+    def _profile_has_capacity(self, profile: WorkerProfile, usage: CapacityUsage) -> bool:
+        return usage.profiles.get(
+            profile.worker_profile_id, 0
+        ) < self.capacity.profile_capacity.get(
+            profile.worker_profile_id,
+            self.capacity.global_capacity,
+        )
+
+    def _endpoint_has_capacity(self, endpoint: WorkerEndpoint, usage: CapacityUsage) -> bool:
+        return usage.endpoints.get(endpoint.worker_endpoint_id, 0) < min(
+            endpoint.capacity,
+            self.capacity.endpoint_capacity.get(endpoint.worker_endpoint_id, endpoint.capacity),
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -388,6 +431,7 @@ class ConcurrentRuntime:
         terminal: dict[ID, Run] = {}
         while works or tasks:
             works.update(self._claim_all_work())
+            self._recover_unowned_attempts(works, tasks)
             for run_id in sorted(works):
                 self._orchestrator.advance_ready_adoptions(run_id)
             with self._uow_factory() as uow:
@@ -477,6 +521,44 @@ class ConcurrentRuntime:
         works.update(self._claim_all_work())
         for run_id in works:
             self._orchestrator.recover_candidate_results(run_id)
+        self._recover_unowned_attempts(works, tasks)
+        if not tasks:
+            return ()
+        completed = await asyncio.gather(*tasks, return_exceptions=True)
+        terminal: dict[ID, Run] = {}
+        first_error: BaseException | None = None
+        for task, result in zip(tasks, completed, strict=True):
+            active = tasks[task]
+            self._active_helpers.pop(active.attempt.attempt_id, None)
+            self._active_tasks.pop(active.attempt.attempt_id, None)
+            try:
+                if isinstance(result, BaseException):
+                    if first_error is None:
+                        first_error = result
+                    continue
+                if result.status is not RunStatus.RUNNING:
+                    active.helper.finish_dispatch_work(active.work)
+                    terminal[result.run_id] = result
+            finally:
+                if active.workspace is not None and self._workspace_manager is not None:
+                    self._workspace_manager.cleanup(active.workspace)
+        if first_error is not None:
+            raise first_error
+        return tuple(terminal[key] for key in sorted(terminal))
+
+    def _recover_unowned_attempts(
+        self,
+        works: Mapping[ID, DispatchWork],
+        tasks: dict[asyncio.Task[Run], _ActiveExecution],
+    ) -> None:
+        """Start recovery for running Attempts of claimed work that no task here executes.
+
+        At startup that is every running Attempt. Later it is an Attempt left by a process
+        that stopped before its dispatch lease expired: startup recovery could not claim that
+        work, and the scheduling loop reclaims it only after the lease runs out. A recovery
+        holds a slot like new work, so it waits for the same capacity and workspace rules;
+        the loop retries it before scheduling anything new.
+        """
         with self._uow_factory() as uow:
             for work in works.values():
                 run = uow.states.get_run(work.run_id)
@@ -486,9 +568,24 @@ class ConcurrentRuntime:
                 if goal is None:
                     raise RuntimeError(f"Run {run.run_id} Goal is missing")
                 for attempt in uow.states.list_attempts(run.run_id):
-                    if attempt.status is not AttemptStatus.RUNNING:
+                    if (
+                        attempt.status is not AttemptStatus.RUNNING
+                        or attempt.attempt_id in self._active_tasks
+                    ):
                         continue
                     assignment = self._persisted_assignment(attempt)
+                    if len(tasks) >= self._policy.max_concurrency or not self._dispatcher.admits(
+                        assignment,
+                        project_id=goal.project_id,
+                        run_id=run.run_id,
+                        usage=_capacity_usage(tasks.values()),
+                        workspace_conflict=self._workspace_conflict(
+                            _attempt_may_write_workspace(attempt, self._dispatcher.profiles, uow),
+                            tasks,
+                            uow,
+                        ),
+                    ):
+                        continue
                     connector = self._connectors.get(assignment.endpoint.worker_endpoint_id)
                     if connector is None:
                         raise RuntimeError(
@@ -521,29 +618,6 @@ class ConcurrentRuntime:
                     tasks[task] = active
                     self._active_helpers[attempt.attempt_id] = helper
                     self._active_tasks[attempt.attempt_id] = task
-        if not tasks:
-            return ()
-        completed = await asyncio.gather(*tasks, return_exceptions=True)
-        terminal: dict[ID, Run] = {}
-        first_error: BaseException | None = None
-        for task, result in zip(tasks, completed, strict=True):
-            active = tasks[task]
-            self._active_helpers.pop(active.attempt.attempt_id, None)
-            self._active_tasks.pop(active.attempt.attempt_id, None)
-            try:
-                if isinstance(result, BaseException):
-                    if first_error is None:
-                        first_error = result
-                    continue
-                if result.status is not RunStatus.RUNNING:
-                    active.helper.finish_dispatch_work(active.work)
-                    terminal[result.run_id] = result
-            finally:
-                if active.workspace is not None and self._workspace_manager is not None:
-                    self._workspace_manager.cleanup(active.workspace)
-        if first_error is not None:
-            raise first_error
-        return tuple(terminal[key] for key in sorted(terminal))
 
     async def _converge_scheduler_error(
         self,
@@ -842,21 +916,7 @@ class ConcurrentRuntime:
                         node for node in plan.nodes if node.plan_node_id == attempt.plan_node_id
                     )
                     write_capable = _may_write_workspace(node, self._dispatcher.profiles)
-                    workspace_conflict = (
-                        write_capable
-                        and (
-                            self._workspace_manager is None
-                            or not self._workspace_manager.can_isolate_writes()
-                        )
-                        and any(
-                            _active_may_write_workspace(
-                                active,
-                                self._dispatcher.profiles,
-                                uow,
-                            )
-                            for active in tasks.values()
-                        )
-                    )
+                    workspace_conflict = self._workspace_conflict(write_capable, tasks, uow)
                     decision = self._dispatcher.select(
                         node,
                         project_id=goal.project_id,
@@ -881,6 +941,24 @@ class ConcurrentRuntime:
                     uow.states.put_attempt(attempt.queue(decision.reason or "waiting for dispatch"))
             uow.commit()
         return None
+
+    def _workspace_conflict(
+        self,
+        write_capable: bool,
+        tasks: Mapping[asyncio.Task[Run], _ActiveExecution],
+        uow: UnitOfWork,
+    ) -> bool:
+        """Writers share one workspace unless the manager can isolate them."""
+        return (
+            write_capable
+            and (
+                self._workspace_manager is None or not self._workspace_manager.can_isolate_writes()
+            )
+            and any(
+                _attempt_may_write_workspace(active.attempt, self._dispatcher.profiles, uow)
+                for active in tasks.values()
+            )
+        )
 
     def _claim_all_work(self) -> dict[ID, DispatchWork]:
         claimed: dict[ID, DispatchWork] = {}
@@ -999,19 +1077,19 @@ def _may_write_workspace(
     )
 
 
-def _active_may_write_workspace(
-    active: _ActiveExecution,
+def _attempt_may_write_workspace(
+    attempt: Attempt,
     profiles: tuple[WorkerProfile, ...],
     uow: UnitOfWork,
 ) -> bool:
-    run = uow.states.get_run(active.work.run_id)
+    run = uow.states.get_run(attempt.run_id)
     if run is None:
         return False
     plan = uow.states.get_execution_plan(run.run_id)
     if plan is None:
         return False
     node = next(
-        (item for item in plan.nodes if item.plan_node_id == active.attempt.plan_node_id),
+        (item for item in plan.nodes if item.plan_node_id == attempt.plan_node_id),
         None,
     )
     return node is not None and _may_write_workspace(node, profiles)
