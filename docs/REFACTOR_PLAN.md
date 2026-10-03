@@ -31,7 +31,7 @@
 | --- | --- | --- | --- |
 | 1. 安全网 | 每次修改都能自动确认主路径未被破坏 | 产品 E2E 入库；CI 在 Linux 跑静态检查、契约生成比对和 E2E，并在 Windows 跑 E2E | 完成：E2E 与 CI 已入库，首次 CI 全部通过（含 Windows E2E） |
 | 2. 低风险清理 | 代码只保留实际使用的后端和清晰命名 | Codex 去留已决定并执行；图 IR、脱敏工具移到中性模块；`legacy_config.py` 处置；Run/Routine 命名冲突有决定 | 完成：Codex 已删除（选项 A）；图 IR 与脱敏已移出；`legacy_config.py` 已删除；命名决定为不改名、统一术语 |
-| 3. 拆分大文件 | 新贡献者能按职责定位代码 | Orchestrator 拆为门面与若干职责模块；Repository/Service 按聚合拆分；幂等回执合并为一个机制；E2E 全程通过 | 进行中：三个大文件已拆分（2026-10-02）；幂等回执合并未开始 |
+| 3. 拆分大文件 | 新贡献者能按职责定位代码 | Orchestrator 拆为门面与若干职责模块；Repository/Service 按聚合拆分；幂等回执合并为一个机制；E2E 全程通过 | 完成：三个大文件已拆分，幂等回执已合并为一个机制（2026-10-02） |
 | 4. 收尾 P2 | 在真实项目上完成一次可核对的开发任务 | 真实 Pi 按[手动验收](#真实-pi-手动验收)完成并记录；随后在 P3.3 与 P4 通用 Workflow 中选一项 | 进行中：手动验收已完成一次（2026-10-03，见[执行记录](#2026-10-03-第四步真实-pi-手动验收与强杀恢复)），P3.3 与 P4 的选择待定 |
 
 ### 步骤 3 的拆分方向
@@ -48,8 +48,9 @@ Orchestrator 按代码中已存在的边界拆分，保留 `Orchestrator` 作为
 | 人工介入 | intervention、`waiting_for_*` |
 
 `sqlite/repository.py` 与 `application/service.py` 按聚合拆分（note / workflow / connector 本来就在独立模块中）。
-幂等回执当前至少有三处实现（Workflow、Connector 的 `receipt/remember` 与核心 `CommandReceipt`），
-合并为一个共用机制，供后续自定义 Workflow 复用。
+幂等回执原有四处实现（核心 `CommandReceipt`，以及 Workflow、Connector、路由实验各自的 `receipt/remember`），
+已合并为一个共用机制（[idempotency.py](../src/ehai/application/idempotency.py)，见
+[执行记录](#2026-10-02-第三步幂等回执合并)），供后续自定义 Workflow 复用。
 
 ## 产品 E2E
 
@@ -241,6 +242,36 @@ Reviewer/Gate → 人工验收 → `integrate-run`，并在执行中强杀一次
   修复后：启动中列出工具成功、同轮 probe + finish 时 finish 被拒、单独 finish 被接受、之后的调用被 Hub 拒绝，核心正常完成。
 - 未覆盖：真实 MCP harness；多会话并发下的令牌隔离只经代码路径确认，未单独运行。
 
+### 2026-10-02 第三步：幂等回执合并
+
+- 合并前有四套实现：核心 `command_receipts`，以及 `workflow_receipts`、`connector_receipts`、`routing_receipts`
+  三张表和各自的 `receipt/remember` SQL（计划原文写"至少三处"，路由实验是第四处）。
+- 合并后是一张表、一个存储类、一个应用层入口：
+  - 表 `command_receipts` 的主键改为 `(scope, idempotency_key)`。`scope` 是键的命名空间：核心命令为 `command`，
+    Workflow 为 `workflow`，Connector 与路由实验为 `connector:<原 scope>`、`routing:<原 scope>`。
+    每个入口的键仍只在原来的范围内唯一，同一个键可以分别用于核心命令和 Workflow。
+  - `CommandReceipt` 增加 `scope`；`CommandReceiptStore.get` 增加 `scope` 参数（默认 `command`，核心调用点不变）。
+    Workflow、Connector、路由实验的事务接口去掉 `receipt/remember`，改为提供同一个 `receipts` 存储。
+  - [idempotency.py](../src/ehai/application/idempotency.py) 的 `recorded_result` / `record_result` 负责查找、
+    比对命令名与指纹、记录结果；核心服务、便签和上述三个服务都经它使用回执。键被另一条命令或另一份内容占用时
+    抛出什么错误由调用方传入，因此各入口的 HTTP 状态码、`error.code` 和错误文字都没有变。
+- Schema 22 → 23（只前进）：四张表的行复制到新表后删除旧表，在同一个迁移事务内完成。Workflow 回执原先保存整个请求
+  JSON 作为比对依据，迁移时换成它的 SHA-256；Workflow、Connector、路由回执原先没有时间，迁移后 `created_at` 为空，不补造。
+  升级后的数据库不能再由旧版本程序打开。
+- 未改动：StartRun 重放（含历史 CLI 授权的兼容分支）和定向挂起的专用判断仍直接读取回执；`worker_event_receipts`
+  是事件去重，不属于命令回执。
+- 验证（仓库外诊断，未提交）：先在改动前的 main 上启动 `ehai-api`，经 HTTP 执行 25 个操作，在四张表各写入回执
+  （核心 7、Workflow 6、Connector 5、路由 5 行）：核心的创建项目/目标，便签的创建/回复/决定，Workflow 的全部 5 个命令，
+  Connector 的全部 5 个命令，路由实验的 create / pause / change-project / fallback / submit，以及同一个键用于另一条命令、
+  同一个键分别用于核心命令和 Workflow。然后把这个数据库复制两份，分别用改动前和改动后的程序打开（后者迁移到 schema 23），
+  对每个操作做同键同内容重放和同键不同内容的误用：两边的状态码与响应体逐字节相同。迁移后旧表不存在，新表 23 行；
+  之后的新命令及其重放正常。把迁移中 Workflow 指纹的哈希去掉后，诊断在 Workflow 重放处失败。
+  产品 E2E（连续 3 次，无遗留进程）、ruff、format、mypy（两个平台）、lint-imports 通过；API Schema 与 TS Client
+  重新生成无差异，TS 类型检查与构建通过。本次在 macOS 上运行，此前的证据来自 Linux 与 Windows；
+  PR 的 CI（静态检查与契约、Linux E2E、Windows E2E）通过。
+- 未覆盖：真实使用中的旧数据库（只验证了诊断生成的 schema 22 数据库）；路由实验的 resolve / feedback / propose /
+  replay / publish 五个命令的重放（需要 Jev 连接器的实际往返，与已验证的命令共用同一段代码）。
+
 ### 2026-10-03 第四步：真实 Pi 手动验收与强杀恢复
 
 - 环境：macOS；锁定的 Pi 0.85.1；模型为 OpenCode Go 的 `deepseek-v4.1-flash`（用户为测试单独提供的凭证，只经宿主环境变量
@@ -265,6 +296,12 @@ Reviewer/Gate → 人工验收 → `integrate-run`，并在执行中强杀一次
 - 修复：调度循环每次认领后，对已认领工作中处于 running、但本进程没有任务在执行的 Attempt 走与启动恢复相同的
   `recover_attempt`（`ConcurrentRuntime._recover_unowned_attempts`，启动恢复也改用它）。本进程正在执行的 Attempt 都登记在
   `_active_tasks` 中，不会被重复恢复。租约语义不变：重启的宿主仍要等旧租约过期（最长 5 分钟）才接手，但不再需要第二次重启。
+- 评审发现（Codex）：循环中的恢复一次启动该工作的全部孤儿 Attempt，不经过 `_schedule` 使用的全局/项目/Run/Profile/Endpoint
+  容量和共享工作区写入规则；重启后的宿主若已用新工作占满容量，某个任务结束的那一刻就会超出容量。修复：`Dispatcher.admits`
+  按 `select` 的同一组限制检查已确定的分配，工作区冲突规则合为一个方法供两处使用；放不下的恢复等待，循环在调度新工作前
+  重试。诊断（仓库外，脚本化模型，`--worker-capacity 2`）：Run 1 的两个节点被挂起时强杀并立即重启，Run 2 的两个挂起节点占满容量；
+  Run 1 租约到期后放行 Run 2 的一个节点。修复前的提交在一次恢复中把本进程任务数从 1 推到 3；修复后分两次各恢复一个，始终不超过 2，
+  Run 1 最终完成。（Run 2 被人为挂起约 5 分钟的那个请求按结果未知打开干预，属预期，与本修复无关。）
 - 修复后复测（全新状态与仓库）：两个写代码节点都在运行时 `kill -9` 宿主，20 秒内重启，此后不再重启。旧租约到期的同一秒，
   宿主重新认领并把两个 Attempt 标为中断（崩溃前尚未提交候选），按本地回滚规则重试；新 Attempt 成功，Reviewer 完成，
   `verify.py` 通过，人工验收后 Run completed，integrate-run 成功。产品 E2E、ruff、format、mypy（两个平台）、lint-imports 通过。
@@ -279,3 +316,5 @@ Reviewer/Gate → 人工验收 → `integrate-run`，并在执行中强杀一次
 | `--worker-timeout-seconds` | 原只用于 Codex Worker，现无使用方；参数与多工作区登记字段保留以免破坏接口，是否删除待定 |
 | CLI 启动 scripted 宿主 Run | `ehai --api-url ... start-run` 要求 `--execution-config`，而执行配置只接受 pi；scripted 宿主只能经 HTTP 启动。E2E 暂用 HTTP，是否调整 CLI 待定 |
 | 幂等重放返回值 | 重复人工判定返回当前 Run 状态而非原回执；如需原回执语义需单独设计 |
+| 幂等键冲突的错误码 | 同一个键用于不同内容时，核心命令返回 409 `conflict`，Workflow/Connector/路由返回 409 `state_conflict`，便签返回 422 `invalid_request`；回执合并时按"保持行为"原样保留，是否统一待定 |
+| 便签命令重放的响应 | create-note / add-note-message / decide-note 同键重放返回便签的当前状态，不是当时的响应：没有首次响应中的 `stale_reason: null`，便签之后有回复或决定时内容也随之不同（合并前已如此）；与上一条同类，是否改为原回执语义待定 |

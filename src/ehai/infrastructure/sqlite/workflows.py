@@ -6,7 +6,6 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 
 from ehai import JsonValue, json_loads, normalize_id
-from ehai.application.ports import StateConflictError
 from ehai.application.queries import QueryNotFoundError
 from ehai.application.workflow_execution_models import WorkflowExecutionRecord
 from ehai.application.workflow_models import WorkflowModel
@@ -14,7 +13,7 @@ from ehai.application.workflow_recording import project_workflow_run
 from ehai.application.workflows import WorkflowEntity, WorkflowTransaction
 from ehai.domain.events import Event
 from ehai.infrastructure.sqlite.database import SQLiteDatabase
-from ehai.infrastructure.sqlite.repository import SQLiteEventLog
+from ehai.infrastructure.sqlite.repository import SQLiteCommandReceiptStore, SQLiteEventLog
 from ehai.infrastructure.sqlite.workflow_execution import SQLiteWorkflowExecutionRecords
 
 
@@ -88,22 +87,9 @@ class _Transaction(SQLiteWorkflowExecutionRecords):
             (kind, entity_id, document["project_id"], value.model_dump_json()),
         )
 
-    def receipt(self, key: str, request: str) -> dict[str, JsonValue] | None:
-        row = self.connection.execute(
-            "SELECT request_json,response_json FROM workflow_receipts WHERE idempotency_key=?",
-            (key,),
-        ).fetchone()
-        if row is None:
-            return None
-        if row[0] != request:
-            raise StateConflictError("idempotency_key already belongs to another workflow command")
-        return _document(row[1])
-
-    def remember(self, key: str, request: str, result: WorkflowModel) -> None:
-        self.connection.execute(
-            "INSERT INTO workflow_receipts VALUES (?,?,?)",
-            (key, request, result.model_dump_json()),
-        )
+    @property
+    def receipts(self) -> SQLiteCommandReceiptStore:
+        return SQLiteCommandReceiptStore(self.connection)
 
     def emit(self, event: Event) -> None:
         SQLiteEventLog(self.connection).append(event)

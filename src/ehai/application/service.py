@@ -19,6 +19,7 @@ from ehai.application.execution_service.common import (
 from ehai.application.execution_service.planning import PlanningCommandsMixin
 from ehai.application.execution_service.process import ProcessCommandsMixin
 from ehai.application.execution_service.runs import RunCommandsMixin
+from ehai.application.idempotency import recorded_result
 from ehai.application.orchestrator import Orchestrator
 from ehai.application.planner import (
     Planner,
@@ -90,14 +91,15 @@ class ExecutionService(PlanningCommandsMixin, ProcessCommandsMixin, RunCommandsM
         command_name: str,
         fingerprint: str,
     ) -> Mapping[str, JsonValue] | None:
-        receipt = uow.command_receipts.get(idempotency_key)
-        if receipt is None:
-            return None
-        if receipt.command_name != command_name or receipt.command_fingerprint != fingerprint:
-            raise IdempotencyConflictError(
+        return recorded_result(
+            uow.command_receipts,
+            idempotency_key,
+            command_name,
+            fingerprint,
+            conflict=lambda receipt: IdempotencyConflictError(
                 f"idempotency key {idempotency_key!r} already belongs to {receipt.command_name}"
-            )
-        return receipt.result
+            ),
+        )
 
     def _record_receipt(
         self,

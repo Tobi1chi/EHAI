@@ -36,8 +36,9 @@
 | 10-02 | Planner 改为与 harness 无关的 PlannerRole | 0（真实 Pi + 脚本化模型服务） | discuss-plan（ask_user）与 propose-plan（raise_note）在 main 与改动后输出一致 | 真实模型、完整建图、replan/过程草稿路径 | [REFACTOR_PLAN](REFACTOR_PLAN.md#2026-10-02-adr-0007-第-5-步plannerrole) |
 | 10-02 | Hub 每会话 MCP 端点 | 0（合成 MCP harness） | 工具列表限于本会话，调用经核心执行与记录后返回；关闭后令牌失效，Hub 令牌无权访问 | 真实 MCP harness、并发会话 | [REFACTOR_PLAN](REFACTOR_PLAN.md#2026-10-02-adr-0007-第-7-步每会话-mcp-端点) |
 | 10-02 | propose-plan 只得到便签时的 HTTP 500 | 0（真实 Pi + 脚本化模型服务） | 复现 500 后修复：返回 422 `planner_failed` 且便签保存；Hub 不可达时返回 502 `harness_outcome_unknown` | 真实模型 | [REFACTOR_PLAN](REFACTOR_PLAN.md#2026-10-02-adr-0007-第-5-步plannerrole) |
+| 10-02 | 幂等回执合并为一张表（schema 22→23） | 0 | 同一个改动前生成的数据库，分别由改动前后的程序重放 25 个操作（含同键不同内容），响应逐字节相同；键的命名空间互不影响；迁移后新命令及重放正常 | 真实旧数据库、路由实验 5 个命令的重放 | [REFACTOR_PLAN](REFACTOR_PLAN.md#2026-10-02-第三步幂等回执合并) |
 | 10-03 | 真实 Pi 手动验收（导入 → 并发写代码 → Reviewer → 命令与人工 Gate → integrate-run） | 真实 OpenCode Go DeepSeek V4.1 Flash（25 个响应） | Run completed，成果只改两个模块文件，integrate-run 重试得到同一 commit；Reviewer 运行中强杀后 Run 卡住，见下一行 | Pi Planner、Windows、写入中途崩溃 | [REFACTOR_PLAN](REFACTOR_PLAN.md#2026-10-03-第四步真实-pi-手动验收与强杀恢复) |
-| 10-03 | 强杀后重启卡住的修复 | 真实 OpenCode Go DeepSeek V4.1 Flash（26 个响应） | 修复前：租约未过期时重启，running Attempt 永不恢复；修复后：两个写代码节点运行中强杀并立即重启，旧租约到期时自动中断并重试，Run 完成并整合 | 多次连续崩溃、独立 Hub、Windows | [REFACTOR_PLAN](REFACTOR_PLAN.md#2026-10-03-第四步真实-pi-手动验收与强杀恢复) |
+| 10-03 | 强杀后重启卡住的修复 | 真实 OpenCode Go DeepSeek V4.1 Flash（26 个响应） | 修复前：租约未过期时重启，running Attempt 永不恢复；修复后：两个写代码节点运行中强杀并立即重启，旧租约到期时自动中断并重试，Run 完成并整合；恢复受容量限制（脚本化诊断：修复前一次恢复超出容量 2，修复后不超出） | 多次连续崩溃、独立 Hub、Windows | [REFACTOR_PLAN](REFACTOR_PLAN.md#2026-10-03-第四步真实-pi-手动验收与强杀恢复) |
 
 ## P3 平台后端
 
