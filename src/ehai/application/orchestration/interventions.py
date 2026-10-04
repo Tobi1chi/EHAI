@@ -22,12 +22,16 @@ from ehai.application.orchestration.host import OrchestratorHost
 from ehai.application.orchestration.readiness import (
     ready_nodes,
 )
+from ehai.application.pause_causes import PauseCause, pause_event_payload
 from ehai.application.ports import UnitOfWork
 from ehai.domain.events import EventType
 from ehai.domain.execution import AttemptStatus, Run, RunStatus
 from ehai.domain.planning import (
     PlanNodeStatus,
 )
+
+REPEATED_INTERVENTION_LIMIT = 3
+"""Every this-many interventions on one PlanNode pause the Run for an explicit decision."""
 
 
 class InterventionsMixin:
@@ -81,6 +85,34 @@ class InterventionsMixin:
                     },
                 )
             )
+            count = sum(
+                1
+                for item in list_interventions(uow.events, run.run_id)
+                if item.get("plan_node_id") == node.plan_node_id
+            )
+            if run.status is RunStatus.RUNNING and count % REPEATED_INTERVENTION_LIMIT == 0:
+                # Replies keep releasing the node into the same blocker; stop dispatching until
+                # someone decides explicitly instead of spending further Attempts.
+                run = run.pause()
+                uow.states.put_run(run)
+                uow.events.append(
+                    self._event(
+                        EventType.RUN_PAUSED,
+                        run,
+                        run.run_id,
+                        pause_event_payload(
+                            run.run_id,
+                            PauseCause.REPEATED_INTERVENTION,
+                            reason=(
+                                f"PlanNode {node.title!r} has asked for human help {count} times "
+                                "in this Run and replies have not unblocked it. Give a concrete "
+                                "decision, adjust the process or cancel, then resume the Run."
+                            ),
+                            plan_node_id=node.plan_node_id,
+                            intervention_count=count,
+                        ),
+                    )
+                )
             uow.commit()
             return run
 

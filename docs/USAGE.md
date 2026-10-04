@@ -167,6 +167,9 @@ get-trace、get-result；候选 Artifact、Reviewer 结论和最终 Gate 是不�
 - pause-run / resume-run / cancel-run：--run-id、--idempotency-key；由持有执行的 API 宿主收敛。
 - get-run-interventions → reply-intervention：--intervention-id、--request-token、--actor、
   --message、--idempotency-key。只解除对应人工问题，不批准新需求/权限。
+  同一节点在一个 Run 中每累计 3 次干预，Run 会暂停（`RunPaused` 事件的 `pause_cause` 为
+  `repeated_intervention`，原因与次数见 get-trace 的事件）：先给出明确决定、调整过程或取消，
+  再 resume-run；暂停期间的回复不会自行恢复执行。
 - get-run-checks → decide-human-check：--check-run-id、--request-token、--passed 或 --rejected、
   --actor、--comment、--idempotency-key。
 - propose-process --run-id --reason；review-process --draft-id；apply-process --review-id；

@@ -224,6 +224,11 @@ def create_local_app(
         pi_backend=pi_backend,
         notes=notes,
         project_configuration=project_configuration,
+        worker_capability_preview=(
+            None
+            if host_execution_config is None
+            else worker_capability_preview(host_execution_config)
+        ),
     )
     builtin_sessions = SQLiteAgentTraceStore(query_database)
     session_mailbox = SessionMailbox(SQLiteSessionMailboxRepository(query_database))
@@ -840,6 +845,32 @@ def _parse_allowed_command_argv(values: Sequence[str]) -> tuple[tuple[str, ...],
             raise ValueError("--agent-allowed-command requires an argv JSON array")
         policies.append(decoded)
     return tuple(policies)
+
+
+def worker_capability_preview(config: ExecutionConfig) -> dict[str, JsonValue]:
+    """Describe the Worker policy a Run on this host receives, for the Planner's context.
+
+    Mirrors the Pi Worker's tool assembly: reviewers keep the command list but get a read-only
+    workspace, no shells and at most git.read. This states facts; it authorizes nothing.
+    """
+    commands: list[JsonValue] = [list(argv) for argv in config.allowed_commands]
+    git = sorted(config.git_permissions)
+    return {
+        "work_nodes": {
+            "workspace": "read and write in the node's EHAI-owned workspace",
+            "allowed_commands": commands,
+            "available_shells": list(config.available_shells),
+            "git_permissions": list(git),
+        },
+        "reviewer_nodes": {
+            "workspace": "read-only",
+            "allowed_commands": list(commands),
+            "available_shells": [],
+            "git_permissions": ["git.read"] if "git.read" in git else [],
+        },
+        "unlisted": "Any command, interpreter or script not listed exactly is unavailable.",
+        "authorization": "Granted only by start-run with this host's execution configuration.",
+    }
 
 
 def _normalize_allowed_command_argv(
