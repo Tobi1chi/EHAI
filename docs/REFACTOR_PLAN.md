@@ -32,7 +32,7 @@
 | 1. 安全网 | 每次修改都能自动确认主路径未被破坏 | 产品 E2E 入库；CI 在 Linux 跑静态检查、契约生成比对和 E2E，并在 Windows 跑 E2E | 完成：E2E 与 CI 已入库，首次 CI 全部通过（含 Windows E2E） |
 | 2. 低风险清理 | 代码只保留实际使用的后端和清晰命名 | Codex 去留已决定并执行；图 IR、脱敏工具移到中性模块；`legacy_config.py` 处置；Run/Routine 命名冲突有决定 | 完成：Codex 已删除（选项 A）；图 IR 与脱敏已移出；`legacy_config.py` 已删除；命名决定为不改名、统一术语 |
 | 3. 拆分大文件 | 新贡献者能按职责定位代码 | Orchestrator 拆为门面与若干职责模块；Repository/Service 按聚合拆分；幂等回执合并为一个机制；E2E 全程通过 | 完成：三个大文件已拆分，幂等回执已合并为一个机制（2026-10-02） |
-| 4. 收尾 P2 | 在真实项目上完成一次可核对的开发任务 | 真实 Pi 按[手动验收](#真实-pi-手动验收)完成并记录；随后在 P3.3 与 P4 通用 Workflow 中选一项 | 进行中：手动验收已完成一次（2026-10-03，见[执行记录](#2026-10-03-第四步真实-pi-手动验收与强杀恢复)），P3.3 与 P4 的选择待定 |
+| 4. 收尾 P2 | 在真实项目上完成一次可核对的开发任务 | 真实 Pi 按[手动验收](#真实-pi-手动验收)完成并记录；随后在 P3.3 与 P4 通用 Workflow 中选一项 | 完成：导入路径按手动验收完成一次，含强杀恢复（2026-10-03，见[执行记录](#2026-10-03-第四步真实-pi-手动验收与强杀恢复)）；另以 Pi Planner 规划路径做了一次补充验收，未含强杀（见[Planner 路径](#2026-10-03-第四步补充pi-planner-规划路径)）；用户选择下一步做 P3.3 |
 
 ### 步骤 3 的拆分方向
 
@@ -308,6 +308,21 @@ Reviewer/Gate → 人工验收 → `integrate-run`，并在执行中强杀一次
 - 用量（Pi 上报，非账单）：第一次 25 个模型响应、约 16 万 token（其中约 12 万为缓存命中）；复测 26 个响应、约 15 万 token。
 - 未覆盖：Pi Planner 规划（本次用导入）；Windows；写入中途崩溃（崩溃时尚未提交候选）；多次连续崩溃；独立 Hub；
   租约未过期前的等待时间（最长 5 分钟）是否需要缩短，按现有租约设计保留。
+
+### 2026-10-03 第四步补充：Pi Planner 规划路径
+
+- 用户选择先补这一项再做 P3.3。环境、目标仓库与模型同上一节；宿主改为 `--planner pi --planner-model deepseek-v4.1-flash
+  --planner-timeout-seconds 600`，并以 `--command-check-argv` 把 `verify.py` 设为 `command:exit-zero` 判据的宿主命令。
+- 正常入口：create-project → create-goal → `discuss-plan`（判据 `command:exit-zero` 与 `human:<问题>`，消息要求两个并行写代码节点、
+  只读 Reviewer、宿主运行 verify.py 后人工验收）。Planner 探查仓库约 2 分钟后直接返回草稿（"Draft ready"），没有另调
+  `propose-plan`。
+- 草稿：两个并行写代码节点 → 阶段 Reviewer（节点 Gate 运行两个测试模块）→ 汇合节点 → 最终 Reviewer；完成契约为
+  `verify.py` 命令检查加人工问题。比要求多出汇合节点和第二个 Reviewer，偏保守但不违反要求，按原样批准。
+- 执行：approve-plan → `start-run --authorize`，五个节点依次完成，阶段 Gate 与 verify.py 通过，人工验收后 Run completed；
+  integrate-run 成功（5 个来源，无冲突），成果只改两个模块文件，测试与额外用例通过。
+- 用量（Pi 上报，非账单）：规划 12 个模型响应、约 20 万 token；执行 34 个响应、约 33 万 token。
+- 这是规划路径的补充验收，不是完整手动验收：执行中没有强杀宿主（强杀恢复由上一节的导入路径覆盖）。
+- 未覆盖：强杀恢复；多轮讨论与 `propose-plan` / `replan-plan`；规划失败或便签路径（已由 10-02 的脚本化诊断覆盖 422）；Windows。
 
 ## 待决事项
 
