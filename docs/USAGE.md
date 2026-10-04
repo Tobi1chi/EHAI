@@ -168,7 +168,9 @@ get-trace、get-result；候选 Artifact、Reviewer 结论和最终 Gate 是不�
 - get-run-interventions → reply-intervention：--intervention-id、--request-token、--actor、
   --message、--idempotency-key。只解除对应人工问题，不批准新需求/权限。
 - get-run-checks → decide-human-check：--check-run-id、--request-token、--passed 或 --rejected、
-  --actor、--comment、--idempotency-key。
+  --actor、--comment、--idempotency-key；可选 --hold（HTTP `hold=true`）在同一事务中暂停 Run
+  （`pause_cause` 为 `human_hold`），下游不会开始，Gate 暂不结算；此时可做批准内过程调整，
+  resume-run 后结算 Gate 并按当前过程继续。待办中对应操作为 "Pass and hold"。
 - propose-process --run-id --reason；review-process --draft-id；apply-process --review-id；
   写入均需幂等键。API 提案/审查为异步受理，get-process-draft/get-process-review 查询真实状态。
   不改变需求、对外接口、Gate、权限；不等于跨批准后继 Run 已交付。
@@ -232,6 +234,8 @@ HTTP 为 `GET /api/v1/inbox?project_id=...&run_id=...` 和
 `passed=true`、`actor` 和 `comment`；CLI 仍使用 `decide-human-check --passed`。
 回复干预不扩大批准，人工 Check 决定由核心继续评估 Gate。提交后重读待办和 Run；
 Run 已暂停时，普通回复不隐式恢复；人工 Check 需先明确恢复 Run 才能作出决定。
+需要"通过但先不往下走"（例如先粗后细时按设计细化后续阶段）时，用 `hold=true` 决定，而不是决定后再暂停：
+后者会让下游在暂停生效前开始执行。
 
 外层 `observed_at` / `event_offset` 描述持久事实的只读快照。
 本地 `--database` / `--artifacts` 模式同样可查询持久待办。

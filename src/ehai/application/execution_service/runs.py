@@ -30,7 +30,7 @@ from ehai.application.execution_service.host import ExecutionServiceHost
 from ehai.application.goal_budgets import validate_goal_worker_budget
 from ehai.application.interventions import list_interventions
 from ehai.application.orchestrator import GateRejectedError
-from ehai.application.pause_causes import PauseCause, require_pause_cause
+from ehai.application.pause_causes import PauseCause, pause_event_payload, require_pause_cause
 from ehai.application.ports import CommandReceipt, UnitOfWork
 from ehai.application.process_control import (
     ProcessControlGuard,
@@ -209,6 +209,28 @@ class RunCommandsMixin:
                     actor=command.actor,
                     comment=command.comment,
                 )
+                if command.hold:
+                    # Paused before the Gate settles: no downstream work can be admitted.
+                    # resume-run recovers the decided Gate and continues from there.
+                    run = run.pause()
+                    uow.states.put_run(run)
+                    uow.events.append(
+                        Event(
+                            type=EventType.RUN_PAUSED,
+                            run_id=run.run_id,
+                            correlation_id=run.run_id,
+                            payload=pause_event_payload(
+                                run.run_id,
+                                PauseCause.HUMAN_HOLD,
+                                reason=(
+                                    "Human decision recorded with hold; resume the Run to "
+                                    "settle the Gate and continue."
+                                ),
+                                check_run_id=command.check_run_id,
+                            ),
+                            occurred_at=self._clock(),
+                        )
+                    )
                 self._record_receipt(
                     uow,
                     command.idempotency_key,

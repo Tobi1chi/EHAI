@@ -436,19 +436,34 @@ class InboxQuery:
         actions = (
             ()
             if not pending or reason
-            else tuple(
+            else (
+                *(
+                    InboxAction(
+                        "decide-human-check",
+                        "Pass" if passed else "Reject",
+                        "Record a decision for this evidence version; the core evaluates the Gate",
+                        ("idempotency_key", "actor", "comment"),
+                        {
+                            "check_run_id": check.check_run_id,
+                            "request_token": request.request_token,
+                            "passed": passed,
+                        },
+                    )
+                    for passed in (True, False)
+                ),
                 InboxAction(
                     "decide-human-check",
-                    "Pass" if passed else "Reject",
-                    "Record a decision for this evidence version; the core evaluates the Gate",
+                    "Pass and hold",
+                    "Record a pass and pause the Run before downstream work starts, e.g. to "
+                    "adjust the process; resume-run then settles the Gate and continues",
                     ("idempotency_key", "actor", "comment"),
                     {
                         "check_run_id": check.check_run_id,
                         "request_token": request.request_token,
-                        "passed": passed,
+                        "passed": True,
+                        "hold": True,
                     },
-                )
-                for passed in (True, False)
+                ),
             )
         )
         return InboxItem(
