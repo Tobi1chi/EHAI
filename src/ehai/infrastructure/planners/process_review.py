@@ -60,8 +60,12 @@ _REVIEWER_SYSTEM_PROMPT = "\n".join(
         "The host reallocates IDs for changed tasks and input-affected downstream tasks; this",
         "alone is not a changed approval. gate_owners retains logical Gate identity separately.",
         "Historical/draft-key references may identify source work, but an assertion that old",
-        "execution IDs or edges remain current must agree with the compiled graph. If the",
-        "design misstates the current route or Gate owner, mark gate_scope uncertain and",
+        "execution IDs or edges remain current must agree with the compiled graph. The Planner",
+        "writes the design before compilation, so it may name a task by its previous execution",
+        "ID; candidate_process_revision.block_changes maps each previous_node_id to its compiled",
+        "node_id. A reference that block_changes maps to the stated role or Gate owner is",
+        "consistent. If the design still misstates the current route or Gate owner, mark",
+        "gate_scope uncertain and",
         "explain the contradiction; do not silently repair or ignore it to report preservation.",
         "Read the supplied intervention history and user replies. They are continuation context,",
         "not approval to broaden requirements or permissions. Check that replacement tasks",
@@ -360,6 +364,11 @@ def _process_document(process: ProcessRevision) -> dict[str, JsonValue]:
         "reason": process.reason,
         "created_at": format_utc_datetime(process.created_at),
         "gate_owners": {str(key): value for key, value in process.gate_owners.items()},
+        "block_changes": (
+            None
+            if process.block_changes is None
+            else [change.to_document() for change in process.block_changes]
+        ),
         "graph": _plan_document(process.graph),
     }
 
