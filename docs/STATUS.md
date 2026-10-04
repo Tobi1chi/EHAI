@@ -25,7 +25,7 @@
 | Agent 后端 | 部分 | 只有 Pi；Codex 已删除；Planner 与 harness 无关；Hub 已有每会话 MCP 端点（仅合成客户端验证）；能力清单与执行配置形状未实现 | [ADR 0007](adr/0007-agent-harness-port.md) |
 | Agent harness Hub | 无模型验证 | 所有 Pi 角色经独立 `ehai-hub`（默认本机子进程）；Worker 路径由产品 E2E 在 Linux/Windows CI 覆盖，未用真实模型；跨机器需同路径 | [HUB](HUB.md) · [核心](EVIDENCE.md#核心执行) |
 | 阶段上下文 | 部分 | 逻辑 Phase Session 共享；物理 Pi Session 按 Attempt 隔离 | [EXECUTION_MODEL](EXECUTION_MODEL.md#实例与会话) |
-| 批准内过程调整 / Block 清单 | 无模型验证 | 清单只描述变化，不批准、不授权复用成果；10-04 前过程审查在真实 Pi 上无法运行（已修复，真实模型审查未完成） | [核心](EVIDENCE.md#核心执行) |
+| 批准内过程调整 / Block 清单 | 真实验证 | 清单只描述变化，不批准、不授权复用成果；草稿可读已完成成果，先粗后细在中型任务上端到端通过（10-04）；暂停时不能决定人工 Gate | [核心](EVIDENCE.md#核心执行) |
 | Git 自动整合 | 无模型验证 | 用历史真实成果整合；冲突路径未实跑 | [核心](EVIDENCE.md#核心执行) |
 | 跨批准后继 Run | 真实验证 | 单次接续通过；基线变化重执行、多次接续、崩溃未验证 | [核心](EVIDENCE.md#核心执行) |
 | 长任务可靠性 | 部分 | Worker/Reviewer 运行中强杀后可恢复（重启后等旧租约过期，最长 5 分钟，10-03 真实验证）；写入中断、长链接续未系统验证 | [未决问题](EVIDENCE.md#已知未决问题) |
