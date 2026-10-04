@@ -324,6 +324,24 @@ Reviewer/Gate → 人工验收 → `integrate-run`，并在执行中强杀一次
 - 这是规划路径的补充验收，不是完整手动验收：执行中没有强杀宿主（强杀恢复由上一节的导入路径覆盖）。
 - 未覆盖：强杀恢复；多轮讨论与 `propose-plan` / `replan-plan`；规划失败或便签路径（已由 10-02 的脚本化诊断覆盖 422）；Windows。
 
+### 2026-10-05 人工 Check 决定后保持暂停
+
+- 起因：先粗后细回放中，用户需要"通过第 1 阶段 Gate，但先按设计细化后续阶段再继续"。既有语义下 Run 暂停时
+  人工 Check 不可决定，而决定后下游立即派发（实测约 40 毫秒），先决定再暂停会让粗方案的下一阶段节点开始执行，
+  只能等它排空或被中断。
+- 决定（用户选择）：`decide-human-check --hold`（HTTP `hold=true`）。决定与 Run 暂停（`pause_cause` 为
+  `human_hold`）在同一事务提交，不排派发、不结算 Gate；`resume-run` 由既有的候选恢复路径结算 Gate，再按当时的
+  过程继续。待办在 Pass、Reject 之后新增 "Pass and hold"。`hold` 只在为真时进入命令指纹，旧回执不受影响。
+- 诊断（仓库外，真实 Pi + 脚本化模型，产品 E2E 方案）：待办出现 "Pass and hold"；决定返回 paused；6 秒内无新 Attempt，
+  被决定节点仍为 verifying、下游未开始、无 GatePassed；同键重放返回同一结果，同键去掉 hold 返回 409；恢复后 Gate 结算，
+  Run 完成。静态检查、Schema 与 Client 生成无额外差异（OpenAPI 新增可选字段）、产品 E2E 通过。
+- 真实模型（OpenCode Go `deepseek-v4.1-flash`，与过程调整读取成果的分支本地合并后运行，cdls 先粗后细，隐藏评分；
+  2 组共 310 个响应，按单价约 $0.85）：两组都在决定的同一毫秒暂停（`CheckPassed` 后紧接 `RunPaused`），
+  草稿开始前无节点就绪或启动。H1 审查通过、应用细化（6→9 节点），恢复后依次 `RunResumed` → `GatePassed` →
+  细化后的第一个节点开始，满分、零干预、无中断 Attempt（此前"先决定再暂停"的两组各有 1 个被中断）。H2 审查判定
+  细化遗漏了第 3 阶段 Gate 要求的一项测试，未应用；恢复后 Gate 结算并按原过程满分完成。
+- 未覆盖：保持期间并行分支仍在运行时的排空、多次连续保持、Windows。
+
 ## 待决事项
 
 | 事项 | 说明 |

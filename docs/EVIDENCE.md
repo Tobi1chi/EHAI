@@ -1,6 +1,6 @@
 # 运行证据
 
-更新：2026-10-03。本页把每次正常入口试用压缩为一行：做了什么、结果、哪些没有覆盖。
+更新：2026-10-05。本页把每次正常入口试用压缩为一行：做了什么、结果、哪些没有覆盖。
 能力结论见 [STATUS](STATUS.md)；原始叙述（Run ID、用量明细、临时证据目录）保留在下列归档：
 
 - [RECORD_R2](history/RECORD_R2.md)：核心执行、导入/MCP、Git 整合、后继 Run 与模型工具契约（2026-09-14 ~ 09-27）
@@ -40,6 +40,7 @@
 | 10-03 | 真实 Pi 手动验收（导入 → 并发写代码 → Reviewer → 命令与人工 Gate → integrate-run） | 真实 OpenCode Go DeepSeek V4.1 Flash（25 个响应） | Run completed，成果只改两个模块文件，integrate-run 重试得到同一 commit；Reviewer 运行中强杀后 Run 卡住，见下一行 | Pi Planner、Windows、写入中途崩溃 | [REFACTOR_PLAN](REFACTOR_PLAN.md#2026-10-03-第四步真实-pi-手动验收与强杀恢复) |
 | 10-03 | 强杀后重启卡住的修复 | 真实 OpenCode Go DeepSeek V4.1 Flash（26 个响应） | 修复前：租约未过期时重启，running Attempt 永不恢复；修复后：两个写代码节点运行中强杀并立即重启，旧租约到期时自动中断并重试，Run 完成并整合；恢复受容量限制（脚本化诊断：修复前一次恢复超出容量 2，修复后不超出） | 多次连续崩溃、独立 Hub、Windows | [REFACTOR_PLAN](REFACTOR_PLAN.md#2026-10-03-第四步真实-pi-手动验收与强杀恢复) |
 | 10-03 | 真实 Pi Planner 规划 → 执行 → 验收 → integrate-run | 真实 OpenCode Go DeepSeek V4.1 Flash（规划 12 + 执行 34 个响应） | discuss-plan 产出可批准草稿（并行节点、Reviewer、verify.py 与人工判据），Run completed，integrate-run 成功 | 多轮讨论、propose/replan、Windows | [REFACTOR_PLAN](REFACTOR_PLAN.md#2026-10-03-第四步补充pi-planner-规划路径) |
+| 10-05 | 人工 Check 决定后保持暂停（`--hold`） | 真实 Pi + 脚本化模型；真实 OpenCode Go DeepSeek V4.1 Flash（2 组，310 个响应，按单价约 $0.85） | 决定与暂停同一事务，保持期间无派发、Gate 未结算；恢复后结算并继续；先粗后细一组应用细化后满分且无中断 Attempt，另一组审查拦下遗漏义务后按原过程满分 | 保持时并行分支排空、多次保持、Windows | [REFACTOR_PLAN](REFACTOR_PLAN.md#2026-10-05-人工-check-决定后保持暂停) |
 
 ## P3 平台后端
 
