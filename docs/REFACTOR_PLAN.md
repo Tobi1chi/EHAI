@@ -324,6 +324,22 @@ Reviewer/Gate → 人工验收 → `integrate-run`，并在执行中强杀一次
 - 这是规划路径的补充验收，不是完整手动验收：执行中没有强杀宿主（强杀恢复由上一节的导入路径覆盖）。
 - 未覆盖：强杀恢复；多轮讨论与 `propose-plan` / `replan-plan`；规划失败或便签路径（已由 10-02 的脚本化诊断覆盖 422）；Windows。
 
+### 2026-10-04 过程审查工具被 Pi 严格模式拒绝
+
+- 现象：真实模型下 `review-process` 每次都失败，错误为 `HarnessExecutionUnknownError`，看起来像流中断。
+  10-03 规划实验的 P1 与 10-04 的两次先粗后细回放都是如此，审查在开始后不到 1 秒失败。
+- 原因：Pi 适配层给所有 EHAI 工具请求严格约束采样（`strict: "require"`），而 `finish_process_review`
+  的 `obligation_mapping` 写成 `anyOf: [对象, null]`；Pi 0.85.1 的严格化不支持对象联合，在发出模型请求前
+  就拒绝该工具（会话记录：`requires JSON-schema constrained sampling, but object and array unions are unsupported`）。
+  过程审查因此在真实 Pi 上从未运行过；`HarnessExecutionUnknownError` 掩盖了这个确定性错误。
+- 修复：`obligation_mapping` 改为不在 `required` 中的普通对象属性，由 Pi 严格化时自行允许 null；
+  解析端接受该键缺省或为 null，均表示没有映射（草稿不能应用，既有语义）。
+- 验证：仓库外诊断（真实 Pi + 脚本化模型，经正常入口 propose-process → review-process）：修复前 Reviewer
+  没有发出任何模型请求；修复后请求到达模型，工具 Schema 中 `obligation_mapping` 为"对象或 null"且列为必填。
+  静态检查、Schema 无差异、产品 E2E 通过。
+- 未覆盖：真实模型完成一次审查并应用草稿（随过程调整读取成果的回放一起验证）；其他严格模式限制的系统排查
+  （仓库内其余面向模型的工具没有 `anyOf`/`oneOf`）。
+
 ## 待决事项
 
 | 事项 | 说明 |
