@@ -10,7 +10,7 @@ from __future__ import annotations
 import asyncio
 import math
 from collections.abc import Callable, Mapping
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
 
@@ -64,6 +64,10 @@ from ehai.domain.process import (
     process_graph_definition,
 )
 from ehai.infrastructure.host_tools import HostToolRuntime
+from ehai.infrastructure.planners.artifact_pages import (
+    artifact_page_parameters,
+    read_artifact_page,
+)
 from ehai.infrastructure.planners.plan_documents import build_planner_input
 
 _DEFAULT_PLANNER_BUDGET = ExplorationBudget(max_attempts=24, max_width=3, max_depth=4)
@@ -253,6 +257,12 @@ _PROCESS_PLANNER_SYSTEM_PROMPT = "\n".join(
         "Do not silently discard open questions, declare unknown external effects resolved, or",
         "use another route to bypass a required human decision. Carry relevant replies into",
         "replacement task instructions so the new Worker receives the needed context.",
+        "planner_input.completed_outputs lists completed tasks with their retained output",
+        "Artifacts and every Check run. Before refining work that depends on a completed",
+        "task, read the relevant Artifacts with read_completed_output; a code task's",
+        "solution.patch holds its full diff, including new documents. Never claim a listed",
+        "output is missing. A Check awaiting a human is an open decision, not a pass: plan",
+        "around it and state the dependency in the design instead of assuming its outcome.",
         "For every change explain which original obligation it implements, its inputs/outputs,",
         "permission scope, evidence and Gate coverage in set_plan_design. Keep unchanged work.",
         "Use move_process_gate only to move a complete original Gate to its new owner; never",
@@ -438,6 +448,7 @@ class PlannerRole:
         *,
         session_ref_id: ID | None = None,
         intervention_context: tuple[dict[str, JsonValue], ...] = (),
+        completed_outputs: Mapping[str, JsonValue] | None = None,
     ) -> ProcessRevision:
         """Run the async process draft entry point from a synchronous caller."""
         return asyncio.run(
@@ -450,6 +461,7 @@ class PlannerRole:
                 reason,
                 session_ref_id=session_ref_id,
                 intervention_context=intervention_context,
+                completed_outputs=completed_outputs,
             )
         )
 
@@ -464,6 +476,7 @@ class PlannerRole:
         *,
         session_ref_id: ID | None = None,
         intervention_context: tuple[dict[str, JsonValue], ...] = (),
+        completed_outputs: Mapping[str, JsonValue] | None = None,
     ) -> ProcessRevision:
         """Draft only; the caller still owns durable review, authorization and publication."""
         self._require_goal(goal, allow_completion_contract=True)
@@ -500,6 +513,7 @@ class PlannerRole:
         document["parent_process_revision_id"] = previous.process_revision_id
         document["reason"] = reason.strip()
         document["interventions"] = [dict(item) for item in intervention_context]
+        document["completed_outputs"] = dict(completed_outputs or {})
         document["frozen_checks"] = [
             {
                 "check_id": check.check_id,
@@ -627,8 +641,13 @@ class PlannerRole:
                 return note
 
             note_handler = raise_note
+        output_reader = None
+        if process_graph is not None and self._artifact_store is not None:
+            output_reader = _completed_output_reader(
+                _output_roster(input_document.get("completed_outputs")), self._artifact_store
+            )
         registry, names = _planner_registry(
-            graph, design, answer, workspace_tools, discussion, note_handler
+            graph, design, answer, workspace_tools, discussion, note_handler, output_reader
         )
         project_context: dict[str, JsonValue] = {}
         project_id = input_document.get("project_id")
@@ -661,6 +680,7 @@ class PlannerRole:
             permissions=frozenset(
                 {"plan.read", "plan.write"}
                 | ({"workspace.read"} if workspace_tools is not None else set())
+                | ({"artifact.read"} if output_reader is not None else set())
             ),
             final_tool_requires_only=False,
         )
@@ -734,6 +754,58 @@ class PlannerRole:
             raise ValueError(f"Goal {goal.goal_id} already has a CompletionContract")
 
 
+@dataclass(frozen=True, slots=True)
+class _OutputArtifact:
+    artifact_id: ID
+    name: str
+    media_type: str
+    size_bytes: int
+    sha256: str
+
+
+def _output_roster(completed_outputs: JsonValue) -> dict[ID, _OutputArtifact]:
+    """Parse the host-built completed output roster; anything malformed is not readable."""
+    roster: dict[ID, _OutputArtifact] = {}
+    outputs = completed_outputs if isinstance(completed_outputs, dict) else {}
+    nodes = outputs.get("completed_nodes")
+    for node in nodes if isinstance(nodes, list) else ():
+        artifacts = node.get("artifacts") if isinstance(node, dict) else None
+        for item in artifacts if isinstance(artifacts, list) else ():
+            if not isinstance(item, dict):
+                continue
+            artifact_id, name = item.get("artifact_id"), item.get("name")
+            media_type, digest = item.get("media_type"), item.get("sha256")
+            size = item.get("size_bytes")
+            if (
+                isinstance(artifact_id, str)
+                and isinstance(name, str)
+                and isinstance(media_type, str)
+                and type(size) is int
+                and isinstance(digest, str)
+            ):
+                normalized = normalize_id(artifact_id)
+                roster[normalized] = _OutputArtifact(normalized, name, media_type, size, digest)
+    return roster
+
+
+def _completed_output_reader(
+    roster: Mapping[ID, _OutputArtifact], artifact_store: ArtifactStore
+) -> ToolHandler:
+    async def read_completed_output(
+        arguments: dict[str, JsonValue], cancellation: CancellationToken
+    ) -> JsonValue:
+        cancellation.raise_if_cancelled()
+        return read_artifact_page(
+            arguments,
+            roster,
+            artifact_store,
+            missing_code="output_not_listed",
+            missing_message="artifact_id must name an Artifact in planner_input.completed_outputs",
+        )
+
+    return read_completed_output
+
+
 def _planner_registry(
     graph: PlanGraphToolRuntime,
     design: dict[str, str],
@@ -741,9 +813,20 @@ def _planner_registry(
     workspace_tools: HostToolRuntime | None,
     discussion: bool,
     note_handler: Callable[[dict[str, JsonValue]], JsonValue] | None = None,
+    output_reader: ToolHandler | None = None,
 ) -> tuple[ToolRegistry, tuple[str, ...]]:
     definitions: list[ToolDefinition] = []
     handlers: dict[str, ToolHandler] = {}
+    if output_reader is not None:
+        definitions.append(
+            ToolDefinition(
+                "read_completed_output",
+                "Read one Artifact listed in planner_input.completed_outputs by byte offset and "
+                "bounded page size; the host verifies its retained size and SHA-256 first.",
+                artifact_page_parameters(),
+            )
+        )
+        handlers["read_completed_output"] = output_reader
     if note_handler is not None:
         definitions.append(
             ToolDefinition(

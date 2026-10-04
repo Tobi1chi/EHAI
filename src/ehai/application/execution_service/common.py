@@ -49,6 +49,7 @@ class _PreparedProcessDraft:
     current: PlanRevision
     checks: tuple[CheckSpec, ...]
     intervention_context: tuple[dict[str, JsonValue], ...]
+    completed_outputs: dict[str, JsonValue]
 
 
 @dataclass(frozen=True, slots=True)
