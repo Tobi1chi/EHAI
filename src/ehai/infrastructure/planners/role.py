@@ -192,8 +192,10 @@ _PLANNER_SYSTEM_PROMPT = "\n".join(
         "the Run is authorized: the exact command argvs they may run, shells, Git permissions and",
         "workspace access for work and reviewer nodes. It is a fact about the host, not an",
         "authorization. Plan every node so it can be completed with those capabilities: never",
-        "instruct a Worker to run a command, interpreter, ad-hoc script or probe that is not",
-        "listed exactly. If the Goal needs a capability that is missing, say so in the design and",
+        "instruct a Worker to run a command, interpreter, ad-hoc script or probe its node cannot",
+        "run. Outside a shell only exact allowed_commands run; a work node with a listed shell",
+        "may run other command lines through it; reviewer nodes have no shell. If the Goal needs",
+        "a capability that is missing, say so in the design and",
         "use raise_note for the user's decision instead of planning a node that would block.",
     )
 )
