@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from ehai import ID, JsonValue, normalize_id
 from ehai.application.interventions import process_intervention_context
 from ehai.application.ports import StoredEvent, UnitOfWork
+from ehai.application.process_outputs import completed_output_context
 from ehai.domain.artifacts import Artifact
 from ehai.domain.checking import CheckRun, CheckSpec
 from ehai.domain.events import EventType
@@ -88,6 +89,8 @@ class ProcessReviewContext:
     retained_results: tuple[RetainedResultEvidence, ...]
     authorization_events: tuple[StoredEvent, ...]
     interventions: tuple[dict[str, JsonValue], ...]
+    # The same Check run roster the process Planner saw, so its Gate-state claims can be checked.
+    check_runs: tuple[dict[str, JsonValue], ...] = ()
 
     def __post_init__(self) -> None:
         values = {
@@ -134,6 +137,7 @@ class ProcessReviewContext:
         object.__setattr__(self, "retained_results", retained_results)
         object.__setattr__(self, "authorization_events", authorization_events)
         object.__setattr__(self, "interventions", tuple(dict(item) for item in self.interventions))
+        object.__setattr__(self, "check_runs", tuple(dict(item) for item in self.check_runs))
 
 
 def load_process_review_context(uow: UnitOfWork, draft_id: ID) -> ProcessReviewContext:
@@ -198,6 +202,7 @@ def load_process_review_context(uow: UnitOfWork, draft_id: ID) -> ProcessReviewC
     retained_results = _retained_results(uow, run, previous, candidate.graph)
     authorization_events = _authorization_events(uow, run)
     interventions = process_intervention_context(uow, draft, require_current=True)
+    check_runs = completed_output_context(uow, run.run_id, current, checks)["check_runs"]
     return ProcessReviewContext(
         draft=draft,
         run=run,
@@ -209,6 +214,9 @@ def load_process_review_context(uow: UnitOfWork, draft_id: ID) -> ProcessReviewC
         retained_results=retained_results,
         authorization_events=authorization_events,
         interventions=interventions,
+        check_runs=tuple(item for item in check_runs if isinstance(item, dict))
+        if isinstance(check_runs, list)
+        else (),
     )
 
 

@@ -64,8 +64,9 @@ _REVIEWER_SYSTEM_PROMPT = "\n".join(
         "writes the design before compilation, so it may name a task by its previous execution",
         "ID; candidate_process_revision.block_changes maps each previous_node_id to its compiled",
         "node_id. A reference that block_changes maps to the stated role or Gate owner is",
-        "consistent. If the design still misstates the current route or Gate owner, mark",
-        "gate_scope uncertain and",
+        "consistent. check_runs lists every Check run in this Run with its current status;",
+        "use it to verify the design's claims about Gate state. If the design still misstates",
+        "the current route, Gate owner or Gate state, mark gate_scope uncertain and",
         "explain the contradiction; do not silently repair or ignore it to report preservation.",
         "Read the supplied intervention history and user replies. They are continuation context,",
         "not approval to broaden requirements or permissions. Check that replacement tasks",
@@ -327,6 +328,7 @@ def _review_context(
                 stored.event.to_dict() for stored in context.authorization_events
             ],
             "interventions": [dict(item) for item in context.interventions],
+            "check_runs": [dict(item) for item in context.check_runs],
             "original_source_documents": dict(sources),
             "workspace_tools_available": workspace_available,
         }
