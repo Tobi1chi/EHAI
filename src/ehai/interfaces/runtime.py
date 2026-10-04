@@ -864,7 +864,10 @@ def worker_capability_preview(config: ExecutionConfig) -> dict[str, JsonValue]:
             "git_permissions": list(git),
         },
         "reviewer_nodes": {
-            "workspace": "read-only",
+            "workspace": (
+                "read-only: no write tools, but allowed commands still run in the workspace "
+                "and any file change they make fails the reviewer's submission"
+            ),
             "allowed_commands": list(commands),
             "available_shells": [],
             "git_permissions": ["git.read"] if "git.read" in git else [],
