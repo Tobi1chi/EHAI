@@ -382,10 +382,37 @@ def _source_refs(raw: JsonValue, sources: Mapping[str, str]) -> tuple[ApprovalSo
         _keys(item, {"source_key", "quote"}, "source reference")
         key = _text(item.get("source_key"), "source_key")
         quote = _text(item.get("quote"), "quote")
-        if key not in sources or quote not in sources[key]:
-            raise ValueError("Source reference must quote the specified original material exactly")
+        if key not in sources:
+            raise ValueError(
+                f"Source reference source_key {key!r} is not one of the supplied original sources"
+            )
+        if quote not in sources[key]:
+            raise ValueError(_quote_mismatch(key, quote, sources[key]))
         refs.append(ApprovalSourceRef(key, quote))
     return tuple(refs)
+
+
+def _quote_mismatch(key: str, quote: str, source: str) -> str:
+    """Say where a quote stops matching, so the Reviewer can repair that one reference."""
+    low, high = 0, len(quote)
+    while low < high:  # a prefix that occurs implies every shorter prefix occurs
+        middle = (low + high + 1) // 2
+        if quote[:middle] in source:
+            low = middle
+        else:
+            high = middle - 1
+    if low == 0:
+        return (
+            f"Source reference quote for {key!r} must be an exact substring of that source; "
+            f"no part of it matches: {quote[:80]!r}"
+        )
+    position = source.find(quote[:low]) + low
+    return (
+        f"Source reference quote for {key!r} must be an exact substring of that source; its first "
+        f"{low} characters match, then the quote has {quote[low : low + 60]!r} where the source "
+        f"continues {source[position : position + 60]!r}. Copy the source exactly or quote a "
+        "shorter span"
+    )
 
 
 def _keys(value: Mapping[str, JsonValue], expected: set[str], name: str) -> None:

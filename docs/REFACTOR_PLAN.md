@@ -337,6 +337,10 @@ Reviewer/Gate → 人工验收 → `integrate-run`，并在执行中强杀一次
 - 验证：仓库外诊断（真实 Pi + 脚本化模型，经正常入口 propose-process → review-process）：修复前 Reviewer
   没有发出任何模型请求；修复后请求到达模型，工具 Schema 中 `obligation_mapping` 为"对象或 null"且列为必填。
   静态检查、Schema 无差异、产品 E2E 通过。
+- 修复后真实模型回放中，一次审查连续 4 次提交被拒（`Source reference must quote the specified original
+  material exactly`）后失败：模型从 26 条不匹配的引用改到只剩 1 条，但报错不说明是哪条、差在哪里，它在漏掉
+  原文一段括号说明的同一条引用上卡住。报错改为指出 `source_key`、匹配的前缀长度，以及引用与原文从何处不同
+  （各给一小段）；逐字匹配的要求不变。
 - 未覆盖：真实模型完成一次审查并应用草稿（随过程调整读取成果的回放一起验证）；其他严格模式限制的系统排查
   （仓库内其余面向模型的工具没有 `anyOf`/`oneOf`）。
 
