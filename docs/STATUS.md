@@ -31,7 +31,7 @@
 | Token / 费用硬限额 | 暂缓 | 2026-09-16 决定暂不实现；用量记录保留 | — |
 | 产品 E2E | 无模型验证 | 真实 Pi 经本机 Hub、Git worktree，模型为脚本化服务；不覆盖真实模型、独立 Hub、integrate-run、MCP | [REFACTOR_PLAN](REFACTOR_PLAN.md#产品-e2e) |
 | CI | 无模型验证 | 静态检查、两平台 mypy、契约比对、TS 构建、Linux/Windows E2E | [REFACTOR_PLAN](REFACTOR_PLAN.md#执行记录) |
-| P2 总验收 | 部分 | 真实 Pi 手动验收一次通过（导入路径、单个小仓库、macOS，10-03）；Pi Planner 规划路径与 Windows 未做 | [REFACTOR_PLAN](REFACTOR_PLAN.md#四步顺序) |
+| P2 总验收 | 真实验证 | 导入路径真实手动验收通过，含强杀恢复；Pi Planner 规划路径补充验收通过，未含强杀（单个小仓库、macOS，10-03）；Windows、多轮讨论与 replan 未做 | [REFACTOR_PLAN](REFACTOR_PLAN.md#四步顺序) |
 
 ## 平台后端（P3）
 
@@ -62,5 +62,5 @@
 
 ## 下一步
 
-按 [重构与推进计划](REFACTOR_PLAN.md) 推进：安全网 → 低风险清理 → 拆分大文件 → P2 收尾。
-P4 新功能暂停；之后在 P3.3 与 P4 通用 Workflow 中选择一项。
+[重构与推进计划](REFACTOR_PLAN.md) 的四步（安全网 → 低风险清理 → 拆分大文件 → P2 收尾）已于 10-03 完成。
+下一步是 P3.3 薄工作台（[ROADMAP](ROADMAP.md#当前顺序)）；P4 新功能继续暂停。
