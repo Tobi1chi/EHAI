@@ -69,6 +69,14 @@ from ehai.infrastructure.planners.plan_documents import build_planner_input
 _DEFAULT_PLANNER_BUDGET = ExplorationBudget(max_attempts=24, max_width=3, max_depth=4)
 
 
+def _allows_final_command(criteria: tuple[str, ...]) -> bool:
+    """A final command Gate may only express a command criterion the user selected.
+
+    Without explicit criteria the Planner proposes the final condition itself.
+    """
+    return not criteria or COMMAND_EXIT_ZERO_CRITERION in criteria
+
+
 def _requires_final_gate(criteria: tuple[str, ...]) -> bool:
     return any(
         criterion == COMMAND_EXIT_ZERO_CRITERION or criterion.startswith(HUMAN_CRITERION_PREFIX)
@@ -152,6 +160,11 @@ _PLANNER_SYSTEM_PROMPT = "\n".join(
         "sequence. If host_check_configuration already contains an explicit command argv, preserve",
         "that existing condition; a final_gate_argv adds the command:exit-zero condition rather",
         "than replacing an existing artifact or other condition.",
+        "When the user gave explicit completion criteria without command:exit-zero, the final",
+        "Gate must not carry a command (graph state final_command_allowed is false): a host",
+        "command can cover work outside this Goal and would silently add a condition the user",
+        "did not choose. Use argv=[] with the required human_question and describe any further",
+        "verification in the design for the user to configure.",
         "In particular, an existing artifact condition such as artifact:non-empty is retained",
         "when final_gate_argv causes command:exit-zero to be added.",
         "When a human-only final condition is required, call set_final_gate with argv=[] and a",
@@ -161,7 +174,9 @@ _PLANNER_SYSTEM_PROMPT = "\n".join(
         "If the discussion input has no explicit completion criteria, propose a non-empty final",
         "Gate using an exact command or human_question; never add artifact:non-empty as a",
         "placeholder for an unspecified condition.",
-        "If host_check_configuration contains an explicit command argv, use that exact argv.",
+        "Use the command argv in host_check_configuration only when command:exit-zero is among",
+        "the selected criteria or the discussion gave no explicit criteria; then use that exact",
+        "argv.",
         "Do not invent a generic lint or unit-test checklist as the final behavioral gate.",
         "Every accepted or rejected graph mutation counts toward the plan",
         "operation budget; inspect_plan and finish_plan are free.",
@@ -173,6 +188,15 @@ _PLANNER_SYSTEM_PROMPT = "\n".join(
         "The host Check Runner runs configured checks after candidate submission.",
         "Do not create Worker nodes solely to rerun these host checks.",
         "Host check argv configuration does not grant a Worker permission to execute that command.",
+        "worker_capability_preview, when present, states what Workers on this host can do once",
+        "the Run is authorized: the exact command argvs they may run, shells, Git permissions and",
+        "workspace access for work and reviewer nodes. It is a fact about the host, not an",
+        "authorization. Plan every node so it can be completed with those capabilities: never",
+        "instruct a Worker to run a command, interpreter, ad-hoc script or probe its node cannot",
+        "run. Outside a shell only exact allowed_commands run; a work node with a listed shell",
+        "may run other command lines through it; reviewer nodes have no shell. If the Goal needs",
+        "a capability that is missing, say so in the design and",
+        "use raise_note for the user's decision instead of planning a node that would block.",
     )
 )
 
@@ -264,6 +288,7 @@ class PlannerRole:
         workspace: Path | None = None,
         artifact_store: ArtifactStore | None = None,
         check_configuration: Mapping[str, JsonValue] | None = None,
+        worker_capabilities: Mapping[str, JsonValue] | None = None,
         note_service: NoteService | None = None,
         project_context_resolver: Callable[[ID, ID | None], dict[str, JsonValue]] | None = None,
         id_factory: Callable[[], ID] = new_id,
@@ -294,6 +319,9 @@ class PlannerRole:
             raise ValueError("Planner workspace must be a directory")
         self._artifact_store = artifact_store
         self._check_configuration = dict(check_configuration or {})
+        self._worker_capabilities = (
+            None if worker_capabilities is None else dict(worker_capabilities)
+        )
         self._note_service = note_service
         self._project_context_resolver = project_context_resolver
         self._id_factory = id_factory
@@ -342,6 +370,7 @@ class PlannerRole:
             self._build_template(
                 input_document,
                 require_final_gate=_requires_final_gate(normalized_criteria),
+                allow_final_command=_allows_final_command(normalized_criteria),
             )
         )
         return build_plan_proposal(
@@ -384,6 +413,7 @@ class PlannerRole:
                 document,
                 discussion=True,
                 require_final_gate=(True if not normalized else _requires_final_gate(normalized)),
+                allow_final_command=_allows_final_command(normalized),
                 session_ref_id=session_ref_id,
             )
         )
@@ -529,11 +559,13 @@ class PlannerRole:
         input_document: Mapping[str, JsonValue],
         *,
         require_final_gate: bool,
+        allow_final_command: bool = True,
     ) -> PlanTemplate:
         template, _, _ = await self._run_planner(
             input_document,
             discussion=False,
             require_final_gate=require_final_gate,
+            allow_final_command=allow_final_command,
         )
         if template is None:
             raise PlannerError("Proposal finished without a plan")
@@ -545,6 +577,7 @@ class PlannerRole:
         *,
         discussion: bool,
         require_final_gate: bool,
+        allow_final_command: bool = True,
         process_graph: PlanGraphToolRuntime | None = None,
         session_ref_id: ID | None = None,
     ) -> tuple[PlanTemplate | None, str, ID]:
@@ -552,6 +585,7 @@ class PlannerRole:
             self._budget,
             planner_event_types=(self._completion_event_type,),
             require_final_gate=require_final_gate,
+            allow_final_command=allow_final_command,
         )
         design: dict[str, str] = {}
         answer: dict[str, str] = {}
@@ -658,6 +692,11 @@ class PlannerRole:
                         "project_configuration": project_context,
                         "host_check_configuration": (
                             self._check_configuration if process_graph is None else {}
+                        ),
+                        **(
+                            {}
+                            if self._worker_capabilities is None
+                            else {"worker_capability_preview": self._worker_capabilities}
                         ),
                     },
                 )

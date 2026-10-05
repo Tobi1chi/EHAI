@@ -32,7 +32,8 @@ notification 通道，不直接写被 RPC 接管的 stdout。业务幂等键不�
 - Attempt 保留真实成功、失败、中断或未知结果；不复制节点状态成为另一套 Agent 生命周期。
 
 独立任务可在兄弟节点挂起时继续。人工介入带目标、原因、证据和 request token；
-reply-intervention 只解决对应问题，不扩权。周期审查默认 600 秒或 30 步先到触发，
+reply-intervention 只解决对应问题，不扩权；同一节点每累计 3 次干预即暂停空闲的 Run，等待明确决定后显式恢复。
+周期审查默认 600 秒或 30 步先到触发，
 仅建议；显式 suspend-attempt 需匹配 Attempt、review_id 和覆盖序号，不自动采纳。
 
 批准内过程调整使用同一 Run 的提案/独立审查/应用路径。
