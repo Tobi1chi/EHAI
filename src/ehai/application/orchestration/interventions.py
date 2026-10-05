@@ -22,12 +22,16 @@ from ehai.application.orchestration.host import OrchestratorHost
 from ehai.application.orchestration.readiness import (
     ready_nodes,
 )
+from ehai.application.pause_causes import PauseCause, pause_event_payload
 from ehai.application.ports import UnitOfWork
 from ehai.domain.events import EventType
 from ehai.domain.execution import AttemptStatus, Run, RunStatus
 from ehai.domain.planning import (
     PlanNodeStatus,
 )
+
+REPEATED_INTERVENTION_LIMIT = 3
+"""This many interventions on one PlanNode since its last such pause pause an idle Run."""
 
 
 class InterventionsMixin:
@@ -81,6 +85,57 @@ class InterventionsMixin:
                     },
                 )
             )
+            count = sum(
+                1
+                for item in list_interventions(uow.events, run.run_id)
+                if item.get("plan_node_id") == node.plan_node_id
+            )
+            last_paused_at = 0
+            for stored in uow.events.list_events():
+                payload = stored.event.payload
+                paused_count = payload.get("intervention_count")
+                if (
+                    stored.event.run_id == run.run_id
+                    and stored.event.type is EventType.RUN_PAUSED
+                    and payload.get("pause_cause") == PauseCause.REPEATED_INTERVENTION.value
+                    and payload.get("plan_node_id") == node.plan_node_id
+                    and type(paused_count) is int
+                ):
+                    last_paused_at = max(last_paused_at, paused_count)
+            # A direct pause is only a drained pause when nothing else is executing; otherwise
+            # wait for the next intervention that finds the Run idle.
+            others_active = any(
+                item.attempt_id != attempt_id
+                and item.status in {AttemptStatus.PENDING, AttemptStatus.RUNNING}
+                for item in uow.states.list_attempts(run.run_id)
+            )
+            if (
+                run.status is RunStatus.RUNNING
+                and count - last_paused_at >= REPEATED_INTERVENTION_LIMIT
+                and not others_active
+            ):
+                # Replies keep releasing the node into the same blocker; stop dispatching until
+                # someone decides explicitly instead of spending further Attempts.
+                run = run.pause()
+                uow.states.put_run(run)
+                uow.events.append(
+                    self._event(
+                        EventType.RUN_PAUSED,
+                        run,
+                        run.run_id,
+                        pause_event_payload(
+                            run.run_id,
+                            PauseCause.REPEATED_INTERVENTION,
+                            reason=(
+                                f"PlanNode {node.title!r} has asked for human help {count} times "
+                                "in this Run and replies have not unblocked it. Give a concrete "
+                                "decision, adjust the process or cancel, then resume the Run."
+                            ),
+                            plan_node_id=node.plan_node_id,
+                            intervention_count=count,
+                        ),
+                    )
+                )
             uow.commit()
             return run
 

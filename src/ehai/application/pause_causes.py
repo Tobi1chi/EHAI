@@ -26,6 +26,7 @@ class PauseCause(StrEnum):
     RETRY_EXHAUSTED = "retry_exhausted"
     GOAL_BUDGET_EXHAUSTED = "goal_budget_exhausted"
     REVIEW_REWORK = "review_rework"
+    REPEATED_INTERVENTION = "repeated_intervention"
     HUMAN_HOLD = "human_hold"
     UNKNOWN = "unknown"
 

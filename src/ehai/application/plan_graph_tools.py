@@ -143,12 +143,18 @@ class PlanGraphToolRuntime:
         *,
         planner_event_types: tuple[str, ...] = (),
         require_final_gate: bool = False,
+        allow_final_command: bool = True,
     ) -> None:
         self._budget = budget
         self._planner_event_types = planner_event_types
         if not isinstance(require_final_gate, bool):
             raise TypeError("require_final_gate must be a boolean")
+        if not isinstance(allow_final_command, bool):
+            raise TypeError("allow_final_command must be a boolean")
         self._require_final_gate = require_final_gate
+        # False when the user's explicit criteria leave out command:exit-zero: a final command
+        # Gate would then silently add a completion condition the user did not choose.
+        self._allow_final_command = allow_final_command
         self._nodes: dict[str, _DraftNode] = {}
         self._edges: dict[tuple[str, str, EdgeType, str | None], _DraftEdge] = {}
         self._branches: dict[str, _DraftBranch] = {}
@@ -700,6 +706,17 @@ class PlanGraphToolRuntime:
             )
         argv = _required_gate_argv(arguments, "final_gate.argv")
         human_question = _optional_text(arguments, "human_question", "final_gate")
+        if argv and not self._allow_final_command:
+            raise _ToolRejection(
+                PlanIssue(
+                    "FINAL_COMMAND_NOT_SELECTED",
+                    "final_gate.argv",
+                    "The user's explicit completion criteria do not include command:exit-zero, so "
+                    "the final Gate cannot add a command condition. Use argv=[] with the human "
+                    "question the criteria require; describe any further verification in the "
+                    "design for the user to configure",
+                )
+            )
         if not argv and human_question is None:
             raise _ToolRejection(
                 PlanIssue(
@@ -908,6 +925,7 @@ class PlanGraphToolRuntime:
                 str(gate_id): owner_key for gate_id, owner_key in self._retained_gate_owners.items()
             },
             "require_final_gate": self._require_final_gate,
+            "final_command_allowed": self._allow_final_command,
             "operations_used": self._operations_used,
             "operations_remaining": MAX_PLAN_OPERATIONS - self._operations_used,
             "validation_failures": self._validation_failures,
@@ -2209,7 +2227,8 @@ _TOOL_DEFINITIONS: dict[str, ToolDefinition] = {
         "Set or replace the draft final Gate with command argv, a human question, or both. "
         "Both fields replace their previous values: [] clears the command and null clears "
         "the human question, but at least one condition must remain. To delete the whole "
-        "draft Gate use remove_final_gate. Unavailable in process mode.",
+        "draft Gate use remove_final_gate. Command argv is rejected while inspect_plan reports "
+        "final_command_allowed=false. Unavailable in process mode.",
         {
             "type": "object",
             "additionalProperties": False,

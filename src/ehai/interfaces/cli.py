@@ -6,7 +6,7 @@ import argparse
 import asyncio
 import sqlite3
 import sys
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from io import TextIOWrapper
 from pathlib import Path
 
@@ -143,6 +143,7 @@ def build_service(
     pi_backend: PiBackendConfig | None = None,
     project_configuration: ProjectConfigurationService | None = None,
     notes: NoteService | None = None,
+    worker_capability_preview: Mapping[str, JsonValue] | None = None,
 ) -> ExecutionService:
     """Build the local service from concrete infrastructure Adapters."""
     from ehai.interfaces.agent_backends import resolve_planner_kind
@@ -200,6 +201,7 @@ def build_service(
                 "command_argv": [] if command_check_argv is None else list(command_check_argv),
                 "semantic_required_terms": list(semantic_required_terms),
             },
+            worker_capabilities=worker_capability_preview,
         )
     else:
         raise ValueError(f"unsupported Planner: {planner_kind}")
