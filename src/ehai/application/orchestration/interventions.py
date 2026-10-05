@@ -31,7 +31,7 @@ from ehai.domain.planning import (
 )
 
 REPEATED_INTERVENTION_LIMIT = 3
-"""Every this-many interventions on one PlanNode pause the Run for an explicit decision."""
+"""This many interventions on one PlanNode since its last such pause pause an idle Run."""
 
 
 class InterventionsMixin:
@@ -90,7 +90,30 @@ class InterventionsMixin:
                 for item in list_interventions(uow.events, run.run_id)
                 if item.get("plan_node_id") == node.plan_node_id
             )
-            if run.status is RunStatus.RUNNING and count % REPEATED_INTERVENTION_LIMIT == 0:
+            last_paused_at = 0
+            for stored in uow.events.list_events():
+                payload = stored.event.payload
+                paused_count = payload.get("intervention_count")
+                if (
+                    stored.event.run_id == run.run_id
+                    and stored.event.type is EventType.RUN_PAUSED
+                    and payload.get("pause_cause") == PauseCause.REPEATED_INTERVENTION.value
+                    and payload.get("plan_node_id") == node.plan_node_id
+                    and type(paused_count) is int
+                ):
+                    last_paused_at = max(last_paused_at, paused_count)
+            # A direct pause is only a drained pause when nothing else is executing; otherwise
+            # wait for the next intervention that finds the Run idle.
+            others_active = any(
+                item.attempt_id != attempt_id
+                and item.status in {AttemptStatus.PENDING, AttemptStatus.RUNNING}
+                for item in uow.states.list_attempts(run.run_id)
+            )
+            if (
+                run.status is RunStatus.RUNNING
+                and count - last_paused_at >= REPEATED_INTERVENTION_LIMIT
+                and not others_active
+            ):
                 # Replies keep releasing the node into the same blocker; stop dispatching until
                 # someone decides explicitly instead of spending further Attempts.
                 run = run.pause()
