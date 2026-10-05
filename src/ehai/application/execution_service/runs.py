@@ -201,6 +201,18 @@ class RunCommandsMixin:
                 run = _required_run(uow, _result_id(existing, "run_id"))
                 attempt_id = _result_id(existing, "attempt_id")
             else:
+                if command.hold:
+                    pending = uow.states.get_check_run(command.check_run_id)
+                    if pending is not None and any(
+                        attempt.status in {AttemptStatus.PENDING, AttemptStatus.RUNNING}
+                        for attempt in uow.states.list_attempts(pending.run_id)
+                    ):
+                        # A direct pause only means "drained" when nothing else executes;
+                        # process adjustment relies on that before publishing a new graph.
+                        raise ApplicationError(
+                            "Cannot hold while other Attempts in this Run are running or queued; "
+                            "decide without hold, or wait until they finish"
+                        )
                 run, attempt_id = self._orchestrator.record_human_decision(
                     uow,
                     command.check_run_id,

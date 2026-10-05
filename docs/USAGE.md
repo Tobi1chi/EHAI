@@ -170,7 +170,8 @@ get-trace、get-result；候选 Artifact、Reviewer 结论和最终 Gate 是不�
 - get-run-checks → decide-human-check：--check-run-id、--request-token、--passed 或 --rejected、
   --actor、--comment、--idempotency-key；可选 --hold（HTTP `hold=true`）在同一事务中暂停 Run
   （`pause_cause` 为 `human_hold`），下游不会开始，Gate 暂不结算；此时可做批准内过程调整，
-  resume-run 后结算 Gate 并按当前过程继续。待办中对应操作为 "Pass and hold"。
+  resume-run 后结算 Gate 并按当前过程继续。待办中对应操作为 "Pass and hold"。Run 中仍有其他运行或排队的
+  Attempt 时拒绝 hold（409）：直接暂停只在空闲时等于已排空，批准内过程调整依赖这一点。
 - propose-process --run-id --reason；review-process --draft-id；apply-process --review-id；
   写入均需幂等键。API 提案/审查为异步受理，get-process-draft/get-process-review 查询真实状态。
   不改变需求、对外接口、Gate、权限；不等于跨批准后继 Run 已交付。

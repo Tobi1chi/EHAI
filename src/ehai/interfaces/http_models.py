@@ -264,7 +264,8 @@ class DecideHumanCheckRequest(_StrictRequest):
         default=False,
         description=(
             "Pause the Run in the same transaction as the decision, so no downstream work "
-            "starts; resume the Run to settle the Gate and continue."
+            "starts; resume the Run to settle the Gate and continue. Rejected while other "
+            "Attempts are running or queued."
         ),
     )
 
