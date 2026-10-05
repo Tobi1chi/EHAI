@@ -777,6 +777,7 @@ class ProcessPlanner(Protocol):
         *,
         session_ref_id: ID | None = None,
         intervention_context: tuple[dict[str, JsonValue], ...] = (),
+        completed_outputs: Mapping[str, JsonValue] | None = None,
     ) -> ProcessRevision: ...
 
 
@@ -804,6 +805,7 @@ class AsyncProcessPlanner(Protocol):
         *,
         session_ref_id: ID | None = None,
         intervention_context: tuple[dict[str, JsonValue], ...] = (),
+        completed_outputs: Mapping[str, JsonValue] | None = None,
     ) -> ProcessRevision: ...
 
 
@@ -895,6 +897,7 @@ class ConfiguredCheckPlanner:
         *,
         session_ref_id: ID | None = None,
         intervention_context: tuple[dict[str, JsonValue], ...] = (),
+        completed_outputs: Mapping[str, JsonValue] | None = None,
     ) -> ProcessRevision:
         if not isinstance(self.planner, ProcessPlanner):
             raise ValueError(
@@ -910,6 +913,7 @@ class ConfiguredCheckPlanner:
             reason,
             session_ref_id=session_ref_id,
             intervention_context=intervention_context,
+            completed_outputs=completed_outputs,
         )
 
     async def propose_process_async(
@@ -923,6 +927,7 @@ class ConfiguredCheckPlanner:
         *,
         session_ref_id: ID | None = None,
         intervention_context: tuple[dict[str, JsonValue], ...] = (),
+        completed_outputs: Mapping[str, JsonValue] | None = None,
     ) -> ProcessRevision:
         if not (
             isinstance(self.planner, AsyncProcessPlanner)
@@ -942,6 +947,7 @@ class ConfiguredCheckPlanner:
             reason,
             session_ref_id=session_ref_id,
             intervention_context=intervention_context,
+            completed_outputs=completed_outputs,
         )
 
     def replan(

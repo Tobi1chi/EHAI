@@ -8,9 +8,6 @@ process revision.
 
 from __future__ import annotations
 
-import base64
-from collections.abc import Mapping
-from hashlib import sha256
 from pathlib import Path
 
 from ehai import ID, JsonValue, format_utc_datetime, new_id, normalize_id
@@ -38,12 +35,14 @@ from ehai.application.process_review_context import ProcessReviewContext
 from ehai.domain.artifacts import Artifact
 from ehai.domain.checking import CheckRun
 from ehai.domain.process import ProcessRevision
-from ehai.infrastructure.artifacts import ArtifactIntegrityError
 from ehai.infrastructure.host_tools import HostToolRuntime
+from ehai.infrastructure.planners.artifact_pages import (
+    artifact_page_parameters,
+    read_artifact_page,
+)
 from ehai.infrastructure.planners.plan_documents import base_plan_document
 
 _WORKSPACE_TOOL_NAMES = frozenset({"workspace_list", "workspace_read", "workspace_search"})
-_MAX_EVIDENCE_PAGE_BYTES = 64 * 1024
 _MAX_INVALID_FINISH_ATTEMPTS = 4
 
 
@@ -61,8 +60,13 @@ _REVIEWER_SYSTEM_PROMPT = "\n".join(
         "The host reallocates IDs for changed tasks and input-affected downstream tasks; this",
         "alone is not a changed approval. gate_owners retains logical Gate identity separately.",
         "Historical/draft-key references may identify source work, but an assertion that old",
-        "execution IDs or edges remain current must agree with the compiled graph. If the",
-        "design misstates the current route or Gate owner, mark gate_scope uncertain and",
+        "execution IDs or edges remain current must agree with the compiled graph. The Planner",
+        "writes the design before compilation, so it may name a task by its previous execution",
+        "ID; candidate_process_revision.block_changes maps each previous_node_id to its compiled",
+        "node_id. A reference that block_changes maps to the stated role or Gate owner is",
+        "consistent. check_runs lists every Check run in this Run with its current status;",
+        "use it to verify the design's claims about Gate state. If the design still misstates",
+        "the current route, Gate owner or Gate state, mark gate_scope uncertain and",
         "explain the contradiction; do not silently repair or ignore it to report preservation.",
         "Read the supplied intervention history and user replies. They are continuation context,",
         "not approval to broaden requirements or permissions. Check that replacement tasks",
@@ -146,73 +150,15 @@ async def run_process_boundary_review(
         arguments: dict[str, JsonValue], cancellation: CancellationToken
     ) -> JsonValue:
         cancellation.raise_if_cancelled()
-        artifact_id = _tool_artifact_id(arguments)
-        artifact = artifact_roster.get(artifact_id)
-        if artifact is None:
-            raise RecoverableToolError(
-                "evidence_not_retained",
-                "artifact_id must name an Artifact in retained result evidence",
-            )
-        offset = _tool_integer(arguments, "offset", minimum=0)
-        limit = _tool_integer(
+        page = read_artifact_page(
             arguments,
-            "limit",
-            minimum=1,
-            maximum=_MAX_EVIDENCE_PAGE_BYTES,
+            artifact_roster,
+            artifact_store,
+            missing_code="evidence_not_retained",
+            missing_message="artifact_id must name an Artifact in retained result evidence",
         )
-        try:
-            content = artifact_store.read(artifact_id)
-        except ArtifactIntegrityError as error:
-            raise RecoverableToolError(
-                "artifact_integrity",
-                f"Artifact {artifact_id} failed storage integrity validation; "
-                "do not cite it as reviewed evidence and assess result reuse as uncertain",
-            ) from error
-        except (FileNotFoundError, OSError) as error:
-            raise RecoverableToolError(
-                "evidence_unavailable",
-                f"Artifact {artifact_id} bytes are unavailable; assess result reuse as uncertain",
-            ) from error
-        if len(content) != artifact.size_bytes:
-            raise RecoverableToolError(
-                "artifact_integrity",
-                f"Artifact {artifact_id} size does not match retained metadata",
-            )
-        if sha256(content).hexdigest() != artifact.sha256:
-            raise RecoverableToolError(
-                "artifact_integrity",
-                f"Artifact {artifact_id} SHA-256 does not match retained metadata",
-            )
-        if offset > len(content):
-            raise RecoverableToolError(
-                "invalid_offset",
-                f"offset must be no greater than the Artifact size ({len(content)})",
-            )
-        if content and offset == len(content):
-            raise RecoverableToolError(
-                "invalid_offset",
-                "offset at non-empty Artifact EOF would return no evidence bytes",
-            )
-        end = min(offset + limit, len(content))
-        page = content[offset:end]
-        encoding, encoded = _encode_page(page)
-        has_more = end < len(content)
-        read_artifact_ids.add(artifact_id)
-        return {
-            "artifact_id": artifact.artifact_id,
-            "name": artifact.name,
-            "media_type": artifact.media_type,
-            "sha256": artifact.sha256,
-            "size_bytes": artifact.size_bytes,
-            "offset": offset,
-            "limit": limit,
-            "returned_bytes": len(page),
-            "next_offset": end if has_more else None,
-            "has_more": has_more,
-            "complete": offset == 0 and end == len(content),
-            "encoding": encoding,
-            "content": encoded,
-        }
+        read_artifact_ids.add(normalize_id(str(page["artifact_id"])))
+        return page
 
     async def finish_process_review(
         arguments: dict[str, JsonValue], cancellation: CancellationToken
@@ -246,20 +192,7 @@ async def run_process_boundary_review(
             "read_evidence_artifact",
             "Read one retained result Artifact by byte offset and bounded page size; "
             "the host verifies its retained size and SHA-256 before returning bytes.",
-            {
-                "type": "object",
-                "properties": {
-                    "artifact_id": {"type": "string"},
-                    "offset": {"type": "integer", "minimum": 0},
-                    "limit": {
-                        "type": "integer",
-                        "minimum": 1,
-                        "maximum": _MAX_EVIDENCE_PAGE_BYTES,
-                    },
-                },
-                "required": ["artifact_id", "offset", "limit"],
-                "additionalProperties": False,
-            },
+            artifact_page_parameters(),
         )
     ]
     handlers = {"read_evidence_artifact": read_evidence_artifact}
@@ -395,6 +328,7 @@ def _review_context(
                 stored.event.to_dict() for stored in context.authorization_events
             ],
             "interventions": [dict(item) for item in context.interventions],
+            "check_runs": [dict(item) for item in context.check_runs],
             "original_source_documents": dict(sources),
             "workspace_tools_available": workspace_available,
         }
@@ -432,6 +366,11 @@ def _process_document(process: ProcessRevision) -> dict[str, JsonValue]:
         "reason": process.reason,
         "created_at": format_utc_datetime(process.created_at),
         "gate_owners": {str(key): value for key, value in process.gate_owners.items()},
+        "block_changes": (
+            None
+            if process.block_changes is None
+            else [change.to_document() for change in process.block_changes]
+        ),
         "graph": _plan_document(process.graph),
     }
 
@@ -530,36 +469,3 @@ def _artifact_roster(context: ProcessReviewContext) -> dict[ID, Artifact]:
                 )
             roster[artifact.artifact_id] = artifact
     return roster
-
-
-def _tool_artifact_id(arguments: Mapping[str, JsonValue]) -> ID:
-    value = arguments.get("artifact_id")
-    if not isinstance(value, str):
-        raise RecoverableToolError("invalid_artifact_id", "artifact_id must be a valid UUID")
-    try:
-        return normalize_id(value)
-    except ValueError as error:
-        raise RecoverableToolError(
-            "invalid_artifact_id", "artifact_id must be a valid UUID"
-        ) from error
-
-
-def _tool_integer(
-    arguments: Mapping[str, JsonValue],
-    name: str,
-    *,
-    minimum: int,
-    maximum: int | None = None,
-) -> int:
-    value = arguments.get(name)
-    if type(value) is not int or value < minimum or (maximum is not None and value > maximum):
-        bound = f" between {minimum} and {maximum}" if maximum is not None else f" >= {minimum}"
-        raise RecoverableToolError("invalid_arguments", f"{name} must be an integer{bound}")
-    return value
-
-
-def _encode_page(page: bytes) -> tuple[str, str]:
-    try:
-        return "utf-8", page.decode("utf-8")
-    except UnicodeDecodeError:
-        return "base64", base64.b64encode(page).decode("ascii")

@@ -39,6 +39,7 @@ from ehai.application.process_control import (
     ProcessControlGuard,
     require_process_control,
 )
+from ehai.application.process_outputs import completed_output_context
 from ehai.application.process_review import (
     ProcessBoundaryReport,
     approved_source_documents,
@@ -81,6 +82,7 @@ class ProcessCommandsMixin:
                 prepared.draft.reason,
                 session_ref_id=prepared.draft.planner_session_ref_id,
                 intervention_context=prepared.intervention_context,
+                completed_outputs=prepared.completed_outputs,
             )
             return self._complete_process_draft(prepared, candidate)
         except BaseException as error:
@@ -109,6 +111,7 @@ class ProcessCommandsMixin:
                 prepared.draft.reason,
                 session_ref_id=prepared.draft.planner_session_ref_id,
                 intervention_context=prepared.intervention_context,
+                completed_outputs=prepared.completed_outputs,
             )
             return self._complete_process_draft(prepared, candidate)
         except BaseException as error:
@@ -158,6 +161,7 @@ class ProcessCommandsMixin:
             uow.states.put_process_draft(draft)
             self._append_process_draft_event(uow, draft, EventType.PROCESS_DRAFT_STARTED)
             intervention_context = process_intervention_context(uow, draft)
+            completed_outputs = completed_output_context(uow, run.run_id, current, checks)
             self._record_receipt(
                 uow,
                 command.idempotency_key,
@@ -174,6 +178,7 @@ class ProcessCommandsMixin:
                 current=current,
                 checks=checks,
                 intervention_context=intervention_context,
+                completed_outputs=completed_outputs,
             )
 
     def _complete_process_draft(
