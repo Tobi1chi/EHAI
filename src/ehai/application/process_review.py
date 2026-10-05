@@ -143,9 +143,13 @@ def parse_process_boundary_report(
     value: Mapping[str, JsonValue], context: ProcessReviewContext
 ) -> ProcessBoundaryReport:
     """Validate a Reviewer submission against its exact retained draft and source facts."""
-    _keys(
-        value, {"summary", "assessments", "obligation_mapping", "evidence_artifact_ids"}, "report"
-    )
+    # obligation_mapping may be omitted or null; both mean the report maps no obligations.
+    required = {"summary", "assessments", "evidence_artifact_ids"}
+    if not required <= set(value) <= required | {"obligation_mapping"}:
+        raise ValueError(
+            "report must contain summary, assessments and evidence_artifact_ids, "
+            "plus an optional obligation_mapping"
+        )
     summary = _text(value.get("summary"), "summary")
     candidate = context.draft.candidate
     if candidate is None:
@@ -338,14 +342,24 @@ def process_boundary_report_schema(context: ProcessReviewContext) -> dict[str, J
             "gate_scopes": _array_schema(scope),
         }
     )
-    return _object_schema(
+    # Optional rather than an explicit object|null union: strict tool schemas reject object
+    # unions, and the harness makes an optional property nullable on its own.
+    report = _object_schema(
         {
             "summary": text_schema,
             "assessments": _array_schema(assessment),
-            "obligation_mapping": {"anyOf": [mapping, {"type": "null"}]},
+            "obligation_mapping": {
+                **mapping,
+                "description": (
+                    "Required for the draft to be applied. Omit it or pass null only when you "
+                    "cannot map every original obligation; the draft then cannot be applied."
+                ),
+            },
             "evidence_artifact_ids": _array_schema({"type": "string"}),
         }
     )
+    report["required"] = ["summary", "assessments", "evidence_artifact_ids"]
+    return report
 
 
 def _object_schema(properties: dict[str, JsonValue]) -> dict[str, JsonValue]:
@@ -368,10 +382,37 @@ def _source_refs(raw: JsonValue, sources: Mapping[str, str]) -> tuple[ApprovalSo
         _keys(item, {"source_key", "quote"}, "source reference")
         key = _text(item.get("source_key"), "source_key")
         quote = _text(item.get("quote"), "quote")
-        if key not in sources or quote not in sources[key]:
-            raise ValueError("Source reference must quote the specified original material exactly")
+        if key not in sources:
+            raise ValueError(
+                f"Source reference source_key {key!r} is not one of the supplied original sources"
+            )
+        if quote not in sources[key]:
+            raise ValueError(_quote_mismatch(key, quote, sources[key]))
         refs.append(ApprovalSourceRef(key, quote))
     return tuple(refs)
+
+
+def _quote_mismatch(key: str, quote: str, source: str) -> str:
+    """Say where a quote stops matching, so the Reviewer can repair that one reference."""
+    low, high = 0, len(quote)
+    while low < high:  # a prefix that occurs implies every shorter prefix occurs
+        middle = (low + high + 1) // 2
+        if quote[:middle] in source:
+            low = middle
+        else:
+            high = middle - 1
+    if low == 0:
+        return (
+            f"Source reference quote for {key!r} must be an exact substring of that source; "
+            f"no part of it matches: {quote[:80]!r}"
+        )
+    position = source.find(quote[:low]) + low
+    return (
+        f"Source reference quote for {key!r} must be an exact substring of that source; its first "
+        f"{low} characters match, then the quote has {quote[low : low + 60]!r} where the source "
+        f"continues {source[position : position + 60]!r}. Copy the source exactly or quote a "
+        "shorter span"
+    )
 
 
 def _keys(value: Mapping[str, JsonValue], expected: set[str], name: str) -> None:
