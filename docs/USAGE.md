@@ -175,6 +175,8 @@ get-trace、get-result；候选 Artifact、Reviewer 结论和最终 Gate 是不�
 - propose-process --run-id --reason；review-process --draft-id；apply-process --review-id；
   写入均需幂等键。API 提案/审查为异步受理，get-process-draft/get-process-review 查询真实状态。
   不改变需求、对外接口、Gate、权限；不等于跨批准后继 Run 已交付。
+  提案时 Planner 会收到已完成节点的成果清单（候选 Artifact，代码节点含 `solution.patch`）与各 Check 的状态，
+  可只读读取清单内的 Artifact；等待人工的 Check 仍是待决事项。
 - get-attempt-runtime：--attempt-id。Worker 一轮中途需要人工输入时走 Intervention（挂起 → reply-intervention）；
   运行中 Worker 请求接口已随 Codex 后端删除，见 [ADR 0007](adr/0007-agent-harness-port.md)。
 - cancel-attempt：--attempt-id、--idempotency-key。取消不是人工 suspend。

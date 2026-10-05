@@ -37,6 +37,7 @@ reply-intervention 只解决对应问题，不扩权；同一节点每累计 3 �
 仅建议；显式 suspend-attempt 需匹配 Attempt、review_id 和覆盖序号，不自动采纳。
 
 批准内过程调整使用同一 Run 的提案/独立审查/应用路径。
+提案时 Planner 看到已完成节点的成果清单与全部 Check 状态，并可只读读取清单中的 Artifact。
 过程版本保存 block_changes：稳定 block_id、版本、前后执行节点与字段变化；
 下游输入变化仍产生新执行身份。它描述修改/删除，不自行批准或授权 Git 成果复用。
 旧版本未记录的清单为 null；不会从标题推断历史。使用细节见 Usage 的 Block 变更清单。
