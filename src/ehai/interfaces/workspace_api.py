@@ -14,7 +14,7 @@ from typing import Annotated, Any, Literal, cast
 import httpx
 import uvicorn
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, StreamingResponse
 from pydantic import BaseModel, ConfigDict, WithJsonSchema
 
 from ehai import JsonValue, utc_now
@@ -110,7 +110,7 @@ def _core_openapi() -> dict[str, Any]:
         return core.openapi()
 
 
-def create_workspace_app(supervisor: WorkspaceSupervisor) -> FastAPI:
+def create_workspace_app(supervisor: WorkspaceSupervisor, ui_dir: Path | None = None) -> FastAPI:
     """Compose one local manager; child cores retain all business-state ownership."""
     core_schema = _core_openapi()
     allowed_routes = [
@@ -336,7 +336,40 @@ def create_workspace_app(supervisor: WorkspaceSupervisor) -> FastAPI:
             stream(), status_code=upstream.status_code, headers=response_headers
         )
 
+    if ui_dir is not None:
+        _mount_ui(app, ui_dir)
     return app
+
+
+def _mount_ui(app: FastAPI, ui_dir: Path) -> None:
+    """Serve the built web workbench same-origin with the manager and workspace APIs."""
+    root = ui_dir.resolve()
+
+    @app.get("/", include_in_schema=False)
+    def ui_root() -> RedirectResponse:
+        return RedirectResponse("/ui/")
+
+    @app.get("/ui", include_in_schema=False)
+    @app.get("/ui/{ui_path:path}", include_in_schema=False)
+    def ui(ui_path: str = "") -> Any:
+        index = root / "index.html"
+        if not index.is_file():
+            return JSONResponse(
+                {
+                    "error": {
+                        "code": "ui_not_built",
+                        "message": "No built workbench in --ui-dir; run npm run web:build "
+                        "in control-plane first",
+                    }
+                },
+                status_code=404,
+            )
+        target = (root / ui_path).resolve()
+        if ui_path and target.is_relative_to(root) and target.is_file():
+            # Vite fingerprints names under assets/; everything else is revalidated.
+            cache = "public, max-age=31536000" if ui_path.startswith("assets/") else "no-cache"
+            return FileResponse(target, headers={"cache-control": cache})
+        return FileResponse(index, headers={"cache-control": "no-cache"})
 
 
 def main() -> int:
@@ -347,6 +380,12 @@ def main() -> int:
     parser.add_argument("--port", type=int, default=8765)
     parser.add_argument("--max-worker-capacity", type=int, default=8)
     parser.add_argument("--max-planner-capacity", type=int, default=8)
+    parser.add_argument(
+        "--ui-dir",
+        type=Path,
+        default=None,
+        help="serve a built web workbench (control-plane/web/dist) under /ui",
+    )
     args = parser.parse_args()
     supervisor = WorkspaceSupervisor(
         args.data_dir,
@@ -354,7 +393,7 @@ def main() -> int:
         max_planner_capacity=args.max_planner_capacity,
     )
     uvicorn.run(
-        create_workspace_app(supervisor),
+        create_workspace_app(supervisor, args.ui_dir),
         host="127.0.0.1",
         port=args.port,
         timeout_graceful_shutdown=15,
