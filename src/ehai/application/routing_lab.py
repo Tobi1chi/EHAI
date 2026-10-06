@@ -184,6 +184,14 @@ class RoutingLabService:
             lab = RoutingLab.model_validate(tx.get("lab", lab_id))
             return RoutingLabView(lab=lab, recipes=self._recipes(tx, lab_id))
 
+    def labs(self, project_id: str) -> list[RoutingLabView]:
+        with self.store.transaction(write=False) as tx:
+            return [
+                RoutingLabView(lab=lab, recipes=self._recipes(tx, lab.lab_id))
+                for row in tx.list("lab")
+                if (lab := RoutingLab.model_validate(row)).project_id == project_id
+            ]
+
     def automatic_labs(self) -> list[RoutingLab]:
         with self.store.transaction(write=False) as tx:
             return [
@@ -229,6 +237,11 @@ class RoutingLabService:
         with self.store.transaction(write=False) as tx:
             tx.get("lab", lab_id)
             return [RoutingRequest.model_validate(r) for r in tx.list("request", lab_id)]
+
+    def replays(self, lab_id: str) -> list[RoutingReplay]:
+        with self.store.transaction(write=False) as tx:
+            tx.get("lab", lab_id)
+            return [RoutingReplay.model_validate(r) for r in tx.list("replay", lab_id)]
 
     def submit(self, lab_id: str, request: SubmitRoutingRequest) -> RoutingRequest:
         def action(tx: RoutingTransaction) -> RoutingRequest:

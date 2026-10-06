@@ -2009,6 +2009,14 @@ export type RoutingResponse_RoutingRequest_ = {
   readonly data: RoutingRequest;
 };
 
+export type RoutingResponse_list_RoutingLabView__ = {
+  readonly data: ReadonlyArray<RoutingLabView>;
+};
+
+export type RoutingResponse_list_RoutingReplay__ = {
+  readonly data: ReadonlyArray<RoutingReplay>;
+};
+
 export type RoutingResponse_list_RoutingRequest__ = {
   readonly data: ReadonlyArray<RoutingRequest>;
 };
@@ -2212,6 +2220,10 @@ export class EhaiApiClient {
     return this.request("/projects/" + encodeURIComponent(projectId) + "/routing-labs", "POST", request);
   }
 
+  listRoutingLabs(projectId: string): Promise<{ data: RoutingLabView[] }> {
+    return this.request("/projects/" + encodeURIComponent(projectId) + "/routing-labs", "GET");
+  }
+
   getRoutingLab(labId: string): Promise<{ data: RoutingLabView }> {
     return this.request("/routing-labs/" + encodeURIComponent(labId), "GET");
   }
@@ -2254,6 +2266,10 @@ export class EhaiApiClient {
 
   startRoutingReplay(labId: string, request: StartRoutingReplayRequest): Promise<{ data: RoutingReplay }> {
     return this.request("/routing-labs/" + encodeURIComponent(labId) + "/replays", "POST", request);
+  }
+
+  listRoutingReplays(labId: string): Promise<{ data: RoutingReplay[] }> {
+    return this.request("/routing-labs/" + encodeURIComponent(labId) + "/replays", "GET");
   }
 
   getRoutingReplay(replayId: string): Promise<{ data: RoutingReplay }> {

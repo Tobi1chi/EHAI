@@ -50,6 +50,10 @@ def build_routing_router(service: RoutingLabService) -> APIRouter:
     ) -> RoutingResponse[RoutingLabView]:
         return RoutingResponse(data=service.create(normalize_id(project_id), body))
 
+    @router.get("/projects/{project_id}/routing-labs", operation_id="listRoutingLabs")
+    def labs(project_id: UuidInput) -> RoutingResponse[list[RoutingLabView]]:
+        return RoutingResponse(data=service.labs(normalize_id(project_id)))
+
     @router.get("/routing-labs/{lab_id}", operation_id="getRoutingLab")
     def lab(lab_id: UuidInput) -> RoutingResponse[RoutingLabView]:
         return RoutingResponse(data=service.lab(normalize_id(lab_id)))
@@ -95,6 +99,10 @@ def build_routing_router(service: RoutingLabService) -> APIRouter:
         lab_id: UuidInput, body: StartRoutingReplayRequest
     ) -> RoutingResponse[RoutingReplay]:
         return RoutingResponse(data=service.start_replay(normalize_id(lab_id), body))
+
+    @router.get("/routing-labs/{lab_id}/replays", operation_id="listRoutingReplays")
+    def replays(lab_id: UuidInput) -> RoutingResponse[list[RoutingReplay]]:
+        return RoutingResponse(data=service.replays(normalize_id(lab_id)))
 
     @router.get("/routing-replays/{replay_id}", operation_id="getRoutingReplay")
     def get_replay(replay_id: UuidInput) -> RoutingResponse[RoutingReplay]:

@@ -1430,6 +1430,40 @@
       ],
       "title": "RoutingResponse[RoutingRequest]"
     },
+    "RoutingResponse_list_RoutingLabView__": {
+      "properties": {
+        "data": {
+          "items": {
+            "$ref": "#/$defs/RoutingLabView"
+          },
+          "type": "array",
+          "title": "Data"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "data"
+      ],
+      "title": "RoutingResponse[list[RoutingLabView]]"
+    },
+    "RoutingResponse_list_RoutingReplay__": {
+      "properties": {
+        "data": {
+          "items": {
+            "$ref": "#/$defs/RoutingReplay"
+          },
+          "type": "array",
+          "title": "Data"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "data"
+      ],
+      "title": "RoutingResponse[list[RoutingReplay]]"
+    },
     "RoutingResponse_list_RoutingRequest__": {
       "properties": {
         "data": {
