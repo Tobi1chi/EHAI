@@ -468,6 +468,11 @@ def create_parser() -> argparse.ArgumentParser:
     verdict.add_argument("--rejected", action="store_true", help="reject the human Check")
     decide_check.add_argument("--actor", required=True)
     decide_check.add_argument("--comment", required=True)
+    decide_check.add_argument(
+        "--hold",
+        action="store_true",
+        help="pause the Run with the decision so nothing downstream starts; resume-run continues",
+    )
 
     reply_intervention = commands.add_parser(
         "reply-intervention",
@@ -1098,6 +1103,7 @@ def _dispatch(service: ExecutionService, args: argparse.Namespace) -> dict[str, 
                 args.passed,
                 args.actor,
                 args.comment,
+                hold=args.hold,
             )
         )
         return {"run_id": run.run_id, "status": run.status.value}

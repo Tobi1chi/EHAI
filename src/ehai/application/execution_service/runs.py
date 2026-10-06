@@ -30,7 +30,7 @@ from ehai.application.execution_service.host import ExecutionServiceHost
 from ehai.application.goal_budgets import validate_goal_worker_budget
 from ehai.application.interventions import list_interventions
 from ehai.application.orchestrator import GateRejectedError
-from ehai.application.pause_causes import PauseCause, require_pause_cause
+from ehai.application.pause_causes import PauseCause, pause_event_payload, require_pause_cause
 from ehai.application.ports import CommandReceipt, UnitOfWork
 from ehai.application.process_control import (
     ProcessControlGuard,
@@ -201,6 +201,18 @@ class RunCommandsMixin:
                 run = _required_run(uow, _result_id(existing, "run_id"))
                 attempt_id = _result_id(existing, "attempt_id")
             else:
+                if command.hold:
+                    pending = uow.states.get_check_run(command.check_run_id)
+                    if pending is not None and any(
+                        attempt.status in {AttemptStatus.PENDING, AttemptStatus.RUNNING}
+                        for attempt in uow.states.list_attempts(pending.run_id)
+                    ):
+                        # A direct pause only means "drained" when nothing else executes;
+                        # process adjustment relies on that before publishing a new graph.
+                        raise ApplicationError(
+                            "Cannot hold while other Attempts in this Run are running or queued; "
+                            "decide without hold, or wait until they finish"
+                        )
                 run, attempt_id = self._orchestrator.record_human_decision(
                     uow,
                     command.check_run_id,
@@ -209,6 +221,28 @@ class RunCommandsMixin:
                     actor=command.actor,
                     comment=command.comment,
                 )
+                if command.hold:
+                    # Paused before the Gate settles: no downstream work can be admitted.
+                    # resume-run recovers the decided Gate and continues from there.
+                    run = run.pause()
+                    uow.states.put_run(run)
+                    uow.events.append(
+                        Event(
+                            type=EventType.RUN_PAUSED,
+                            run_id=run.run_id,
+                            correlation_id=run.run_id,
+                            payload=pause_event_payload(
+                                run.run_id,
+                                PauseCause.HUMAN_HOLD,
+                                reason=(
+                                    "Human decision recorded with hold; resume the Run to "
+                                    "settle the Gate and continue."
+                                ),
+                                check_run_id=command.check_run_id,
+                            ),
+                            occurred_at=self._clock(),
+                        )
+                    )
                 self._record_receipt(
                     uow,
                     command.idempotency_key,

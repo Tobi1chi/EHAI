@@ -462,6 +462,9 @@ class DecideHumanCheck:
     passed: bool
     actor: str
     comment: str
+    # Pause the Run in the decision transaction so nothing downstream starts; resume-run then
+    # settles the Gate and continues.
+    hold: bool = False
 
     def __post_init__(self) -> None:
         owner = type(self).__name__
@@ -469,6 +472,8 @@ class DecideHumanCheck:
         object.__setattr__(
             self, "check_run_id", _normalized_id(self.check_run_id, "check_run_id", owner)
         )
+        if type(self.hold) is not bool:
+            raise ValueError(f"{owner} hold must be a boolean")
         if (
             not isinstance(self.request_token, str)
             or _REQUEST_TOKEN_PATTERN.fullmatch(self.request_token) is None
@@ -493,6 +498,8 @@ class DecideHumanCheck:
                 "comment": self.comment,
                 "passed": self.passed,
                 "request_token": self.request_token,
+                # Only present when set, so receipts recorded before hold existed still match.
+                **({"hold": True} if self.hold else {}),
             },
         )
 

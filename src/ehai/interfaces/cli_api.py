@@ -68,7 +68,7 @@ _COMMANDS: dict[str, tuple[str, tuple[str, ...]]] = {
     "apply-process": ("/commands/apply-process", ("review_id",)),
     "decide-human-check": (
         "/check-runs/{check_run_id}/decision",
-        ("request_token", "passed", "actor", "comment"),
+        ("request_token", "passed", "actor", "comment", "hold"),
     ),
     "reply-intervention": (
         "/interventions/{intervention_id}/reply",

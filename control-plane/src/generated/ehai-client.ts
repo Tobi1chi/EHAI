@@ -1030,6 +1030,7 @@ export type DecideHumanCheckRequest = {
   readonly passed: boolean;
   readonly actor: string;
   readonly comment: string;
+  readonly hold?: boolean;
 };
 
 export type ReplyInterventionRequest = {

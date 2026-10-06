@@ -260,6 +260,14 @@ class DecideHumanCheckRequest(_StrictRequest):
         str,
         StringConstraints(strip_whitespace=True, min_length=1, max_length=8000),
     ]
+    hold: StrictBool = Field(
+        default=False,
+        description=(
+            "Pause the Run in the same transaction as the decision, so no downstream work "
+            "starts; resume the Run to settle the Gate and continue. Rejected while other "
+            "Attempts are running or queued."
+        ),
+    )
 
 
 class ReplyInterventionRequest(_StrictRequest):

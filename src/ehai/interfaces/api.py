@@ -591,6 +591,7 @@ def create_app(
                 request.passed,
                 request.actor,
                 request.comment,
+                hold=request.hold,
             )
         )
         if runtime_control is not None and run.status is RunStatus.RUNNING:
