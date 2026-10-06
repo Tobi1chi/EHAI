@@ -56,6 +56,7 @@
 | 09-22 | 真实便签→修订→执行→人工验收 | 真实 Go（20 次） | Planner raise_note、revise_plan 草稿、Worker/Reviewer、便签人工 Gate，Run completed；项目更新后真实输入仍为旧规则 | propose_process 路径、任意崩溃恢复 | [P3](history/RECORD_P3.md#2026-09-22opencode-go-真实便签试用) |
 | 09-22 | 多工作区管理层与规划容量 | 0 | 两个子核心独立执行、停启后数据保留；容量 201/409/409 后释放；MCP 72/65 工具 | 真实模型并发、强杀 | [P3](history/RECORD_P3.md#正常入口薄验证) |
 | 09-23 | 真实多工作区 Pi 并发 | 真实 Go（24 次） | 跨工作区 Planner/Worker/Reviewer 请求重叠，输入只含本项目规则；修复 Git 继承 stdin 阻塞后原 Run 接续完成 | 多 Provider、远程工作区、任意强杀 | [P3](history/RECORD_P3.md#2026-09-23真实多-pi-并发与-windows-git-阻塞修复) |
+| 10-06 | Web 工作台逐页试运行（管理器 `--ui-dir` 同源托管，home/dev 两个 fake 工作区） | 0（fake Worker；Jev 为本机协议替身） | 生活：录入（直接保存与待确认）、批准、完成/撤销、编辑、定时启停与修改、回顾记录；工作：人工 Gate“通过并暂停”后恢复至 completed、轨迹；问：快环选中配方并返回待办，纠错暂停配方，慢环处理结果回显；学习：提出候选→3 案例回放通过→确认替身后发布；工作区停止/启动；375px 宽无横向溢出，深色正常；产品 E2E 通过。发现并修复：时间按字符串排序（偏移不同）、回放刷新后丢失（新增 listRoutingReplays） | 真实模型、真实 Jev、真实 Connector、Windows、多浏览器并发 | [ADR 0008](adr/0008-web-workbench.md) |
 
 ## P4 生活事务与外部连接
 
