@@ -16,7 +16,9 @@ import { RECIPE_TARGET, routingReason } from "../../lib/labels";
 import { byNewest, projectRows } from "../../lib/overview";
 import { actorName, setPrefs, usePrefs } from "../../lib/prefs";
 import { useSubmission } from "../../lib/submit";
-import { RouteLine, RoutingResult, useAutoAdvance } from "./routing";
+import { FEEDBACK_LABEL, RouteLine, RoutingResult, useAutoAdvance } from "./routing";
+
+const FALLBACK_STATUS: Readonly<Record<string, string>> = { running: "处理中", completed: "处理完了", failed: "失败" };
 
 type LabRef = {
   readonly workspaceId: string;
@@ -62,12 +64,12 @@ export function LearnPage() {
     <div className="content wide">
       <div className="page-head">
         <div className="grow">
-          <div className="meta">生活和工作共用</div>
+          <div className="meta">通用</div>
           <h1 className="page-title">学习与发布</h1>
         </div>
       </div>
       <p className="body muted">
-        快环（代码规则和 Jev）只在你批准的只读配方里选择；接不住的请求交给慢环。慢环提出候选配方，回放通过后由你发布。
+        常见的问题由快环按你发布过的配方直接回答，其余的交给慢环。慢环处理多了会提出新配方，回放检查通过后由你决定是否发布。
       </p>
       <QueryView query={labs}>
         {() =>
@@ -125,8 +127,9 @@ function Lab({ lab }: { lab: LabRef }) {
   const waiting = all.some((r) => r.status === "queued" || r.status === "routing");
   useAutoAdvance(ws, labId, waiting);
 
-  const candidates = current.recipes.filter((r) => r.status === "candidate");
-  const published = current.recipes.filter((r) => r.status !== "candidate");
+  // A paused recipe goes back through replay and publish, the same way as a new one.
+  const candidates = current.recipes.filter((r) => r.status === "candidate" || r.status === "paused");
+  const published = current.recipes.filter((r) => r.status === "active");
   const escalated = all.filter((r) => r.status === "escalated");
 
   async function advance() {
@@ -143,10 +146,10 @@ function Lab({ lab }: { lab: LabRef }) {
           <span className="h2" style={{ flex: "1 1 auto" }}>
             {current.lab.name}
           </span>
-          <span className="tag">{current.lab.mode === "shadow" ? "影子模式" : "只读执行"}</span>
-          <span className="tag">慢环：{current.lab.fallback_mode === "pi" ? "Pi 回退" : "外部 Agent"}</span>
+          <span className="tag">{current.lab.mode === "shadow" ? "试运行（只记录不回答）" : "正式回答（只读）"}</span>
+          <span className="tag">慢环：{current.lab.fallback_mode === "pi" ? "Pi" : "外部 Agent"}</span>
           <button type="button" className="btn small" disabled={advancing} onClick={() => void advance()}>
-            {advancing ? <Spinner /> : "推进一次"}
+            {advancing ? <Spinner /> : "手动处理一轮"}
           </button>
         </div>
         <div className="meta">
@@ -181,11 +184,11 @@ function Lab({ lab }: { lab: LabRef }) {
 
       <section className="section">
         <div className="section-head">
-          <h2 className="h2">待你发布</h2>
+          <h2 className="h2">待发布</h2>
           {candidates.length > 0 && <span className="nav-count">{candidates.length}</span>}
         </div>
         {candidates.length === 0 ? (
-          <p className="empty">没有待发布的候选。</p>
+          <p className="empty">没有待发布的配方。</p>
         ) : (
           candidates.map((recipe) => (
             <Candidate key={recipe.recipe_id} lab={lab} view={current} recipe={recipe} requests={all} />
@@ -199,7 +202,7 @@ function Lab({ lab }: { lab: LabRef }) {
           {escalated.length > 0 && <span className="nav-count">{escalated.length}</span>}
         </div>
         {escalated.length === 0 ? (
-          <p className="empty">没有等待慢环的请求。</p>
+          <p className="empty">没有在等慢环的请求。</p>
         ) : (
           <>
             {escalated.map((r) => (
@@ -211,9 +214,9 @@ function Lab({ lab }: { lab: LabRef }) {
       </section>
 
       <section className="section">
-        <h2 className="h2">已发布的配方</h2>
+        <h2 className="h2">在用的配方</h2>
         {published.length === 0 ? (
-          <p className="empty">还没有配方。</p>
+          <p className="empty">还没有在用的配方。</p>
         ) : (
           published.map((recipe) => (
             <Published key={recipe.recipe_id} workspaceId={ws} recipe={recipe} hits={metrics.data?.by_recipe[recipe.recipe_id]} />
@@ -222,7 +225,7 @@ function Lab({ lab }: { lab: LabRef }) {
       </section>
 
       <section className="section">
-        <h2 className="h2">请求与案例</h2>
+        <h2 className="h2">所有请求</h2>
         <SubmitCase workspaceId={ws} labId={labId} />
         <QueryView query={requests}>
           {(data) => (
@@ -236,7 +239,7 @@ function Lab({ lab }: { lab: LabRef }) {
                       <RouteLine request={r} lab={current} />
                       <span className="meta">
                         {r.case_role === "validation" ? "验证案例" : "学习"} · {ago(r.created_at)}
-                        {r.feedback ? ` · 反馈：${r.feedback.outcome}` : ""}
+                        {r.feedback ? ` · ${FEEDBACK_LABEL[r.feedback.outcome]}` : ""}
                       </span>
                     </span>
                   </div>
@@ -301,7 +304,11 @@ function Candidate({
   return (
     <div className="card">
       <div>
-        <div className="meta">新配方 · 根据 {recipe.source_request_ids.length} 条请求提出</div>
+        <div className={recipe.status === "paused" ? "meta attn" : "meta"}>
+          {recipe.status === "paused"
+            ? `已暂停${recipe.pause_reason ? `：${recipe.pause_reason}` : ""} · 回放通过后可以重新发布`
+            : `新配方 · 根据 ${recipe.source_request_ids.length} 条请求提出`}
+        </div>
         <div className="h2">{recipe.name}</div>
       </div>
       <p className="body">{recipe.applicability}</p>
@@ -316,7 +323,12 @@ function Candidate({
         </div>
       )}
       {replays.map((replay) => (
-        <ReplayView key={replay.replay_id} replay={replay} current={replay.catalog_version === view.lab.catalog_version} />
+        <ReplayView
+          key={replay.replay_id}
+          replay={replay}
+          view={view}
+          current={replay.catalog_version === view.lab.catalog_version}
+        />
       ))}
       {labReplays.error !== undefined && <ErrorBlock error={labReplays.error} onRetry={labReplays.reload} />}
       <StartReplay
@@ -332,7 +344,7 @@ function Candidate({
           <input className="check" type="checkbox" checked={allowTrial} onChange={(e) => setAllowTrial(e.target.checked)} />
           <span className="grow">
             <span>仍然发布</span>
-            <span className="meta attn">这次回放由协议替身判断，不是真实 Jev 的证据。只在试运行里这样发布。</span>
+            <span className="meta attn">这次回放是测试用的模拟 Jev 判的，不算数。只在试用时勾选。</span>
           </span>
         </label>
       )}
@@ -342,17 +354,24 @@ function Candidate({
           type="button"
           className="btn primary"
           disabled={!passed || publish.pending || (trial && !allowTrial)}
-          title={passed ? undefined : "需要一次在当前目录版本上通过的回放"}
+          title={passed ? undefined : "先跑一次回放，通过后才能发布"}
           onClick={() => passed && void doPublish(passed)}
         >
-          发布
+          {recipe.status === "paused" ? "重新发布" : "发布"}
         </button>
       </div>
     </div>
   );
 }
 
-function ReplayView({ replay, current }: { replay: RoutingReplay; current: boolean }) {
+/** A recipe's name for a replay choice; the choices are recipe IDs or "escalate". */
+function choiceName(view: RoutingLabView, choice: string): string {
+  if (choice === "escalate") return "交给慢环";
+  const recipe = view.recipes.find((r) => r.recipe_id === choice);
+  return recipe ? `「${recipe.name}」` : choice.slice(0, 8);
+}
+
+function ReplayView({ replay, view, current }: { replay: RoutingReplay; view: RoutingLabView; current: boolean }) {
   const tone = replay.status === "passed" ? "ok" : replay.status === "failed" ? "bad" : "";
   const done = replay.entries.filter((e) => e.passed !== null).length;
   return (
@@ -362,7 +381,7 @@ function ReplayView({ replay, current }: { replay: RoutingReplay; current: boole
           回放 {replay.status === "pending" ? "进行中" : replay.status === "passed" ? "通过" : "未通过"} · {done}/
           {replay.entries.length}
         </span>
-        {!current && <span className="meta">（目录已变化，不能用于发布）</span>}
+        {!current && <span className="meta">（配方有变动，这次回放作废）</span>}
       </summary>
       <div className="list" style={{ marginTop: 8 }}>
         {replay.entries.map((e) => (
@@ -370,8 +389,8 @@ function ReplayView({ replay, current }: { replay: RoutingReplay; current: boole
             <span className="grow">
               <span>「{e.message}」</span>
               <span className="meta">
-                {e.case_role === "validation" ? "验证" : "学习"} · 期望 {e.expected_choice === "escalate" ? "交给慢环" : e.expected_choice.slice(0, 8)}
-                {e.judgement ? ` · Jev 选 ${e.judgement.choice === "escalate" ? "慢环" : e.judgement.choice.slice(0, 8)}` : ""}
+                {e.case_role === "validation" ? "验证" : "学习"} · 应该选{choiceName(view, e.expected_choice)}
+                {e.judgement ? ` · Jev 选了${choiceName(view, e.judgement.choice)}` : ""}
                 {e.reason ? ` · ${routingReason(e.reason)}` : ""}
               </span>
             </span>
@@ -405,7 +424,7 @@ function StartReplay({
   const [cases, setCases] = useState<Record<string, string>>({});
   const submission = useSubmission("start-replay");
   const choices = [
-    { value: recipe.recipe_id, label: `本候选「${recipe.name}」` },
+    { value: recipe.recipe_id, label: `这个配方「${recipe.name}」` },
     ...view.recipes.filter((r) => r.status === "active").map((r) => ({ value: r.recipe_id, label: r.name })),
     { value: "escalate", label: "交给慢环" },
   ];
@@ -438,9 +457,9 @@ function StartReplay({
   }
   return (
     <div className="card" style={{ background: "var(--sidebar)" }}>
-      <div className="h2">选择回放案例</div>
+      <div className="h2">选几条请求来回放</div>
       <p className="meta">
-        至少两个不同的消息，并包含一个没有用于提出候选的验证案例。回放只调用 Jev，不执行配方；期望答案不发给 Jev。
+        至少选两条不同的请求，其中一条是没用来提出这个配方的验证案例。回放只看 Jev 怎么选，不会真的执行，也不会把正确答案告诉 Jev。
       </p>
       <div className="list">
         {requests.map((r) => (
@@ -455,11 +474,11 @@ function StartReplay({
             <select
               className="select"
               style={{ width: 180 }}
-              aria-label={`「${r.message}」的期望`}
+              aria-label={`「${r.message}」应该怎么处理`}
               value={cases[r.request_id] ?? ""}
               onChange={(e) => setCases((c) => ({ ...c, [r.request_id]: e.target.value }))}
             >
-              <option value="">不使用</option>
+              <option value="">不选</option>
               {choices.map((c) => (
                 <option key={c.value} value={c.value}>
                   {c.label}
@@ -480,7 +499,7 @@ function StartReplay({
           disabled={submission.pending || selected.length < 2}
           onClick={() => void start()}
         >
-          开始回放 {selected.length} 个案例
+          回放 {selected.length} 条
         </button>
       </div>
     </div>
@@ -508,7 +527,7 @@ function Escalated({ workspaceId, request }: { workspaceId: string; request: Rou
     );
     if (result) {
       touch(workspaceId);
-      toast("已记录慢环处理结果");
+      toast("已记下处理结果");
     }
   }
 
@@ -522,17 +541,17 @@ function Escalated({ workspaceId, request }: { workspaceId: string; request: Rou
       </div>
       {request.fallback && (
         <div className="meta">
-          Pi 回退：{request.fallback.status}
+          Pi：{FALLBACK_STATUS[request.fallback.status] ?? request.fallback.status}
           {request.fallback.error ? ` · ${request.fallback.error}` : ""}
           {request.fallback.change_reason ? ` · ${request.fallback.change_reason}` : ""}
-          {request.fallback.project_change ? ` · 转交工程修改：${request.fallback.project_change.status}` : ""}
+          {request.fallback.project_change ? ` · 已转成项目修改（${request.fallback.project_change.status}）` : ""}
         </div>
       )}
       {request.result && <RoutingResult request={request} />}
       {!open ? (
         <div>
           <button type="button" className="btn small" disabled={running} onClick={() => setOpen(true)}>
-            记录处理结果
+            记下处理结果
           </button>
         </div>
       ) : (
@@ -545,7 +564,7 @@ function Escalated({ workspaceId, request }: { workspaceId: string; request: Rou
             <span>依据</span>
             <input className="input" value={evidence} onChange={(e) => setEvidence(e.target.value)} />
           </label>
-          <p className="meta">记为外部 Agent 报告，不代表 EHAI 核实了其中的外部事实。</p>
+          <p className="meta">会标记为未经核实。</p>
           {submission.error !== undefined && <ErrorBlock error={submission.error} />}
           <div className="actions">
             <button type="button" className="btn" onClick={() => setOpen(false)}>
@@ -596,7 +615,7 @@ function ProposeCandidate({
     if (result) {
       touch(workspaceId);
       setOpen(false);
-      toast("已提出候选，回放通过后可以发布");
+      toast("已提出，回放通过后就能发布");
     }
   }
 
@@ -604,32 +623,32 @@ function ProposeCandidate({
     return (
       <div>
         <button type="button" className="btn small ghost" disabled={learning.length === 0} onClick={() => setOpen(true)}>
-          手动提出候选配方
+          手动提一个配方
         </button>
       </div>
     );
   }
   return (
     <div className="card" style={{ background: "var(--sidebar)" }}>
-      <div className="h2">提出候选配方</div>
-      <p className="meta">通常由慢环提出。这里等同于以外部 Agent 的身份提交；候选仍需回放并由你发布。</p>
+      <div className="h2">提一个配方</div>
+      <p className="meta">一般由慢环提出。在这里手动提的，也一样要回放、发布。</p>
       <label className="field">
         <span>名称</span>
         <input className="input" value={name} onChange={(e) => setName(e.target.value)} />
       </label>
       <label className="field">
-        <span>适用范围</span>
+        <span>什么时候用</span>
         <textarea className="textarea" value={applicability} onChange={(e) => setApplicability(e.target.value)} />
       </label>
       <label className="field">
-        <span>执行</span>
+        <span>做什么</span>
         <select className="select" value={target} onChange={(e) => setTarget(e.target.value as RoutingRecipeInput["target"])}>
           <option value="life.tasks.list">life.tasks.list · 查看生活待办</option>
-          <option value="inbox.list">inbox.list · 查看需要我处理</option>
+          <option value="inbox.list">inbox.list · 查看待处理</option>
         </select>
       </label>
       <div className="field">
-        <span>来源请求（学习案例，最多 20 条）</span>
+        <span>根据哪些请求（学习案例，最多 20 条）</span>
         <div className="list">
           {learning.map((r) => (
             <label key={r.request_id} className="row" style={{ minHeight: 40, cursor: "pointer" }}>
@@ -656,7 +675,7 @@ function ProposeCandidate({
           disabled={submission.pending || !name.trim() || !applicability.trim() || sources.length === 0 || sources.length > 20}
           onClick={() => void propose()}
         >
-          提出
+          提交
         </button>
       </div>
     </div>
@@ -769,8 +788,8 @@ function SubmitCase({ workspaceId, labId }: { workspaceId: string; labId: string
   return (
     <div className="composer">
       <textarea
-        aria-label="提交请求或验证案例"
-        placeholder="提交一条请求；验证案例用于回放，不用于提出候选"
+        aria-label="写一条请求"
+        placeholder="写一条请求。验证案例只用来回放检查"
         value={message}
         onChange={(e) => setMessage(e.target.value)}
       />
@@ -805,7 +824,7 @@ const DEFAULT_RECIPES: ReadonlyArray<RoutingRecipeInput> = [
     target: "life.tasks.list",
   },
   {
-    name: "查看需要我处理",
+    name: "查看待处理",
     applicability: "用户只想知道当前有哪些等待自己处理的事项，不要求做出决定",
     target: "inbox.list",
   },
@@ -862,14 +881,14 @@ function CreateLab({ projects }: { projects: ReadonlyArray<ProjectRef> }) {
         {() =>
           options.length === 0 ? (
             <div className="banner">
-              <div className="banner-title">先登记一个 Jev Connector</div>
+              <div className="banner-title">先连上 Jev</div>
               <div className="meta">
-                实验需要同一 Project 里的 Jev 连接。在本机运行下面的命令（状态目录放在仓库外，密钥只从私有文件或环境变量读取）：
+                在终端里运行下面的命令。私有目录不要放在代码仓库里，密钥放在私有文件里。
               </div>
               <div className="code">
                 {`uv run ehai-jev init --api-url ${window.location.origin}/workspaces/<工作区> --project-id <项目 ID> --state-dir <私有目录> --model jev-latest\nuv run ehai-jev run --state-dir <私有目录> --key-file <私有密钥文件>`}
               </div>
-              <div className="meta">登记后回到这里创建实验。项目 ID 可以在「连接」页看到。</div>
+              <div className="meta">登记好再回到这里。项目 ID 可以在「连接」页找到。</div>
             </div>
           ) : (
             <div className="card">
@@ -896,15 +915,15 @@ function CreateLab({ projects }: { projects: ReadonlyArray<ProjectRef> }) {
                 <span>模式</span>
                 <div className="segmented" role="tablist">
                   <button type="button" role="tab" aria-selected={mode === "read_only"} onClick={() => setMode("read_only")}>
-                    只读执行
+                    正式回答
                   </button>
                   <button type="button" role="tab" aria-selected={mode === "shadow"} onClick={() => setMode("shadow")}>
-                    影子模式（只记录判断）
+                    试运行（只记录不回答）
                   </button>
                 </div>
               </div>
               <div className="field">
-                <span>首批批准的配方</span>
+                <span>先发布这些配方</span>
                 {DEFAULT_RECIPES.map((r) => (
                   <label key={r.target} className="row" style={{ minHeight: 40, cursor: "pointer" }}>
                     <input
@@ -929,7 +948,7 @@ function CreateLab({ projects }: { projects: ReadonlyArray<ProjectRef> }) {
                   disabled={submission.pending || !name.trim() || picked.length === 0}
                   onClick={() => void create()}
                 >
-                  创建并批准这些配方
+                  创建
                 </button>
               </div>
             </div>

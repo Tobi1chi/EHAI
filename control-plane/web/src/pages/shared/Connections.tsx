@@ -66,7 +66,7 @@ export function ConnectionsPage() {
     <div className="content wide">
       <div className="page-head">
         <div className="grow">
-          <div className="meta">按 Project 登记 · 凭证只在本机 Connector 里，不经过这个页面</div>
+          <div className="meta">账号授权在你电脑的命令行里完成，不经过网页</div>
           <h1 className="page-title">连接</h1>
         </div>
         <button type="button" className="btn" onClick={() => setAdding((v) => !v)}>
@@ -139,7 +139,7 @@ function ConnectorDetail({ row }: { row: Row }) {
           {row.workspaceId} / {row.projectName} · 登记于 {ago(c.created_at)}
         </div>
       </div>
-      <p className="meta">凭证保存在 Connector 的私有目录，EHAI 只保存摘要。连接登记后不能修改，换账号请新建连接。</p>
+      <p className="meta">连接登记后不能改。要换账号，新建一个连接。</p>
       {config && <div className="code">{config}</div>}
       <section className="section">
         <h3 className="h2">动作</h3>
@@ -152,7 +152,7 @@ function ConnectorDetail({ row }: { row: Row }) {
                 </span>
                 <span className="meta">{a.description}</span>
               </span>
-              <span className={`tag ${a.read_only ? "" : "attn"}`}>{a.read_only ? "只读" : "会写外部"}</span>
+              <span className={`tag ${a.read_only ? "" : "attn"}`}>{a.read_only ? "只读" : "会改动外部数据"}</span>
             </div>
           ))}
         </div>
@@ -201,7 +201,7 @@ function CallRow({ workspaceId, call }: { workspaceId: string; call: ConnectorCa
     );
     if (result) {
       touch(workspaceId);
-      toast("已请 Connector 查询一次结果");
+      toast("正在查结果");
     }
   }
 
@@ -213,18 +213,18 @@ function CallRow({ workspaceId, call }: { workspaceId: string; call: ConnectorCa
         </span>
         <span className="meta">
           {shortId(call.call_id)} · {ago(call.created_at)}
-          {call.write_authorized ? " · 已授权写入" : ""}
+          {call.write_authorized ? " · 允许改动" : ""}
           {call.error ? ` · ${call.error}` : ""}
         </span>
         {call.status === "unknown" && (
           <>
             <span className="meta attn">
-              请求已发出，但没有收到结果。远端可能已经执行了这个动作。EHAI 不会自动重试，以免重复执行。
+              请求发出去了，但没收到回复，对方可能已经执行过。为了避免重复，不会自动重试。
             </span>
             {submission.error !== undefined && <ErrorBlock error={submission.error} />}
             <span>
               <button type="button" className="btn small" disabled={submission.pending} onClick={() => void reconcile()}>
-                让 Connector 查询一次
+                查一下结果
               </button>
             </span>
           </>
@@ -245,7 +245,7 @@ function AddConnector() {
   return (
     <div className="card">
       <div className="h2">新建连接</div>
-      <p className="meta">凭证只在你本机的 Connector 里完成授权，不会经过这个页面。在终端依次运行：</p>
+      <p className="meta">在终端里依次运行下面的命令。账号授权在命令行里完成，不经过网页。</p>
       {projects.length > 0 && (
         <label className="field">
           <span>登记到哪个项目</span>
@@ -267,7 +267,7 @@ function AddConnector() {
         <div className="code">
           {`uv run ehai-jev init --api-url ${api} --project-id ${projectId} --state-dir <私有目录> --model jev-latest\nuv run ehai-jev run --state-dir <私有目录> --key-file <私有密钥文件>`}
         </div>
-        <p className="meta">状态目录放在仓库外。登记完成后，连接会出现在下面的列表里。</p>
+        <p className="meta">私有目录不要放在代码仓库里。登记好之后，连接会显示在下面。</p>
       </div>
     </div>
   );

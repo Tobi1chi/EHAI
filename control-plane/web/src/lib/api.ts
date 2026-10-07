@@ -41,9 +41,10 @@ export function errorStatus(error: unknown): number | null {
 export function describeError(error: unknown): string {
   if (error instanceof EhaiApiError) {
     const code = error.detail?.error.code;
-    return `${error.status}${code ? ` · ${code}` : ""} · ${error.message}`;
+    // The reason first; the status and code stay for anyone reporting the problem.
+    return `${error.message}（${error.status}${code ? ` ${code}` : ""}）`;
   }
-  if (error instanceof TypeError) return "无法连接 EHAI 管理层";
+  if (error instanceof TypeError) return "连不上 EHAI，看看服务有没有在运行。";
   if (error instanceof Error) return error.message;
   return String(error);
 }

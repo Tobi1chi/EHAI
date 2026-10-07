@@ -20,10 +20,10 @@ export function ProjectsPage() {
       {overview.error !== undefined && <ErrorBlock error={overview.error} onRetry={overview.reload} stale />}
       {overview.data === undefined && overview.error === undefined && (
         <p className="empty">
-          <Spinner /> 正在读取…
+          <Spinner /> 加载中…
         </p>
       )}
-      {overview.data !== undefined && rows.length === 0 && <p className="empty">可用的工作区里还没有项目。</p>}
+      {overview.data !== undefined && rows.length === 0 && <p className="empty">还没有项目。</p>}
       <div className="list">
         {rows.map(({ workspaceId, detail }) => {
           const p = detail.project;
@@ -71,7 +71,7 @@ export function ProjectPage({ workspaceId, projectId }: { workspaceId: string; p
         </div>
       </div>
       <section className="section">
-        <h2 className="h2">需要我处理</h2>
+        <h2 className="h2">待处理</h2>
         <QueryView query={inbox}>
           {(data) => (
             <InboxList
@@ -85,7 +85,7 @@ export function ProjectPage({ workspaceId, projectId }: { workspaceId: string; p
       <QueryView query={project}>
         {(data) =>
           data.goals.length === 0 ? (
-            <p className="empty">这个项目还没有目标。目标和方案目前通过 CLI 或 MCP 创建与讨论。</p>
+            <p className="empty">还没有目标。目前要用命令行或 MCP 创建目标、讨论方案。</p>
           ) : (
             <section className="section">
               <h2 className="h2">目标</h2>
@@ -115,7 +115,7 @@ export function ProjectPage({ workspaceId, projectId }: { workspaceId: string; p
                               {summary.run.status_reason ? ` · ${summary.run.status_reason}` : ""}
                             </span>
                             <span className="meta">
-                              {nodeProgress(summary.node_counts)} · {summary.completed_results.length} 个已验证成果 ·{" "}
+                              {nodeProgress(summary.node_counts)} · {summary.completed_results.length} 个通过检查的成果 ·{" "}
                               {ago(summary.run.created_at)}
                             </span>
                           </span>

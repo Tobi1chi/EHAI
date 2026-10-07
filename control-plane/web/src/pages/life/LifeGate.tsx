@@ -24,9 +24,9 @@ export function LifeGate({ children }: { children: (life: Life) => ReactNode }) 
     return (
       <div className="content">
         <div className="banner attn">
-          <div className="banner-title">找不到生活项目</div>
+          <div className="banner-title">找不到之前选的生活项目</div>
           <div className="meta">
-            工作区 <span className="mono">{binding.workspaceId}</span> 里没有之前选定的项目，可能已经换了数据目录。
+            在 <span className="mono">{binding.workspaceId}</span> 里没找到它，可能换过数据目录。
           </div>
           <div>
             <button type="button" className="btn small" onClick={() => setPrefs({ life: null })}>
@@ -43,11 +43,11 @@ export function LifeGate({ children }: { children: (life: Life) => ReactNode }) 
         entry={entry}
         title={
           <>
-            生活项目所在的工作区 <span className="mono">{binding.workspaceId}</span> 不可用
+            生活项目所在的 <span className="mono">{binding.workspaceId}</span> 没在运行
           </>
         }
       >
-        {!canStart(entry) && <div className="meta">下面的内容可能无法读取或已经过期。</div>}
+        {!canStart(entry) && <div className="meta">下面的内容可能不是最新的。</div>}
       </WorkspaceBanner>
     </div>
   );
@@ -88,17 +88,17 @@ function LifeSetup() {
     <div className="content">
       <h1 className="page-title">生活</h1>
       <p className="body muted">
-        生活分区使用一个 Project 存放待办、定时回顾和录入记录。选择已有的项目，或者新建一个。这个选择保存在当前浏览器里。
+        选一个项目来放你的生活待办，或者新建一个。
       </p>
       {overview.error !== undefined && <ErrorBlock error={overview.error} onRetry={overview.reload} />}
       {overview.data === undefined && overview.error === undefined && (
         <p className="empty">
-          <Spinner /> 正在读取工作区…
+          <Spinner /> 加载中…
         </p>
       )}
       {rows.length > 0 && (
         <section className="section">
-          <h2 className="h2">用已有项目</h2>
+          <h2 className="h2">用已有的项目</h2>
           <div className="list">
             {rows.map(({ workspaceId: ws, detail }) => (
               <button
@@ -120,7 +120,7 @@ function LifeSetup() {
       )}
       {available.length > 0 && (
         <section className="section">
-          <h2 className="h2">新建生活项目</h2>
+          <h2 className="h2">新建一个</h2>
           <div className="split">
             <label className="field">
               <span>工作区</span>
@@ -152,7 +152,7 @@ function LifeSetup() {
       )}
       {overview.data !== undefined && available.length === 0 && (
         <div className="banner">
-          <div className="meta">没有可用的工作区。先在管理层登记并启动一个工作区。</div>
+          <div className="meta">还没有在运行的工作区。先用命令行登记并启动一个。</div>
         </div>
       )}
     </div>

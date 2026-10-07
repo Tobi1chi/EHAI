@@ -72,7 +72,7 @@ function RunControls({ workspaceId, run, onDone }: { workspaceId: string; run: R
             <span>取消原因（可选）</span>
             <input className="input" value={reason} onChange={(e) => setReason(e.target.value)} />
           </label>
-          <p className="meta">取消后 Run 不能恢复；已验证的成果仍然保留。</p>
+          <p className="meta">取消后不能恢复，已经通过检查的成果会保留。</p>
           <div className="actions">
             <button type="button" className="btn" onClick={() => setCancelling(false)}>
               不取消
@@ -139,7 +139,7 @@ function PlanView({ plan }: { plan: PlanGraph }) {
 }
 
 function InterventionsView({ items }: { items: ReadonlyArray<Intervention> }) {
-  if (items.length === 0) return <p className="empty">这个 Run 没有请求过帮助。</p>;
+  if (items.length === 0) return <p className="empty">这个 Run 没有求助过。</p>;
   return (
     <div className="list">
       {[...items].reverse().map((i) => (
@@ -147,7 +147,7 @@ function InterventionsView({ items }: { items: ReadonlyArray<Intervention> }) {
           <span className="grow">
             <span className="title">{i.needed || i.reason}</span>
             <span className="meta">
-              {i.kind === "external_effects" ? "外部影响" : "Worker 受阻"} · {ago(i.occurred_at)} ·{" "}
+              {i.kind === "external_effects" ? "要改动外部" : "Worker 卡住了"} · {ago(i.occurred_at)} ·{" "}
               {i.status === "open" ? "待回复" : "已回复"}
             </span>
             {i.reason && i.needed && <span className="meta pre">{i.reason}</span>}
@@ -164,7 +164,7 @@ function InterventionsView({ items }: { items: ReadonlyArray<Intervention> }) {
 }
 
 function ResultView({ doc }: { doc: RunResultDocument | null }) {
-  if (doc === null) return <p className="empty">还没有成果。Run 完成后在这里显示 commit、diff 与检查结果。</p>;
+  if (doc === null) return <p className="empty">还没有成果。完成后这里会显示 commit、diff 和检查结果。</p>;
   const result = doc.result;
   const checks = result.check_result?.checks ?? [];
   return (
@@ -239,8 +239,8 @@ function TraceView({ trace, plan }: { trace: ExecutionTrace; plan: PlanGraph | u
   }
   return (
     <div className="section">
-      {trace.session_events_truncated && <p className="meta attn">会话事件过多，只显示了一部分。</p>}
-      {trace.attempts.length === 0 && <p className="empty">还没有 Attempt。</p>}
+      {trace.session_events_truncated && <p className="meta attn">记录太多，只显示了一部分。</p>}
+      {trace.attempts.length === 0 && <p className="empty">还没开始执行。</p>}
       {trace.attempts.map((attempt) => {
         const toolCalls = calls.get(attempt.attempt_id) ?? [];
         return (
@@ -363,14 +363,14 @@ export function RunPage({ workspaceId, runId }: { workspaceId: string; runId: st
       </QueryView>
 
       <section className="section">
-        <h2 className="h2">需要我处理</h2>
+        <h2 className="h2">待处理</h2>
         <QueryView query={inbox}>
           {(data) => (
             <InboxList
               rows={data.items.filter((i) => i.pending).map((item) => ({ workspaceId, item }))}
               onOpen={setTarget}
               showWorkspace={false}
-              empty="这个 Run 没有等待你的事项"
+              empty="这个 Run 没有要你处理的事"
             />
           )}
         </QueryView>

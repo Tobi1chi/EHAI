@@ -79,8 +79,7 @@ export function RoutingResult({ request }: { request: RoutingRequest }) {
     return (
       <div className="section" style={{ gap: 4 }}>
         <div className="body pre">{String(result["response"] ?? "")}</div>
-        <div className="meta pre">依据：{String(result["evidence"] ?? "")}</div>
-        <div className="meta">外部 Agent 报告，EHAI 没有核实其中的外部事实。</div>
+        <div className="meta pre">依据：{String(result["evidence"] ?? "")} · 未经核实</div>
       </div>
     );
   }
@@ -96,7 +95,7 @@ export function RoutingResult({ request }: { request: RoutingRequest }) {
             {t.due_at && <span className="meta">{when(t.due_at)}</span>}
           </div>
         ))}
-        <p className="meta">来自待办 · 只读查询，没有修改任何东西{result["truncated"] ? " · 结果过长已截断" : ""}</p>
+        <p className="meta">来自待办{result["truncated"] ? " · 太多了，只列出一部分" : ""}</p>
       </div>
     );
   }
@@ -105,21 +104,45 @@ export function RoutingResult({ request }: { request: RoutingRequest }) {
     const items = view.items.filter((i) => i.pending);
     return (
       <div className="section" style={{ gap: 0 }}>
-        {items.length === 0 && <p className="meta">没有等待处理的事项。</p>}
+        {items.length === 0 && <p className="meta">没有要你处理的事。</p>}
         {items.slice(0, 20).map((i) => (
           <div key={i.kind + i.request_id} className="row" style={{ minHeight: 36, padding: "4px 8px" }}>
             <span className="grow">{inboxQuestion(i)}</span>
             <span className="meta">{INBOX_KIND[i.kind]}</span>
           </div>
         ))}
-        <p className="meta">来自需要我处理 · 只读查询</p>
+        <p className="meta">来自待处理</p>
       </div>
     );
   }
   return <div className="code">{JSON.stringify(result, null, 2)}</div>;
 }
 
-export function RouteLine({ request, lab }: { request: RoutingRequest; lab?: RoutingLabView }) {
+/** Plain wording for the 问 page; the routing details stay on 学习与发布. */
+function PlainRouteLine({ request }: { request: RoutingRequest }) {
+  switch (request.status) {
+    case "queued":
+    case "routing":
+      return <span className="meta">正在处理…</span>;
+    case "shadow":
+      return <span className="meta">试运行中，只记录不回答</span>;
+    case "completed":
+      return null;
+    case "escalated":
+      return (
+        <span className="meta attn">
+          {request.fallback?.status === "failed"
+            ? "处理失败了"
+            : request.feedback
+              ? "已转交重新处理，处理好会显示在这里"
+              : "这个问题要多花点时间，处理好会显示在这里"}
+        </span>
+      );
+  }
+}
+
+export function RouteLine({ request, lab, plain = false }: { request: RoutingRequest; lab?: RoutingLabView; plain?: boolean }) {
+  if (plain) return <PlainRouteLine request={request} />;
   const j = request.judgement;
   switch (request.status) {
     case "queued":
@@ -128,7 +151,7 @@ export function RouteLine({ request, lab }: { request: RoutingRequest; lab?: Rou
     case "shadow":
       return (
         <span className="meta">
-          影子模式：判断为「{recipeName(request, lab) || "慢环"}」，只记录不执行{j ? ` · 置信度 ${j.confidence.toFixed(2)}` : ""}
+          试运行：判断为「{recipeName(request, lab) || "慢环"}」，只记录不回答{j ? ` · 置信度 ${j.confidence.toFixed(2)}` : ""}
         </span>
       );
     case "completed":
@@ -167,12 +190,7 @@ export function FeedbackBar({ workspaceId, request }: { workspaceId: string; req
   }, [open]);
 
   if (request.feedback) {
-    const label = { correct: "已标记正确", misroute: "已标记走错", execution_failed: "已标记执行失败" }[request.feedback.outcome];
-    return (
-      <span className="meta">
-        {label} · {request.feedback.actor}
-      </span>
-    );
+    return <span className="meta">{FEEDBACK_LABEL[request.feedback.outcome]}</span>;
   }
   if (request.status !== "completed") return null;
 
@@ -188,7 +206,7 @@ export function FeedbackBar({ workspaceId, request }: { workspaceId: string; req
     if (result) {
       touch(workspaceId);
       setOpen(false);
-      toast(kind === "correct" ? "已记为正确" : "已暂停这个配方，问题交回慢环");
+      toast(kind === "correct" ? "谢谢反馈" : "收到，这类问题先不自动回答了");
     }
   }
 
@@ -197,10 +215,10 @@ export function FeedbackBar({ workspaceId, request }: { workspaceId: string; req
       {!open && (
         <div className="actions" style={{ justifyContent: "flex-start" }}>
           <button type="button" className="btn small" disabled={submission.pending} onClick={() => void send("correct", "结果正确")}>
-            正确
+            答对了
           </button>
           <button type="button" className="btn small" onClick={() => setOpen(true)}>
-            处理错了
+            答错了
           </button>
         </div>
       )}
@@ -208,7 +226,7 @@ export function FeedbackBar({ workspaceId, request }: { workspaceId: string; req
         <div className="card" ref={form} style={{ scrollMarginBottom: 160 }}>
           <div className="segmented" role="tablist" aria-label="哪里错了">
             <button type="button" role="tab" aria-selected={outcome === "misroute"} onClick={() => setOutcome("misroute")}>
-              理解错了
+              没听懂问题
             </button>
             <button
               type="button"
@@ -216,14 +234,14 @@ export function FeedbackBar({ workspaceId, request }: { workspaceId: string; req
               aria-selected={outcome === "execution_failed"}
               onClick={() => setOutcome("execution_failed")}
             >
-              结果不对
+              答案不对
             </button>
           </div>
           <label className="field">
-            <span>说明</span>
+            <span>哪里不对</span>
             <textarea className="textarea" value={explanation} onChange={(e) => setExplanation(e.target.value)} />
           </label>
-          <p className="meta">提交后会暂停这个配方，问题交回慢环；恢复配方前需要重新回放。</p>
+          <p className="meta">提交后，这类问题先不自动回答，改为转交处理。之后可以在「学习与发布」里重新开启。</p>
           <div className="actions">
             <button type="button" className="btn" onClick={() => setOpen(false)}>
               取消
@@ -234,7 +252,7 @@ export function FeedbackBar({ workspaceId, request }: { workspaceId: string; req
               disabled={submission.pending || !explanation.trim()}
               onClick={() => void send(outcome, explanation.trim())}
             >
-              提交纠错
+              提交
             </button>
           </div>
         </div>
@@ -267,6 +285,12 @@ export function useAutoAdvance(workspaceId: string, labId: string | undefined, w
     return () => window.clearInterval(timer);
   }, [workspaceId, labId, waiting, touch]);
 }
+
+export const FEEDBACK_LABEL: Record<"correct" | "misroute" | "execution_failed", string> = {
+  correct: "你说答对了",
+  misroute: "你说没听懂问题",
+  execution_failed: "你说答案不对",
+};
 
 export function requestAge(request: RoutingRequest): string {
   return ago(request.created_at);

@@ -70,7 +70,7 @@ function LiveFooter() {
   const { overview, live } = useApp();
   const entries = overview.data?.workspaces ?? [];
   if (overview.error !== undefined && overview.data === undefined) {
-    return <div className="meta bad">无法连接 EHAI 管理层</div>;
+    return <div className="meta bad">连不上 EHAI</div>;
   }
   const available = entries.filter((e) => e.available);
   const down = available.filter((e) => live[e.workspace.workspace_id] === "down");
@@ -82,7 +82,7 @@ function LiveFooter() {
           className="dot"
           style={{ background: down.length ? "var(--bad)" : available.length ? "var(--ok)" : "var(--text-3)" }}
         />
-        {down.length ? `实时更新断开 · ${down.map((e) => e.workspace.workspace_id).join("、")}` : "实时更新已连接"}
+        {down.length ? `${down.map((e) => e.workspace.workspace_id).join("、")} 断开了，内容可能不是最新的` : "已连接"}
       </span>
       {offline.length > 0 && (
         <span>
@@ -140,7 +140,7 @@ export function Shell({ zone, path, children }: { zone: Zone; path: string; chil
           </nav>
         )}
         <nav className="nav-group" aria-label="共用">
-          <div className="nav-label">生活和工作共用</div>
+          <div className="nav-label">通用</div>
           {SHARED.map((item) => (
             <NavLink key={item.to} item={item} path={path} />
           ))}

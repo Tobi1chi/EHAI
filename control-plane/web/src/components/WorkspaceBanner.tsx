@@ -21,7 +21,7 @@ export function WorkspaceBanner({ entry, title, children }: { entry: WorkspaceOv
   async function start() {
     const result = await submission.run(() => manager.startWorkspace(id));
     overview.reload();
-    if (result) toast(`已启动 ${id}`);
+    if (result) toast(`${id} 已启动`);
   }
 
   return (

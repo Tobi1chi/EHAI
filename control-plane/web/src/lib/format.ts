@@ -89,7 +89,7 @@ export function splitInterval(seconds: number): { amount: number; unit: Interval
 
 export function intervalText(seconds: number): string {
   const { amount, unit } = splitInterval(seconds);
-  return `每隔 ${amount} ${UNIT_LABEL[unit]}`;
+  return amount === 1 ? `每${unit === "minutes" ? "分钟" : UNIT_LABEL[unit]}` : `每 ${amount} ${UNIT_LABEL[unit]}`;
 }
 
 /** Value for <input type="datetime-local"> in local time. */

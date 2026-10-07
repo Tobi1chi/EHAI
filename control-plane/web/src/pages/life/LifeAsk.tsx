@@ -52,7 +52,7 @@ function Conversation({ life, lab }: { life: Life; lab: RoutingLabView }) {
       <QueryView query={requests}>
         {() =>
           shown.length === 0 ? (
-            <p className="empty">还没有问过。快环只处理已批准的只读查询，其他请求会交给慢环。</p>
+            <p className="empty">可以问问你的待办，比如「我今天还有什么要做？」</p>
           ) : (
             <div className="section" style={{ gap: 20 }}>
               {shown.map((r) => (
@@ -66,14 +66,12 @@ function Conversation({ life, lab }: { life: Life; lab: RoutingLabView }) {
                     </div>
                   </div>
                   <div className="section" style={{ gap: 6 }}>
-                    <RouteLine request={r} lab={lab} />
-                    {(r.status === "queued" || r.status === "routing") && (
+                    {r.status === "queued" || r.status === "routing" ? (
                       <span className="meta">
-                        <Spinner /> 需要 Jev Connector 在运行
+                        <Spinner /> 正在处理…一直没有结果的话，看看 Jev 有没有在运行
                       </span>
-                    )}
-                    {r.status === "escalated" && (
-                      <span className="meta">处理好后会出现在这里；需要你决定的事会出现在「需要我处理」。</span>
+                    ) : (
+                      <RouteLine request={r} lab={lab} plain />
                     )}
                     <RoutingResult request={r} />
                     <FeedbackBar workspaceId={life.workspaceId} request={r} />
@@ -93,7 +91,7 @@ function Conversation({ life, lab }: { life: Life; lab: RoutingLabView }) {
         />
         <div className="composer-bar">
           <span className="meta" style={{ flex: "1 1 auto" }}>
-            {lab.lab.mode === "shadow" ? "影子模式：只记录判断，不执行查询" : "只读：快环不会修改任何东西"}
+            {lab.lab.mode === "shadow" ? "试运行中，只记录不回答" : "只能查询，不会改动你的待办"}
           </span>
           <button
             type="button"
@@ -125,10 +123,9 @@ function Ask({ life }: { life: Life }) {
         {(data) =>
           lab === undefined ? (
             <div className="banner">
-              <div className="banner-title">还没有接通快环</div>
+              <div className="banner-title">「问」还没有设置好</div>
               <div className="meta">
-                「问」使用生活项目里的路由实验：先登记 Jev Connector，再创建实验并批准配方。步骤见{" "}
-                <Link to="/learn">学习与发布</Link>。
+                需要先连上 Jev，再选好能自动回答哪些问题。去 <Link to="/learn">学习与发布</Link> 设置。
               </div>
             </div>
           ) : (

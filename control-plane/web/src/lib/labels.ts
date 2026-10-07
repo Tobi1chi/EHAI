@@ -21,15 +21,15 @@ export const RUN_STATUS: Record<RunStatus, string> = {
 
 export const NODE_STATUS: Record<PlanNodeStatus, string> = {
   pending: "待执行",
-  ready: "就绪",
+  ready: "可以开始",
   running: "运行中",
   candidate: "待检查",
   verifying: "检查中",
-  stalled: "停滞",
-  suspended: "已挂起",
+  stalled: "卡住了",
+  suspended: "搁置",
   completed: "已完成",
   failed: "失败",
-  pruned: "已剪除",
+  pruned: "已放弃",
 };
 
 export const NODE_KIND: Record<PlanNodeKind, string> = {
@@ -47,12 +47,12 @@ export const ATTEMPT_STATUS: Record<AttemptStatus, string> = {
   failed: "失败",
   timed_out: "超时",
   cancelled: "已取消",
-  interrupted: "中断",
+  interrupted: "被打断",
 };
 
 export const INBOX_KIND: Record<InboxKind, string> = {
-  intervention: "干预",
-  human_check: "人工 Gate",
+  intervention: "求助",
+  human_check: "人工检查",
   note: "便签",
   workflow_confirmation: "录入确认",
 };
@@ -60,7 +60,7 @@ export const INBOX_KIND: Record<InboxKind, string> = {
 export const WORKSPACE_STATUS: Record<WorkspaceDescriptor["status"], string> = {
   registered: "未启动",
   starting: "启动中",
-  ready: "可用",
+  ready: "已启动",
   stopping: "停止中",
   stopped: "已停止",
   failed: "失败",
@@ -88,36 +88,36 @@ export function actionHint(action: InboxAction): string {
   switch (action.operation) {
     case "decide-human-check":
       if (args["hold"] === true) {
-        return "记录通过，同时暂停 Run，下游工作不会开始；恢复 Run 后 Gate 才结算并继续。";
+        return "先算通过，但让 Run 停下来，你点恢复后才继续往下做。";
       }
       return args["passed"] === true
-        ? "记录对这一版证据的决定，Gate 由核心判定。"
-        : "记录不通过，核心按规则决定返工或失败。";
+        ? "这一版没问题，继续往下做。"
+        : "这一版不行，按规则返工或结束。";
     case "reply-intervention":
-      return "在已批准的边界内回答这个问题；回复会恢复节点，Run 是否需要单独恢复以状态为准。";
+      return "回复后这一步会接着做；如果 Run 已暂停，还要再点恢复。";
     case "add-note-message":
-      return "追加一条讨论，不改变执行。";
+      return "只留言，不影响执行。";
     case "decide-note":
-      return "关闭、继续原请求或起草调整；批准仍然单独进行。";
+      return "选择怎么处理这条便签。改方案还要另外批准。";
     case "decide-workflow":
-      return "批准后保存这些待办，拒绝则不保存；不会执行待办本身。";
+      return "保存这些待办，或者不保存。";
   }
 }
 
 export const ROUTING_REASON: Record<string, string> = {
-  forced_or_empty_catalog: "没有可用配方，或指定走慢环",
+  forced_or_empty_catalog: "没有合适的配方",
   explicit_binding: "按指定配方处理",
   unapproved_binding: "指定的配方未批准",
   jev_call_failed_or_unknown: "Jev 调用失败或结果未知",
   invalid_jev_result: "Jev 返回的结果无效",
   invalid_choice_set: "Jev 返回的选项与目录不符",
   jev_escalated: "Jev 判断需要慢环",
-  uncertain_judgement: "置信度不够",
-  approved_recipe_selected: "选中已批准配方",
-  recipe_paused_before_execution: "配方在执行前被暂停",
+  uncertain_judgement: "Jev 拿不准",
+  approved_recipe_selected: "用了已发布的配方",
+  recipe_paused_before_execution: "配方刚被暂停",
   read_query_failed: "查询失败",
-  feedback_misroute: "已标记走错，交回慢环",
-  feedback_execution_failed: "已标记执行失败，交回慢环",
+  feedback_misroute: "你标记了答错",
+  feedback_execution_failed: "你标记了结果不对",
 };
 
 export function routingReason(reason: string | null): string {
@@ -127,7 +127,7 @@ export function routingReason(reason: string | null): string {
 
 export const RECIPE_TARGET: Record<string, string> = {
   "life.tasks.list": "查看生活待办",
-  "inbox.list": "查看需要我处理",
+  "inbox.list": "查看待处理",
 };
 
 // Workflow confirmations carry a fixed English question written for API callers; the page shows

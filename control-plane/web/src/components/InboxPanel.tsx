@@ -45,7 +45,7 @@ export function InboxPanel({ target, onClose }: { target: InboxTarget; onClose: 
   const item = query.data;
   return (
     <Panel
-      title={item ? INBOX_KIND[item.kind] : "需要我处理"}
+      title={item ? INBOX_KIND[item.kind] : "待处理"}
       subtitle={
         item
           ? `${target.workspaceId} / ${item.owner.project_name}${item.created_at ? ` · ${ago(item.created_at)}` : ""}`
@@ -94,9 +94,9 @@ function InboxBody({ workspaceId, item, onDone }: { workspaceId: string; item: I
         )}
         {owner.workflow_run_id && (
           <>
-            <dt>流程</dt>
+            <dt>记录</dt>
             <dd>
-              <Link to={`/life/records/${owner.workflow_run_id}`}>查看录入</Link>
+              <Link to={`/life/records/${owner.workflow_run_id}`}>查看这次录入</Link>
             </dd>
           </>
         )}
@@ -104,7 +104,7 @@ function InboxBody({ workspaceId, item, onDone }: { workspaceId: string; item: I
       {/* A capture's evidence is its source text, which the decision form shows as 原文. */}
       {item.evidence_summary && item.kind !== "workflow_confirmation" && (
         <div className="section">
-          <div className="h2">证据</div>
+          <div className="h2">依据</div>
           <div className="body pre">{item.evidence_summary}</div>
         </div>
       )}
@@ -139,8 +139,8 @@ function InboxBody({ workspaceId, item, onDone }: { workspaceId: string; item: I
       )}
       {item.pending && !item.actionable && (
         <div className="banner attn">
-          <div className="banner-title">现在不能在这里处理</div>
-          <div className="meta">{item.unavailable_reason ?? "核心没有提供可执行的动作。"}</div>
+          <div className="banner-title">暂时不能在这里处理</div>
+          <div className="meta">{item.unavailable_reason ?? "可以先用命令行处理。"}</div>
         </div>
       )}
       {item.actionable && <Actions workspaceId={workspaceId} item={item} onDone={onDone} />}
@@ -166,7 +166,7 @@ function Actions({ workspaceId, item, onDone }: { workspaceId: string; item: Inb
   }
   return (
     <div className="banner">
-      <div className="meta">这个事项的动作还不能在页面上处理：{item.actions.map((a) => a.operation).join("、")}</div>
+      <div className="meta">这类事项暂时只能用命令行处理（{item.actions.map((a) => a.operation).join("、")}）。</div>
     </div>
   );
 }
@@ -215,7 +215,7 @@ function HumanCheckForm({
         ...(args["hold"] === true ? { hold: true } : {}),
       }),
     );
-    if (result) after(`已提交：${label}`);
+    if (result) after(args["passed"] === true ? `已${label}` : "已记为不通过");
   }
 
   return (
@@ -244,7 +244,6 @@ function HumanCheckForm({
           </button>
         ))}
       </div>
-      <p className="meta">以 {actorName(prefs)} 身份提交</p>
     </div>
   );
 }
@@ -289,7 +288,6 @@ function ReplyForm({ workspaceId, action, onDone }: { workspaceId: string; actio
           回复
         </button>
       </div>
-      <p className="meta">以 {actorName(prefs)} 身份提交</p>
     </div>
   );
 }
@@ -297,7 +295,7 @@ function ReplyForm({ workspaceId, action, onDone }: { workspaceId: string; actio
 const NOTE_ACTIONS: ReadonlyArray<{ value: DecideNoteRequest["action"]; label: string }> = [
   { value: "resolve", label: "关闭便签" },
   { value: "continue", label: "继续原请求" },
-  { value: "propose_process", label: "起草过程调整" },
+  { value: "propose_process", label: "提一个流程调整" },
   { value: "revise_plan", label: "修订方案" },
 ];
 
@@ -374,7 +372,7 @@ function NoteForms({
             </select>
           </label>
           <label className="field">
-            <span>来源 Gate 是否通过</span>
+            <span>原来的检查算不算通过</span>
             <select className="select" value={passed} onChange={(e) => setPassed(e.target.value as "" | "true" | "false")}>
               <option value="">不涉及</option>
               <option value="true">通过</option>
@@ -406,7 +404,6 @@ function NoteForms({
           </button>
         )}
       </div>
-      <p className="meta">以 {actorName(prefs)} 身份提交 · 决定不等于批准，批准仍单独进行</p>
     </div>
   );
 }
@@ -450,7 +447,7 @@ export function CaptureDecision({
   const count = run.proposed_tasks.length;
 
   async function decide(decision: "approve" | "reject") {
-    const label = decision === "approve" ? `批准 ${count} 项` : "拒绝";
+    const label = decision === "approve" ? `保存 ${count} 项` : "不保存";
     const result = await submission.run((key) =>
       core(workspaceId).decideWorkflow(run.workflow_run_id, {
         idempotency_key: key,
@@ -460,19 +457,19 @@ export function CaptureDecision({
         reason: reason.trim() || label,
       }),
     );
-    if (result) after(decision === "approve" ? `已保存 ${count} 项待办` : "已拒绝，没有保存待办");
+    if (result) after(decision === "approve" ? `已保存 ${count} 项待办` : "没有保存");
   }
 
   return (
     <div className="section" style={{ gap: 16 }}>
       {run.source_text && (
         <div className="section">
-          <div className="h2">原文</div>
+          <div className="h2">原话</div>
           <div className="body muted pre">{run.source_text}</div>
         </div>
       )}
       <div className="section">
-        <div className="h2">候选事项 · {count}</div>
+        <div className="h2">要保存的待办 · {count}</div>
         <ul className="list">
           {run.proposed_tasks.map((task, index) => (
             <li key={index} className="row">
@@ -486,9 +483,9 @@ export function CaptureDecision({
       </div>
       {run.status === "awaiting_confirmation" ? (
         <>
-          <p className="meta">事项不能在这里修改；需要修改时，拒绝后重新录入。</p>
+          <p className="meta">这里不能改内容。要改的话，选「不保存」再重新录入。</p>
           <label className="field">
-            <span>理由（可选）</span>
+            <span>备注（可选）</span>
             <input className="input" value={reason} onChange={(e) => setReason(e.target.value)} />
           </label>
           {submission.error !== undefined && (
@@ -498,7 +495,7 @@ export function CaptureDecision({
           )}
           <div className="actions">
             <button type="button" className="btn" disabled={submission.pending} onClick={() => void decide("reject")}>
-              拒绝
+              不保存
             </button>
             <button
               type="button"
@@ -506,14 +503,14 @@ export function CaptureDecision({
               disabled={submission.pending}
               onClick={() => void decide("approve")}
             >
-              批准 {count} 项
+              保存 {count} 项
             </button>
           </div>
         </>
       ) : (
         <div className="banner">
           <div className="banner-title">
-            {run.status === "rejected" ? "已拒绝" : run.decision ? "已批准" : "已直接保存（录入时未要求确认）"}
+            {run.status === "rejected" ? "没有保存" : run.decision ? "已保存" : "已直接保存"}
           </div>
           {run.decision && (
             <div className="meta">

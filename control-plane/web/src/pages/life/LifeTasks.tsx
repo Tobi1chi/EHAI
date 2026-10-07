@@ -16,10 +16,10 @@ const FILTERS: ReadonlyArray<{ value: Filter; label: string }> = [
 ];
 
 const GROUPS: ReadonlyArray<{ bucket: DueBucket; title: string }> = [
-  { bucket: "overdue", title: "逾期" },
+  { bucket: "overdue", title: "已过期" },
   { bucket: "today", title: "今天" },
   { bucket: "later", title: "之后" },
-  { bucket: "none", title: "无截止时间" },
+  { bucket: "none", title: "没定时间" },
 ];
 
 function Tasks({ life }: { life: Life }) {
@@ -57,7 +57,7 @@ function Tasks({ life }: { life: Life }) {
       <QueryView query={tasks}>
         {(data) => {
           const shown = sortByDue(data.filter((t) => t.status === filter));
-          if (shown.length === 0) return <p className="empty">没有{FILTERS.find((f) => f.value === filter)?.label}的待办。</p>;
+          if (shown.length === 0) return <p className="empty">{filter === "open" ? "都做完了。" : `没有${FILTERS.find((f) => f.value === filter)?.label}的待办。`}</p>;
           if (filter !== "open") {
             return (
               <div className="list">

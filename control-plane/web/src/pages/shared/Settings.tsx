@@ -4,7 +4,7 @@ import { manager, type WorkspaceOverviewEntry } from "../../lib/api";
 import { useApp } from "../../lib/app";
 import { WORKSPACE_STATUS } from "../../lib/labels";
 import { entries, projectRows } from "../../lib/overview";
-import { actorName, setPrefs, usePrefs, type Theme } from "../../lib/prefs";
+import { setPrefs, usePrefs, type Theme } from "../../lib/prefs";
 import { useSubmission } from "../../lib/submit";
 
 function WorkspaceRow({ entry }: { entry: WorkspaceOverviewEntry }) {
@@ -19,7 +19,7 @@ function WorkspaceRow({ entry }: { entry: WorkspaceOverviewEntry }) {
       running ? manager.stopWorkspace(w.workspace_id) : manager.startWorkspace(w.workspace_id),
     );
     overview.reload();
-    if (result) toast(running ? `已停止 ${w.workspace_id}` : `已启动 ${w.workspace_id}`);
+    if (result) toast(running ? `${w.workspace_id} 已停止` : `${w.workspace_id} 已启动`);
   }
 
   return (
@@ -59,21 +59,21 @@ export function SettingsPage() {
   return (
     <div className="content">
       <h1 className="page-title">设置</h1>
-      <p className="meta">这些选项只保存在当前浏览器里。</p>
+      <p className="meta">这些设置只保存在这个浏览器里。</p>
 
       <label className="field">
-        <span>以谁的身份提交决定</span>
+        <span>你的名字</span>
         <input
           className="input"
           placeholder="web"
           value={prefs.actor}
           onChange={(e) => setPrefs({ actor: e.target.value })}
         />
-        <span className="meta">记录在批准、回复和纠错里。现在是：{actorName(prefs)}</span>
+        <span className="meta">会记在你做的决定、回复和反馈旁边。不填就记为「web」。</span>
       </label>
 
       <label className="field">
-        <span>生活分区使用的项目</span>
+        <span>「生活」用哪个项目</span>
         <select
           className="select"
           value={lifeValue}
@@ -82,14 +82,14 @@ export function SettingsPage() {
             setPrefs({ life: workspaceId && projectId ? { workspaceId, projectId } : null });
           }}
         >
-          <option value="">未选择</option>
+          <option value="">还没选</option>
           {rows.map((r) => (
             <option key={r.workspaceId + r.detail.project.project_id} value={`${r.workspaceId}|${r.detail.project.project_id}`}>
               {r.workspaceId} / {r.detail.project.name}
             </option>
           ))}
         </select>
-        <span className="meta">核心还没有分区标记；这个项目的待办在生活分区显示，其余项目归到工作分区。</span>
+        <span className="meta">这个项目显示在「生活」，其余项目都在「工作」。</span>
       </label>
 
       <div className="field">
@@ -117,7 +117,7 @@ export function SettingsPage() {
             <WorkspaceRow key={entry.workspace.workspace_id} entry={entry} />
           ))}
         </div>
-        <p className="meta">登记新的工作区目前用 CLI：</p>
+        <p className="meta">登记新的工作区目前要用命令行：</p>
         <div className="code">{`uv run ehai --api-url ${window.location.origin} register-workspace --file <工作区 JSON>`}</div>
       </section>
     </div>

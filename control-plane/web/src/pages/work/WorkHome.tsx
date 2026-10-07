@@ -46,7 +46,7 @@ function ResumeButton({ row }: { row: RunRow }) {
       toast("已恢复 Run");
       touch(row.workspaceId);
     } else {
-      toast("恢复失败，打开 Run 查看原因");
+      toast("没能恢复，打开 Run 看看原因");
     }
   }
   return (
@@ -87,7 +87,7 @@ export function WorkHome() {
       {overview.error !== undefined && <ErrorBlock error={overview.error} onRetry={overview.reload} stale={data !== undefined} />}
       {data === undefined && overview.error === undefined && (
         <p className="empty">
-          <Spinner /> 正在读取各工作区…
+          <Spinner /> 加载中…
         </p>
       )}
       {entries.length > 0 && <WorkspaceChips entries={entries} />}
@@ -95,7 +95,7 @@ export function WorkHome() {
         <div className="banner">
           <div className="banner-title">还没有登记工作区</div>
           <div className="meta">
-            用 <span className="mono">ehai --api-url &lt;管理层&gt; register-workspace</span> 登记并启动一个工作区后，这里会显示它的项目和待办。
+            用 <span className="mono">ehai --api-url &lt;管理器地址&gt; register-workspace</span> 登记并启动一个工作区，它的项目和 Run 就会显示在这里。
           </div>
         </div>
       )}
@@ -105,18 +105,18 @@ export function WorkHome() {
           entry={e}
           title={
             <>
-              <span className="mono">{e.workspace.workspace_id}</span> 不可用
+              <span className="mono">{e.workspace.workspace_id}</span> 没在运行
             </>
           }
         >
-          <div className="meta">这个工作区的待办和 Run 没有显示，不代表它们不存在。</div>
+          <div className="meta">它的待处理事项和 Run 暂时看不到，启动后才会显示。</div>
         </WorkspaceBanner>
       ))}
 
       <section className="section" aria-labelledby="work-inbox">
         <div className="section-head">
           <h2 id="work-inbox" className="h2">
-            需要我处理
+            待处理
           </h2>
           {inbox.length > 0 && <span className="nav-count">{inbox.length}</span>}
         </div>
@@ -128,7 +128,7 @@ export function WorkHome() {
           正在推进
         </h2>
         {active.length === 0 ? (
-          <p className="empty">没有运行中或暂停的 Run</p>
+          <p className="empty">没有进行中的 Run。</p>
         ) : (
           <div className="list">
             {active.map((row) => {
@@ -157,7 +157,7 @@ export function WorkHome() {
           最近完成
         </h2>
         {finished.length === 0 ? (
-          <p className="empty">还没有完成的 Run</p>
+          <p className="empty">还没有完成的 Run。</p>
         ) : (
           <div className="list">
             {finished.map((row) => {
@@ -169,7 +169,7 @@ export function WorkHome() {
                   <span className="grow">
                     <span className="title">{row.goal.objective}</span>
                     <span className="meta">
-                      {row.workspaceId} / {row.project.name} · {results} 个已验证成果 · {ago(run.ended_at)}
+                      {row.workspaceId} / {row.project.name} · {results} 个通过检查的成果 · {ago(run.ended_at)}
                     </span>
                   </span>
                 </Link>

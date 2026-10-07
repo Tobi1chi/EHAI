@@ -62,7 +62,7 @@ export function QueryView<T>({
     if (query.error !== undefined) return <ErrorBlock error={query.error} onRetry={query.reload} />;
     return (
       <div className="empty" role="status">
-        <Spinner /> 正在读取…
+        <Spinner /> 加载中…
       </div>
     );
   }
@@ -92,7 +92,7 @@ export function ErrorBlock({
           <Icon name="alert" size={16} strokeWidth={2.2} />
         </span>
         {/* Reads offer a retry; a failed write is retried from its own control. */}
-        {stale ? "刷新失败，下面的内容可能已过期" : onRetry ? "读取失败" : "没有完成"}
+        {stale ? "没能刷新，下面可能不是最新的" : onRetry ? "没加载出来" : "没成功"}
       </div>
       <div className="meta pre">{describeError(error)}</div>
       {onRetry && (

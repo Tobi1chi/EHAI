@@ -12,7 +12,7 @@ import { useWorkflowRuns } from "./data";
 const STATUS: Record<WorkflowRun["status"], string> = {
   awaiting_confirmation: "等待确认",
   completed: "已完成",
-  rejected: "已拒绝",
+  rejected: "没有保存",
 };
 
 function title(run: WorkflowRun): string {
@@ -24,7 +24,7 @@ function title(run: WorkflowRun): string {
 
 function trigger(run: WorkflowRun): string {
   if (run.routine_snapshot) return `定时「${run.routine_snapshot.name}」`;
-  return "手动";
+  return "手动录入";
 }
 
 function Records({ life }: { life: Life }) {
@@ -40,7 +40,7 @@ function Records({ life }: { life: Life }) {
       <QueryView query={runs}>
         {(data) =>
           data.length === 0 ? (
-            <p className="empty">还没有录入或回顾。</p>
+            <p className="empty">还没有记录。录入待办或定时回顾之后会显示在这里。</p>
           ) : (
             <div className="list">
               {byNewest([...data], (r) => r.created_at).map((run) => (
@@ -52,7 +52,7 @@ function Records({ life }: { life: Life }) {
                     <span className="title">{title(run)}</span>
                     <span className="meta">
                       {STATUS[run.status]} · {trigger(run)} · {ago(run.created_at)}
-                      {run.review ? ` · ${run.review.open_tasks.length} 项未完成` : ""}
+                      {run.review ? ` · ${run.review.open_tasks.length} 项没做完` : ""}
                     </span>
                   </span>
                 </Link>
@@ -90,14 +90,13 @@ function Record({ life, workflowRunId }: { life: Life; workflowRunId: string }) 
               <div className="grow">
                 <h1 className="page-title">{title(data)}</h1>
                 <div className="meta">
-                  {STATUS[data.status]} · 由{trigger(data)}触发
-                  {data.scheduled_for ? ` · 计划 ${dateTime(data.scheduled_for)}` : ""} · 生成于 {dateTime(data.created_at)}
+                  {STATUS[data.status]} · {trigger(data)} · {dateTime(data.created_at)}
                 </div>
               </div>
             </div>
             {data.coalesced_occurrences > 0 && (
               <div className="banner attn">
-                <div className="meta">宿主停机期间错过了 {data.coalesced_occurrences} 次触发，已合并为这一次回顾。</div>
+                <div className="meta">关机期间错过了 {data.coalesced_occurrences} 次，这次一起补上了。</div>
               </div>
             )}
             {data.workflow === "life.capture" && (
@@ -108,13 +107,13 @@ function Record({ life, workflowRunId }: { life: Life; workflowRunId: string }) 
                 <div className="stats">
                   <div className="stat">
                     <strong>{data.review.open_tasks.length}</strong>
-                    <span className="meta">未完成</span>
+                    <span className="meta">没做完</span>
                   </div>
                   <div className="stat">
                     <strong className={data.review.overdue_task_ids.length ? "bad" : undefined}>
                       {data.review.overdue_task_ids.length}
                     </strong>
-                    <span className="meta">逾期</span>
+                    <span className="meta">已过期</span>
                   </div>
                   <div className="stat">
                     <strong>{data.review.done_count}</strong>
@@ -127,8 +126,8 @@ function Record({ life, workflowRunId }: { life: Life; workflowRunId: string }) 
                 </div>
                 <section className="section">
                   <div className="section-head">
-                    <h2 className="h2">当时未完成的待办</h2>
-                    <span className="meta">快照，不随之后的修改变化</span>
+                    <h2 className="h2">当时没做完的</h2>
+                    <span className="meta">之后的改动不会反映在这里</span>
                   </div>
                   <div className="list">
                     {data.review.open_tasks.map((task) => {
@@ -149,8 +148,8 @@ function Record({ life, workflowRunId }: { life: Life; workflowRunId: string }) 
           </>
         )}
       </QueryView>
-      <section className="section">
-        <h2 className="h2">执行步骤</h2>
+      <details className="disclosure">
+        <summary>技术细节</summary>
         <QueryView query={execution}>
           {(data) => (
             <>
@@ -173,7 +172,7 @@ function Record({ life, workflowRunId }: { life: Life; workflowRunId: string }) 
             </>
           )}
         </QueryView>
-      </section>
+      </details>
     </div>
   );
 }

@@ -20,13 +20,13 @@ export function SchedulerBanner({ status }: { status: RoutineSchedulerStatus | u
         <span className="bad">
           <Icon name="alert" size={16} strokeWidth={2.2} />
         </span>
-        定时没有在运行
+        定时停了
       </div>
       <div className="meta">
-        {status.last_tick_at ? `上次扫描：${ago(status.last_tick_at)}。` : "还没有扫描过。"}
-        在此期间到期的回顾不会生成；恢复后，错过的触发合并为一次。
+        {status.last_tick_at ? `上次运行是${ago(status.last_tick_at)}。` : "还没运行过。"}
+        停着的时候不会回顾待办，恢复后错过的只补一次。
       </div>
-      {status.last_error && <div className="code">last_error: {status.last_error}</div>}
+      {status.last_error && <div className="code">{status.last_error}</div>}
     </div>
   );
 }
@@ -62,7 +62,7 @@ function Today({ life }: { life: Life }) {
         key: "r" + r.routine_id,
         at: r.next_due_at,
         title: r.name,
-        meta: `生成待办回顾 · ${intervalText(r.interval_seconds)}`,
+        meta: `回顾待办 · ${intervalText(r.interval_seconds)}`,
         to: `/life/routines/${r.routine_id}`,
       })),
   ].sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
@@ -96,7 +96,7 @@ function Today({ life }: { life: Life }) {
             问 EHAI
           </button>
           <button type="button" className="btn small primary" onClick={() => carry("/life/capture")}>
-            录入为待办
+            记成待办
           </button>
         </div>
       </div>
@@ -104,13 +104,13 @@ function Today({ life }: { life: Life }) {
       <section className="section" aria-labelledby="today-inbox">
         <div className="section-head">
           <h2 id="today-inbox" className="h2">
-            需要我处理
+            待处理
           </h2>
           {inbox.length > 0 && <span className="nav-count">{inbox.length}</span>}
           <span className="grow" />
           {workCount > 0 && (
             <Link className="meta" to="/work">
-              工作分区还有 {workCount} 项
+              工作那边还有 {workCount} 项
             </Link>
           )}
         </div>
@@ -129,7 +129,7 @@ function Today({ life }: { life: Life }) {
         {tasks.error !== undefined && <ErrorBlock error={tasks.error} onRetry={tasks.reload} stale={tasks.data !== undefined} />}
         {tasks.data !== undefined &&
           (today.length === 0 ? (
-            <p className="empty">今天没有到期的待办。</p>
+            <p className="empty">今天没有要到期的。</p>
           ) : (
             <div className="list">
               {today.map((task) => (
@@ -144,7 +144,7 @@ function Today({ life }: { life: Life }) {
           未来 7 天
         </h2>
         {upcoming.length === 0 ? (
-          <p className="empty">未来 7 天没有到期的待办或定时。</p>
+          <p className="empty">接下来一周没有安排。</p>
         ) : (
           <div className="list">
             {upcoming.map((u) => (

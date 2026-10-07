@@ -92,7 +92,7 @@ export function TaskRow({ life, task, onOpen }: { life: Life; task: LifeTask; on
     );
     if (!result) {
       setOptimistic(null);
-      toast(errorStatus(submission.lastError()) === 409 ? "这条待办已在别处修改，已重新读取" : "没有保存，请重试");
+      toast(errorStatus(submission.lastError()) === 409 ? "这条待办刚在别处改过，已刷新" : "没保存上，再试一次");
       touch(life.workspaceId);
       return;
     }
@@ -186,7 +186,6 @@ export function TaskEditPanel({ life, task, onClose }: { life: Life; task: LifeT
   return (
     <Panel
       title="编辑待办"
-      subtitle={`版本 ${task.version}`}
       onClose={onClose}
       footer={
         <div className="actions">
@@ -228,8 +227,8 @@ export function TaskEditPanel({ life, task, onClose }: { life: Life; task: LifeT
       </label>
       {conflict ? (
         <div className="banner attn" role="alert">
-          <div className="banner-title">这条待办已在别处修改</div>
-          <div className="meta">你编辑的是版本 {task.version}。关闭后重新打开，在最新版本上修改，避免覆盖别人的修改。</div>
+          <div className="banner-title">这条待办刚在别处改过</div>
+          <div className="meta">关掉再重新打开，在最新内容上改，免得覆盖掉。</div>
         </div>
       ) : (
         submission.error !== undefined && <ErrorBlock error={submission.error} />

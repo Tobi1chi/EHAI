@@ -5,7 +5,6 @@ import { useToast } from "../../components/Toast";
 import { core, errorStatus, type LifeRoutine } from "../../lib/api";
 import { useApp, useQuery } from "../../lib/app";
 import {
-  ago,
   dateTime,
   fromLocalInput,
   intervalText,
@@ -39,7 +38,7 @@ function EnabledSwitch({ life, routine }: { life: Life; routine: LifeRoutine }) 
       }),
     );
     touch(life.workspaceId);
-    if (!result) toast(errorStatus(submission.lastError()) === 409 ? "这条定时已在别处修改，已重新读取" : "没有保存，请重试");
+    if (!result) toast(errorStatus(submission.lastError()) === 409 ? "这个定时刚在别处改过，已刷新" : "没保存上，再试一次");
   }
   return (
     <button
@@ -47,7 +46,7 @@ function EnabledSwitch({ life, routine }: { life: Life; routine: LifeRoutine }) 
       className="switch"
       role="switch"
       aria-checked={routine.enabled}
-      aria-label={`启用 ${routine.name}`}
+      aria-label={`开启 ${routine.name}`}
       disabled={submission.pending}
       onClick={() => void toggle()}
     >
@@ -78,13 +77,13 @@ function Routines({ life }: { life: Life }) {
       {scheduler.data?.active && (
         <div className="meta" style={{ display: "flex", alignItems: "center", gap: 8 }}>
           <span className="dot" style={{ background: "var(--ok)" }} />
-          调度器运行中{scheduler.data.last_tick_at ? ` · ${ago(scheduler.data.last_tick_at)}扫描` : ""}
+          定时正常运行
         </div>
       )}
       <QueryView query={routines}>
         {(data) =>
           data.length === 0 ? (
-            <p className="empty">还没有定时。新建一个，按固定间隔生成待办回顾。</p>
+            <p className="empty">还没有定时。可以新建一个，定期回顾一下待办。</p>
           ) : (
             <div className="section" style={{ gap: 12 }}>
               {data.map((r) => (
@@ -97,16 +96,16 @@ function Routines({ life }: { life: Life }) {
                       <span className="title" style={{ fontWeight: 600, color: r.enabled ? undefined : "var(--text-2)" }}>
                         {r.name}
                       </span>
-                      <span className="meta">生成待办回顾 · {intervalText(r.interval_seconds)}</span>
+                      <span className="meta">回顾待办 · {intervalText(r.interval_seconds)}</span>
                     </Link>
                     <EnabledSwitch life={life} routine={r} />
                   </div>
                   <dl className="kv">
                     <dt>下次</dt>
-                    <dd className={r.enabled ? undefined : "meta"}>{r.enabled ? when(r.next_due_at) : "已停用，不会触发"}</dd>
+                    <dd className={r.enabled ? undefined : "meta"}>{r.enabled ? when(r.next_due_at) : "已关闭"}</dd>
                     <dt>上次</dt>
                     <dd>
-                      {r.last_workflow_run_id ? <Link to={`/life/records/${r.last_workflow_run_id}`}>查看回顾</Link> : "还没有运行"}
+                      {r.last_workflow_run_id ? <Link to={`/life/records/${r.last_workflow_run_id}`}>查看回顾</Link> : "还没运行过"}
                     </dd>
                   </dl>
                 </div>
@@ -115,7 +114,7 @@ function Routines({ life }: { life: Life }) {
           )
         }
       </QueryView>
-      <p className="meta">目前只支持按固定间隔生成待办回顾，间隔 1 分钟到 365 天。按日历、事件触发和自定义流程还没有接通。</p>
+      <p className="meta">目前只能按固定间隔回顾待办。</p>
     </div>
   );
 }
@@ -153,7 +152,7 @@ function RoutineForm({ life, routine }: { life: Life; routine: LifeRoutine | nul
     );
     if (result) {
       touch(life.workspaceId);
-      toast(routine ? `已保存为版本 ${result.data.version}` : "已新建定时");
+      toast(routine ? "已保存" : "已新建定时");
       navigate("/life/routines");
     }
   }
@@ -170,8 +169,8 @@ function RoutineForm({ life, routine }: { life: Life; routine: LifeRoutine | nul
       </div>
       {conflict && (
         <div className="banner attn" role="alert">
-          <div className="banner-title">这条定时已在别处修改</div>
-          <div className="meta">你编辑的是版本 {routine.version}。重新载入后再改，避免覆盖别人的修改。</div>
+          <div className="banner-title">这个定时刚在别处改过</div>
+          <div className="meta">重新载入后再改，免得覆盖掉。</div>
           <div>
             <button type="button" className="btn small" onClick={() => window.location.reload()}>
               重新载入
@@ -186,8 +185,8 @@ function RoutineForm({ life, routine }: { life: Life; routine: LifeRoutine | nul
       <div className="field">
         <span>做什么</span>
         <div className="card" style={{ padding: 12 }}>
-          <span>生成待办回顾</span>
-          <span className="meta mono">life.review v1 · 只读本项目待办，不调用模型</span>
+          <span>回顾待办</span>
+          <span className="meta">列出还没做完和已经过期的待办，不会改动它们。</span>
         </div>
       </div>
       <div className="split">
@@ -212,34 +211,31 @@ function RoutineForm({ life, routine }: { life: Life; routine: LifeRoutine | nul
           </select>
         </label>
       </div>
-      {!inRange && <p className="meta bad">间隔需要在 1 分钟到 365 天之间。</p>}
+      {!inRange && <p className="meta bad">间隔要在 1 分钟到 365 天之间。</p>}
       <label className="field">
-        <span>下次触发</span>
+        <span>{routine ? "下次运行" : "第一次运行"}</span>
         <input className="input" type="datetime-local" value={next} onChange={(e) => setNext(e.target.value)} />
-        <span className="meta">
-          {timeZoneLabel()}
-          {nextIso ? ` · 保存为 ${nextIso.replace(".000Z", "Z")}` : ""}
-        </span>
+        <span className="meta">{timeZoneLabel()}</span>
       </label>
       <label className="row" style={{ cursor: "pointer" }}>
         <span className="grow">
-          <span className="title">启用</span>
-          <span className="meta">{enabled ? "到期时生成一次回顾。" : "保存但不触发。"}</span>
+          <span className="title">开启</span>
+          <span className="meta">{enabled ? "到时间就回顾一次。" : "先保存，不运行。"}</span>
         </span>
         <button
           type="button"
           className="switch"
           role="switch"
           aria-checked={enabled}
-          aria-label="启用"
+          aria-label="开启"
           onClick={() => setEnabled((v) => !v)}
         >
           <span />
         </button>
       </label>
       <p className="meta">
-        {intervalText(seconds)}，{nextIso ? `从 ${dateTime(nextIso)} 开始` : "请填写下次触发时间"}。
-        按固定间隔推算，不是“每天固定时刻”；所在地区如有夏令时，本地时间会偏移。宿主停机期间错过的触发，重启后合并为一次回顾。
+        {nextIso ? `从 ${dateTime(nextIso)} 开始，${intervalText(seconds)}一次。` : "填一下第一次运行的时间。"}
+        电脑关机期间错过的，开机后只补一次。
       </p>
       {!conflict && submission.error !== undefined && <ErrorBlock error={submission.error} />}
       <div className="actions">
@@ -255,7 +251,6 @@ function RoutineForm({ life, routine }: { life: Life; routine: LifeRoutine | nul
           保存
         </button>
       </div>
-      {routine && <p className="meta">版本 {routine.version} · 保存时如已被修改会提示重新载入</p>}
     </div>
   );
 }

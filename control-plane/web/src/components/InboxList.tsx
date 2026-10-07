@@ -8,7 +8,7 @@ export function InboxList({
   rows,
   onOpen,
   showWorkspace = true,
-  empty = "没有等待你的事项",
+  empty = "没有要你处理的事",
 }: {
   rows: ReadonlyArray<InboxRow>;
   onOpen: (target: InboxTarget) => void;
