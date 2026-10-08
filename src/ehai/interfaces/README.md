@@ -22,5 +22,5 @@ HTTP 宿主拥有后台任务，start-run 受理不表示完成；客户端退�
 各传输覆盖范围以实际路由和 Usage 为准，不声明所有 HTTP 端点均有 CLI/MCP 对应项。
 事件分页/SSE 不等于完整外部 Agent 消费信箱。
 
-后续总览、统一待办和 Web 工作台按 [路线图](../../../docs/ROADMAP.md) 增量实现，
+Web 工作台（`control-plane/web`，见 [ADR 0008](../../../docs/adr/0008-web-workbench.md)）与后续入口一样，
 只通过公开契约调用；新增能力必须进入生产装配，不能靠外部脚本补业务步骤。

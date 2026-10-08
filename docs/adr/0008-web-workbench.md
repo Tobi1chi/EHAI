@@ -17,5 +17,8 @@ package-lock.json，与生成 Client 共用同一套 npm 脚本和 TypeScript �
 凭证与 OAuth 只在本机 Connector CLI 完成，页面只显示命令。
 
 为页面补充的只读接口：`listRoutingLabs`（按 Project 列出路由实验）与
-`listRoutingReplays`（按实验列出回放），使刷新后仍能看到实验、回放与发布资格。
+`listRoutingReplays`（按实验列出回放），使刷新后仍能看到实验、回放与发布资格；
+`listRunAttempts` 与 `getAttemptTrace`（按 Attempt 读会话事件，每次上限 2048 条），
+因为 Run 级 trace 合计只取前 512 条，长 Run 的后几个 Attempt 会整段缺失。
+执行图用 SVG 自绘在页面内的画布中（分层布局、平移缩放），同样不引入图形库。
 生活与工作分区暂由浏览器偏好指定生活 Project；核心有分区标记前，这只是显示分组，不是权限边界。
