@@ -127,7 +127,7 @@ export function Shell({ zone, path, children }: { zone: Zone; path: string; chil
               return (
                 <Link
                   key={workspaceId + detail.project.project_id}
-                  className="nav-item"
+                  className="nav-item sub"
                   to={to}
                   aria-current={path === to ? "page" : undefined}
                 >
