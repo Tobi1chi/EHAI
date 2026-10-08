@@ -36,7 +36,7 @@ function workItems(count: number): NavItem[] {
 
 const SHARED: NavItem[] = [
   { to: "/connections", label: "连接", icon: "plug", match: prefix("/connections") },
-  { to: "/learn", label: "学习与发布", icon: "learn", match: prefix("/learn") },
+  { to: "/answers", label: "自动回答", icon: "learn", match: (path) => prefix("/answers")(path) || prefix("/learn")(path) },
 ];
 
 function ZoneSwitch({ zone, counts }: { zone: Zone; counts: { life: number; work: number } }) {

@@ -118,7 +118,7 @@ export function RoutingResult({ request }: { request: RoutingRequest }) {
   return <div className="code">{JSON.stringify(result, null, 2)}</div>;
 }
 
-/** Plain wording for the 问 page; the routing details stay on 学习与发布. */
+/** Plain wording for the 问 page; the routing details stay on 自动回答. */
 function PlainRouteLine({ request }: { request: RoutingRequest }) {
   switch (request.status) {
     case "queued":
@@ -241,7 +241,7 @@ export function FeedbackBar({ workspaceId, request }: { workspaceId: string; req
             <span>哪里不对</span>
             <textarea className="textarea" value={explanation} onChange={(e) => setExplanation(e.target.value)} />
           </label>
-          <p className="meta">提交后，这类问题先不自动回答，改为转交处理。之后可以在「学习与发布」里重新开启。</p>
+          <p className="meta">提交后，这类问题先不自动回答，改为转交处理。之后可以在「自动回答」里重新开启。</p>
           <div className="actions">
             <button type="button" className="btn" onClick={() => setOpen(false)}>
               取消

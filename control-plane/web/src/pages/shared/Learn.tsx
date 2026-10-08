@@ -65,11 +65,11 @@ export function LearnPage() {
       <div className="page-head">
         <div className="grow">
           <div className="meta">通用</div>
-          <h1 className="page-title">学习与发布</h1>
+          <h1 className="page-title">自动回答</h1>
         </div>
       </div>
       <p className="body muted">
-        常见的问题由快环按你发布过的配方直接回答，其余的交给慢环。慢环处理多了会提出新配方，回放检查通过后由你决定是否发布。
+        管理「问」里哪些问题可以自动回答。常见的问题由快环按你发布过的配方直接查询回答，其余的交给慢环。慢环处理多了会提出新配方，回放检查通过后由你决定是否发布。
       </p>
       <QueryView query={labs}>
         {() =>

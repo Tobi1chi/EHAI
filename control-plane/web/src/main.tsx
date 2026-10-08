@@ -51,7 +51,8 @@ function resolve(path: string): Route | "home" {
       title: "Run",
     };
   if (path === "/connections") return { zone: null, page: <ConnectionsPage />, title: "连接" };
-  if (path === "/learn") return { zone: null, page: <LearnPage />, title: "学习与发布" };
+  // /learn is the page's earlier address; keep old links working.
+  if (path === "/answers" || path === "/learn") return { zone: null, page: <LearnPage />, title: "自动回答" };
   if (path === "/settings") return { zone: null, page: <SettingsPage />, title: "设置" };
   return {
     zone: null,

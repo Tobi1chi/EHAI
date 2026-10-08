@@ -125,7 +125,7 @@ function Ask({ life }: { life: Life }) {
             <div className="banner">
               <div className="banner-title">「问」还没有设置好</div>
               <div className="meta">
-                需要先连上 Jev，再选好能自动回答哪些问题。去 <Link to="/learn">学习与发布</Link> 设置。
+                需要先连上 Jev，再选好能自动回答哪些问题。去 <Link to="/answers">自动回答</Link> 设置。
               </div>
             </div>
           ) : (
