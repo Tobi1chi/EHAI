@@ -62,6 +62,7 @@ const PATHS: Record<string, ReactNode> = {
   ),
   spin: <path d="M12 3a9 9 0 1 0 9 9" />,
   refresh: <path d="M20 11a8 8 0 1 0-2.3 5.7M20 5v6h-6" />,
+  expand: <path d="M14 4h6v6M10 20H4v-6M20 4l-7 7M4 20l7-7" />,
 };
 
 export function Icon({

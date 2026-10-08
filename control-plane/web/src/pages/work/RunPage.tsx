@@ -316,7 +316,7 @@ export function RunPage({ workspaceId, runId }: { workspaceId: string; runId: st
       <section className="section">
         <div className="section-head">
           <h2 className="h2 grow">执行图</h2>
-          <span className="meta">点节点看这一步的轨迹</span>
+          <span className="meta">点节点看轨迹，拖动查看其余部分</span>
         </div>
         <QueryView query={plan}>{(data) => <PlanView plan={data} trail={trail} />}</QueryView>
       </section>

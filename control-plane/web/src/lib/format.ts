@@ -51,6 +51,16 @@ export function ago(iso: string | null | undefined, now: Date = new Date()): str
   return dateTime(iso);
 }
 
+/** How long something took: "42 秒", "5 分钟", "1 小时 12 分". An open end counts up to now. */
+export function duration(startIso: string, endIso: string | null | undefined, now: Date = new Date()): string {
+  const end = endIso ? new Date(endIso).getTime() : now.getTime();
+  const seconds = Math.max(0, Math.round((end - new Date(startIso).getTime()) / 1000));
+  if (seconds < 60) return `${seconds} 秒`;
+  if (seconds < 3600) return `${Math.round(seconds / 60)} 分钟`;
+  const minutes = Math.round(seconds / 60);
+  return `${Math.floor(minutes / 60)} 小时${minutes % 60 ? ` ${minutes % 60} 分` : ""}`;
+}
+
 /** Due/next-run wording relative to today: "今天 18:00", "明天", "10/7 周三 10:30". */
 export function when(iso: string | null | undefined, now: Date = new Date()): string {
   if (!iso) return "";

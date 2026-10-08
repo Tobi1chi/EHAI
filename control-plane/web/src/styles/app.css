@@ -1049,40 +1049,85 @@ details.disclosure[open] > summary::before {
   font-weight: 600;
 }
 
-/* Execution graph: phases as bands, nodes link to their trace. */
-.graph-scroll {
-  overflow-x: auto;
+/* Execution graph: a bounded canvas, phases as column headers, nodes link to their trace. */
+.graph-canvas {
+  position: relative;
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  background-color: var(--sidebar);
+  background-image: radial-gradient(var(--border-strong) 1px, transparent 1px);
+  background-size: 16px 16px;
+  overflow: hidden;
+}
+
+.graph-canvas.expanded {
+  position: fixed;
+  inset: var(--space-5);
+  z-index: 60;
+  box-shadow: var(--shadow-pop);
+}
+
+.graph-canvas.expanded .graph-viewport {
+  height: 100%;
+}
+
+.graph-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 59;
+  background: var(--scrim);
+}
+
+.graph-viewport {
+  display: flex;
+  overflow: auto;
+  cursor: grab;
+  overscroll-behavior-x: contain;
+  scrollbar-width: none;
+}
+
+.graph-viewport::-webkit-scrollbar {
+  display: none;
+}
+
+.graph-viewport.more-left {
+  mask-image: linear-gradient(to right, transparent, #000 48px);
+}
+
+.graph-viewport.more-right {
+  mask-image: linear-gradient(to left, transparent, #000 48px);
+}
+
+.graph-viewport.more-left.more-right {
+  mask-image: linear-gradient(to right, transparent, #000 48px, #000 calc(100% - 48px), transparent);
+}
+
+.graph-viewport.dragging {
+  cursor: grabbing;
+  user-select: none;
+}
+
+.graph-sizer {
+  flex: none;
+  /* Centres a zoomed-out graph; unlike justify-content, it never clips an overflowing one. */
+  margin: auto;
 }
 
 .graph {
   position: relative;
+  transform-origin: 0 0;
 }
 
-.graph-band {
+.graph-header {
   position: absolute;
-  left: 0;
-  right: 0;
-  border: 1px solid var(--border);
-  border-radius: var(--r-md);
-  background: var(--sidebar);
-}
-
-.graph-band-title {
-  box-sizing: border-box;
-  padding: 6px var(--space-3);
-  font: 12px/16px var(--font-sans);
-  color: var(--text-3);
+  height: 24px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--border-strong);
+  font: 500 12px/18px var(--font-sans);
+  color: var(--text-2);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-}
-
-.graph-band-title.side {
-  padding: var(--space-3);
-  white-space: normal;
-  display: -webkit-box;
-  -webkit-line-clamp: 4;
-  -webkit-box-orient: vertical;
 }
 
 .graph-edges {
@@ -1092,36 +1137,51 @@ details.disclosure[open] > summary::before {
   pointer-events: none;
 }
 
-.graph-edge {
+.graph-edge .line {
   fill: none;
   stroke: var(--border-strong);
   stroke-width: 1.5;
+  transition: stroke 0.15s, opacity 0.15s;
 }
 
-.graph-edge.done {
-  stroke: var(--text-3);
-}
-
-.graph-edge.dashed {
-  stroke-dasharray: 4 4;
-}
-
-.graph-arrow {
+.graph-edge .arrow {
   fill: var(--border-strong);
 }
 
-.graph-arrow.done {
+.graph-edge.done .line {
+  stroke: var(--text-3);
+}
+
+.graph-edge.done .arrow {
   fill: var(--text-3);
+}
+
+.graph-edge.active .line {
+  stroke: var(--text);
+  stroke-width: 2;
+}
+
+.graph-edge.active .arrow {
+  fill: var(--text);
+}
+
+.graph-edge.dim {
+  opacity: 0.35;
+}
+
+.graph-edge.dashed .line {
+  stroke-dasharray: 4 4;
 }
 
 .graph-label {
   position: absolute;
   transform: translate(-50%, -50%);
-  max-width: 160px;
-  padding: 0 4px;
-  border-radius: var(--r-sm);
-  background: var(--bg);
-  font: 11px/16px var(--font-sans);
+  max-width: 140px;
+  padding: 0 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-pill);
+  background: var(--surface);
+  font: 11px/18px var(--font-sans);
   color: var(--text-2);
   white-space: nowrap;
   overflow: hidden;
@@ -1132,20 +1192,22 @@ details.disclosure[open] > summary::before {
   position: absolute;
   box-sizing: border-box;
   display: flex;
-  flex-direction: column;
-  justify-content: center;
-  gap: 4px;
-  padding: var(--space-2) var(--space-3);
-  border: 1px solid var(--border-strong);
+  align-items: center;
+  gap: 10px;
+  padding: 0 var(--space-3);
+  border: 1px solid var(--border);
   border-radius: var(--r-md);
   background: var(--surface);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
   color: var(--text);
   text-decoration: none;
+  transition: border-color 0.15s, box-shadow 0.15s;
 }
 
-a.graph-node:hover {
-  border-color: var(--text-3);
-  background: var(--hover);
+a.graph-node:hover,
+a.graph-node:focus-visible {
+  border-color: var(--border-strong);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.08);
 }
 
 a.graph-node:focus-visible {
@@ -1161,66 +1223,117 @@ a.graph-node:focus-visible {
   border-color: var(--attn);
 }
 
-.graph-node.run {
-  border-color: var(--primary);
-}
-
 .graph-node.pruned {
   border-style: dashed;
-  opacity: 0.55;
+  box-shadow: none;
+  opacity: 0.6;
+}
+
+.graph-text {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
 }
 
 .graph-title {
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
   font: 500 13px/18px var(--font-sans);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .graph-meta {
-  display: flex;
-  align-items: center;
-  gap: 6px;
   font: 12px/16px var(--font-sans);
   color: var(--text-3);
   white-space: nowrap;
   overflow: hidden;
+  text-overflow: ellipsis;
 }
 
-.graph-dot {
+.graph-mark {
   flex: none;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--border-strong);
 }
 
-.graph-dot.ok {
-  background: var(--ok);
+.graph-mark .fill {
+  fill: var(--text-3);
 }
 
-.graph-dot.bad {
-  background: var(--bad);
+.graph-mark.ok .fill {
+  fill: var(--ok);
 }
 
-.graph-dot.attn {
-  background: var(--attn);
+.graph-mark.bad .fill {
+  fill: var(--bad);
 }
 
-.graph-dot.run {
-  background: var(--primary);
-  animation: graph-pulse 1.2s ease-in-out infinite;
+.graph-mark.attn .fill {
+  fill: var(--attn);
 }
 
-@keyframes graph-pulse {
-  50% {
-    opacity: 0.3;
-  }
+.graph-mark .glyph {
+  fill: none;
+  stroke: var(--surface);
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.graph-mark .track {
+  fill: none;
+  stroke: var(--border-strong);
+  stroke-width: 1.6;
+}
+
+.graph-mark .arc {
+  fill: none;
+  stroke: var(--attn);
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  transform-origin: 9px 9px;
+  animation: spin 0.9s linear infinite;
+}
+
+.graph-tools {
+  position: absolute;
+  right: var(--space-2);
+  bottom: var(--space-2);
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--surface);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+}
+
+.graph-tool {
+  display: grid;
+  place-items: center;
+  min-width: 28px;
+  height: 28px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: none;
+  font: 13px/1 var(--font-sans);
+  color: var(--text-2);
+  cursor: pointer;
+}
+
+.graph-tool:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.graph-tool.zoom {
+  min-width: 44px;
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .graph-dot.run {
+  .graph-mark .arc {
     animation: none;
   }
 }
