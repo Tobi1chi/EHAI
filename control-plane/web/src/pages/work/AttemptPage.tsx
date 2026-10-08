@@ -195,7 +195,8 @@ function Truncated({ event }: { event: BuiltinSessionEvent }) {
 }
 
 function Received({ event }: { event: BuiltinSessionEvent }) {
-  const text = pretty(event.payload["content"] ?? event.payload);
+  const preview = previewOf(event.payload);
+  const text = preview === null ? pretty(event.payload["content"] ?? event.payload) : previewText(preview);
   return (
     <details className="disclosure trace-item" id={`e-${event.sequence}`}>
       <summary>

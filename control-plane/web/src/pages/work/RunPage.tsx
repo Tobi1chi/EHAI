@@ -6,20 +6,19 @@ import { useToast } from "../../components/Toast";
 import {
   core,
   errorStatus,
-  type Attempt,
   type Intervention,
   type PlanGraph,
-  type PlanNode,
   type RunResultDocument,
   type Run,
 } from "../../lib/api";
 import { useApp, useQuery } from "../../lib/app";
 import { ago, dateTime, shortId } from "../../lib/format";
-import { ATTEMPT_STATUS, NODE_KIND, NODE_STATUS, RUN_STATUS } from "../../lib/labels";
+import { ATTEMPT_STATUS, RUN_STATUS } from "../../lib/labels";
 import { findRun } from "../../lib/overview";
 import { Link } from "../../lib/router";
 import { Icon } from "../../components/Icon";
 import { attemptNumber, attemptPath, attemptTone, useRunAttempts } from "./AttemptPage";
+import { PlanGraphView, type Trail } from "./PlanGraphView";
 import { useSubmission } from "../../lib/submit";
 
 const TERMINAL = new Set(["completed", "failed", "cancelled"]);
@@ -89,74 +88,10 @@ function RunControls({ workspaceId, run, onDone }: { workspaceId: string; run: R
   );
 }
 
-type Trail = { readonly workspaceId: string; readonly runId: string; readonly attempts: ReadonlyArray<Attempt> };
-
-/** A node opens its latest Attempt's trace; earlier tries are linked from there. */
-function NodeRow({ node, trail }: { node: PlanNode; trail: Trail }) {
-  const tone =
-    node.status === "completed" ? "ok" : node.status === "failed" ? "bad" : node.status === "stalled" || node.status === "suspended" ? "attn" : "";
-  const tries = trail.attempts.filter((a) => a.plan_node_id === node.plan_node_id);
-  const latest = tries[tries.length - 1];
-  const body = (
-    <>
-      <span className="grow">
-        <span>{node.title}</span>
-        <span className="meta">
-          {NODE_KIND[node.kind]}
-          {tries.length > 1 ? ` · 试了 ${tries.length} 次` : ""}
-        </span>
-      </span>
-      <span className={`tag ${tone}`}>{NODE_STATUS[node.status]}</span>
-      {latest && (
-        <span className="meta">
-          <Icon name="chevron" size={16} />
-        </span>
-      )}
-    </>
-  );
-  if (!latest) {
-    return (
-      <div className="row" style={{ minHeight: 44 }}>
-        {body}
-      </div>
-    );
-  }
-  return (
-    <Link
-      className="row"
-      style={{ minHeight: 44 }}
-      to={attemptPath(trail.workspaceId, trail.runId, latest.attempt_id)}
-      title="查看这个节点的轨迹"
-    >
-      {body}
-    </Link>
-  );
-}
-
 function PlanView({ plan, trail }: { plan: PlanGraph; trail: Trail }) {
-  const byId = new Map(plan.nodes.map((n) => [n.plan_node_id, n]));
-  const inPhase = new Set(plan.phases.flatMap((p) => p.node_ids));
-  const loose = plan.nodes.filter((n) => !inPhase.has(n.plan_node_id));
   return (
     <div className="section">
-      {plan.phases.map((phase) => (
-        <div key={phase.phase_id} className="section">
-          <div className="meta">{phase.title}</div>
-          <div className="list">
-            {phase.node_ids.map((id) => {
-              const node = byId.get(id);
-              return node ? <NodeRow key={id} node={node} trail={trail} /> : null;
-            })}
-          </div>
-        </div>
-      ))}
-      {loose.length > 0 && (
-        <div className="list">
-          {loose.map((node) => (
-            <NodeRow key={node.plan_node_id} node={node} trail={trail} />
-          ))}
-        </div>
-      )}
+      <PlanGraphView plan={plan} trail={trail} />
       {plan.design_document && (
         <details className="disclosure">
           <summary>方案说明</summary>
@@ -378,21 +313,23 @@ export function RunPage({ workspaceId, runId }: { workspaceId: string; runId: st
         </QueryView>
       </section>
 
+      <section className="section">
+        <div className="section-head">
+          <h2 className="h2 grow">执行图</h2>
+          <span className="meta">点节点看这一步的轨迹</span>
+        </div>
+        <QueryView query={plan}>{(data) => <PlanView plan={data} trail={trail} />}</QueryView>
+      </section>
+
       <div className="split">
         <section className="section">
-          <h2 className="h2">执行图</h2>
-          <QueryView query={plan}>{(data) => <PlanView plan={data} trail={trail} />}</QueryView>
+          <h2 className="h2">成果</h2>
+          <QueryView query={result}>{(data) => <ResultView doc={data} />}</QueryView>
         </section>
-        <div className="section" style={{ gap: 24 }}>
-          <section className="section">
-            <h2 className="h2">成果</h2>
-            <QueryView query={result}>{(data) => <ResultView doc={data} />}</QueryView>
-          </section>
-          <section className="section">
-            <h2 className="h2">求助记录</h2>
-            <QueryView query={interventions}>{(data) => <InterventionsView items={data} trail={trail} />}</QueryView>
-          </section>
-        </div>
+        <section className="section">
+          <h2 className="h2">求助记录</h2>
+          <QueryView query={interventions}>{(data) => <InterventionsView items={data} trail={trail} />}</QueryView>
+        </section>
       </div>
 
       <section className="section">
