@@ -68,6 +68,8 @@ if TYPE_CHECKING:
 
 _MAX_TRACE_SESSION_EVENTS = 512
 _MAX_TRACE_SESSION_PAYLOAD_BYTES = 8 * 1024
+# One Attempt is read on its own, so a long Run does not hide its later Attempts.
+_MAX_ATTEMPT_TRACE_SESSION_EVENTS = 2048
 _TRACE_SESSION_EVENT_TYPES = frozenset(
     {
         AgentTraceEventType.MESSAGE_RECEIVED,
@@ -416,6 +418,15 @@ class ExecutionTraceView:
 
 
 @dataclass(frozen=True, slots=True)
+class AttemptTraceView:
+    """One Attempt's Built-in Agent facts, bounded separately from the Run trace."""
+
+    attempt: AttemptView
+    session_events: tuple[AgentTraceEventView, ...]
+    session_events_truncated: bool
+
+
+@dataclass(frozen=True, slots=True)
 class AgentTraceEventView:
     """One sanitized and bounded Built-in Agent Step or Tool fact."""
 
@@ -743,6 +754,37 @@ class QueryService:
                 session,
                 normalized_id,
                 builtin_session_reader=self._builtin_session_reader,
+            )
+
+    def list_run_attempts(self, run_id: ID) -> tuple[AttemptView, ...]:
+        """List a Run's Attempts in dispatch order, without their session events."""
+        normalized_id = normalize_id(run_id)
+        with self._read_session_factory() as session:
+            _required_run(session.states.get_run(normalized_id), normalized_id)
+            return tuple(
+                _attempt_view(attempt)
+                for attempt in sorted(
+                    session.states.list_attempts(normalized_id),
+                    key=lambda item: (item.sequence, item.attempt_id),
+                )
+            )
+
+    def get_attempt_trace(self, attempt_id: ID) -> AttemptTraceView:
+        """Return one Attempt's session events, which the Run trace may cut short."""
+        normalized_id = normalize_id(attempt_id)
+        with self._read_session_factory() as session:
+            attempt = session.states.get_attempt(normalized_id)
+            if attempt is None:
+                raise QueryNotFoundError("Attempt", normalized_id)
+            session_events, truncated = _builtin_session_event_views(
+                (attempt,),
+                self._builtin_session_reader,
+                limit=_MAX_ATTEMPT_TRACE_SESSION_EVENTS,
+            )
+            return AttemptTraceView(
+                attempt=_attempt_view(attempt),
+                session_events=session_events,
+                session_events_truncated=truncated,
             )
 
     def list_check_specs(self, plan_revision_id: ID) -> tuple[CheckSpecView, ...]:
@@ -1164,6 +1206,8 @@ def _check_spec_view(check_spec: CheckSpec) -> CheckSpecView:
 def _builtin_session_event_views(
     attempts: tuple[Attempt, ...],
     reader: AgentTraceReader | None,
+    *,
+    limit: int = _MAX_TRACE_SESSION_EVENTS,
 ) -> tuple[tuple[AgentTraceEventView, ...], bool]:
     if reader is None:
         return (), False
@@ -1192,9 +1236,9 @@ def _builtin_session_event_views(
             event.sequence,
         ),
     )
-    truncated = len(ordered) > _MAX_TRACE_SESSION_EVENTS
+    truncated = len(ordered) > limit
     views: list[AgentTraceEventView] = []
-    for event in ordered[:_MAX_TRACE_SESSION_EVENTS]:
+    for event in ordered[:limit]:
         payload, payload_truncated = sanitize_json_object(
             event.payload,
             max_bytes=_MAX_TRACE_SESSION_PAYLOAD_BYTES,

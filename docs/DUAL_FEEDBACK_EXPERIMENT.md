@@ -90,12 +90,14 @@ evidence。核心保存这是外部报告，不会调用第二个内置 Planner�
 
 | HTTP 路径（均以 /api/v1 开头） | CLI 命令；MCP 将连字符换为下划线 |
 | --- | --- |
+| GET /projects/{project_id}/routing-labs | list-routing-labs |
 | GET /routing-labs/{lab_id} | get-routing-lab |
 | GET /routing-labs/{lab_id}/requests | list-routing-requests |
 | POST /routing-requests/{request_id}/resolve | resolve-routing-request |
 | POST /routing-requests/{request_id}/feedback | record-routing-feedback |
 | POST /routing-labs/{lab_id}/candidates | propose-routing-recipe |
 | POST /routing-labs/{lab_id}/replays | start-routing-replay |
+| GET /routing-labs/{lab_id}/replays | list-routing-replays |
 | GET /routing-replays/{replay_id} | get-routing-replay |
 | POST /routing-recipes/{recipe_id}/publish | publish-routing-recipe |
 | POST /routing-recipes/{recipe_id}/pause | pause-routing-recipe |

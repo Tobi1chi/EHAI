@@ -34,6 +34,7 @@ _QUERIES = {
     "get-run-adoptions": "/runs/{run_id}/adoptions",
     "get-run-interventions": "/runs/{run_id}/interventions",
     "get-run-trajectory-reviews": "/runs/{run_id}/trajectory-reviews",
+    "list-run-attempts": "/runs/{run_id}/attempts",
     "get-trace": "/runs/{run_id}/trace",
     "get-result": "/runs/{run_id}/result",
     "get-plan": "/plans/{plan_revision_id}",
@@ -48,6 +49,7 @@ _QUERIES = {
     "get-worker-profiles": "/workers/profiles",
     "get-worker-endpoints": "/workers/endpoints",
     "get-attempt-runtime": "/attempts/{attempt_id}/runtime",
+    "get-attempt-trace": "/attempts/{attempt_id}/trace",
 }
 _COMMANDS: dict[str, tuple[str, tuple[str, ...]]] = {
     **COMMAND_ROUTES,
@@ -91,6 +93,8 @@ API_ONLY_COMMANDS = frozenset(
         "get-worker-profiles",
         "get-worker-endpoints",
         "get-attempt-runtime",
+        "get-attempt-trace",
+        "list-run-attempts",
         "suspend-attempt",
         "cancel-attempt",
         "extend-attempt-deadline",

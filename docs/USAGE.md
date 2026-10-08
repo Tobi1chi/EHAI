@@ -182,6 +182,9 @@ get-trace、get-result；候选 Artifact、Reviewer 结论和最终 Gate 是不�
   可只读读取清单内的 Artifact；等待人工的 Check 仍是待决事项。
 - get-attempt-runtime：--attempt-id。Worker 一轮中途需要人工输入时走 Intervention（挂起 → reply-intervention）；
   运行中 Worker 请求接口已随 Codex 后端删除，见 [ADR 0007](adr/0007-agent-harness-port.md)。
+- list-run-attempts：--run-id，列出 Run 的全部 Attempt（按 sequence）。
+- get-attempt-trace：--attempt-id，读一个 Attempt 的内置 Agent 会话事件（上限 2048 条，单条载荷 8KB）。
+  get-trace 按 Run 合计只取前 512 条，长 Run 的后几个 Attempt 会被截掉；逐个 Attempt 审查轨迹用这个。
 - cancel-attempt：--attempt-id、--idempotency-key。取消不是人工 suspend。
 - extend-attempt-deadline：--attempt-id、--deadline-at（含时区）、--idempotency-key。
 
@@ -238,6 +241,9 @@ HTTP 为 `GET /api/v1/inbox?project_id=...&run_id=...` 和
 
 例如人工验收通过时，向 decision 提交 `idempotency_key`、原 `request_token`、
 `passed=true`、`actor` 和 `comment`；CLI 仍使用 `decide-human-check --passed`。
+便签的每个可用决定是一项 `decide-note`，`arguments` 已带 `action`（人工 Check 续办还带 `passed`），
+只列出宿主当前会接受的组合：未绑定原请求时没有 continue，没有 Run 时没有 propose_process，
+来源 Run 未暂停时没有 revise_plan，便签过时时只剩 resolve。
 回复干预不扩大批准，人工 Check 决定由核心继续评估 Gate。提交后重读待办和 Run；
 Run 已暂停时，普通回复不隐式恢复；人工 Check 需先明确恢复 Run 才能作出决定。
 需要"通过但先不往下走"（例如先粗后细时按设计细化后续阶段）时，用 `hold=true` 决定，而不是决定后再暂停：

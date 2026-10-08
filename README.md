@@ -17,6 +17,7 @@ EHAI（Enhanced Human-Agent Interface）是一个可本地部署的 Agent 规划
 - **介入与继续**：暂停运行、处理人工问题、决定人工 Gate；单个节点挂起时，独立任务可继续。
 - **调整与交付**：追踪任务块的变化、整合有效代码成果，并在重新批准后显式接续适用的旧成果。
 - **多种入口**：CLI、HTTP API 和独立 stdio MCP 共用同一个核心。
+- **Web 工作台**：由 Workspace Manager 同源提供的页面，覆盖生活与工作两区、统一待办、Run 执行图和逐次尝试的模型/工具轨迹。见[Web 工作台](docs/WORKSPACE_MANAGER.md#web-工作台)。
 - **多个工作区**：本机 Workspace Manager 托管独立核心，统一查询和路由；各工作区可配置自己的 Planner 与并发容量。见[多工作区用法](docs/WORKSPACE_MANAGER.md)。
 - **生活事务**：项目内录入/确认待办、完成状态管理，手动或定时回顾；不需要 Git 或模型调用。见[生活 Workflow](docs/WORKFLOWS.md)。
 - **外部 Connector 与实验**：独立进程经标准 HTTP 协议接入（Google Calendar 首版，真实账号未授权验证），
@@ -207,8 +208,9 @@ uv run ehai @Api get-run-interventions --run-id $RunId
 uv run ehai @Api get-result --run-id $RunId
 ```
 
-需要详细过程时使用 `get-trace --run-id $RunId`。人工处理使用查询返回的当前 ID 和
-`request_token`，具体参数见 [人工回路](docs/USAGE.md#控制人工回路与过程调整)。
+需要详细过程时使用 `get-trace --run-id $RunId`；它对整个 Run 合计只取前 512 条会话事件，
+逐个 Attempt 查看模型和工具的每一步用 `list-run-attempts` 与 `get-attempt-trace`，
+或在 Web 工作台的 Run 页点执行图节点。人工处理使用查询返回的当前 ID 和 `request_token`，具体参数见 [人工回路](docs/USAGE.md#控制人工回路与过程调整)。
 
 | 情况 | 对应操作 |
 | --- | --- |
@@ -265,7 +267,8 @@ uv run ehai-mcp --api-url http://127.0.0.1:8000
 ## 0.1 的范围与限制
 
 0.1 是执行核心的首个正式版本，已有真实模型的编码、并发、人工挂起/回复、Reviewer/Gate 和成果接续证据。
-尚未完成：Web 工作台、通用 Workflow 引擎、强杀与写入中断恢复的系统验证、Token/费用硬限额。
+Web 工作台已实现，目前只有无模型验证。
+尚未完成：通用 Workflow 引擎、强杀与写入中断恢复的系统验证、Token/费用硬限额。
 逐项状态见 [当前状态](docs/STATUS.md)，后续顺序见 [路线图](docs/ROADMAP.md)。
 
 ## 文档与参与开发

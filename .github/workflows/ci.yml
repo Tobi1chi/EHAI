@@ -56,6 +56,9 @@ jobs:
         run: |
           npm run typecheck
           npm run build
+      - name: Web workbench typecheck and build
+        working-directory: control-plane
+        run: npm run web:build
 
   e2e:
     name: Product E2E (${{ matrix.os }})

@@ -758,6 +758,15 @@ def create_app(
     def get_attempt_runtime(attempt_id: UuidInput) -> DataResponse:
         return _response(query_service.get_attempt_runtime(_id(str(attempt_id))))
 
+    @router.get(
+        "/attempts/{attempt_id}/trace",
+        response_model=DataResponse,
+        responses=_read_responses("AttemptTraceResponse", "One Attempt's session events"),
+        operation_id="getAttemptTrace",
+    )
+    def get_attempt_trace(attempt_id: UuidInput) -> DataResponse:
+        return _response(query_service.get_attempt_trace(_id(str(attempt_id))))
+
     @router.post(
         "/attempts/{attempt_id}/deadline",
         response_model=DataResponse,
@@ -891,6 +900,15 @@ def create_app(
     )
     def get_trajectory_reviews(run_id: UuidInput) -> DataResponse:
         return _response(query_service.list_trajectory_reviews(_id(str(run_id))))
+
+    @router.get(
+        "/runs/{run_id}/attempts",
+        response_model=DataResponse,
+        responses=_read_responses("AttemptListResponse", "A Run's Attempts"),
+        operation_id="listRunAttempts",
+    )
+    def list_run_attempts(run_id: UuidInput) -> DataResponse:
+        return _response(query_service.list_run_attempts(_id(str(run_id))))
 
     @router.get(
         "/runs/{run_id}/trace",

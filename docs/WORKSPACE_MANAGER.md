@@ -47,6 +47,19 @@ Pi 的原生设置会复制到此 workspace 的私有配置目录并固定指纹
 允许的命令、shell、Git 权限和 Check 设置可在 `runtime` 明确提供，默认均不增加副作用权限。
 首版固定登记时的运行配置，不提供注销、原地配置替换或既有 Run 跨 workspace 迁移。
 
+## Web 工作台
+
+先在 `control-plane` 构建页面（`npm.cmd ci`、`npm.cmd run web:build`），再让管理器同源提供：
+
+```powershell
+uv run ehai-manager --data-dir 'D:/ehai-data/manager' --port 8765 --ui-dir control-plane/web/dist
+```
+
+浏览器打开 `http://127.0.0.1:8765/ui/`。页面只调用本管理器及其 `/workspaces/{id}` 代理，
+不读数据库、不保存凭证；未传 `--ui-dir` 时不提供页面。开发时可运行 `npm.cmd run web:dev`，
+它把 API 请求转发到 `EHAI_MANAGER_URL`（默认 `http://127.0.0.1:8765`）。
+页面范围与边界见 [control-plane README](../control-plane/README.md#web-工作台)。
+
 ## 在指定 workspace 执行业务
 
 把原来单宿主的 API 地址改为带工作区前缀的地址，其他业务命令保持相同：
