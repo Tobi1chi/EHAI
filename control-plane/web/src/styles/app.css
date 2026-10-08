@@ -978,3 +978,73 @@ details.disclosure[open] > summary::before {
   clip: rect(0 0 0 0);
   white-space: nowrap;
 }
+
+/* Attempt trace: a single column timeline; tool calls fold, model text stays open. */
+.trace {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.trace-item {
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  padding: 8px 12px;
+  background: var(--surface);
+  min-width: 0;
+}
+
+.trace-item > summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  min-width: 0;
+}
+
+.trace-message {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  background: var(--hover);
+  border-color: transparent;
+}
+
+.trace-error {
+  border-color: var(--bad);
+}
+
+.trace-kind {
+  flex: none;
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--text-3);
+  min-width: 28px;
+}
+
+.trace-line {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.trace-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.trace-item pre.code {
+  margin: 0;
+  max-height: 420px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.trace-step {
+  padding: 8px 0 2px;
+  font-weight: 600;
+}

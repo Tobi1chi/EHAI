@@ -6,8 +6,7 @@ import { useToast } from "../../components/Toast";
 import {
   core,
   errorStatus,
-  type BuiltinSessionEvent,
-  type ExecutionTrace,
+  type Attempt,
   type Intervention,
   type PlanGraph,
   type PlanNode,
@@ -19,6 +18,8 @@ import { ago, dateTime, shortId } from "../../lib/format";
 import { ATTEMPT_STATUS, NODE_KIND, NODE_STATUS, RUN_STATUS } from "../../lib/labels";
 import { findRun } from "../../lib/overview";
 import { Link } from "../../lib/router";
+import { Icon } from "../../components/Icon";
+import { attemptNumber, attemptPath, attemptTone, useRunAttempts } from "./AttemptPage";
 import { useSubmission } from "../../lib/submit";
 
 const TERMINAL = new Set(["completed", "failed", "cancelled"]);
@@ -88,21 +89,51 @@ function RunControls({ workspaceId, run, onDone }: { workspaceId: string; run: R
   );
 }
 
-function NodeRow({ node }: { node: PlanNode }) {
+type Trail = { readonly workspaceId: string; readonly runId: string; readonly attempts: ReadonlyArray<Attempt> };
+
+/** A node opens its latest Attempt's trace; earlier tries are linked from there. */
+function NodeRow({ node, trail }: { node: PlanNode; trail: Trail }) {
   const tone =
     node.status === "completed" ? "ok" : node.status === "failed" ? "bad" : node.status === "stalled" || node.status === "suspended" ? "attn" : "";
-  return (
-    <div className="row" style={{ minHeight: 44 }}>
+  const tries = trail.attempts.filter((a) => a.plan_node_id === node.plan_node_id);
+  const latest = tries[tries.length - 1];
+  const body = (
+    <>
       <span className="grow">
         <span>{node.title}</span>
-        <span className="meta">{NODE_KIND[node.kind]}</span>
+        <span className="meta">
+          {NODE_KIND[node.kind]}
+          {tries.length > 1 ? ` · 试了 ${tries.length} 次` : ""}
+        </span>
       </span>
       <span className={`tag ${tone}`}>{NODE_STATUS[node.status]}</span>
-    </div>
+      {latest && (
+        <span className="meta">
+          <Icon name="chevron" size={16} />
+        </span>
+      )}
+    </>
+  );
+  if (!latest) {
+    return (
+      <div className="row" style={{ minHeight: 44 }}>
+        {body}
+      </div>
+    );
+  }
+  return (
+    <Link
+      className="row"
+      style={{ minHeight: 44 }}
+      to={attemptPath(trail.workspaceId, trail.runId, latest.attempt_id)}
+      title="查看这个节点的轨迹"
+    >
+      {body}
+    </Link>
   );
 }
 
-function PlanView({ plan }: { plan: PlanGraph }) {
+function PlanView({ plan, trail }: { plan: PlanGraph; trail: Trail }) {
   const byId = new Map(plan.nodes.map((n) => [n.plan_node_id, n]));
   const inPhase = new Set(plan.phases.flatMap((p) => p.node_ids));
   const loose = plan.nodes.filter((n) => !inPhase.has(n.plan_node_id));
@@ -114,7 +145,7 @@ function PlanView({ plan }: { plan: PlanGraph }) {
           <div className="list">
             {phase.node_ids.map((id) => {
               const node = byId.get(id);
-              return node ? <NodeRow key={id} node={node} /> : null;
+              return node ? <NodeRow key={id} node={node} trail={trail} /> : null;
             })}
           </div>
         </div>
@@ -122,7 +153,7 @@ function PlanView({ plan }: { plan: PlanGraph }) {
       {loose.length > 0 && (
         <div className="list">
           {loose.map((node) => (
-            <NodeRow key={node.plan_node_id} node={node} />
+            <NodeRow key={node.plan_node_id} node={node} trail={trail} />
           ))}
         </div>
       )}
@@ -138,7 +169,7 @@ function PlanView({ plan }: { plan: PlanGraph }) {
   );
 }
 
-function InterventionsView({ items }: { items: ReadonlyArray<Intervention> }) {
+function InterventionsView({ items, trail }: { items: ReadonlyArray<Intervention>; trail: Trail }) {
   if (items.length === 0) return <p className="empty">这个 Run 没有求助过。</p>;
   return (
     <div className="list">
@@ -148,7 +179,8 @@ function InterventionsView({ items }: { items: ReadonlyArray<Intervention> }) {
             <span className="title">{i.needed || i.reason}</span>
             <span className="meta">
               {i.kind === "external_effects" ? "要改动外部" : "Worker 卡住了"} · {ago(i.occurred_at)} ·{" "}
-              {i.status === "open" ? "待回复" : "已回复"}
+              {i.status === "open" ? "待回复" : "已回复"} ·{" "}
+              <Link to={attemptPath(trail.workspaceId, trail.runId, i.attempt_id)}>查看轨迹</Link>
             </span>
             {i.reason && i.needed && <span className="meta pre">{i.reason}</span>}
             {i.reply && (
@@ -218,56 +250,30 @@ function ResultView({ doc }: { doc: RunResultDocument | null }) {
   );
 }
 
-function eventSummary(event: BuiltinSessionEvent): string {
-  const p = event.payload;
-  for (const key of ["tool_name", "name", "tool"]) {
-    const value = p[key];
-    if (typeof value === "string") return value;
-  }
-  const text = JSON.stringify(p);
-  return text.length > 140 ? text.slice(0, 140) + "…" : text;
-}
-
-function TraceView({ trace, plan }: { trace: ExecutionTrace; plan: PlanGraph | undefined }) {
+function AttemptsView({ trail, plan }: { trail: Trail; plan: PlanGraph | undefined }) {
   const titles = new Map((plan?.nodes ?? []).map((n) => [n.plan_node_id, n.title]));
-  const calls = new Map<string, BuiltinSessionEvent[]>();
-  for (const event of trace.session_events) {
-    if (event.type !== "tool/call") continue;
-    const list = calls.get(event.attempt_id) ?? [];
-    list.push(event);
-    calls.set(event.attempt_id, list);
-  }
+  if (trail.attempts.length === 0) return <p className="empty">还没开始执行。</p>;
   return (
-    <div className="section">
-      {trace.session_events_truncated && <p className="meta attn">记录太多，只显示了一部分。</p>}
-      {trace.attempts.length === 0 && <p className="empty">还没开始执行。</p>}
-      {trace.attempts.map((attempt) => {
-        const toolCalls = calls.get(attempt.attempt_id) ?? [];
-        return (
-          <details key={attempt.attempt_id} className="disclosure card">
-            <summary>
-              <span style={{ flex: "1 1 auto" }}>
-                {titles.get(attempt.plan_node_id) ?? shortId(attempt.plan_node_id)} · #{attempt.sequence}
-              </span>
-              <span className="tag">{ATTEMPT_STATUS[attempt.status]}</span>
-              <span className="meta">{toolCalls.length} 次工具调用</span>
-            </summary>
-            <div className="meta">
-              {dateTime(attempt.started_at)} → {attempt.ended_at ? dateTime(attempt.ended_at) : "进行中"}
-              {attempt.outcome_reason ? ` · ${attempt.outcome_reason}` : ""}
-            </div>
-            {toolCalls.length > 0 && (
-              <ol className="list mono" style={{ paddingLeft: 0 }}>
-                {toolCalls.map((event) => (
-                  <li key={event.sequence} style={{ padding: "2px 0", overflowWrap: "anywhere" }}>
-                    {event.sequence}. {eventSummary(event)}
-                  </li>
-                ))}
-              </ol>
-            )}
-          </details>
-        );
-      })}
+    <div className="list">
+      {[...trail.attempts].reverse().map((a) => (
+        <Link key={a.attempt_id} className="row" to={attemptPath(trail.workspaceId, trail.runId, a.attempt_id)}>
+          <span className="grow">
+            <span>
+              {titles.get(a.plan_node_id) ?? shortId(a.plan_node_id)}
+              <span className="meta"> · 第 {attemptNumber(trail.attempts, a)} 次</span>
+            </span>
+            <span className="meta">
+              {a.started_at ? dateTime(a.started_at) : dateTime(a.created_at)}
+              {a.ended_at ? ` → ${dateTime(a.ended_at)}` : " → 进行中"}
+              {a.outcome_reason ? ` · ${a.outcome_reason}` : ""}
+            </span>
+          </span>
+          <span className={`tag ${attemptTone(a.status)}`}>{ATTEMPT_STATUS[a.status]}</span>
+          <span className="meta">
+            <Icon name="chevron" size={16} />
+          </span>
+        </Link>
+      ))}
     </div>
   );
 }
@@ -275,7 +281,6 @@ function TraceView({ trace, plan }: { trace: ExecutionTrace; plan: PlanGraph | u
 export function RunPage({ workspaceId, runId }: { workspaceId: string; runId: string }) {
   const { overview } = useApp();
   const [target, setTarget] = useState<InboxTarget | null>(null);
-  const [showTrace, setShowTrace] = useState(false);
   const opts = { workspaces: [workspaceId] };
   const client = core(workspaceId);
   const run = useQuery(`run:${workspaceId}:${runId}`, () => client.getRun(runId).then((r) => r.data), opts);
@@ -303,11 +308,8 @@ export function RunPage({ workspaceId, runId }: { workspaceId: string; runId: st
       ),
     opts,
   );
-  const trace = useQuery(
-    showTrace ? `run-trace:${workspaceId}:${runId}` : null,
-    () => client.getExecutionTrace(runId).then((r) => r.data),
-    opts,
-  );
+  const attempts = useRunAttempts(workspaceId, runId);
+  const trail: Trail = { workspaceId, runId, attempts: attempts.data ?? [] };
   const context = findRun(overview.data, workspaceId, runId);
 
   return (
@@ -379,7 +381,7 @@ export function RunPage({ workspaceId, runId }: { workspaceId: string; runId: st
       <div className="split">
         <section className="section">
           <h2 className="h2">执行图</h2>
-          <QueryView query={plan}>{(data) => <PlanView plan={data} />}</QueryView>
+          <QueryView query={plan}>{(data) => <PlanView plan={data} trail={trail} />}</QueryView>
         </section>
         <div className="section" style={{ gap: 24 }}>
           <section className="section">
@@ -388,7 +390,7 @@ export function RunPage({ workspaceId, runId }: { workspaceId: string; runId: st
           </section>
           <section className="section">
             <h2 className="h2">求助记录</h2>
-            <QueryView query={interventions}>{(data) => <InterventionsView items={data} />}</QueryView>
+            <QueryView query={interventions}>{(data) => <InterventionsView items={data} trail={trail} />}</QueryView>
           </section>
         </div>
       </div>
@@ -396,11 +398,9 @@ export function RunPage({ workspaceId, runId }: { workspaceId: string; runId: st
       <section className="section">
         <div className="section-head">
           <h2 className="h2 grow">轨迹</h2>
-          <button type="button" className="btn small" onClick={() => setShowTrace((v) => !v)}>
-            {showTrace ? "收起" : "展开"}
-          </button>
+          <span className="meta">点一次尝试，看模型和工具的每一步</span>
         </div>
-        {showTrace && <QueryView query={trace}>{(data) => <TraceView trace={data} plan={plan.data} />}</QueryView>}
+        <QueryView query={attempts}>{() => <AttemptsView trail={trail} plan={plan.data} />}</QueryView>
       </section>
 
       {target && <InboxPanel target={target} onClose={() => setTarget(null)} />}

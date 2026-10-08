@@ -15,6 +15,7 @@ import { ConnectionsPage } from "./pages/shared/Connections";
 import { LearnPage } from "./pages/shared/Learn";
 import { SettingsPage } from "./pages/shared/Settings";
 import { ProjectPage, ProjectsPage } from "./pages/work/Projects";
+import { AttemptPage } from "./pages/work/AttemptPage";
 import { RunPage } from "./pages/work/RunPage";
 import { WorkHome } from "./pages/work/WorkHome";
 import "./styles/tokens.css";
@@ -43,6 +44,19 @@ function resolve(path: string): Route | "home" {
       zone: "work",
       page: <ProjectPage key={path} workspaceId={p["ws"] as string} projectId={p["project"] as string} />,
       title: "项目",
+    };
+  if ((p = match("/work/w/:ws/runs/:run/attempts/:attempt", path)))
+    return {
+      zone: "work",
+      page: (
+        <AttemptPage
+          key={path}
+          workspaceId={p["ws"] as string}
+          runId={p["run"] as string}
+          attemptId={p["attempt"] as string}
+        />
+      ),
+      title: "轨迹",
     };
   if ((p = match("/work/w/:ws/runs/:run", path)))
     return {

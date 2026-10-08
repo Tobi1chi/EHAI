@@ -20,6 +20,7 @@ import {
 } from "../lib/labels";
 import { actorName, usePrefs } from "../lib/prefs";
 import { Link } from "../lib/router";
+import { attemptPath } from "../pages/work/AttemptPage";
 import { useSubmission } from "../lib/submit";
 import { useToast } from "./Toast";
 import { Panel } from "./Panel";
@@ -75,7 +76,15 @@ function InboxBody({ workspaceId, item, onDone }: { workspaceId: string; item: I
         {owner.node_title && (
           <>
             <dt>节点</dt>
-            <dd>{owner.node_title}</dd>
+            <dd>
+              {owner.node_title}
+              {owner.run_id && owner.attempt_id && (
+                <>
+                  {" · "}
+                  <Link to={attemptPath(workspaceId, owner.run_id, owner.attempt_id)}>查看这一步的轨迹</Link>
+                </>
+              )}
+            </dd>
           </>
         )}
         {owner.run_status && (
