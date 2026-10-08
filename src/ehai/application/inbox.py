@@ -42,6 +42,22 @@ class InboxEvidence:
     sha256: str | None
 
 
+_NOTE_DECISIONS: dict[tuple[str, bool | None], tuple[str, str]] = {
+    ("resolve", None): ("Close", "Close the discussion; execution and approval do not change"),
+    ("continue", None): ("Continue", "Reply to the bound intervention with this message"),
+    ("continue", True): ("Pass", "Pass the bound human Check with this message"),
+    ("continue", False): ("Fail", "Fail the bound human Check with this message"),
+    ("propose_process", None): (
+        "Propose process",
+        "Draft a process change; review and apply remain separate",
+    ),
+    ("revise_plan", None): (
+        "Revise plan",
+        "Discuss a plan revision; approval and authorization remain separate",
+    ),
+}
+
+
 @dataclass(frozen=True, slots=True)
 class InboxAction:
     operation: Literal[
@@ -200,7 +216,12 @@ class InboxQuery:
     def _notes(self, project_id: ID | None, run_id: ID | None) -> list[InboxItem]:
         from typing import cast
 
-        from ehai.application.notes import NoteDocument, note_documents, note_stale_reason
+        from ehai.application.notes import (
+            NoteDocument,
+            note_decision_choices,
+            note_documents,
+            note_stale_reason,
+        )
 
         items: list[InboxItem] = []
         for note in note_documents(self.session):
@@ -222,6 +243,7 @@ class InboxQuery:
                     "note_id": note["note_id"],
                     "request_token": note["request_token"],
                 }
+                # One action per decision the core accepts now, like human Check verdicts.
                 actions = (
                     InboxAction(
                         "add-note-message",
@@ -230,12 +252,18 @@ class InboxQuery:
                         ("idempotency_key", "actor", "message"),
                         arguments,
                     ),
-                    InboxAction(
-                        "decide-note",
-                        "Decide",
-                        "Close, continue a request, or draft; approval remains separate",
-                        ("idempotency_key", "actor", "action", "message", "passed"),
-                        arguments,
+                    *(
+                        InboxAction(
+                            "decide-note",
+                            *_NOTE_DECISIONS[(action, passed)],
+                            ("idempotency_key", "actor", "message"),
+                            {
+                                **arguments,
+                                "action": action,
+                                **({} if passed is None else {"passed": passed}),
+                            },
+                        )
+                        for action, passed in note_decision_choices(self.session, note)
                     ),
                 )
             items.append(

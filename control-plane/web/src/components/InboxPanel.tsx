@@ -301,13 +301,7 @@ function ReplyForm({ workspaceId, action, onDone }: { workspaceId: string; actio
   );
 }
 
-const NOTE_ACTIONS: ReadonlyArray<{ value: DecideNoteRequest["action"]; label: string }> = [
-  { value: "resolve", label: "关闭便签" },
-  { value: "continue", label: "继续原请求" },
-  { value: "propose_process", label: "提一个流程调整" },
-  { value: "revise_plan", label: "修订方案" },
-];
-
+/** The core lists one decide-note action per decision it accepts now; render exactly those. */
 function NoteForms({
   workspaceId,
   actions,
@@ -319,12 +313,10 @@ function NoteForms({
 }) {
   const prefs = usePrefs();
   const [message, setMessage] = useState("");
-  const [decision, setDecision] = useState<DecideNoteRequest["action"]>("resolve");
-  const [passed, setPassed] = useState<"" | "true" | "false">("");
   const submission = useSubmission("note");
   const after = useAfterWrite(workspaceId, onDone);
   const discuss = actions.find((a) => a.operation === "add-note-message");
-  const decide = actions.find((a) => a.operation === "decide-note");
+  const decisions = actions.filter((a) => a.operation === "decide-note");
 
   async function addMessage(action: InboxAction) {
     const result = await submission.run((key) =>
@@ -342,19 +334,20 @@ function NoteForms({
   }
 
   async function decideNote(action: InboxAction) {
+    const args = action.arguments;
     const result = await submission.run((key) =>
-      core(workspaceId).decideNote(str(action.arguments["note_id"]), {
+      core(workspaceId).decideNote(str(args["note_id"]), {
         idempotency_key: key,
-        request_token: str(action.arguments["request_token"]),
+        request_token: str(args["request_token"]),
         actor: actorName(prefs),
         message: message.trim(),
-        action: decision,
-        ...(passed === "" ? {} : { passed: passed === "true" }),
+        action: args["action"] as DecideNoteRequest["action"],
+        ...(typeof args["passed"] === "boolean" ? { passed: args["passed"] } : {}),
       }),
     );
     if (result) {
       setMessage("");
-      after("已提交决定");
+      after(`已${actionLabel(action)}`);
     }
   }
 
@@ -364,34 +357,17 @@ function NoteForms({
         <span>消息</span>
         <textarea className="textarea" value={message} onChange={(e) => setMessage(e.target.value)} />
       </label>
-      {decide && (
-        <div className="split">
-          <label className="field">
-            <span>决定</span>
-            <select
-              className="select"
-              value={decision}
-              onChange={(e) => setDecision(e.target.value as DecideNoteRequest["action"])}
-            >
-              {NOTE_ACTIONS.map((a) => (
-                <option key={a.value} value={a.value}>
-                  {a.label}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="field">
-            <span>原来的检查算不算通过</span>
-            <select className="select" value={passed} onChange={(e) => setPassed(e.target.value as "" | "true" | "false")}>
-              <option value="">不涉及</option>
-              <option value="true">通过</option>
-              <option value="false">不通过</option>
-            </select>
-          </label>
-        </div>
+      {decisions.length > 0 && (
+        <ul className="meta" style={{ margin: 0, paddingLeft: 18 }}>
+          {decisions.map((a) => (
+            <li key={actionLabel(a)}>
+              {actionLabel(a)}：{actionHint(a)}
+            </li>
+          ))}
+        </ul>
       )}
       {submission.error !== undefined && <ErrorBlock error={submission.error} />}
-      <div className="actions">
+      <div className="actions" style={{ flexWrap: "wrap" }}>
         {discuss && (
           <button
             type="button"
@@ -402,16 +378,17 @@ function NoteForms({
             只留言
           </button>
         )}
-        {decide && (
+        {decisions.map((a) => (
           <button
+            key={actionLabel(a)}
             type="button"
-            className="btn primary"
+            className={a.arguments["action"] === "resolve" ? "btn" : "btn primary"}
             disabled={submission.pending || !message.trim()}
-            onClick={() => void decideNote(decide)}
+            onClick={() => void decideNote(a)}
           >
-            提交决定
+            {actionLabel(a)}
           </button>
-        )}
+        ))}
       </div>
     </div>
   );

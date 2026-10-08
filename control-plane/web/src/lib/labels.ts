@@ -77,7 +77,18 @@ export function actionLabel(action: InboxAction): string {
     case "add-note-message":
       return "只留言";
     case "decide-note":
-      return "决定";
+      switch (args["action"]) {
+        case "resolve":
+          return "关闭便签";
+        case "continue":
+          return args["passed"] === true ? "检查通过并继续" : args["passed"] === false ? "检查不通过" : "回复原求助";
+        case "propose_process":
+          return "提一个流程调整";
+        case "revise_plan":
+          return "修订方案";
+        default:
+          return "决定";
+      }
     case "decide-workflow":
       return "批准或拒绝";
   }
@@ -98,7 +109,20 @@ export function actionHint(action: InboxAction): string {
     case "add-note-message":
       return "只留言，不影响执行。";
     case "decide-note":
-      return "选择怎么处理这条便签。改方案还要另外批准。";
+      switch (args["action"]) {
+        case "resolve":
+          return "只关掉讨论，不影响执行和批准。";
+        case "continue":
+          return args["passed"] === undefined
+            ? "把你的消息当作原求助的回复，那一步会接着做。"
+            : "按你选的结果判定原来的人工检查，消息作为说明。";
+        case "propose_process":
+          return "让 Planner 起草流程调整，草稿还要审查和应用。";
+        case "revise_plan":
+          return "带着便签内容去讨论方案，改出来的方案还要另外批准。";
+        default:
+          return "";
+      }
     case "decide-workflow":
       return "保存这些待办，或者不保存。";
   }

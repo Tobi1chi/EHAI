@@ -146,6 +146,50 @@ def note_stale_reason(session: ReadSession | UnitOfWork, note: NoteDocument) -> 
     return None
 
 
+def note_decision_error(
+    session: ReadSession | UnitOfWork, note: NoteDocument, action: str, passed: bool | None
+) -> str | None:
+    """Why this decision cannot apply to the note now; None when it can."""
+    if action != "resolve" and (reason := note_stale_reason(session, note)) is not None:
+        return reason
+    source = cast(NoteDocument, note["source"])
+    if action == "continue" and source["source_kind"] is None:
+        return "Continue requires a bound intervention or human Check"
+    if action == "propose_process" and source["run_id"] is None:
+        return "Process proposals require a Run"
+    if action == "revise_plan" and source["run_id"] is not None:
+        run = session.states.get_run(cast(ID, source["run_id"]))
+        if run is None or run.status.value != "paused":
+            return "Pause the source Run explicitly before requesting plan revision"
+    human_check = action == "continue" and source["source_kind"] == "human_check"
+    if human_check and passed is None:
+        return "A human Check continuation requires explicit passed"
+    if passed is not None and not human_check:
+        return "passed is only valid for a human Check continuation"
+    return None
+
+
+_NOTE_CHOICES: tuple[tuple[str, bool | None], ...] = (
+    ("resolve", None),
+    ("continue", None),
+    ("continue", True),
+    ("continue", False),
+    ("propose_process", None),
+    ("revise_plan", None),
+)
+
+
+def note_decision_choices(
+    session: ReadSession | UnitOfWork, note: NoteDocument
+) -> tuple[tuple[str, bool | None], ...]:
+    """The (action, passed) pairs decide accepts for this note now, so callers offer only those."""
+    return tuple(
+        (action, passed)
+        for action, passed in _NOTE_CHOICES
+        if note_decision_error(session, note, action, passed) is None
+    )
+
+
 class NoteService:
     def __init__(
         self, uow_factory: Callable[[], UnitOfWork], read_session_factory: Callable[[], ReadSession]
@@ -330,25 +374,9 @@ class NoteService:
                         return self.get(note_id)
                 return retained  # Pending/unknown operations are never blindly replayed.
             note = self._open(uow, note_id, request_token)
-            if action != "resolve" and (reason := note_stale_reason(uow, note)) is not None:
-                raise ValueError(reason)
+            if (error := note_decision_error(uow, note, action, passed)) is not None:
+                raise ValueError(error)
             source = cast(NoteDocument, note["source"])
-            if action == "continue" and source["source_kind"] is None:
-                raise ValueError("Continue requires a bound intervention or human Check")
-            if action == "propose_process" and source["run_id"] is None:
-                raise ValueError("Process proposals require a Run")
-            if action == "revise_plan" and source["run_id"] is not None:
-                run = uow.states.get_run(cast(ID, source["run_id"]))
-                if run is None or run.status.value != "paused":
-                    raise ValueError(
-                        "Pause the source Run explicitly before requesting plan revision"
-                    )
-            if action == "continue" and source["source_kind"] == "human_check" and passed is None:
-                raise ValueError("A human Check continuation requires explicit passed")
-            if passed is not None and not (
-                action == "continue" and source["source_kind"] == "human_check"
-            ):
-                raise ValueError("passed is only valid for a human Check continuation")
             operation_key = "note-decision:" + str(new_id())
             decision = {
                 **payload,
