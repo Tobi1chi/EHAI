@@ -182,6 +182,9 @@ get-trace、get-result；候选 Artifact、Reviewer 结论和最终 Gate 是不�
   可只读读取清单内的 Artifact；等待人工的 Check 仍是待决事项。
 - get-attempt-runtime：--attempt-id。Worker 一轮中途需要人工输入时走 Intervention（挂起 → reply-intervention）；
   运行中 Worker 请求接口已随 Codex 后端删除，见 [ADR 0007](adr/0007-agent-harness-port.md)。
+- list-run-attempts：--run-id，列出 Run 的全部 Attempt（按 sequence）。
+- get-attempt-trace：--attempt-id，读一个 Attempt 的内置 Agent 会话事件（上限 2048 条，单条载荷 8KB）。
+  get-trace 按 Run 合计只取前 512 条，长 Run 的后几个 Attempt 会被截掉；逐个 Attempt 审查轨迹用这个。
 - cancel-attempt：--attempt-id、--idempotency-key。取消不是人工 suspend。
 - extend-attempt-deadline：--attempt-id、--deadline-at（含时区）、--idempotency-key。
 

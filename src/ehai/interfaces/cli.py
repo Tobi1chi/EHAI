@@ -526,6 +526,10 @@ def create_parser() -> argparse.ArgumentParser:
         "get-run-trajectory-reviews", help="read advisory Worker trajectory reviews"
     )
     trajectory_query.add_argument("--run-id", required=True)
+    attempts_query = commands.add_parser(
+        "list-run-attempts", help="list a Run's Attempts (requires --api-url)"
+    )
+    attempts_query.add_argument("--run-id", required=True)
 
     plan_query = commands.add_parser(
         "get-plan", help="read a stored plan without invoking a Planner"
@@ -625,6 +629,7 @@ def create_parser() -> argparse.ArgumentParser:
         commands.add_parser(name, help=help_text + " (requires --api-url)")
     for name, help_text in (
         ("get-attempt-runtime", "read one Attempt's runtime state"),
+        ("get-attempt-trace", "read one Attempt's full Agent session events"),
         ("cancel-attempt", "cancel one Attempt on its owning API host"),
         ("suspend-attempt", "adopt a trajectory review and suspend only its Worker"),
         ("extend-attempt-deadline", "explicitly extend one Attempt's deadline"),

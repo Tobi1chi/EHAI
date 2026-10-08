@@ -646,6 +646,20 @@ export type ProcessDraftReviewsResponse = {
   readonly data: ProcessDraftReviews;
 };
 
+export type AttemptListResponse = {
+  readonly data: ReadonlyArray<Attempt>;
+};
+
+export type AttemptTrace = {
+  readonly attempt: Attempt;
+  readonly session_events: ReadonlyArray<BuiltinSessionEvent>;
+  readonly session_events_truncated: boolean;
+};
+
+export type AttemptTraceResponse = {
+  readonly data: AttemptTrace;
+};
+
 export type ExecutionTraceResponse = {
   readonly data: ExecutionTrace;
 };
@@ -2570,6 +2584,10 @@ export class EhaiApiClient {
     return this.request(`/runs/${encodeURIComponent(runId)}/process-drafts`, "GET");
   }
 
+  listRunAttempts(runId: string): Promise<AttemptListResponse> {
+    return this.request(`/runs/${encodeURIComponent(runId)}/attempts`, "GET");
+  }
+
   getExecutionTrace(runId: string): Promise<ExecutionTraceResponse> {
     return this.request(`/runs/${encodeURIComponent(runId)}/trace`, "GET");
   }
@@ -2580,6 +2598,10 @@ export class EhaiApiClient {
 
   listWorkerEndpoints(): Promise<WorkerEndpointListResponse> {
     return this.request("/workers/endpoints", "GET");
+  }
+
+  getAttemptTrace(attemptId: string): Promise<AttemptTraceResponse> {
+    return this.request(`/attempts/${encodeURIComponent(attemptId)}/trace`, "GET");
   }
 
   getAttemptRuntime(attemptId: string): Promise<AttemptRuntimeResponse> {

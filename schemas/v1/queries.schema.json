@@ -2673,6 +2673,56 @@
         }
       }
     },
+    "AttemptListResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "data"
+      ],
+      "properties": {
+        "data": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Attempt"
+          }
+        }
+      }
+    },
+    "AttemptTrace": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "attempt",
+        "session_events",
+        "session_events_truncated"
+      ],
+      "properties": {
+        "attempt": {
+          "$ref": "#/$defs/Attempt"
+        },
+        "session_events": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/BuiltinSessionEvent"
+          }
+        },
+        "session_events_truncated": {
+          "type": "boolean"
+        }
+      }
+    },
+    "AttemptTraceResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "data"
+      ],
+      "properties": {
+        "data": {
+          "$ref": "#/$defs/AttemptTrace"
+        }
+      }
+    },
     "ExecutionTraceResponse": {
       "type": "object",
       "additionalProperties": false,

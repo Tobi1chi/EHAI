@@ -614,6 +614,10 @@ export class EhaiApiClient {
     return this.request(\`/runs/\${encodeURIComponent(runId)}/process-drafts\`, "GET");
   }
 
+  listRunAttempts(runId: string): Promise<AttemptListResponse> {
+    return this.request(\`/runs/\${encodeURIComponent(runId)}/attempts\`, "GET");
+  }
+
   getExecutionTrace(runId: string): Promise<ExecutionTraceResponse> {
     return this.request(\`/runs/\${encodeURIComponent(runId)}/trace\`, "GET");
   }
@@ -624,6 +628,10 @@ export class EhaiApiClient {
 
   listWorkerEndpoints(): Promise<WorkerEndpointListResponse> {
     return this.request("/workers/endpoints", "GET");
+  }
+
+  getAttemptTrace(attemptId: string): Promise<AttemptTraceResponse> {
+    return this.request(\`/attempts/\${encodeURIComponent(attemptId)}/trace\`, "GET");
   }
 
   getAttemptRuntime(attemptId: string): Promise<AttemptRuntimeResponse> {
