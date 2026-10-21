@@ -175,6 +175,8 @@ function eventText(item: ThreadTimelineItem): string {
       return `${inbox}已处理`;
     case "succession_started":
       return "开始了后继 Run";
+    case "integration_created":
+      return ref(refs, "status") === "conflicted" ? "整合代码成果时有冲突" : "代码成果已整合";
     case "discussion_message":
       return item.summary;
   }
@@ -260,7 +262,7 @@ export function ThreadPage({ workspaceId, goalId }: { workspaceId: string; goalI
   const [message, setMessage] = useState("");
   const [inbox, setInbox] = useState<InboxTarget | null>(null);
   const [starting, setStarting] = useState<PlanGraph | null>(null);
-  const [integrating, setIntegrating] = useState<string | null>(null);
+  const [integrating, setIntegrating] = useState<{ runId: string; integrationId?: string } | null>(null);
   const pending = usePendingDiscussion(workspaceId, goalId);
 
   const thread = useQuery(
@@ -347,7 +349,7 @@ export function ThreadPage({ workspaceId, goalId }: { workspaceId: string; goalI
               onFocusComposer={() => composer.current?.focus()}
               onStartPlan={(id) => void openPlan(id)}
               onInbox={setInbox}
-              onIntegrate={setIntegrating}
+              onIntegrate={(runId) => setIntegrating({ runId })}
             />
           </div>
         )}
@@ -446,6 +448,29 @@ export function ThreadPage({ workspaceId, goalId }: { workspaceId: string; goalI
                     </EventLine>
                   );
                 }
+                case "integration_created": {
+                  const integrationId = ref(refs, "integration_id");
+                  const conflicted = ref(refs, "status") === "conflicted";
+                  return (
+                    <div key={key} className={conflicted ? "row thread-card attn" : "row thread-card"}>
+                      <span className="grow">
+                        <span className="title">{eventText(item)}</span>
+                        <span className="meta">
+                          {ago(item.at)} · {conflicted ? "冲突留在整合工作区里" : "未改动你的分支"}
+                        </span>
+                      </span>
+                      {runId !== null && integrationId !== null && (
+                        <button
+                          type="button"
+                          className="btn small"
+                          onClick={() => setIntegrating({ runId, integrationId })}
+                        >
+                          {conflicted ? "查看冲突" : "查看差异"}
+                        </button>
+                      )}
+                    </div>
+                  );
+                }
                 default:
                   return <EventLine key={key} item={item} />;
               }
@@ -527,7 +552,12 @@ export function ThreadPage({ workspaceId, goalId }: { workspaceId: string; goalI
         />
       )}
       {integrating && (
-        <IntegratePanel workspaceId={workspaceId} runId={integrating} onClose={() => setIntegrating(null)} />
+        <IntegratePanel
+          workspaceId={workspaceId}
+          runId={integrating.runId}
+          {...(integrating.integrationId === undefined ? {} : { integrationId: integrating.integrationId })}
+          onClose={() => setIntegrating(null)}
+        />
       )}
     </div>
   );
