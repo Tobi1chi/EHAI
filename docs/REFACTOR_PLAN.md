@@ -382,6 +382,22 @@ Reviewer/Gate → 人工验收 → `integrate-run`，并在执行中强杀一次
   适配层关于 Pi 没有 MCP 的注释改为说明内置 MCP 保持关闭。
 - 验证：`inspect-agent` 控制通道通过；静态检查、两平台 mypy、lint-imports、产品 E2E 通过。仓库外诊断
   （产品 E2E 方案）：声明支持时 7 个模型请求的工具均带 `strict: true`，未声明时均不带 `strict`，两者都完成。
+
+### 2026-10-22 默认关闭严格采样，核心统一校验工具参数
+
+- 决定（用户选择）：不再依赖模型侧严格约束采样，改由 EHAI 校验。桥接层改为 `constrainedSampling: false`，
+  所有 Provider 上模型看到同一份原始工具 Schema，"省略"与"null"的含义不再随端点变化。
+- 实现：`ToolExecutor` 构造时按每个工具的 Schema（默认 Draft 2020-12）建校验器，Schema 本身无效即拒绝构造；
+  执行前校验参数，不符合时抛出可恢复的 `invalid_arguments`，最多列出 5 处 JSON 路径与原因，处理器不运行。
+  Worker/Reviewer（Hub）、Planner 与过程审查都经此入口，因此经 MCP 端点接入的其他 harness 也有同一层校验；
+  经 Pi 时 Pi 自己的参数校验仍在前面。
+- 处理器核对：除过程审查的 `obligation_mapping`（解析端已接受省略或 null）外，现有工具 Schema 均把全部字段列为必填，
+  不存在严格模式补 null、关闭后变为省略的字段；外部 MCP 工具的参数语义仍由其服务端负责。
+- 验证：仓库外诊断直接调用 `ToolExecutor`：合法参数执行；缺字段、多字段、类型错、空字符串、嵌套缺字段均返回
+  `invalid_arguments` 并逐处列出，处理器未运行；无效 Schema 构造失败。产品 E2E 方案：未声明 strict 的端点工具
+  不带 `strict`，声明支持的端点工具为 `strict: false`，两者都完成。静态检查、两平台 mypy、lint-imports、产品 E2E 通过。
+- 未覆盖：真实模型下参数出错的频率与一次纠正的成功率（DeepSeek flash 此前一直在严格模式下运行）；
+  Planner、过程审查与路由的工具 Schema 只做了静态核对，未经产品 E2E。
 - 未覆盖：真实模型（Planner、Worker、Reviewer、过程审查）；Windows；独立 Hub。E2E 输出与宿主日志都看不到
   Pi 拒绝请求的原因，这是旁支发现，另行处理。
 

@@ -192,12 +192,7 @@ def _pi_backend(root: Path, provider: ScriptedProvider) -> Path:
                 "baseUrl": provider.url,
                 "api": "openai-completions",
                 "apiKey": f"${PROVIDER_KEY}",
-                # Keep the strict tool path covered; Pi assumes custom endpoints lack it.
-                "compat": {
-                    "supportsDeveloperRole": False,
-                    "supportsReasoningEffort": False,
-                    "supportsStrictMode": True,
-                },
+                "compat": {"supportsDeveloperRole": False, "supportsReasoningEffort": False},
                 "models": [{"id": MODEL}],
             }
         }

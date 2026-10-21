@@ -77,7 +77,7 @@ C:/private/ehai/
 | --- | --- | --- |
 | `backend.json` | [后端示例](agent-backends/pi/examples/backend.json) | Node 可执行文件、Pi CLI 的绝对路径、`agent_dir`、Provider 与凭证环境变量名 |
 | `pi/settings.json` | [设置示例](agent-backends/pi/examples/settings.json) | 使用配套的压缩与重试设置 |
-| `pi/models.json` | [模型示例](agent-backends/pi/examples/models.json) | 内置 Provider 可保留空配置；自定义网关需补充 Provider、端点和模型定义；OpenAI 兼容端点确实支持严格工具调用时可声明 `"compat": {"supportsStrictMode": true}` |
+| `pi/models.json` | [模型示例](agent-backends/pi/examples/models.json) | 内置 Provider 可保留空配置；自定义网关需补充 Provider、端点和模型定义 |
 | `execution-api.json` | [执行配置示例](examples/execution-api.json) | 模型 ID、目标仓库，以及与 `backend.json` 一致的 `pi` 对象 |
 
 在这个例子中，`agent_dir` 为 `C:/private/ehai/pi`，Pi CLI 为

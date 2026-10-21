@@ -7,6 +7,11 @@ from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
 
+from jsonschema import Draft202012Validator
+from jsonschema.exceptions import SchemaError
+from jsonschema.protocols import Validator
+from jsonschema.validators import validator_for
+
 from ehai import JsonValue, json_dumps, json_loads
 
 
@@ -170,13 +175,21 @@ ToolHandler = Callable[[dict[str, JsonValue], CancellationToken], Awaitable[Json
 
 
 class ToolExecutor:
-    """Execute only handlers matching the Session's fixed ToolSet."""
+    """Execute only handlers matching the Session's fixed ToolSet.
+
+    Arguments are checked against each Tool's input schema here, whatever harness or
+    provider produced them, because model-side constrained sampling is not relied on.
+    """
 
     def __init__(self, tool_set: ToolSet, handlers: Mapping[str, ToolHandler]) -> None:
         if set(handlers) != {item.name for item in tool_set.definitions}:
             raise ValueError("ToolExecutor handlers must exactly match the fixed ToolSet")
         self.tool_set = tool_set
         self._handlers = dict(handlers)
+        self._validators = {
+            item.name: _argument_validator(item.name, item.input_schema)
+            for item in tool_set.definitions
+        }
         self._closed = False
 
     async def execute(self, call: ToolCall, cancellation: CancellationToken) -> JsonValue:
@@ -184,12 +197,36 @@ class ToolExecutor:
             raise RuntimeError("ToolExecutor is closed")
         self.tool_set.require(call.name)
         cancellation.raise_if_cancelled()
-        result = await self._handlers[call.name](call.arguments, cancellation)
+        arguments = call.arguments
+        _check_arguments(self._validators[call.name], arguments)
+        result = await self._handlers[call.name](arguments, cancellation)
         cancellation.raise_if_cancelled()
         return json_loads(json_dumps(result))
 
     async def aclose(self) -> None:
         self._closed = True
+
+
+def _argument_validator(name: str, schema: dict[str, JsonValue]) -> Validator:
+    cls = validator_for(schema, default=Draft202012Validator)
+    try:
+        cls.check_schema(schema)
+    except SchemaError as error:
+        raise ValueError(f"Tool {name!r} has an invalid input schema") from error
+    return cls(schema)
+
+
+def _check_arguments(validator: Validator, arguments: dict[str, JsonValue]) -> None:
+    errors = sorted(validator.iter_errors(arguments), key=lambda item: item.json_path)
+    if not errors:
+        return
+    # Name every failing location so the model can correct all of them in one retry.
+    details = "; ".join(f"{item.json_path}: {item.message[:200]}" for item in errors[:5])
+    if len(errors) > 5:
+        details += f"; and {len(errors) - 5} more"
+    raise RecoverableToolError(
+        "invalid_arguments", f"Arguments do not match the tool schema: {details}"
+    )
 
 
 def _text(value: str, name: str) -> str:

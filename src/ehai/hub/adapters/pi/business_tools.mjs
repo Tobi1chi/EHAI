@@ -47,8 +47,8 @@ export default function ehaiTools(pi) {
       label: tool.name,
       description: tool.description,
       parameters: tool.parameters,
-      // Strict where the endpoint supports it; Pi and the core still validate arguments.
-      constrainedSampling: { type: "json_schema", strict: "prefer" },
+      // One model-facing schema on every provider; the core validates the arguments.
+      constrainedSampling: false,
       executionMode: "sequential",
       execute: async (callId, args, signal, _onUpdate, ctx) => {
         if (finished) throw new Error("EHAI result already submitted; no further tools allowed");
