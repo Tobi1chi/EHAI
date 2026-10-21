@@ -1,0 +1,19 @@
+[package]
+name = "ehai-desktop"
+version = "0.1.0"
+description = "EHAI desktop shell"
+edition = "2021"
+rust-version = "1.89"
+resolver = "3"
+publish = false
+
+[lib]
+name = "ehai_desktop_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+serde = { version = "1", features = ["derive"] }
