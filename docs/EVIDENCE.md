@@ -53,6 +53,7 @@
 
 | 日期 | 场景 | 模型 | 结果 | 未覆盖 | 原文 |
 | --- | --- | --- | --- | --- | --- |
+| 10-22 | 整合结果持久化、整合列表与 diff 读取，线程页差异查看 | 0（真实 Pi + 脚本化模型） | 产品 E2E 1 passed：integrate 得到 integrated，重试同一 integration_id，列表一条，diff 与宿主补丁一致且未截断，时间线一条 integration_created（refs 另带 event_id）。本机管理器登记脚本化 Pi 工作区后，浏览器中批准并开始 → 人工 Gate 通过 → 整合成果 → 按文件显示差异，刷新后从时间线卡片重开同一结果，手机宽度为底部面板 | 冲突与冲突后重试、超过 1 MiB 截断、MCP、旧版本未持久化的整合、真实模型 | [Git 自动整合](USAGE.md#git-自动整合) |
 | 10-22 | 模块 B 本地引擎与用户配置 | 0 | macOS 临时 EHAI_HOME：init→up→status→add 临时 Git 仓库→doctor→down；重启恢复登记、重复 up/add/down 通过；doctor 如实报告终端/守护进程缺凭证，UI 静态页 200；审查回退了停止超时改为不结束子进程的改动（failed 状态下可再次启动导致双进程）；独立复跑同一流程，并在页面打开批准确认框核对 Pi 执行配置 | 真实模型、凭证齐全、交互确认、活动任务停止冲突、Windows/Linux 实跑、浏览器交互 | [验证记录](WORKSPACE_MANAGER.md#模块-b-验证记录2026-10-22) |
 | 10-22 | 线程读模型（应用外壳模块 A）与线程式 Web 页面 | 0（真实 Pi + 脚本化模型；页面用 fake Worker） | 产品 E2E 1 passed：创建/草稿/运行/人工 Gate/完成各阶段的 phase 与 next_action、时间线条目、分页与 404。审查中修正全零 UUID 得到 422、逐 Goal 全量扫描事件（改为一次扫描的归属索引）和 run_status_changed 缺少 refs.status。本机管理器 + fake Worker 工作区在浏览器中走通新建线程 → 规划失败显示（single Planner 不支持讨论，409）→ 导入方案 → 批准并开始 → 人工 Gate 通过 → 完成；整合因该宿主无 Git 整合后端返回 409 并如实显示 | 多 Goal、讨论/便签归属分支、管理器离线工作区、MCP 调用、Pi 工作区的执行配置展示与整合、真实模型均未验证 | [用法与取值](USAGE.md#线程查询) |
 | 09-21 | 项目总览查询 | 0 | 两个 fake 宿主隔离；CLI/API/MCP（48 工具）结果一致；历史 Pi 库保留接续成果来源 | 真实模型、多仓库真实执行 | [P3](history/RECORD_P3.md#2026-09-21-实施结果) |

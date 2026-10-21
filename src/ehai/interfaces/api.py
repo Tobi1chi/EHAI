@@ -186,6 +186,7 @@ def create_app(
     execution_config_validator: Callable[[ExecutionConfig], None] | None = None,
     artifact_root: str | None = None,
     code_integration: Callable[[ID, ID], dict[str, JsonValue]] | None = None,
+    integration_diff: Callable[[ID, ID], tuple[str, bool]] | None = None,
     runtime_context: Callable[[], RuntimeContextView] | None = None,
     notes: NoteService | None = None,
     event_consumers: EventConsumerService | None = None,
@@ -328,6 +329,50 @@ def create_app(
             raise StateConflictError("This host has no Git integration backend")
         return _response(
             code_integration(_id(str(run_id)), _id(str(request.expected_process_revision_id)))
+        )
+
+    @router.get(
+        "/runs/{run_id}/integrations",
+        response_model=DataResponse,
+        operation_id="listRunIntegrations",
+        responses=_read_responses(
+            "CodeIntegrationListResponse", "Latest persisted result per integration, oldest first"
+        ),
+    )
+    def list_run_integrations(run_id: UuidInput) -> DataResponse:
+        return _response(query_service.list_run_integrations(_id(str(run_id))))
+
+    @router.get(
+        "/runs/{run_id}/integrations/{integration_id}/diff",
+        response_model=DataResponse,
+        operation_id="getIntegrationDiff",
+        responses={
+            **_read_responses(
+                "CodeIntegrationDiffResponse",
+                "JSON-wrapped unified diff (UTF-8 replacement decoding), capped at 1048576 "
+                "source bytes; truncated is true when more bytes exist",
+            ),
+            409: {"model": ErrorResponse, "description": "No complete diff is available"},
+        },
+    )
+    def get_integration_diff(run_id: UuidInput, integration_id: UuidInput) -> DataResponse:
+        owner_id, result_id = _id(str(run_id)), _id(str(integration_id))
+        result = query_service.get_run_integration(owner_id, result_id)
+        if result["diff_path"] is None:
+            raise StateConflictError("Conflicted integration has no complete diff")
+        if integration_diff is None:
+            raise StateConflictError("This host has no Git integration diff backend")
+        try:
+            content, truncated = integration_diff(owner_id, result_id)
+        except FileNotFoundError as error:
+            raise StateConflictError("Retained integration diff is missing") from error
+        return _response(
+            {
+                "run_id": owner_id,
+                "integration_id": result_id,
+                "content": content,
+                "truncated": truncated,
+            }
         )
 
     event_stream_endpoint = create_event_stream_endpoint(

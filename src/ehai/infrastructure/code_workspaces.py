@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import codecs
 import os
 import subprocess
 import tempfile
@@ -497,6 +498,18 @@ class GitCodeWorkspace:
         """
         with self._integration_lock:
             return self._integrate_results(run_id, process_revision_id, sources)
+
+    def read_integration_diff(self, run_id: str, integration_id: str) -> tuple[str, bool]:
+        """Read at most 1 MiB of a retained patch, using only host-derived paths."""
+        path = self._path(run_id, f"integration-{normalize_id(integration_id)}.patch")
+        limit = 1024 * 1024
+        with path.open("rb") as stream:
+            content = stream.read(limit + 1)
+        truncated = len(content) > limit
+        # Git paths/content need not be UTF-8; keep the JSON response valid. Drop an
+        # incomplete final UTF-8 character only when the byte limit split it.
+        decoder = codecs.getincrementaldecoder("utf-8")("replace")
+        return decoder.decode(content[:limit], final=not truncated), truncated
 
     def _integrate_results(
         self, run_id: str, process_revision_id: str, sources: list[JsonValue]

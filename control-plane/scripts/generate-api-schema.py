@@ -50,6 +50,39 @@ for request_type in (CreateNoteRequest, AddNoteMessageRequest, DecideNoteRequest
 notes_path.write_text(json.dumps(notes, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 queries_path = schema_root / "queries.schema.json"
 queries = json.loads(queries_path.read_text(encoding="utf-8"))
+queries["$defs"]["CodeIntegrationListResponse"] = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["data"],
+    "properties": {
+        "data": {"type": "array", "items": {"$ref": "#/$defs/CodeIntegration"}},
+    },
+}
+queries["$defs"]["CodeIntegrationDiff"] = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["run_id", "integration_id", "content", "truncated"],
+    "properties": {
+        "run_id": {"$ref": "common.schema.json#/$defs/Id"},
+        "integration_id": {"$ref": "common.schema.json#/$defs/Id"},
+        "content": {
+            "type": "string",
+            "description": "Unified diff, UTF-8 with replacement for invalid bytes, "
+            "from at most the first 1048576 source bytes (1 MiB).",
+        },
+        "truncated": {
+            "type": "boolean",
+            "description": "True if the retained patch exceeds 1048576 bytes; "
+            "content is then a prefix, not a complete patch.",
+        },
+    },
+}
+queries["$defs"]["CodeIntegrationDiffResponse"] = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["data"],
+    "properties": {"data": {"$ref": "#/$defs/CodeIntegrationDiff"}},
+}
 
 
 def thread_reference(value: object) -> object:

@@ -478,9 +478,32 @@ MCP 名称为 integrate_run，启动即可调用。调用后宿主自动选择�
 
 返回 sources 列出 block、生产 Attempt、prepared_commit、commit；旧 block 版本为 null。
 同一过程及成果集合对应同一 integration_id，重试继续原合并记录，不需要额外幂等键。
-integrated 返回独立工作区、commit、完整 diff；conflicted 返回冲突路径和保留工作区，
+integrated 返回独立工作区、commit、完整补丁的宿主本地路径 diff_path；conflicted 返回冲突路径和保留工作区，
 commit/diff_path 为 null。可显式处理并暂存冲突后重试，宿主不自动改写冲突内容。
 整合成功只代表代码可物化，不改变 Gate/Run 状态，不自动提交到用户分支或推送。
+
+前端或远程客户端通过只读接口找回结果和补丁，不需要读取宿主路径或重新整合：
+
+~~~powershell
+uv run ehai --api-url http://127.0.0.1:8000 list-run-integrations --run-id <run-id>
+uv run ehai --api-url http://127.0.0.1:8000 get-integration-diff --run-id <run-id> --integration-id <integration-id>
+~~~
+
+- `GET /api/v1/runs/{run_id}/integrations`（`listRunIntegrations`）：JSON `{data: CodeIntegration[]}`，
+  每个 integration_id 只返回最新记录，按首次记录顺序排列；已知 Run 尚无记录时为 `[]`。
+- `GET /api/v1/runs/{run_id}/integrations/{integration_id}/diff`（`getIntegrationDiff`）：
+  JSON `{data: {run_id, integration_id, content, truncated}}`；`content` 是 unified diff 文本，
+  最多读取补丁前 1 MiB（1,048,576 字节），超过则 `truncated=true`，不可视为完整补丁。
+  非 UTF-8 字节替换为 `�`，截断点不输出被切开的 UTF-8 字符。
+  Run 或其整合不存在（含整合属于其他 Run）返回 404；冲突尚无完整补丁、补丁已丢失或
+  宿主没有 Git diff 后端时返回 409。读取不执行 Git 整合、不创建文件。
+
+MCP 沿用相同契约，名称为 `list_run_integrations`、`get_integration_diff`，只需对应路径 ID。
+整合结果在当前 Run/过程复核后写入现有 SQLite 事件日志 `IntegrationCreated`，刷新和重启后可读；
+相同结果重试不重复记事件，冲突修复后同一 ID 的最新结果更新为 integrated。
+线程时间线从该事件生成 `integration_created`，refs 包含 run_id、integration_id、status。
+此前版本只持久化 Git 合并游标与补丁，未保存完整整合结果；不从游标补造历史结果或时间线，
+这些整合在显式重试后才进入列表。补丁仍保留在既有宿主存储中，不复制到数据库。
 
 ## 跨批准后继 Run
 

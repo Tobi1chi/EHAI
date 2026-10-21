@@ -26,11 +26,11 @@
 | Agent harness Hub | 无模型验证 | 所有 Pi 角色经独立 `ehai-hub`（默认本机子进程）；Worker 路径由产品 E2E 在 Linux/Windows CI 覆盖，未用真实模型；跨机器需同路径 | [HUB](HUB.md) · [核心](EVIDENCE.md#核心执行) |
 | 阶段上下文 | 部分 | 逻辑 Phase Session 共享；物理 Pi Session 按 Attempt 隔离 | [EXECUTION_MODEL](EXECUTION_MODEL.md#实例与会话) |
 | 批准内过程调整 / Block 清单 | 真实验证 | 清单只描述变化，不批准、不授权复用成果；草稿可读已完成成果，先粗后细在中型任务上端到端通过（10-04）；暂停时不能决定人工 Gate | [核心](EVIDENCE.md#核心执行) |
-| Git 自动整合 | 无模型验证 | 用历史真实成果整合；冲突路径未实跑 | [核心](EVIDENCE.md#核心执行) |
+| Git 自动整合 | 无模型验证 | 用历史真实成果整合；新增结果事件持久化、Run 整合列表、1 MiB 截断 diff 的 HTTP/CLI/MCP 与 integration_created 时间线；产品 E2E 覆盖无冲突整合、重试同 ID、列表、diff 与时间线，Web 线程页的整合与差异查看经本机管理器 + 脚本化 Pi 走通；MCP 与冲突路径未实跑 | [Git 自动整合](USAGE.md#git-自动整合) · [核心](EVIDENCE.md#核心执行) |
 | 跨批准后继 Run | 真实验证 | 单次接续通过；基线变化重执行、多次接续、崩溃未验证 | [核心](EVIDENCE.md#核心执行) |
 | 长任务可靠性 | 部分 | Worker/Reviewer 运行中强杀后可恢复（重启后等旧租约过期，最长 5 分钟，10-03 真实验证）；写入中断、长链接续未系统验证 | [未决问题](EVIDENCE.md#已知未决问题) |
 | Token / 费用硬限额 | 暂缓 | 2026-09-16 决定暂不实现；用量记录保留 | — |
-| 产品 E2E | 无模型验证 | 真实 Pi 经本机 Hub、Git worktree，模型为脚本化服务；不覆盖真实模型、独立 Hub、integrate-run、MCP | [REFACTOR_PLAN](REFACTOR_PLAN.md#产品-e2e) |
+| 产品 E2E | 无模型验证 | 真实 Pi 经本机 Hub、Git worktree，模型为脚本化服务；覆盖无冲突的 integrate-run；不覆盖真实模型、独立 Hub、整合冲突、MCP | [REFACTOR_PLAN](REFACTOR_PLAN.md#产品-e2e) |
 | CI | 无模型验证 | 静态检查、两平台 mypy、契约比对、TS 构建、Linux/Windows E2E | [REFACTOR_PLAN](REFACTOR_PLAN.md#执行记录) |
 | P2 总验收 | 真实验证 | 导入路径真实手动验收通过，含强杀恢复；Pi Planner 规划路径补充验收通过，未含强杀（单个小仓库、macOS，10-03）；Windows、多轮讨论与 replan 未做 | [REFACTOR_PLAN](REFACTOR_PLAN.md#四步顺序) |
 

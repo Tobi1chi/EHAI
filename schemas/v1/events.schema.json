@@ -45,6 +45,7 @@
         "RunCompleted",
         "RunFailed",
         "RunCancelled",
+        "IntegrationCreated",
         "AttemptStarted",
         "AttemptQueued",
         "AttemptDispatched",

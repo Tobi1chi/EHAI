@@ -15,7 +15,7 @@ export type ErrorResponse = {
 };
 };
 
-export type EventType = "ProjectCreated" | "GoalCreated" | "CompletionContractConfirmed" | "PlanRevisionProposed" | "PlanRevisionApproved" | "PlanningTurnStarted" | "PlanningTurnCompleted" | "PlanningTurnFailed" | "ProcessDraftStarted" | "ProcessDraftCompleted" | "ProcessDraftFailed" | "ProcessReviewStarted" | "ProcessReviewCompleted" | "ProcessReviewFailed" | "ProcessRevisionApplied" | "ProcessAdjustmentStarted" | "ProcessAdjustmentFinished" | "ProcessAdjustmentSkipped" | "PlanNodeReadied" | "PlanNodeStalled" | "PlanNodeSuspended" | "PlanNodeRecovered" | "PlanNodeStarted" | "PlanNodeCandidateSubmitted" | "PlanNodeCompleted" | "PlanNodeFailed" | "PlanNodeReopened" | "PlanNodePruned" | "BranchSelected" | "BranchPruned" | "BranchSelectionInvalidated" | "RunConfigurationCaptured" | "RunStarted" | "RunSuccessorCreated" | "RunPaused" | "RunResumed" | "RunCompleted" | "RunFailed" | "RunCancelled" | "AttemptStarted" | "AttemptQueued" | "AttemptDispatched" | "AttemptBound" | "AttemptHeartbeatObserved" | "AttemptWaiting" | "AttemptDeadlineExtended" | "AttemptRetryScheduled" | "AttemptSucceeded" | "AttemptFailed" | "AttemptTimedOut" | "AttemptCancelled" | "AttemptInterrupted" | "DispatchWorkClaimed" | "EndpointHealthChanged" | "ProviderUsageRecorded" | "ArtifactCreated" | "CheckStarted" | "CheckPassed" | "CheckFailed" | "CheckInterrupted" | "GatePassed" | "GateFailed" | "CheckpointCreated" | "CheckpointRestored" | "WorkspacePreserved" | "PhaseSessionOpened" | "PhaseSessionJoined" | "PhaseContextPublished" | "AttemptHandoffConfirmed" | "NoteCreated" | "WorkflowRunChanged" | "LifeTaskChanged" | "RoutineChanged" | "ConnectorCallChanged" | "ConnectorEventReceived" | "RoutingRequestChanged" | "RoutingCatalogChanged" | "RoutingCandidateCreated" | "NoteMessageAdded" | "NoteDecisionStarted" | "NoteDecisionCompleted" | "NoteDecisionFailed" | "InterventionOpened" | "InterventionReplied";
+export type EventType = "ProjectCreated" | "GoalCreated" | "CompletionContractConfirmed" | "PlanRevisionProposed" | "PlanRevisionApproved" | "PlanningTurnStarted" | "PlanningTurnCompleted" | "PlanningTurnFailed" | "ProcessDraftStarted" | "ProcessDraftCompleted" | "ProcessDraftFailed" | "ProcessReviewStarted" | "ProcessReviewCompleted" | "ProcessReviewFailed" | "ProcessRevisionApplied" | "ProcessAdjustmentStarted" | "ProcessAdjustmentFinished" | "ProcessAdjustmentSkipped" | "PlanNodeReadied" | "PlanNodeStalled" | "PlanNodeSuspended" | "PlanNodeRecovered" | "PlanNodeStarted" | "PlanNodeCandidateSubmitted" | "PlanNodeCompleted" | "PlanNodeFailed" | "PlanNodeReopened" | "PlanNodePruned" | "BranchSelected" | "BranchPruned" | "BranchSelectionInvalidated" | "RunConfigurationCaptured" | "RunStarted" | "RunSuccessorCreated" | "RunPaused" | "RunResumed" | "RunCompleted" | "RunFailed" | "RunCancelled" | "IntegrationCreated" | "AttemptStarted" | "AttemptQueued" | "AttemptDispatched" | "AttemptBound" | "AttemptHeartbeatObserved" | "AttemptWaiting" | "AttemptDeadlineExtended" | "AttemptRetryScheduled" | "AttemptSucceeded" | "AttemptFailed" | "AttemptTimedOut" | "AttemptCancelled" | "AttemptInterrupted" | "DispatchWorkClaimed" | "EndpointHealthChanged" | "ProviderUsageRecorded" | "ArtifactCreated" | "CheckStarted" | "CheckPassed" | "CheckFailed" | "CheckInterrupted" | "GatePassed" | "GateFailed" | "CheckpointCreated" | "CheckpointRestored" | "WorkspacePreserved" | "PhaseSessionOpened" | "PhaseSessionJoined" | "PhaseContextPublished" | "AttemptHandoffConfirmed" | "NoteCreated" | "WorkflowRunChanged" | "LifeTaskChanged" | "RoutineChanged" | "ConnectorCallChanged" | "ConnectorEventReceived" | "RoutingRequestChanged" | "RoutingCatalogChanged" | "RoutingCandidateCreated" | "NoteMessageAdded" | "NoteDecisionStarted" | "NoteDecisionCompleted" | "NoteDecisionFailed" | "InterventionOpened" | "InterventionReplied";
 
 export type EventEnvelope = {
   readonly id: Id;
@@ -944,7 +944,7 @@ export type ThreadResponse = {
 
 export type ThreadTimelineItem = {
   readonly at: string;
-  readonly kind: "goal_created" | "discussion_message" | "plan_revision_created" | "plan_approved" | "run_started" | "run_status_changed" | "node_completed" | "inbox_opened" | "inbox_resolved" | "succession_started";
+  readonly kind: "goal_created" | "discussion_message" | "plan_revision_created" | "plan_approved" | "run_started" | "run_status_changed" | "node_completed" | "inbox_opened" | "inbox_resolved" | "succession_started" | "integration_created";
   readonly refs: Readonly<Record<string, JsonValue>>;
   readonly summary: string;
 };
@@ -959,6 +959,21 @@ export type ThreadTimelineView = {
 
 export type ThreadTimelineResponse = {
   readonly data: ThreadTimelineView;
+};
+
+export type CodeIntegrationListResponse = {
+  readonly data: ReadonlyArray<CodeIntegration>;
+};
+
+export type CodeIntegrationDiff = {
+  readonly run_id: Id;
+  readonly integration_id: Id;
+  readonly content: string;
+  readonly truncated: boolean;
+};
+
+export type CodeIntegrationDiffResponse = {
+  readonly data: CodeIntegrationDiff;
 };
 
 export type JsonScalar = boolean | number | number | string | null;
@@ -2585,6 +2600,14 @@ export class EhaiApiClient {
 
   integrateRun(runId: string, request: IntegrateRunRequest): Promise<CodeIntegrationResponse> {
     return this.request("/runs/" + encodeURIComponent(runId) + "/integrate", "POST", request);
+  }
+
+  listRunIntegrations(runId: string): Promise<CodeIntegrationListResponse> {
+    return this.request("/runs/" + encodeURIComponent(runId) + "/integrations", "GET");
+  }
+
+  getIntegrationDiff(runId: string, integrationId: string): Promise<CodeIntegrationDiffResponse> {
+    return this.request("/runs/" + encodeURIComponent(runId) + "/integrations/" + encodeURIComponent(integrationId) + "/diff", "GET");
   }
 
   decideHumanCheck(

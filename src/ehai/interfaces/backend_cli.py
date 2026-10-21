@@ -21,6 +21,8 @@ MANAGER_COMMANDS: dict[str, tuple[str, tuple[str, ...]]] = {
 
 QUERY_ROUTES = {
     **MANAGER_QUERIES,
+    "list-run-integrations": "/runs/{run_id}/integrations",
+    "get-integration-diff": "/runs/{run_id}/integrations/{integration_id}/diff",
     "get-planner-capacity": "/planning/capacity",
     "list-workflows": "/workflows",
     "get-routine-scheduler": "/routines/scheduler",
@@ -156,6 +158,7 @@ def _path_arguments(parser: argparse.ArgumentParser, path: str) -> None:
         "consumer_id",
         "project_id",
         "run_id",
+        "integration_id",
         "workspace_id",
         "workflow_run_id",
         "task_id",

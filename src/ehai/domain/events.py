@@ -67,6 +67,7 @@ class EventType(StrEnum):
     RUN_COMPLETED = "RunCompleted"
     RUN_FAILED = "RunFailed"
     RUN_CANCELLED = "RunCancelled"
+    INTEGRATION_CREATED = "IntegrationCreated"
     ATTEMPT_STARTED = "AttemptStarted"
     ATTEMPT_QUEUED = "AttemptQueued"
     ATTEMPT_DISPATCHED = "AttemptDispatched"

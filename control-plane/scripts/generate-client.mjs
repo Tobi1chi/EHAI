@@ -79,6 +79,8 @@ const requiredOperations = [
   "reviewProcess",
   "applyProcess",
   "integrateRun",
+  "listRunIntegrations",
+  "getIntegrationDiff",
   "decideHumanCheck",
   "get_run_interventions_api_v1_runs__run_id__interventions_get",
   "list_result_adoptions_api_v1_runs__run_id__adoptions_get",
@@ -540,6 +542,14 @@ export class EhaiApiClient {
 
   integrateRun(runId: string, request: IntegrateRunRequest): Promise<CodeIntegrationResponse> {
     return this.request("/runs/" + encodeURIComponent(runId) + "/integrate", "POST", request);
+  }
+
+  listRunIntegrations(runId: string): Promise<CodeIntegrationListResponse> {
+    return this.request("/runs/" + encodeURIComponent(runId) + "/integrations", "GET");
+  }
+
+  getIntegrationDiff(runId: string, integrationId: string): Promise<CodeIntegrationDiffResponse> {
+    return this.request("/runs/" + encodeURIComponent(runId) + "/integrations/" + encodeURIComponent(integrationId) + "/diff", "GET");
   }
 
   decideHumanCheck(

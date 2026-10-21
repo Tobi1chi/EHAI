@@ -652,3 +652,33 @@ def test_product_e2e(tmp_path: Path) -> None:
         runs = [item for goal_view in project_view["goals"] for item in goal_view["runs"]]
         assert [item["run"]["run_id"] for item in runs] == [run_id]
         assert runs[0]["completed_results"]
+
+        # 5. Integrate the code results and read them back without the host-local patch path.
+        process = host.cli("get-run-plan", "--run-id", run_id)["process_revision_id"]
+        integration = host.http(
+            "POST", f"/runs/{run_id}/integrate", {"expected_process_revision_id": process}
+        )
+        assert integration["status"] == "integrated" and integration["commit"]
+        again = host.http(
+            "POST", f"/runs/{run_id}/integrate", {"expected_process_revision_id": process}
+        )
+        assert again["integration_id"] == integration["integration_id"]
+        assert host.cli("list-run-integrations", "--run-id", run_id) == [integration]
+        diff = host.cli(
+            "get-integration-diff",
+            "--run-id",
+            run_id,
+            "--integration-id",
+            integration["integration_id"],
+        )
+        assert diff["truncated"] is False
+        assert diff["content"] == Path(integration["diff_path"]).read_text(encoding="utf-8")
+        assert all(_node_file(title) in diff["content"] for title in ("Task A", "Task B"))
+        timeline = host.cli("get-thread-timeline", "--goal-id", goal["goal_id"])
+        created = [item for item in timeline["items"] if item["kind"] == "integration_created"]
+        assert len(created) == 1
+        assert {
+            "run_id": run_id,
+            "integration_id": integration["integration_id"],
+            "status": "integrated",
+        }.items() <= created[0]["refs"].items()

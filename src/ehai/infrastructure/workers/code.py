@@ -29,6 +29,7 @@ from ehai.application.workers import (
 )
 from ehai.domain.adoptions import ResultAdoption
 from ehai.domain.artifacts import ArtifactKind
+from ehai.domain.events import Event, EventType
 from ehai.domain.execution import Attempt, AttemptStatus, RunStatus
 from ehai.domain.planning import (
     Branch,
@@ -192,7 +193,7 @@ class CodeRuntimeConnector:
         result_document = self.code_store.integrate_results(
             run_id=str(run_id), process_revision_id=str(process_revision_id), sources=sources
         )
-        with self.database.read_session() as session:
+        with self.database.unit_of_work() as session:
             if (
                 session.states.get_run(run_id) != run
                 or session.states.get_execution_plan(run_id) != plan
@@ -200,6 +201,26 @@ class CodeRuntimeConnector:
                 or session.states.list_attempts(run_id) != attempts
             ):
                 raise ValueError("Run changed during integration; result is not current")
+            previous = next(
+                (
+                    stored.event.payload
+                    for stored in reversed(session.events.list_events())
+                    if stored.event.type is EventType.INTEGRATION_CREATED
+                    and stored.event.run_id == run_id
+                    and stored.event.correlation_id == result_document["integration_id"]
+                ),
+                None,
+            )
+            if previous != result_document:
+                session.events.append(
+                    Event(
+                        type=EventType.INTEGRATION_CREATED,
+                        correlation_id=str(result_document["integration_id"]),
+                        run_id=run_id,
+                        payload=result_document,
+                    )
+                )
+            session.commit()
         return result_document
 
     def _adopted_snapshot(self, adoption_id: ID) -> tuple[ResultAdoption, GitCodeResult]:

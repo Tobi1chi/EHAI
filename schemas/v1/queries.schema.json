@@ -3882,7 +3882,8 @@
             "node_completed",
             "inbox_opened",
             "inbox_resolved",
-            "succession_started"
+            "succession_started",
+            "integration_created"
           ],
           "title": "Kind",
           "type": "string"
@@ -3961,6 +3962,59 @@
       "properties": {
         "data": {
           "$ref": "#/$defs/ThreadTimelineView"
+        }
+      }
+    },
+    "CodeIntegrationListResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "data"
+      ],
+      "properties": {
+        "data": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/CodeIntegration"
+          }
+        }
+      }
+    },
+    "CodeIntegrationDiff": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "run_id",
+        "integration_id",
+        "content",
+        "truncated"
+      ],
+      "properties": {
+        "run_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "integration_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "content": {
+          "type": "string",
+          "description": "Unified diff, UTF-8 with replacement for invalid bytes, from at most the first 1048576 source bytes (1 MiB)."
+        },
+        "truncated": {
+          "type": "boolean",
+          "description": "True if the retained patch exceeds 1048576 bytes; content is then a prefix, not a complete patch."
+        }
+      }
+    },
+    "CodeIntegrationDiffResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "data"
+      ],
+      "properties": {
+        "data": {
+          "$ref": "#/$defs/CodeIntegrationDiff"
         }
       }
     }

@@ -35,6 +35,7 @@ from ehai.domain.checking import (
     HumanCheckEvidence,
     HumanCheckRequest,
 )
+from ehai.domain.events import EventType
 from ehai.domain.execution import Attempt, AttemptStatus, Run, RunStatus
 from ehai.domain.planning import (
     Branch,
@@ -524,6 +525,26 @@ class QueryService:
 
         with self._read_session_factory() as session:
             return list_projects(session)
+
+    def list_run_integrations(self, run_id: ID) -> tuple[dict[str, JsonValue], ...]:
+        """Latest recorded result per integration, in first-recorded order."""
+        run_id = normalize_id(run_id)
+        with self._read_session_factory() as session:
+            _required_run(session.states.get_run(run_id), run_id)
+            results = {
+                stored.event.correlation_id: stored.event.payload
+                for stored in session.events.list_events()
+                if stored.event.type is EventType.INTEGRATION_CREATED
+                and stored.event.run_id == run_id
+            }
+            return tuple(results.values())
+
+    def get_run_integration(self, run_id: ID, integration_id: ID) -> dict[str, JsonValue]:
+        integration_id = normalize_id(integration_id)
+        for result in self.list_run_integrations(run_id):
+            if result["integration_id"] == integration_id:
+                return result
+        raise QueryNotFoundError("Integration", integration_id)
 
     def list_threads(self) -> ThreadListView:
         from ehai.application.thread_queries import ThreadQuery

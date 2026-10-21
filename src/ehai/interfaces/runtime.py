@@ -540,6 +540,9 @@ def create_local_app(
         code_integration=connector.integrate_run
         if isinstance(connector, CodeRuntimeConnector)
         else None,
+        integration_diff=connector.code_store.read_integration_diff
+        if isinstance(connector, CodeRuntimeConnector)
+        else None,
         runtime_context=lambda: RuntimeContextView(
             utc_now(),
             str(workspace),
