@@ -365,6 +365,26 @@ Reviewer/Gate → 人工验收 → `integrate-run`，并在执行中强杀一次
   hold 返回 409、Run 继续运行、决定未记录；B 完成后 hold 正常暂停。
 - 未覆盖：多次连续保持、Windows。
 
+### 2026-10-21 Pi 升级到 1.3.0
+
+- 起因：用户决定把锁定的 Pi 从 0.85.1 跟进到上游最新的 1.3.0（10-15 发布）。
+- 依赖面核对（0.86–1.3 的变更记录）：EHAI 用到的 RPC 命令（get_state、prompt、steer、clear_queue、abort）、
+  启动参数、扩展 API（registerTool、registerCommand、ui.notify、context / before_provider_request / turn_end）
+  与事件均未出现不兼容变化；新增的内置 MCP、codemode、tool_search 扩展由已有的 `--no-extensions` 一并关闭。
+- 现象：只改锁定版本时产品 E2E 在等待人工请求处超时，宿主日志没有原因。
+- 原因：自 0.86 起，Pi 对未声明的 OpenAI 兼容端点默认 `supportsStrictMode: false`；桥接层给 EHAI 工具请求
+  `strict: "require"`，于是 Pi 在发出模型请求前拒绝（仓库外诊断：脚本化服务收到 0 个请求）。
+  内置 OpenCode Go `deepseek-v4.1-flash` 自带 `supportsStrictMode: true`，此前的真实模型配置不受影响。
+- 决定（用户选择）：不再强制严格模式。桥接层改为 `strict: "prefer"`：端点声明支持时仍严格采样，
+  否则退回普通工具调用；参数仍先经 Pi 按工具 Schema 校验，再由核心处理器校验。代价：Schema 超出严格子集时
+  （如 10-04 的对象联合）不再报错，而是该工具静默改用普通调用。产品 E2E 的脚本化 Provider 继续声明
+  `supportsStrictMode`，以覆盖严格路径；USAGE 与 README 改为"确实支持时可声明"。
+  适配层关于 Pi 没有 MCP 的注释改为说明内置 MCP 保持关闭。
+- 验证：`inspect-agent` 控制通道通过；静态检查、两平台 mypy、lint-imports、产品 E2E 通过。仓库外诊断
+  （产品 E2E 方案）：声明支持时 7 个模型请求的工具均带 `strict: true`，未声明时均不带 `strict`，两者都完成。
+- 未覆盖：真实模型（Planner、Worker、Reviewer、过程审查）；Windows；独立 Hub。E2E 输出与宿主日志都看不到
+  Pi 拒绝请求的原因，这是旁支发现，另行处理。
+
 ## 待决事项
 
 | 事项 | 说明 |

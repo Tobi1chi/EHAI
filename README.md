@@ -51,7 +51,7 @@ npm.cmd ci --prefix agent-backends/pi --ignore-scripts --no-audit --no-fund
 uv run ehai --help
 ```
 
-从源码目录使用 `uv run`，无需全局安装 EHAI。Pi 版本由仓库锁定为 0.85.1。
+从源码目录使用 `uv run`，无需全局安装 EHAI。Pi 版本由仓库锁定为 1.3.0。
 
 准备目标仓库 `C:/work/my-project`：已有至少一个 Git commit，开发基线已提交，
 并能运行现有验收命令。示例使用 `uv run pytest`；你的项目使用其他命令时，
@@ -77,7 +77,7 @@ C:/private/ehai/
 | --- | --- | --- |
 | `backend.json` | [后端示例](agent-backends/pi/examples/backend.json) | Node 可执行文件、Pi CLI 的绝对路径、`agent_dir`、Provider 与凭证环境变量名 |
 | `pi/settings.json` | [设置示例](agent-backends/pi/examples/settings.json) | 使用配套的压缩与重试设置 |
-| `pi/models.json` | [模型示例](agent-backends/pi/examples/models.json) | 内置 Provider 可保留空配置；自定义网关需补充 Provider、端点和模型定义 |
+| `pi/models.json` | [模型示例](agent-backends/pi/examples/models.json) | 内置 Provider 可保留空配置；自定义网关需补充 Provider、端点和模型定义；OpenAI 兼容端点确实支持严格工具调用时可声明 `"compat": {"supportsStrictMode": true}` |
 | `execution-api.json` | [执行配置示例](examples/execution-api.json) | 模型 ID、目标仓库，以及与 `backend.json` 一致的 `pi` 对象 |
 
 在这个例子中，`agent_dir` 为 `C:/private/ehai/pi`，Pi CLI 为
