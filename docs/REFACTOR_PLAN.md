@@ -396,8 +396,20 @@ Reviewer/Gate → 人工验收 → `integrate-run`，并在执行中强杀一次
 - 验证：仓库外诊断直接调用 `ToolExecutor`：合法参数执行；缺字段、多字段、类型错、空字符串、嵌套缺字段均返回
   `invalid_arguments` 并逐处列出，处理器未运行；无效 Schema 构造失败。产品 E2E 方案：未声明 strict 的端点工具
   不带 `strict`，声明支持的端点工具为 `strict: false`，两者都完成。静态检查、两平台 mypy、lint-imports、产品 E2E 通过。
-- 未覆盖：真实模型下参数出错的频率与一次纠正的成功率（DeepSeek flash 此前一直在严格模式下运行）；
-  Planner、过程审查与路由的工具 Schema 只做了静态核对，未经产品 E2E。
+- 真实模型（同日，用户提供的 DeepSeek 测试凭证，只经宿主环境变量 `DEEPSEEK_API_KEY` 传入）：Pi 内置的 `deepseek`
+  Provider（官方端点 `api.deepseek.com`）与 `deepseek-flash`，隔离 agent_dir 的 models.json 为空。仓库外小项目
+  （`textkit/slug.py`、`textkit/roman.py` 各一个未实现函数，配 unittest 与 verify.py），经 `ehai` CLI：create-project →
+  create-goal → discuss-plan（判据 `command:exit-zero` 与人工问题）→ approve-plan → `start-run --authorize` →
+  decide-human-check → integrate-run。
+  - 第一次运行：Planner 草稿符合要求，两个写代码节点约 20 秒完成；但测试仓库没有 .gitignore，两个节点运行 unittest
+    产生的 `__pycache__` 都进入候选，整合冲突使 Reviewer 无法启动，5 次自动重试在约 2 秒内耗尽后转为干预
+    （旁支发现，记入 EVIDENCE 未决问题）。43 次工具调用中只有 1 次语义错误（`workspace_write` 未设 overwrite 得到
+    `already_exists`，下一次调用改正），没有 `invalid_arguments`。
+  - 补 .gitignore 后以全新状态重跑：草稿同样为两个并行节点 + 只读 Reviewer；verify.py 通过（附加用例 7/7），
+    人工验收（读过整合后的代码）后 Run completed，integrate-run 只改两个模块文件、无冲突。55 次工具调用
+    （Planner 22 次，含嵌套对象参数的 add_plan_node、add_plan_edge、set_plan_phase、set_final_gate；Worker/Reviewer 33 次）
+    零错误。两次运行共 60 个模型响应，Pi 估算约 $0.06。
+- 未覆盖：过程审查、路由与轨迹审查工具的真实调用；较大任务下的参数出错频率；强杀恢复；Windows；独立 Hub。
 - 未覆盖：真实模型（Planner、Worker、Reviewer、过程审查）；Windows；独立 Hub。E2E 输出与宿主日志都看不到
   Pi 拒绝请求的原因，这是旁支发现，另行处理。
 
