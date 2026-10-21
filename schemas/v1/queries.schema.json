@@ -3657,6 +3657,312 @@
           "$ref": "#/$defs/PlannerCapacity"
         }
       }
+    },
+    "GoalStatus": {
+      "description": "P1 Goal lifecycle states.",
+      "enum": [
+        "open",
+        "satisfied"
+      ],
+      "title": "GoalStatus",
+      "type": "string"
+    },
+    "ThreadNextAction": {
+      "properties": {
+        "kind": {
+          "enum": [
+            "start_discussion",
+            "continue_discussion",
+            "review_plan",
+            "handle_inbox",
+            "watch_run",
+            "resume_run",
+            "review_result",
+            "none"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "refs": {
+          "additionalProperties": {
+            "$ref": "commands.schema.json#/$defs/JsonValue"
+          },
+          "title": "Refs",
+          "type": "object"
+        }
+      },
+      "required": [
+        "kind",
+        "refs"
+      ],
+      "title": "ThreadNextAction",
+      "type": "object"
+    },
+    "ThreadSummary": {
+      "properties": {
+        "goal_id": {
+          "title": "Goal Id",
+          "type": "string"
+        },
+        "project_id": {
+          "title": "Project Id",
+          "type": "string"
+        },
+        "project_name": {
+          "title": "Project Name",
+          "type": "string"
+        },
+        "objective": {
+          "title": "Objective",
+          "type": "string"
+        },
+        "goal_status": {
+          "$ref": "#/$defs/GoalStatus"
+        },
+        "phase": {
+          "enum": [
+            "needs_attention",
+            "running",
+            "paused",
+            "awaiting_approval",
+            "planning",
+            "completed",
+            "failed",
+            "idle"
+          ],
+          "title": "Phase",
+          "type": "string"
+        },
+        "next_action": {
+          "$ref": "#/$defs/ThreadNextAction"
+        },
+        "attention_count": {
+          "title": "Attention Count",
+          "type": "integer"
+        },
+        "created_at": {
+          "format": "date-time",
+          "title": "Created At",
+          "type": "string"
+        },
+        "last_activity_at": {
+          "format": "date-time",
+          "title": "Last Activity At",
+          "type": "string"
+        },
+        "plan_revision_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Plan Revision Id"
+        },
+        "run_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Run Id"
+        },
+        "run_status": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RunStatus"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "observed_at": {
+          "format": "date-time",
+          "title": "Observed At",
+          "type": "string"
+        },
+        "event_offset": {
+          "title": "Event Offset",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "goal_id",
+        "project_id",
+        "project_name",
+        "objective",
+        "goal_status",
+        "phase",
+        "next_action",
+        "attention_count",
+        "created_at",
+        "last_activity_at",
+        "plan_revision_id",
+        "run_id",
+        "run_status",
+        "observed_at",
+        "event_offset"
+      ],
+      "title": "ThreadSummary",
+      "type": "object"
+    },
+    "ThreadListView": {
+      "properties": {
+        "observed_at": {
+          "format": "date-time",
+          "title": "Observed At",
+          "type": "string"
+        },
+        "event_offset": {
+          "title": "Event Offset",
+          "type": "integer"
+        },
+        "threads": {
+          "items": {
+            "$ref": "#/$defs/ThreadSummary"
+          },
+          "title": "Threads",
+          "type": "array"
+        }
+      },
+      "required": [
+        "observed_at",
+        "event_offset",
+        "threads"
+      ],
+      "title": "ThreadListView",
+      "type": "object"
+    },
+    "ThreadListResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "data"
+      ],
+      "properties": {
+        "data": {
+          "$ref": "#/$defs/ThreadListView"
+        }
+      }
+    },
+    "ThreadResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "data"
+      ],
+      "properties": {
+        "data": {
+          "$ref": "#/$defs/ThreadSummary"
+        }
+      }
+    },
+    "ThreadTimelineItem": {
+      "description": "A persisted fact; run_status_changed refs include the new RunStatus as status.",
+      "properties": {
+        "at": {
+          "format": "date-time",
+          "title": "At",
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "goal_created",
+            "discussion_message",
+            "plan_revision_created",
+            "plan_approved",
+            "run_started",
+            "run_status_changed",
+            "node_completed",
+            "inbox_opened",
+            "inbox_resolved",
+            "succession_started"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "refs": {
+          "additionalProperties": {
+            "$ref": "commands.schema.json#/$defs/JsonValue"
+          },
+          "title": "Refs",
+          "type": "object"
+        },
+        "summary": {
+          "title": "Summary",
+          "type": "string"
+        }
+      },
+      "required": [
+        "at",
+        "kind",
+        "refs",
+        "summary"
+      ],
+      "title": "ThreadTimelineItem",
+      "type": "object"
+    },
+    "ThreadTimelineView": {
+      "properties": {
+        "observed_at": {
+          "format": "date-time",
+          "title": "Observed At",
+          "type": "string"
+        },
+        "event_offset": {
+          "title": "Event Offset",
+          "type": "integer"
+        },
+        "goal_id": {
+          "title": "Goal Id",
+          "type": "string"
+        },
+        "items": {
+          "items": {
+            "$ref": "#/$defs/ThreadTimelineItem"
+          },
+          "title": "Items",
+          "type": "array"
+        },
+        "next_after": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Next After"
+        }
+      },
+      "required": [
+        "observed_at",
+        "event_offset",
+        "goal_id",
+        "items",
+        "next_after"
+      ],
+      "title": "ThreadTimelineView",
+      "type": "object"
+    },
+    "ThreadTimelineResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "data"
+      ],
+      "properties": {
+        "data": {
+          "$ref": "#/$defs/ThreadTimelineView"
+        }
+      }
     }
   }
 }

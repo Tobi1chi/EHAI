@@ -1,6 +1,6 @@
 # EHAI 当前用法
 
-更新：2026-10-02。能力成熟度见 [STATUS](STATUS.md)，历史用法不作为当前参数说明。
+更新：2026-10-22。能力成熟度见 [STATUS](STATUS.md)，历史用法不作为当前参数说明。
 生活 Workflow 见 [WORKFLOWS](WORKFLOWS.md)；Connector、Jev 实验分别见各自文档，索引见 [docs/README](README.md)。
 首次用 0.1 开发项目，先按 [README 快速开始](../README.md#快速开始) 配置宿主并完成一个任务；
 本页补充控制、恢复、计划变更和成果接续的详细契约。
@@ -14,7 +14,64 @@
 - **规划与执行**：[本地规划或导入](#本地规划或导入) · [草稿 Gate 工具](#草稿-gate-工具) · [审查、批准和前台执行](#审查批准和前台执行)
 - **运行中控制与人工处理**：[控制、人工回路与过程调整](#控制人工回路与过程调整) · [周期轨迹审查和定向挂起](#周期轨迹审查和定向挂起) · [统一人工待办（P3.2）](#统一人工待办p32) · [便签讨论与明确决定（P3.2 后端）](#便签讨论与明确决定p32-后端)
 - **成果与接续**：[Block 变更清单](#block-变更清单) · [Git 自动整合](#git-自动整合) · [跨批准后继 Run](#跨批准后继-run)
-- **多项目与外部 Agent**：[项目总览（P3.1）](#项目总览p31) · [外部 Agent 持久事件消费（P3.4 后端）](#外部-agent-持久事件消费p34-后端) · [项目规则、宿主绑定与执行快照（P3.5 后端）](#项目规则宿主绑定与执行快照p35-后端)
+- **多项目与外部 Agent**：[线程查询](#线程查询) · [项目总览（P3.1）](#项目总览p31) · [外部 Agent 持久事件消费（P3.4 后端）](#外部-agent-持久事件消费p34-后端) · [项目规则、宿主绑定与执行快照（P3.5 后端）](#项目规则宿主绑定与执行快照p35-后端)
+
+## 线程查询
+
+一个线程对应一个 Goal，查询包含它的讨论、方案版本、全部 Run（含后继 Run）、人工待办和成果。
+核心在一个数据库只读快照内推导状态；没有新增线程实体。验证范围见 [STATUS](STATUS.md)。
+
+~~~sh
+uv run ehai --api-url http://127.0.0.1:8000 list-threads
+uv run ehai --api-url http://127.0.0.1:8000 get-thread --goal-id <goal-id>
+uv run ehai --api-url http://127.0.0.1:8000 get-thread-timeline --goal-id <goal-id> --limit 100 --after 0
+~~~
+
+核心 HTTP 对应 `GET /api/v1/threads`、`GET /api/v1/threads/{goal_id}` 和
+`GET /api/v1/threads/{goal_id}/timeline`，均使用 `{data: ...}` 响应封装，CLI 输出其中的 data。
+未知 Goal 的详情和时间线返回 404。三个命令也可通过本地 `--database` 只读查询。
+MCP 使用 `list_threads`、`get_thread`、`get_thread_timeline`；时间线工具显式传入 `limit` 和 `after`。
+
+列表的 data 为 `{observed_at, event_offset, threads}`，按 `last_activity_at` 倒序；
+单线程 data 为摘要，包含 Goal/Project 标识和名称、objective、goal_status、phase、next_action、
+attention_count、created_at、last_activity_at、最新 plan_revision_id、最新 run_id/run_status、
+observed_at 和 event_offset。没有方案或 Run 时相应 ID/状态为 null。
+
+phase 按以下顺序取首个满足的条件，不从 Goal 的 satisfied 状态推断线程完成：
+
+| phase | 条件 | next_action.kind |
+| --- | --- | --- |
+| needs_attention | 任一 Run 有 pending 的统一待办 | handle_inbox |
+| running | 最新 Run 为 pending/running | watch_run |
+| paused | 最新 Run 为 paused | resume_run |
+| awaiting_approval | 最新方案为 draft，且没有基于它的 Run | review_plan |
+| planning | 有规划讨论，尚无方案版本 | continue_discussion |
+| completed | 最新 Run 为 completed | review_result |
+| failed | 最新 Run 为 failed/cancelled | none |
+| idle | 其余情况 | 有方案时 review_plan；无方案和 Run 时 start_discussion；否则 none |
+
+`next_action` 为 `{kind, refs}`，refs 只提供动作所需的现有 ID：讨论用 goal_id/conversation_id，
+方案用 plan_revision_id/completion_contract_id，Run 用 run_id，待办用 kind/request_id/run_id。
+handle_inbox 指向最早的 pending 项；其余项通过统一待办查询读取，动作仍提交到源接口。
+
+时间线 data 为 `{observed_at, event_offset, goal_id, items, next_after}`。
+items 中每项为 `{at, kind, refs, summary}`，按时间升序，同一时间按持久事件偏移排序。
+kind 为 goal_created、discussion_message、plan_revision_created、plan_approved、run_started、
+run_status_changed、node_completed、inbox_opened、inbox_resolved、succession_started。
+summary 是面向 CLI 阅读的简短英文描述；前端按 kind 和 refs 显示，不解析英文文案推导状态。
+run_status_changed 的 refs.status 是变更后的 RunStatus：paused、running（恢复）、completed、failed 或 cancelled。
+discussion_message 的 summary 带 User/Planner 前缀和消息正文，refs 带 conversation_id/turn_id，
+回复产生方案时带 plan_revision_id；节点成果引用已有 Gate/Checkpoint/Artifact，不补造历史。
+`limit` 默认为 100，范围 1..1000；`after` 默认为 0，是时间线条目的零基偏移，
+后续页传返回的 next_after，null 表示本次快照已读完。event_offset 是事件流位置，不能作为 after。
+多页不是同一事务；有新事件时可从头重读，实时更新继续用现有事件流触发查询。
+
+管理器的 `GET /api/v1/threads`（以及指向管理器的 `list-threads` / `list_threads`）
+返回 `{observed_at, workspaces, consistent_across_workspaces: false}`。
+每组包含 workspace、api_path、available、threads（核心列表 data，或 null）和 error；
+不可用工作区保留错误。单线程和时间线使用 `/workspaces/{workspace_id}` 作用域，
+CLI 将 `--api-url` 设为对应作用域；管理器 MCP 的详情/时间线工具显式传 workspace_id。
+管理器只聚合，不承诺跨工作区同一快照。
 
 ## 安装与私有 Pi 配置
 

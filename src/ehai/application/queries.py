@@ -65,6 +65,7 @@ if TYPE_CHECKING:
     from ehai.application.inbox import InboxDetailView, InboxKind, InboxListView
     from ehai.application.project_queries import ProjectDetailView, ProjectListView
     from ehai.application.runtime_control import RuntimeControlService
+    from ehai.application.thread_queries import ThreadListView, ThreadSummary, ThreadTimelineView
 
 _MAX_TRACE_SESSION_EVENTS = 512
 _MAX_TRACE_SESSION_PAYLOAD_BYTES = 8 * 1024
@@ -523,6 +524,26 @@ class QueryService:
 
         with self._read_session_factory() as session:
             return list_projects(session)
+
+    def list_threads(self) -> ThreadListView:
+        from ehai.application.thread_queries import ThreadQuery
+
+        with self._read_session_factory() as session:
+            return ThreadQuery(session).list_threads()
+
+    def get_thread(self, goal_id: ID) -> ThreadSummary:
+        from ehai.application.thread_queries import ThreadQuery
+
+        with self._read_session_factory() as session:
+            return ThreadQuery(session).get_thread(goal_id)
+
+    def get_thread_timeline(
+        self, goal_id: ID, *, limit: int = 100, after: int = 0
+    ) -> ThreadTimelineView:
+        from ehai.application.thread_queries import ThreadQuery
+
+        with self._read_session_factory() as session:
+            return ThreadQuery(session).timeline(goal_id, limit=limit, after=after)
 
     def list_inbox(
         self,

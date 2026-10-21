@@ -712,6 +712,90 @@
         "data"
       ],
       "title": "WorkspaceResponse"
+    },
+    "WorkspaceThreadEntry": {
+      "properties": {
+        "workspace": {
+          "$ref": "#/$defs/WorkspaceDescriptor"
+        },
+        "api_path": {
+          "type": "string",
+          "title": "Api Path"
+        },
+        "available": {
+          "type": "boolean",
+          "title": "Available"
+        },
+        "threads": {
+          "anyOf": [
+            {
+              "$ref": "queries.schema.json#/$defs/ThreadListView"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Threads"
+        },
+        "error": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/WorkspaceQueryError"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "type": "object",
+      "required": [
+        "workspace",
+        "api_path",
+        "available",
+        "threads",
+        "error"
+      ],
+      "title": "WorkspaceThreadEntry"
+    },
+    "WorkspaceThreadsData": {
+      "properties": {
+        "observed_at": {
+          "type": "string",
+          "title": "Observed At"
+        },
+        "workspaces": {
+          "items": {
+            "$ref": "#/$defs/WorkspaceThreadEntry"
+          },
+          "type": "array",
+          "title": "Workspaces"
+        },
+        "consistent_across_workspaces": {
+          "type": "boolean",
+          "const": false,
+          "title": "Consistent Across Workspaces",
+          "default": false
+        }
+      },
+      "type": "object",
+      "required": [
+        "observed_at",
+        "workspaces"
+      ],
+      "title": "WorkspaceThreadsData"
+    },
+    "WorkspaceThreadsResponse": {
+      "properties": {
+        "data": {
+          "$ref": "#/$defs/WorkspaceThreadsData"
+        }
+      },
+      "type": "object",
+      "required": [
+        "data"
+      ],
+      "title": "WorkspaceThreadsResponse"
     }
   }
 }

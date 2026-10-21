@@ -252,6 +252,24 @@
           }
         }
       }
+    },
+    "/api/v1/threads": {
+      "get": {
+        "summary": "Threads",
+        "operationId": "listWorkspaceThreads",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceThreadsResponse"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -998,6 +1016,90 @@
           "data"
         ],
         "title": "WorkspaceResponse"
+      },
+      "WorkspaceThreadEntry": {
+        "properties": {
+          "workspace": {
+            "$ref": "#/components/schemas/WorkspaceDescriptor"
+          },
+          "api_path": {
+            "type": "string",
+            "title": "Api Path"
+          },
+          "available": {
+            "type": "boolean",
+            "title": "Available"
+          },
+          "threads": {
+            "anyOf": [
+              {
+                "$ref": "queries.schema.json#/$defs/ThreadListView"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Threads"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/WorkspaceQueryError"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "workspace",
+          "api_path",
+          "available",
+          "threads",
+          "error"
+        ],
+        "title": "WorkspaceThreadEntry"
+      },
+      "WorkspaceThreadsData": {
+        "properties": {
+          "observed_at": {
+            "type": "string",
+            "title": "Observed At"
+          },
+          "workspaces": {
+            "items": {
+              "$ref": "#/components/schemas/WorkspaceThreadEntry"
+            },
+            "type": "array",
+            "title": "Workspaces"
+          },
+          "consistent_across_workspaces": {
+            "type": "boolean",
+            "const": false,
+            "title": "Consistent Across Workspaces",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "observed_at",
+          "workspaces"
+        ],
+        "title": "WorkspaceThreadsData"
+      },
+      "WorkspaceThreadsResponse": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/WorkspaceThreadsData"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "WorkspaceThreadsResponse"
       }
     }
   },

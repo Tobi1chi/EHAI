@@ -8,10 +8,11 @@ CLI/MCP 参数和生成 Client 必须按各自调用边界与契约一致，内�
 | --- | --- |
 | [common.schema.json](v1/common.schema.json) | ID、时间、Project、Goal、计划/阶段、Run、Attempt、Artifact、Check 和 Worker 等共享定义 |
 | [commands.schema.json](v1/commands.schema.json) | 规划、执行控制、人工请求与过程操作等 Command |
-| [queries.schema.json](v1/queries.schema.json) | 计划、过程、运行、轨迹、成果与 Runtime 查询 |
+| [queries.schema.json](v1/queries.schema.json) | 线程摘要/时间线、计划、过程、运行、轨迹、成果与 Runtime 查询 |
 | [events.schema.json](v1/events.schema.json) | 公开事件类型、envelope 与分页 |
 | [plan-import.schema.json](v1/plan-import.schema.json) | 外部声明式计划导入 |
 | [http-api.openapi.json](v1/http-api.openapi.json) | HTTP 路由、operation ID、请求、响应和 SSE |
+| [workspace-manager.schema.json](v1/workspace-manager.schema.json)、[workspace-manager.openapi.json](v1/workspace-manager.openapi.json) | 工作区生命周期、总览与线程分组聚合 |
 | [notes.schema.json](v1/notes.schema.json) | 持久便签、消息、明确决定及其来源/结果 |
 | [project-configuration.schema.json](v1/project-configuration.schema.json) | 项目规则版本、宿主绑定和 Run 配置快照 |
 | [workflows.schema.json](v1/workflows.schema.json) | 生活事务、Routine 与独立执行记录 |

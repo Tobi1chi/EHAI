@@ -254,6 +254,39 @@ def create_app(
         )
 
     @router.get(
+        "/threads",
+        response_model=DataResponse,
+        operation_id="listThreads",
+        responses=_read_responses("ThreadListResponse", "Thread discovery snapshot"),
+    )
+    def list_threads() -> DataResponse:
+        return _response(query_service.list_threads())
+
+    @router.get(
+        "/threads/{goal_id}",
+        response_model=DataResponse,
+        operation_id="getThread",
+        responses=_read_responses("ThreadResponse", "Thread phase and next action"),
+    )
+    def get_thread(goal_id: UuidInput) -> DataResponse:
+        return _response(query_service.get_thread(_id(str(goal_id))))
+
+    @router.get(
+        "/threads/{goal_id}/timeline",
+        response_model=DataResponse,
+        operation_id="getThreadTimeline",
+        responses=_read_responses("ThreadTimelineResponse", "Persisted thread timeline"),
+    )
+    def get_thread_timeline(
+        goal_id: UuidInput,
+        limit: Annotated[int, Query(ge=1, le=1000)] = 100,
+        after: Annotated[int, Query(ge=0)] = 0,
+    ) -> DataResponse:
+        return _response(
+            query_service.get_thread_timeline(_id(str(goal_id)), limit=limit, after=after)
+        )
+
+    @router.get(
         "/projects",
         response_model=DataResponse,
         operation_id="listProjects",

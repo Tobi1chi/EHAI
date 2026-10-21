@@ -28,6 +28,18 @@ class PlanningConversationView:
     source_run_id: ID | None = None
 
 
+def planning_conversation_ids(events: tuple[StoredEvent, ...], goal_id: ID) -> tuple[ID, ...]:
+    """List a Goal's discussions in durable latest-turn order."""
+    goal_id = normalize_id(goal_id)
+    latest = {
+        item.event.correlation_id: item.offset
+        for item in events
+        if item.event.type is EventType.PLANNING_TURN_STARTED
+        and item.event.payload.get("goal_id") == goal_id
+    }
+    return tuple(sorted(latest, key=lambda conversation_id: latest[conversation_id]))
+
+
 def planning_conversation(
     events: tuple[StoredEvent, ...], conversation_id: ID
 ) -> PlanningConversationView | None:

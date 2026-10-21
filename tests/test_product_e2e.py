@@ -40,6 +40,7 @@ from contextlib import closing, contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 import httpx
 import pytest
@@ -462,6 +463,21 @@ def test_product_e2e(tmp_path: Path) -> None:
             "--idempotency-key",
             "g",
         )
+        thread = host.cli("get-thread", "--goal-id", goal["goal_id"])
+        assert thread["phase"] == "idle"
+        assert thread["next_action"] == {
+            "kind": "start_discussion",
+            "refs": {"goal_id": goal["goal_id"]},
+        }
+        assert thread["attention_count"] == 0 and thread["run_id"] is None
+        threads = host.cli("list-threads")
+        assert [t["goal_id"] for t in threads["threads"]] == [goal["goal_id"]]
+        assert threads["threads"][0]["event_offset"] == threads["event_offset"]
+        timeline = host.cli("get-thread-timeline", "--goal-id", goal["goal_id"])
+        assert [item["kind"] for item in timeline["items"]] == ["goal_created"]
+        unknown = str(uuid4())
+        assert httpx.get(f"{host.url}/api/v1/threads/{unknown}").status_code == 404
+        assert httpx.get(f"{host.url}/api/v1/threads/{unknown}/timeline").status_code == 404
         plan_file = tmp_path / "plan.json"
         plan_file.write_text(json.dumps(_plan_document()), encoding="utf-8")
         plan = host.cli(
@@ -474,6 +490,17 @@ def test_product_e2e(tmp_path: Path) -> None:
             "import",
         )
         assert plan["status"] == "draft"
+        thread = host.cli("get-thread", "--goal-id", goal["goal_id"])
+        assert thread["phase"] == "awaiting_approval"
+        assert thread["next_action"] == {
+            "kind": "review_plan",
+            "refs": {
+                "plan_revision_id": plan["plan_revision_id"],
+                "completion_contract_id": plan["completion_contract_id"],
+            },
+        }
+        timeline = host.http("GET", f"/threads/{goal['goal_id']}/timeline")
+        assert timeline["items"][-1]["kind"] == "plan_revision_created"
 
         # 2. Approval and execution authorization are separate explicit steps.
         approved = host.cli(
@@ -493,6 +520,9 @@ def test_product_e2e(tmp_path: Path) -> None:
             {"idempotency_key": "start", "plan_revision_id": plan["plan_revision_id"]},
         )
         run_id = run["run_id"]
+        thread = host.http("GET", f"/threads/{goal['goal_id']}")
+        assert thread["phase"] == "running"
+        assert thread["next_action"] == {"kind": "watch_run", "refs": {"run_id": run_id}}
 
         _wait(lambda: len(_human_checks(host, run_id)) == 1, "the human request", host)
         _wait(
@@ -507,6 +537,20 @@ def test_product_e2e(tmp_path: Path) -> None:
         request = _human_checks(host, run_id)[0]
         assert request["actionable"] is True
         assert request["owner"]["node_title"] == "Task A"
+        thread = host.cli("get-thread", "--goal-id", goal["goal_id"])
+        assert thread["phase"] == "needs_attention" and thread["attention_count"] == 1
+        assert thread["next_action"] == {
+            "kind": "handle_inbox",
+            "refs": {
+                "kind": "human_check",
+                "request_id": request["request_id"],
+                "run_id": run_id,
+            },
+        }
+        timeline = host.http("GET", f"/threads/{goal['goal_id']}/timeline")
+        assert {"plan_approved", "run_started", "inbox_opened", "node_completed"} <= {
+            item["kind"] for item in timeline["items"]
+        }
         batch = host.cli("read-consumer-events", "--consumer-id", "e2e-observer")
         assert batch["batch_token"] is not None and batch["events"]
 
@@ -519,6 +563,7 @@ def test_product_e2e(tmp_path: Path) -> None:
         recovered = _human_checks(host, run_id)
         assert len(recovered) == 1
         assert recovered[0]["request_token"] == request["request_token"]
+        assert host.cli("get-thread", "--goal-id", goal["goal_id"])["phase"] == "needs_attention"
         replayed = host.cli("read-consumer-events", "--consumer-id", "e2e-observer")
         assert replayed["batch_token"] == batch["batch_token"]
         assert [event["offset"] for event in replayed["events"]] == [
@@ -553,6 +598,38 @@ def test_product_e2e(tmp_path: Path) -> None:
         replay = host.cli(*decision_args)
         assert (replay["run_id"], replay["status"]) == (first["run_id"], "completed")
         assert _human_checks(host, run_id) == []
+        thread = host.cli("get-thread", "--goal-id", goal["goal_id"])
+        assert thread["phase"] == "completed" and thread["attention_count"] == 0
+        assert thread["next_action"] == {"kind": "review_result", "refs": {"run_id": run_id}}
+        timeline = host.cli("get-thread-timeline", "--goal-id", goal["goal_id"])
+        assert {"inbox_resolved", "run_status_changed"} <= {
+            item["kind"] for item in timeline["items"]
+        }
+        assert [
+            item["refs"]["status"]
+            for item in timeline["items"]
+            if item["kind"] == "run_status_changed"
+        ] == ["completed"]
+        assert [item["at"] for item in timeline["items"]] == sorted(
+            item["at"] for item in timeline["items"]
+        )
+        assert any(
+            item["kind"] == "node_completed"
+            and item["refs"].get("gate_id")
+            and item["refs"].get("artifact_ids")
+            for item in timeline["items"]
+        )
+        page = host.cli("get-thread-timeline", "--goal-id", goal["goal_id"], "--limit", "2")
+        assert page["items"] == timeline["items"][:2] and page["next_after"] == 2
+        remaining = host.cli(
+            "get-thread-timeline",
+            "--goal-id",
+            goal["goal_id"],
+            "--after",
+            str(page["next_after"]),
+        )
+        assert page["items"] + remaining["items"] == timeline["items"]
+        assert remaining["next_after"] is None
 
         result = host.cli("get-result", "--run-id", run_id)["result"]
         checks = result["check_result"]["checks"]

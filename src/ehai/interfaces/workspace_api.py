@@ -96,6 +96,29 @@ class WorkspaceOverviewResponse(BaseModel):
     data: WorkspaceOverviewData
 
 
+class WorkspaceThreadEntry(BaseModel):
+    workspace: WorkspaceDescriptor
+    api_path: str
+    available: bool
+    threads: Annotated[
+        dict[str, JsonValue] | None,
+        WithJsonSchema(
+            {"anyOf": [{"$ref": "queries.schema.json#/$defs/ThreadListView"}, {"type": "null"}]}
+        ),
+    ]
+    error: WorkspaceQueryError | None
+
+
+class WorkspaceThreadsData(BaseModel):
+    observed_at: str
+    workspaces: list[WorkspaceThreadEntry]
+    consistent_across_workspaces: Literal[False] = False
+
+
+class WorkspaceThreadsResponse(BaseModel):
+    data: WorkspaceThreadsData
+
+
 def _core_openapi() -> dict[str, Any]:
     # Schema assembly starts no lifespan, worker or model process. Keep the normal
     # production API contract even when no registered workspace is online.
@@ -242,6 +265,48 @@ def create_workspace_app(supervisor: WorkspaceSupervisor, ui_dir: Path | None = 
                         )
                     entry["projects"] = details
                     entry["inbox"] = await read_core(client, endpoint, "/api/v1/inbox")
+                    entry["available"] = True
+                except SupervisorError as error:
+                    entry["error"] = {"code": error.code, "message": str(error)}
+                except (httpx.HTTPError, ValueError, KeyError, TypeError):
+                    entry["error"] = {
+                        "code": "workspace_query_failed",
+                        "message": "Workspace query unavailable; no request was retried",
+                    }
+                return entry
+
+        workspaces = await supervisor.list()
+        entries = await asyncio.gather(*(summarize(w.workspace_id) for w in workspaces))
+        return DataResponse(
+            data={
+                "observed_at": utc_now().isoformat(),
+                "workspaces": cast(list[JsonValue], entries),
+                "consistent_across_workspaces": False,
+            }
+        )
+
+    @app.get(
+        "/api/v1/threads",
+        operation_id="listWorkspaceThreads",
+        response_model=WorkspaceThreadsResponse,
+    )
+    async def threads(request: Request) -> DataResponse:
+        client = request.app.state.workspace_http
+        slots = asyncio.Semaphore(4)
+
+        async def summarize(workspace_id: str) -> dict[str, Any]:
+            async with slots:
+                descriptor = await supervisor.get(workspace_id)
+                entry: dict[str, Any] = {
+                    "workspace": descriptor.model_dump(mode="json"),
+                    "api_path": f"/workspaces/{workspace_id}",
+                    "available": False,
+                    "threads": None,
+                    "error": None,
+                }
+                try:
+                    endpoint = await supervisor.endpoint(workspace_id)
+                    entry["threads"] = await read_core(client, endpoint, "/api/v1/threads")
                     entry["available"] = True
                 except SupervisorError as error:
                     entry["error"] = {"code": error.code, "message": str(error)}

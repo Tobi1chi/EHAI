@@ -64,6 +64,8 @@ async def serve(api_url: str, *, timeout: float | None) -> None:
         }
     )
     manager_tools = {name.replace("-", "_") for name in (*MANAGER_QUERIES, *MANAGER_COMMANDS)}
+    if manager:
+        manager_tools.add("list_threads")
     tools: list[Tool] = []
     for name, (method, path) in routes.items():
         source_schema = manager_openapi if name in manager_tools else openapi
@@ -102,6 +104,16 @@ async def serve(api_url: str, *, timeout: float | None) -> None:
             description += (
                 "Read actions and required inputs. Submit through the corresponding source tool, "
                 "then re-read this item and its Run. "
+            )
+        if name == "get_thread_timeline":
+            properties.update(
+                {
+                    "limit": {"type": "integer", "minimum": 1, "maximum": 1000},
+                    "after": {"type": "integer", "minimum": 0},
+                }
+            )
+            description += (
+                "after is a zero-based timeline item offset; use next_after to continue. "
             )
         if method == "POST":
             properties["request_json"] = {"type": "string", "minLength": 2, "maxLength": 1000000}
@@ -237,6 +249,13 @@ async def serve(api_url: str, *, timeout: float | None) -> None:
                     )
                 if filters:
                     path += "?" + urlencode(filters)
+            if name == "get_thread_timeline":
+                limit, after = arguments["limit"], arguments["after"]
+                if type(limit) is not int or not 1 <= limit <= 1000:
+                    raise ValueError("limit must be 1..1000")
+                if type(after) is not int or after < 0:
+                    raise ValueError("after must be nonnegative")
+                path += "?" + urlencode({"limit": limit, "after": after})
             body = None
             if method == "POST":
                 value = json_loads(arguments["request_json"])

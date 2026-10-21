@@ -36,7 +36,7 @@ const managerOperations = new Set(
 );
 for (const operationId of [
   "listWorkspaces", "registerWorkspace", "getWorkspace", "startWorkspace", "stopWorkspace",
-  "getWorkspaceOverview", "getWorkspaceExecutionConfig",
+  "getWorkspaceOverview", "getWorkspaceExecutionConfig", "listWorkspaceThreads",
 ]) {
   if (!managerOperations.has(operationId)) {
     throw new Error(`Manager OpenAPI operation is missing: ${operationId}`);
@@ -63,6 +63,7 @@ const requiredOperations = [
   "listInbox",
   "getInboxItem",
   "listProjects",
+  "listThreads", "getThread", "getThreadTimeline",
   "getProject",
   "getRuntimeContext",
   "importPlan",
@@ -230,6 +231,22 @@ export class EhaiApiClient {
 
   listProjects(): Promise<ProjectListResponse> {
     return this.request("/projects", "GET");
+  }
+
+  listThreads(): Promise<ThreadListResponse> {
+    return this.request("/threads", "GET");
+  }
+
+  getThread(goalId: string): Promise<ThreadResponse> {
+    return this.request("/threads/" + encodeURIComponent(goalId), "GET");
+  }
+
+  getThreadTimeline(goalId: string, options: { limit?: number; after?: number } = {}): Promise<ThreadTimelineResponse> {
+    const query = new URLSearchParams();
+    if (options.limit !== undefined) query.set("limit", String(options.limit));
+    if (options.after !== undefined) query.set("after", String(options.after));
+    const suffix = query.toString();
+    return this.request("/threads/" + encodeURIComponent(goalId) + "/timeline" + (suffix ? "?" + suffix : ""), "GET");
   }
 
   listInbox(filters: { projectId?: string; runId?: string } = {}): Promise<InboxListResponse> {
@@ -724,6 +741,10 @@ export class EhaiWorkspaceManagerClient {
 
   getWorkspaceOverview(): Promise<WorkspaceOverviewResponse> {
     return this.request("/workspace-overview", "GET");
+  }
+
+  listThreads(): Promise<WorkspaceThreadsResponse> {
+    return this.request("/threads", "GET");
   }
 
   workspace(workspaceId: string): EhaiApiClient {

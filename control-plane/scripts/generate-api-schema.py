@@ -8,7 +8,10 @@ import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
+from pydantic import TypeAdapter
+
 from ehai.application.plan_imports import plan_import_error_schema, plan_import_schema
+from ehai.application.thread_queries import ThreadListView, ThreadSummary, ThreadTimelineView
 from ehai.domain.events import EventType
 from ehai.infrastructure.workspace_supervisor import WorkspaceSupervisor
 from ehai.interfaces.event_consumers_api import (
@@ -47,6 +50,37 @@ for request_type in (CreateNoteRequest, AddNoteMessageRequest, DecideNoteRequest
 notes_path.write_text(json.dumps(notes, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 queries_path = schema_root / "queries.schema.json"
 queries = json.loads(queries_path.read_text(encoding="utf-8"))
+
+
+def thread_reference(value: object) -> object:
+    if isinstance(value, list):
+        return [thread_reference(item) for item in value]
+    if not isinstance(value, dict):
+        return value
+    result = {key: thread_reference(item) for key, item in value.items()}
+    if result.get("$ref") == "#/$defs/JsonValue":
+        result["$ref"] = "commands.schema.json#/$defs/JsonValue"
+    return result
+
+
+for view_type, response_name in (
+    (ThreadListView, "ThreadListResponse"),
+    (ThreadSummary, "ThreadResponse"),
+    (ThreadTimelineView, "ThreadTimelineResponse"),
+):
+    view_schema = TypeAdapter(view_type).json_schema()
+    definitions = view_schema.pop("$defs", {})
+    definitions.pop("JsonValue", None)
+    definitions.pop("JsonScalar", None)
+    definitions.pop("RunStatus", None)
+    queries["$defs"].update(thread_reference(definitions))
+    queries["$defs"][view_type.__name__] = thread_reference(view_schema)
+    queries["$defs"][response_name] = {
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["data"],
+        "properties": {"data": {"$ref": "#/$defs/" + view_type.__name__}},
+    }
 queries["$defs"].update(event_consumer_schema_definitions())
 queries["$defs"]["PlannerCapacity"] = {
     "type": "object",

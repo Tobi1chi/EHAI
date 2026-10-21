@@ -363,6 +363,13 @@ def create_parser() -> argparse.ArgumentParser:
     inbox_item.add_argument("--request-id", required=True)
 
     commands.add_parser("list-projects", help="discover Projects and their goal/Run counts")
+    commands.add_parser("list-threads", help="list threads by latest activity")
+    thread_query = commands.add_parser("get-thread", help="read a thread phase and next action")
+    thread_query.add_argument("--goal-id", required=True)
+    timeline = commands.add_parser("get-thread-timeline", help="read persisted thread activity")
+    timeline.add_argument("--goal-id", required=True)
+    timeline.add_argument("--limit", type=int, default=100)
+    timeline.add_argument("--after", type=int, default=0)
     project_query = commands.add_parser("get-project", help="read project goals, Runs and results")
     project_query.add_argument("--project-id", required=True)
 
@@ -706,6 +713,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(json_dumps(asyncio.run(inspect_pi_backend(node=args.node, cli=args.pi_cli))))
             return 0
         if args.command in {
+            "list-threads",
+            "get-thread",
+            "get-thread-timeline",
             "list-inbox",
             "get-inbox-item",
             "list-projects",
@@ -943,6 +953,16 @@ def _dispatch_query(args: argparse.Namespace) -> JsonValue:
         return public_json_value(queries.get_inbox_item(args.kind, normalize_id(args.request_id)))
     if args.command == "list-projects":
         return public_json_value(queries.list_projects())
+    if args.command == "list-threads":
+        return public_json_value(queries.list_threads())
+    if args.command == "get-thread":
+        return public_json_value(queries.get_thread(normalize_id(args.goal_id)))
+    if args.command == "get-thread-timeline":
+        return public_json_value(
+            queries.get_thread_timeline(
+                normalize_id(args.goal_id), limit=args.limit, after=args.after
+            )
+        )
     if args.command == "get-project":
         return public_json_value(queries.get_project(normalize_id(args.project_id)))
     if args.command == "get-plan":

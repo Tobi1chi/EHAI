@@ -903,6 +903,64 @@ export type PlannerCapacityResponse = {
   readonly data: PlannerCapacity;
 };
 
+export type GoalStatus = "open" | "satisfied";
+
+export type ThreadNextAction = {
+  readonly kind: "start_discussion" | "continue_discussion" | "review_plan" | "handle_inbox" | "watch_run" | "resume_run" | "review_result" | "none";
+  readonly refs: Readonly<Record<string, JsonValue>>;
+};
+
+export type ThreadSummary = {
+  readonly goal_id: string;
+  readonly project_id: string;
+  readonly project_name: string;
+  readonly objective: string;
+  readonly goal_status: GoalStatus;
+  readonly phase: "needs_attention" | "running" | "paused" | "awaiting_approval" | "planning" | "completed" | "failed" | "idle";
+  readonly next_action: ThreadNextAction;
+  readonly attention_count: number;
+  readonly created_at: string;
+  readonly last_activity_at: string;
+  readonly plan_revision_id: string | null;
+  readonly run_id: string | null;
+  readonly run_status: RunStatus | null;
+  readonly observed_at: string;
+  readonly event_offset: number;
+};
+
+export type ThreadListView = {
+  readonly observed_at: string;
+  readonly event_offset: number;
+  readonly threads: ReadonlyArray<ThreadSummary>;
+};
+
+export type ThreadListResponse = {
+  readonly data: ThreadListView;
+};
+
+export type ThreadResponse = {
+  readonly data: ThreadSummary;
+};
+
+export type ThreadTimelineItem = {
+  readonly at: string;
+  readonly kind: "goal_created" | "discussion_message" | "plan_revision_created" | "plan_approved" | "run_started" | "run_status_changed" | "node_completed" | "inbox_opened" | "inbox_resolved" | "succession_started";
+  readonly refs: Readonly<Record<string, JsonValue>>;
+  readonly summary: string;
+};
+
+export type ThreadTimelineView = {
+  readonly observed_at: string;
+  readonly event_offset: number;
+  readonly goal_id: string;
+  readonly items: ReadonlyArray<ThreadTimelineItem>;
+  readonly next_after: number | null;
+};
+
+export type ThreadTimelineResponse = {
+  readonly data: ThreadTimelineView;
+};
+
 export type JsonScalar = boolean | number | number | string | null;
 
 export type JsonValue = JsonScalar | ReadonlyArray<JsonValue> | { readonly [key: string]: JsonValue };
@@ -2168,6 +2226,24 @@ export type WorkspaceResponse = {
   readonly data: WorkspaceDescriptor;
 };
 
+export type WorkspaceThreadEntry = {
+  readonly workspace: WorkspaceDescriptor;
+  readonly api_path: string;
+  readonly available: boolean;
+  readonly threads: ThreadListView | null;
+  readonly error: WorkspaceQueryError | null;
+};
+
+export type WorkspaceThreadsData = {
+  readonly observed_at: string;
+  readonly workspaces: ReadonlyArray<WorkspaceThreadEntry>;
+  readonly consistent_across_workspaces?: false;
+};
+
+export type WorkspaceThreadsResponse = {
+  readonly data: WorkspaceThreadsData;
+};
+
 export class EhaiApiError extends Error {
   readonly status: number;
   readonly detail: ErrorResponse | null;
@@ -2200,6 +2276,22 @@ export class EhaiApiClient {
 
   listProjects(): Promise<ProjectListResponse> {
     return this.request("/projects", "GET");
+  }
+
+  listThreads(): Promise<ThreadListResponse> {
+    return this.request("/threads", "GET");
+  }
+
+  getThread(goalId: string): Promise<ThreadResponse> {
+    return this.request("/threads/" + encodeURIComponent(goalId), "GET");
+  }
+
+  getThreadTimeline(goalId: string, options: { limit?: number; after?: number } = {}): Promise<ThreadTimelineResponse> {
+    const query = new URLSearchParams();
+    if (options.limit !== undefined) query.set("limit", String(options.limit));
+    if (options.after !== undefined) query.set("after", String(options.after));
+    const suffix = query.toString();
+    return this.request("/threads/" + encodeURIComponent(goalId) + "/timeline" + (suffix ? "?" + suffix : ""), "GET");
   }
 
   listInbox(filters: { projectId?: string; runId?: string } = {}): Promise<InboxListResponse> {
@@ -2694,6 +2786,10 @@ export class EhaiWorkspaceManagerClient {
 
   getWorkspaceOverview(): Promise<WorkspaceOverviewResponse> {
     return this.request("/workspace-overview", "GET");
+  }
+
+  listThreads(): Promise<WorkspaceThreadsResponse> {
+    return this.request("/threads", "GET");
   }
 
   workspace(workspaceId: string): EhaiApiClient {

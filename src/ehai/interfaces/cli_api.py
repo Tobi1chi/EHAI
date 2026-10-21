@@ -25,6 +25,9 @@ _QUERIES = {
     "list-inbox": "/inbox",
     "get-inbox-item": "/inbox/{kind}/{request_id}",
     "list-projects": "/projects",
+    "list-threads": "/threads",
+    "get-thread": "/threads/{goal_id}",
+    "get-thread-timeline": "/threads/{goal_id}/timeline",
     "get-project": "/projects/{project_id}",
     "get-runtime-context": "/runtime/context",
     "get-plan-import-schema": "/plans/import-schema",
@@ -142,6 +145,8 @@ def _request_arguments(args: argparse.Namespace) -> tuple[str, str, dict[str, Js
             values[key] = str(normalize_id(value))
     if command in _QUERIES:
         path = _QUERIES[command].format_map(values)
+        if command == "get-thread-timeline":
+            path += "?" + urlencode({"limit": args.limit, "after": args.after})
         if command in {"list-inbox", "list-notes"}:
             query_fields = (
                 ("project_id", "run_id")
