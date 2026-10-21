@@ -20,6 +20,8 @@ struct Daemon {
     url: String,
     /// Whether the daemon answered its workspace listing with HTTP 200.
     ready: bool,
+    /// The start command used when the launcher has none remembered.
+    default_command: String,
 }
 
 #[derive(serde::Serialize)]
@@ -71,6 +73,13 @@ fn answers(url: &str) -> bool {
     line.starts_with("HTTP/1.1 200") || line.starts_with("HTTP/1.0 200")
 }
 
+fn default_command() -> String {
+    std::env::var("EHAI_UP_COMMAND")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| DEFAULT_UP_COMMAND.to_string())
+}
+
 #[tauri::command]
 async fn probe() -> Daemon {
     let url = manager_url();
@@ -78,24 +87,29 @@ async fn probe() -> Daemon {
     let ready = tauri::async_runtime::spawn_blocking(move || answers(&target))
         .await
         .unwrap_or(false);
-    Daemon { url, ready }
+    Daemon { url, ready, default_command: default_command() }
 }
 
-/// Run the user's start command once and report its output; the launcher keeps probing.
+/// Run the start command the user confirmed on the launcher once and report its output; the
+/// launcher keeps probing. Only the bundled launcher page can invoke this.
 #[tauri::command]
-async fn start_daemon() -> Started {
-    let command = std::env::var("EHAI_UP_COMMAND")
-        .ok()
-        .filter(|value| !value.trim().is_empty())
-        .unwrap_or_else(|| DEFAULT_UP_COMMAND.to_string());
+async fn start_daemon(command: Option<String>) -> Started {
+    let command = command
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(default_command);
     let line = command.clone();
     let result = tauri::async_runtime::spawn_blocking(move || {
         if cfg!(target_os = "windows") {
             Command::new("cmd").args(["/C", &line]).output()
         } else {
-            // A login shell, so PATH and credential variables match the user's terminal.
+            // An interactive login shell reads the same startup files as a new terminal
+            // (zsh's .zshrc included), so PATH and credential variables match it.
             let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string());
-            Command::new(shell).args(["-lc", &line]).output()
+            Command::new(shell)
+                .args(["-ilc", &line])
+                .stdin(std::process::Stdio::null())
+                .output()
         }
     })
     .await;
