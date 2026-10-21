@@ -12,6 +12,10 @@ registerEventConsumer/readConsumerEvents/acknowledgeConsumerEvents、configurePr
 Web 工作台不承担便签决定、批准或执行接续的业务编排，只把用户的决定提交给对应的源操作。
 `EhaiWorkspaceManagerClient` 提供工作区登记/启动/停止/总览及执行配置读取；
 `manager.workspace(workspaceId)` 返回绑定该工作区的 `EhaiApiClient`，包括 `getPlannerCapacity()`。
+线程查询的生成入口为 `EhaiApiClient.listThreads()`、`getThread(goalId)`、
+`getThreadTimeline(goalId, {limit, after})`；`EhaiWorkspaceManagerClient.listThreads()`
+按工作区返回核心线程列表快照与不可用错误。时间线 `next_after` 是条目偏移，
+不同于事件流的 `event_offset`。验证范围见 [STATUS](../docs/STATUS.md)。
 聚合结果保留来源与不可用状态，不声称多个核心之间具有同一事务快照。
 具体范围及完成条件见 [路线图](../docs/ROADMAP.md)，不在此重复定义。
 页面先呈现成果、待办和下一步，轨迹按需展开；顶层 Agent 仍在 EHAI 之外。
@@ -50,7 +54,7 @@ npm.cmd run web:build
 | 分区 | 页面 | 接入的正式能力 |
 | --- | --- | --- |
 | 生活 | 今天、待办、录入、定时、记录、问 | life tasks、life.capture 确认、Routine 与调度状态、Workflow 执行记录、路由实验提问与纠错 |
-| 工作 | 首页、项目、Run、尝试轨迹 | 跨工作区总览、统一待办（人工 Gate 含“通过并暂停”、干预回复、便签）、Run 暂停/恢复/取消、执行图（嵌在页面里的画布：从左到右按依赖分列，阶段为列标题，跨列的线绕开节点；拖动平移、⌘/Ctrl+滚轮或双指缩放、看全图、全屏）、成果；从执行图节点、轨迹列表、求助记录和待处理进入单个 Attempt，逐条看模型回复、工具调用与返回、报错和 token |
+| 工作 | 首页、新线程、线程、项目、Run、尝试轨迹 | 线程列表与线程时间线（讨论、方案、Run、待办与成果按时间排列，状态与下一步来自核心的线程读模型）；新建线程（创建 Goal 后发起规划讨论）；方案卡片“批准并开始”（展示管理器给出的执行配置，依次提交批准与授权执行两个写操作）；整合 Run 成果；跨工作区总览、统一待办（人工 Gate 含“通过并暂停”、干预回复、便签）、Run 暂停/恢复/取消、执行图（嵌在页面里的画布：从左到右按依赖分列，阶段为列标题，跨列的线绕开节点；拖动平移、⌘/Ctrl+滚轮或双指缩放、看全图、全屏）、成果；从执行图节点、轨迹列表、求助记录和待处理进入单个 Attempt，逐条看模型回复、工具调用与返回、报错和 token |
 | 共用 | 连接、自动回答、设置 | Connector 动作与调用记录（结果未知时请求核对）；路由实验的慢环处理、候选、回放与发布（已暂停的配方经回放重新发布）；工作区启停 |
 
 - 生活分区使用哪个 Project 是本浏览器的偏好，核心尚无分区标记；其余项目归入工作分区。
@@ -58,5 +62,7 @@ npm.cmd run web:build
 - 写操作带幂等键；结果未知（网络错误或 5xx）时重试沿用同一个键，版本冲突（409）提示重新读取。
 - 实时更新读取各工作区事件流，只用来触发重新读取，不在页面推导业务状态。
 - 凭证、OAuth 与 Connector 登记只在本机 CLI 完成，页面只给出命令；工作区登记同样使用 CLI。
-- 未提供：创建 Goal 与规划（使用 CLI/MCP）、通用 Workflow 与流程库、工作分区的定时、手工判定未知调用的结果。
+- 规划讨论可能持续数分钟；发出的消息在本页记住直到核心记录这一轮，失败（结果未知）时用同一个幂等键重发。
+- 未提供：通用 Workflow 与流程库、工作分区的定时、手工判定未知调用的结果、页面内查看整合差异（显示差异文件路径）。
+- 桌面外壳见 [desktop](../desktop/README.md)。
 

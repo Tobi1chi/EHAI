@@ -1,17 +1,16 @@
 import { useState } from "react";
 import { InboxList } from "../../components/InboxList";
 import { InboxPanel, type InboxTarget } from "../../components/InboxPanel";
-import { ErrorBlock, RunStatusIcon, Spinner } from "../../components/Status";
-import { useToast } from "../../components/Toast";
+import { ErrorBlock, QueryView, Spinner } from "../../components/Status";
 import { WorkspaceBanner } from "../../components/WorkspaceBanner";
-import { core, type WorkspaceOverviewEntry } from "../../lib/api";
+import type { WorkspaceOverviewEntry } from "../../lib/api";
 import { useApp } from "../../lib/app";
 import { ago } from "../../lib/format";
-import { RUN_STATUS, WORKSPACE_STATUS } from "../../lib/labels";
-import { byNewest, inboxRows, isLife, nodeProgress, runRows, type RunRow } from "../../lib/overview";
+import { THREAD_PHASE, WORKSPACE_STATUS, phaseTone } from "../../lib/labels";
+import { byNewest, inboxRows, isLife } from "../../lib/overview";
 import { usePrefs } from "../../lib/prefs";
 import { Link } from "../../lib/router";
-import { useSubmission } from "../../lib/submit";
+import { threadPath, useThreads, workThreadRows } from "../../lib/threads";
 
 function WorkspaceChips({ entries }: { entries: ReadonlyArray<WorkspaceOverviewEntry> }) {
   return (
@@ -34,28 +33,6 @@ function WorkspaceChips({ entries }: { entries: ReadonlyArray<WorkspaceOverviewE
   );
 }
 
-function ResumeButton({ row }: { row: RunRow }) {
-  const { touch } = useApp();
-  const toast = useToast();
-  const submission = useSubmission("resume");
-  async function resume() {
-    const result = await submission.run((key) =>
-      core(row.workspaceId).resumeRun(row.summary.run.run_id, { idempotency_key: key }),
-    );
-    if (result) {
-      toast("已恢复 Run");
-      touch(row.workspaceId);
-    } else {
-      toast("没能恢复，打开 Run 看看原因");
-    }
-  }
-  return (
-    <button type="button" className="btn small" disabled={submission.pending} onClick={() => void resume()}>
-      {submission.pending ? <Spinner /> : "恢复"}
-    </button>
-  );
-}
-
 export function WorkHome() {
   const { overview } = useApp();
   const prefs = usePrefs();
@@ -66,15 +43,8 @@ export function WorkHome() {
     inboxRows(data).filter((row) => !isLife(prefs.life, row.workspaceId, row.item.owner.project_id)),
     (row) => row.item.created_at,
   );
-  const runs = runRows(data).filter((row) => !isLife(prefs.life, row.workspaceId, row.project.project_id));
-  const active = byNewest(
-    runs.filter((row) => ["running", "paused", "pending"].includes(row.summary.run.status)),
-    (row) => row.summary.run.started_at ?? row.summary.run.created_at,
-  );
-  const finished = byNewest(
-    runs.filter((row) => row.summary.run.status === "completed"),
-    (row) => row.summary.run.ended_at,
-  ).slice(0, 8);
+  const threads = useThreads();
+  const rows = workThreadRows(threads.data, prefs.life);
   const unavailable = entries.filter((e) => !e.available);
 
   return (
@@ -83,6 +53,9 @@ export function WorkHome() {
         <div className="grow">
           <h1 className="page-title">工作</h1>
         </div>
+        <Link className="btn primary" to="/work/new">
+          新线程
+        </Link>
       </div>
       {overview.error !== undefined && <ErrorBlock error={overview.error} onRetry={overview.reload} stale={data !== undefined} />}
       {data === undefined && overview.error === undefined && (
@@ -95,7 +68,7 @@ export function WorkHome() {
         <div className="banner">
           <div className="banner-title">还没有登记工作区</div>
           <div className="meta">
-            用 <span className="mono">ehai --api-url &lt;管理器地址&gt; register-workspace</span> 登记并启动一个工作区，它的项目和 Run 就会显示在这里。
+            在终端里进入你的仓库运行 <span className="mono">ehai add</span>，登记并启动一个工作区，它的线程就会显示在这里。
           </div>
         </div>
       )}
@@ -123,60 +96,33 @@ export function WorkHome() {
         <InboxList rows={inbox} onOpen={setTarget} />
       </section>
 
-      <section className="section" aria-labelledby="work-active">
-        <h2 id="work-active" className="h2">
-          正在推进
-        </h2>
-        {active.length === 0 ? (
-          <p className="empty">没有进行中的 Run。</p>
-        ) : (
-          <div className="list">
-            {active.map((row) => {
-              const run = row.summary.run;
-              return (
-                <div key={row.workspaceId + run.run_id} className="row">
-                  <RunStatusIcon status={run.status} />
-                  <Link className="grow" to={`/work/w/${row.workspaceId}/runs/${run.run_id}`} style={{ textDecoration: "none" }}>
-                    <span className="title">{row.goal.objective}</span>
-                    <span className="meta">
-                      {RUN_STATUS[run.status]}
-                      {run.status_reason ? ` · ${run.status_reason}` : ""} · {row.workspaceId} / {row.project.name}
-                      {nodeProgress(row.summary.node_counts) ? ` · ${nodeProgress(row.summary.node_counts)}` : ""}
+      <section className="section" aria-labelledby="work-threads">
+        <div className="section-head">
+          <h2 id="work-threads" className="h2 grow">
+            线程
+          </h2>
+        </div>
+        <QueryView query={threads}>
+          {() =>
+            rows.length === 0 ? (
+              <p className="empty">还没有线程。点「新线程」写下要做成的事，Planner 会先给出方案。</p>
+            ) : (
+              <div className="list">
+                {rows.map((row) => (
+                  <Link key={threadPath(row)} className="row" to={threadPath(row)}>
+                    <span className="grow">
+                      <span className="title">{row.thread.objective}</span>
+                      <span className="meta">
+                        {row.workspaceId} / {row.thread.project_name} · {ago(row.thread.last_activity_at)}
+                      </span>
                     </span>
+                    <span className={`tag ${phaseTone(row.thread.phase)}`}>{THREAD_PHASE[row.thread.phase]}</span>
                   </Link>
-                  {run.status === "paused" && <ResumeButton row={row} />}
-                </div>
-              );
-            })}
-          </div>
-        )}
-      </section>
-
-      <section className="section" aria-labelledby="work-done">
-        <h2 id="work-done" className="h2">
-          最近完成
-        </h2>
-        {finished.length === 0 ? (
-          <p className="empty">还没有完成的 Run。</p>
-        ) : (
-          <div className="list">
-            {finished.map((row) => {
-              const run = row.summary.run;
-              const results = row.summary.completed_results.length;
-              return (
-                <Link key={row.workspaceId + run.run_id} className="row" to={`/work/w/${row.workspaceId}/runs/${run.run_id}`}>
-                  <RunStatusIcon status={run.status} />
-                  <span className="grow">
-                    <span className="title">{row.goal.objective}</span>
-                    <span className="meta">
-                      {row.workspaceId} / {row.project.name} · {results} 个通过检查的成果 · {ago(run.ended_at)}
-                    </span>
-                  </span>
-                </Link>
-              );
-            })}
-          </div>
-        )}
+                ))}
+              </div>
+            )
+          }
+        </QueryView>
       </section>
 
       {target && <InboxPanel target={target} onClose={() => setTarget(null)} />}
