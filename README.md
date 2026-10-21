@@ -58,7 +58,53 @@ uv run ehai --help
 需要同步修改宿主命令列表、执行配置与计划中的验收要求。
 未提交的本地修改不应被当作执行基线。
 
-### 2. 配置 Pi 与执行权限
+### 2. 初始化用户配置
+
+```powershell
+uv run ehai init
+# 或全部用参数（不保存密钥值）
+uv run ehai init --provider openai --model '<model-id>' --reasoning-effort medium `
+  --credential-env OPENAI_API_KEY --worker-capacity 2 --planner-capacity 1 --port 8765 --yes
+$env:OPENAI_API_KEY = Read-Host '模型 API Key' -MaskInput
+```
+
+`init` 从本仓库解析锁定的 Pi CLI，用 PATH 上的 Node 并校验版本，生成私有 Pi settings/models。
+已有配置会显示差异并要求确认，`--yes` 使用默认值并跳过确认。已有私有 Pi settings/models 保留。
+模型 ID 必须是所选 Provider 支持的值；自定义网关仍需配置私有 `pi/models.json`，见
+[安装与私有 Pi 配置](docs/USAGE.md#安装与私有-pi-配置)。
+
+| 环境变量 | 含义 |
+| --- | --- |
+| `EHAI_HOME` | 用户配置与引擎数据目录，默认 `~/.ehai`；设置在运行本地命令的终端，目录须在执行仓库之外 |
+
+### 3. 启动引擎并加入仓库
+
+```powershell
+uv run ehai up
+uv run ehai add C:/work/my-project --allow-command '["uv","run","pytest"]' --git-permission git.read
+uv run ehai status
+uv run ehai doctor
+```
+
+`up` 后台启动本机管理器，等待健康并打印 UI 地址；再次运行只报告已有进程。
+新启动时显式启动全部已登记工作区。`add` 默认不增加命令、Shell 或 Git 权限，示例中的权限由参数明确追加；
+工作区 ID 默认从目录名规范化，例如 `my-project`，也可传 `--workspace-id`。
+容量按工作区预留，管理器总容量默认 Worker/Planner 各 8，可在 `config.json` 修改。
+停止引擎用 `uv run ehai down`；有活动执行或规划时返回冲突，先暂停或完成任务。
+
+页面须先在 `control-plane` 用 `npm.cmd ci`、`npm.cmd run web:build` 构建；已有 `web/dist` 时
+`up` 自动同源提供 `http://127.0.0.1:8765/ui/`，未构建时会提示。
+守护进程继承启动终端的凭证环境；改凭证后须 `down` / `up`。`doctor` 只报告变量是否存在。
+各工作区业务 API 地址为 `http://127.0.0.1:8765/workspaces/my-project`。
+命令、配置形状与失败边界见 [多工作区后端](docs/WORKSPACE_MANAGER.md)。
+
+### 高级/手动配置
+
+手工 `ehai-api` 方式仍可用于开发、嵌入和独立单宿主，详见
+[使用指南](docs/USAGE.md#api-宿主与-cli-客户端)。以下保留原手工配置与启动示例：
+
+<details>
+<summary>手工准备 Pi、执行配置与单工作区宿主</summary>
 
 将配置放在仓库外，例如：
 
@@ -107,7 +153,7 @@ Pi 经 Agent harness Hub 运行。默认由宿主自动启动一个本机 Hub �
 
 使用独立 Hub 时，模型凭证要设在运行 `ehai-hub` 的环境中。
 
-### 3. 启动项目宿主
+#### 启动项目宿主
 
 在 EHAI 源码目录启动服务；将 `<model-id>` 替换为执行配置中的同一个模型 ID：
 
@@ -136,12 +182,14 @@ uv run ehai-api @Server
 模型、工作区、并发数、命令权限和超时等必须与 `execution-api.json` 一致，
 配置不匹配时启动 Run 会被拒绝。改变授权配置后，不会静默替换旧 Run 的配置。
 
+</details>
+
 ### 4. 创建开发任务并规划
 
 另开一个 PowerShell 终端，进入 EHAI 源码目录：
 
 ```powershell
-$Api = @('--api-url', 'http://127.0.0.1:8000')
+$Api = @('--api-url', 'http://127.0.0.1:8765/workspaces/my-project')
 uv run ehai @Api get-runtime-health
 uv run ehai @Api create-project --name 'My project' --idempotency-key project-001
 ```
@@ -185,6 +233,15 @@ uv run ehai @Api get-plan-checks --plan-revision-id $PlanId
 
 审查需求范围、任务图、阶段、Reviewer 和验收条件。从计划查询结果取得
 `completion_contract_id`，确认后再批准和授权执行：
+
+使用管理器时，先取得该工作区的精确执行配置，保存到仓库外并审阅。读取不构成授权：
+
+```powershell
+$Profile = uv run ehai --api-url http://127.0.0.1:8765 get-workspace-execution-config --workspace-id my-project | ConvertFrom-Json
+$Profile.execution_config | ConvertTo-Json -Depth 100 | Set-Content -Encoding utf8 C:/private/ehai/execution-api.json
+```
+
+先创建上述保存目录。手工 `ehai-api` 方式则使用前面准备的执行配置，并将 `$Api` 改为其 `8000` 地址。
 
 ```powershell
 $ContractId = '<completion-contract-id>'

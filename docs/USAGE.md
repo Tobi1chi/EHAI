@@ -78,6 +78,58 @@ CLI 将 `--api-url` 设为对应作用域；管理器 MCP 的详情/时间线工
 需要 Python 3.12、uv、Node >=22.19.0。运行 uv sync --frozen，
 npm.cmd ci --prefix agent-backends/pi --ignore-scripts --no-audit --no-fund。
 
+推荐从源码目录运行 `uv run ehai init`，再设置凭证环境变量，运行 `uv run ehai up` 和
+`uv run ehai add <仓库路径>`。这六个本地命令（另有 `down`、`status`、`doctor`）
+均不使用 `--api-url`，也不需要 `--database` / `--artifacts`。
+
+~~~sh
+uv run ehai init --provider openai --model '<model-id>' --reasoning-effort medium \
+  --credential-env OPENAI_API_KEY --worker-capacity 2 --planner-capacity 1 --port 8765 --yes
+uv run ehai up
+uv run ehai add /absolute/path/to/repo
+uv run ehai status
+uv run ehai doctor
+uv run ehai down
+~~~
+
+`init` 省略的选项会逐项询问；`--yes` 对省略项用默认值，首次仍须指定 `--model`。
+`--credential-env` 可重复；交互时用逗号分隔多个名字。只保存变量名，不保存密钥。
+已有 `config.json` 时显示差异并要求确认，`--yes` 跳过确认；已有私有 settings/models 保留。
+Node 来自 PATH，Pi CLI 来自本源码仓库的锁定安装；版本分别要求 >=22.19.0 和 1.3.0。
+
+`EHAI_HOME` 覆盖默认的 `~/.ehai`，须在所有执行仓库之外；其中 `config.json` 是默认值的单一来源。
+示意形状（路径均由 init 生成实际绝对路径）：
+
+~~~json
+{
+  "config_version": 1,
+  "provider": "openai",
+  "model": "<model-id>",
+  "reasoning_effort": "medium",
+  "credential_env": ["OPENAI_API_KEY"],
+  "node": "/absolute/path/to/node",
+  "pi_cli": "/absolute/EHAI/agent-backends/pi/node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js",
+  "agent_dir": "/absolute/home/.ehai/pi",
+  "worker_capacity": 2,
+  "planner_capacity": 1,
+  "max_worker_capacity": 8,
+  "max_planner_capacity": 8,
+  "port": 8765,
+  "ui_dir": "/absolute/EHAI/control-plane/web/dist"
+}
+~~~
+
+Worker/Planner 容量是新工作区的默认值，管理器上限由 `max_*_capacity` 指定（默认各 8，
+init 会保证不小于单工作区默认值）。`pi-backend.json` 是生成的兼容文件，`add` 按 config 重新生成，
+无需另行维护；原生 `pi/settings.json` 和 `pi/models.json` 使用仓库示例初始化。
+配置更改不会覆盖已登记的不可变工作区配置；管理器端口、总容量和 UI 目录变更须 down/up。
+
+凭证必须在运行 `up` 的环境中设置；桌面 App 第一版应连接已运行的管理器，或提示从终端启动。
+`doctor` 分别检查当前终端和守护进程实际继承的变量是否存在，不输出值；缺少变量时返回 1，
+不以工作区 ready 推断模型可用。详细启停、日志和权限行为见 [多工作区后端](WORKSPACE_MANAGER.md)。
+
+### 高级/手动配置
+
 在仓库外配置 backend.json，参照 [示例](../agent-backends/pi/examples/backend.json)：
 node、cli、agent_dir 都是宿主真实绝对路径；provider 必须与原生 models.json 一致；
 environment_names 是允许传入 Pi 的模型凭证环境变量名。settings/models 放在 agent_dir。

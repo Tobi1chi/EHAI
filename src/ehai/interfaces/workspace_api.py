@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import hmac
+import json
+import os
 import re
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -18,8 +21,13 @@ from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Stre
 from pydantic import BaseModel, ConfigDict, WithJsonSchema
 
 from ehai import JsonValue, utc_now
-from ehai.infrastructure.workspace_supervisor import SupervisorError, WorkspaceSupervisor
+from ehai.infrastructure.workspace_supervisor import (
+    SupervisorError,
+    WorkspaceConflict,
+    WorkspaceSupervisor,
+)
 from ehai.interfaces.http_models import DataResponse
+from ehai.interfaces.local_app import write_private_json
 from ehai.interfaces.runtime import create_local_app
 from ehai.interfaces.workspace_models import WorkspaceDescriptor, WorkspaceId, WorkspaceRegistration
 
@@ -445,6 +453,7 @@ def main() -> int:
     parser.add_argument("--port", type=int, default=8765)
     parser.add_argument("--max-worker-capacity", type=int, default=8)
     parser.add_argument("--max-planner-capacity", type=int, default=8)
+    parser.add_argument("--local-control-file", type=Path, help=argparse.SUPPRESS)
     parser.add_argument(
         "--ui-dir",
         type=Path,
@@ -457,13 +466,85 @@ def main() -> int:
         max_worker_capacity=args.max_worker_capacity,
         max_planner_capacity=args.max_planner_capacity,
     )
-    uvicorn.run(
-        create_workspace_app(supervisor, args.ui_dir),
-        host="127.0.0.1",
-        port=args.port,
-        timeout_graceful_shutdown=15,
+    app = create_workspace_app(supervisor, args.ui_dir)
+    server = uvicorn.Server(
+        uvicorn.Config(app, host="127.0.0.1", port=args.port, timeout_graceful_shutdown=15)
     )
+    if args.local_control_file is not None:
+        _local_control(app, server, supervisor, args.local_control_file)
+    server.run()
     return 0
+
+
+def _local_control(
+    app: FastAPI, server: uvicorn.Server, supervisor: WorkspaceSupervisor, control_file: Path
+) -> None:
+    """Private daemon lifecycle, deliberately excluded from the public API contract."""
+    record = json.loads(control_file.read_text(encoding="utf-8"))
+    token = record["token"]
+    record["pid"] = os.getpid()
+    # The caller created the file privately; replacement preserves its permissions.
+    write_private_json(control_file, record)
+    stopping = False
+    active_writes = 0
+    shutdown_lock = asyncio.Lock()
+
+    def authorized(request: Request) -> bool:
+        return hmac.compare_digest(request.headers.get("X-EHAI-Manager-Token", ""), token)
+
+    @app.middleware("http")
+    async def stop_writes(request: Request, call_next: Any) -> Any:
+        nonlocal active_writes
+        if stopping and request.method not in {"GET", "HEAD", "OPTIONS"}:
+            return JSONResponse(
+                {"error": {"code": "manager_stopping", "message": "Manager is stopping"}},
+                status_code=409,
+            )
+        writing = request.method not in {
+            "GET",
+            "HEAD",
+            "OPTIONS",
+        } and not request.url.path.startswith("/_ehai_local/")
+        if writing:
+            active_writes += 1
+        try:
+            return await call_next(request)
+        finally:
+            if writing:
+                active_writes -= 1
+
+    @app.get("/_ehai_local/identity", include_in_schema=False)
+    async def identity(request: Request) -> JSONResponse:
+        if not authorized(request):
+            return JSONResponse({"error": "private daemon control"}, status_code=403)
+        return JSONResponse(
+            {
+                "pid": os.getpid(),
+                "credentials": {
+                    name: bool(os.environ.get(name)) for name in record["credential_env"]
+                },
+            }
+        )
+
+    @app.post("/_ehai_local/shutdown", include_in_schema=False)
+    async def shutdown(request: Request) -> JSONResponse:
+        nonlocal stopping
+        if not authorized(request):
+            return JSONResponse({"error": "private daemon control"}, status_code=403)
+        async with shutdown_lock:
+            if active_writes:
+                raise WorkspaceConflict("Manager has active writes; wait for them to finish")
+            stopping = True
+            try:
+                for workspace in await supervisor.list():
+                    result = await supervisor.stop(workspace.workspace_id)
+                    if result.status != "stopped":
+                        raise WorkspaceConflict(f"Workspace {workspace.workspace_id} did not stop")
+            except BaseException:
+                stopping = False
+                raise
+            asyncio.get_running_loop().call_later(0.1, setattr, server, "should_exit", True)
+        return JSONResponse({"stopping": True})
 
 
 if __name__ == "__main__":

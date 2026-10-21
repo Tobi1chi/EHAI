@@ -40,7 +40,8 @@
 | --- | --- | --- | --- |
 | P3.1 项目总览 | 无模型验证 | 按来源宿主查询，不做跨宿主聚合 | [P3](EVIDENCE.md#p3-平台后端) |
 | 线程读模型与线程式页面 | 无模型验证 | 核心摘要/详情/时间线、管理器聚合与 CLI/MCP 已接线；产品 E2E 覆盖创建/草稿/运行/人工 Gate/完成、404、时间线及分页；Web 新建线程、时间线、批准并开始、人工处理在 fake Worker 工作区走通；管理器离线聚合、MCP 调用、Pi 工作区与真实模型未验证 | [线程查询](USAGE.md#线程查询) · [P3](EVIDENCE.md#p3-平台后端) |
-| Tauri 桌面外壳 | 部分 | 启动页探测守护进程、经登录 shell 执行启动命令后跳转到工作台；只完成 macOS 调试构建，窗口、启动命令（`ehai up` 尚未实现）与打包均未运行验证 | [desktop](../desktop/README.md) |
+| 引擎守护进程与单一配置（模块 B） | 无模型验证 | macOS 临时 EHAI_HOME 下 init→up→status→add→doctor→down、重启恢复登记与重复命令通过；doctor 如实报告终端/守护进程缺凭证；页面在 add 的 Pi 工作区展示了执行配置（未启动 Run），未覆盖真实模型、活动任务停止冲突、Windows/Linux 实跑 | [本地引擎验证](WORKSPACE_MANAGER.md#模块-b-验证记录2026-10-22) |
+| Tauri 桌面外壳 | 部分 | 启动页探测守护进程后跳转到工作台，可编辑并记住启动命令、经交互式登录 shell 执行；macOS 调试构建的窗口连上本机管理器并加载工作台（日志核对）；点击“启动 EHAI”、打包与 Windows 未验证 | [desktop](../desktop/README.md) |
 | P3.2 统一人工待办 | 无模型验证 | 人工 Gate 闭环通过；类型为干预、人工验收、便签与生活确认（运行中 Worker 请求已删除） | [P3](EVIDENCE.md#p3-平台后端) |
 | P3.2 便签 | 真实验证 | 便签→修订→执行→人工验收通过；propose_process 路径未验证 | [P3](EVIDENCE.md#p3-平台后端) |
 | P3.3 薄 Web 工作台 | 无模型验证 | 生活/工作两区与共用页面均接入正式 API（fake Worker、Jev 协议替身）；Run 执行图与逐次尝试轨迹用一次真实 Run 数据库的只读副本核对，分支形态只用改写的响应看过；不含创建 Goal/规划、通用 Workflow；生活分区靠浏览器偏好 | [P3](EVIDENCE.md#p3-平台后端) · [ADR 0008](adr/0008-web-workbench.md) |

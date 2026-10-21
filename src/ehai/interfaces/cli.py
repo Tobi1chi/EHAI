@@ -76,6 +76,7 @@ from ehai.infrastructure.sqlite.project_configuration import SQLiteProjectConfig
 from ehai.infrastructure.workers import FakeWorker
 from ehai.interfaces.backend_cli import register_backend_commands
 from ehai.interfaces.cli_api import API_ONLY_COMMANDS, ApiCommandError, dispatch_api
+from ehai.interfaces.local_app import LOCAL_COMMANDS, run_local
 from ehai.interfaces.public_documents import public_json_value
 from ehai.interfaces.session_host import (
     ExecutionConfig,
@@ -348,6 +349,33 @@ def create_parser() -> argparse.ArgumentParser:
     )
     commands = parser.add_subparsers(dest="command", required=True)
     register_backend_commands(commands)
+
+    initialize = commands.add_parser("init", help="configure the local EHAI engine")
+    initialize.add_argument("--provider")
+    initialize.add_argument("--model")
+    initialize.add_argument(
+        "--reasoning-effort", choices=("off", "minimal", "low", "medium", "high", "xhigh", "max")
+    )
+    initialize.add_argument("--credential-env", action="append")
+    initialize.add_argument("--worker-capacity", type=int)
+    initialize.add_argument("--planner-capacity", type=int, dest="local_planner_capacity")
+    initialize.add_argument("--port", type=int)
+    initialize.add_argument(
+        "--yes", action="store_true", help="use defaults and confirm replacement"
+    )
+    for name in ("up", "down", "status", "doctor"):
+        commands.add_parser(name, help=f"local engine: {name}")
+    add = commands.add_parser("add", help="register and start a workspace using local defaults")
+    add.add_argument("path", type=Path, nargs="?", default=Path.cwd())
+    add.add_argument("--workspace-id")
+    add.add_argument("--allow-command", action="append", default=[], metavar="JSON_ARGV")
+    add.add_argument(
+        "--git-permission",
+        action="append",
+        default=[],
+        choices=("git.read", "git.local_write", "git.remote_write", "git.dangerous"),
+    )
+    add.add_argument("--shell", action="append", default=[])
 
     inbox = commands.add_parser("list-inbox", help="list current human requests across projects")
     inbox.add_argument("--project-id")
@@ -662,6 +690,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             stream.reconfigure(encoding="utf-8")
     parser = create_parser()
     args = parser.parse_args(argv)
+    if args.command in LOCAL_COMMANDS:
+        if args.api_url is not None:
+            parser.error("local engine commands do not accept --api-url")
+        return run_local(args)
     if args.api_url is not None:
         local_options = (
             args.database,
