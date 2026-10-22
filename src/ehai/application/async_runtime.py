@@ -117,6 +117,14 @@ class ConnectorStartRequest:
         return self.request.attempt_id
 
 
+class ConnectorStartBlocked(RuntimeError):
+    """A start that fails the same way until a human acts; it is not retried."""
+
+    def __init__(self, blocker: WorkerBlocker) -> None:
+        self.blocker = blocker
+        super().__init__(blocker.reason)
+
+
 @dataclass(frozen=True, slots=True)
 class ConnectorExecution:
     """Provider IDs returned by Connector start or recover."""
@@ -531,6 +539,9 @@ class SingleSlotRuntime:
                 retry_safety=RetrySafety.NO_EXECUTION_HANDLE,
                 timed_out=True,
             )
+        except ConnectorStartBlocked as blocked:
+            # The Endpoint answered; retrying would only spend the Attempt budget.
+            return self._orchestrator.block_attempt(request.attempt_id, blocked.blocker)
         except Exception as error:
             await self._set_endpoint_health(
                 EndpointHealthStatus.UNHEALTHY,
