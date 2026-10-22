@@ -113,4 +113,31 @@ EHAI 的核心、HTTP/SSE、生成 Client 与多工作区管理器已经接通�
 
 - 桌面 App 拉起守护进程时的凭证来源（钥匙串、Pi 私有 auth 文件或仅继承环境）。
 - 终端交互式 `ehai` 会话（下一轮，与本轮的线程接口共用）。
-- 提交到分支 / 开 PR 的成果动作是否进入核心。
+- 开 PR 是否进入核心（提交到新分支已实现：核心只建 `refs/heads/<branch>` 指向整合 commit，不切换、不推送）。
+- `ehai doctor` 是否应当实际启动一次 Pi 会话（不调用模型）来确认 Provider、模型与思考级别被接受。
+
+## 执行记录
+
+### 2026-10-22 第 3 步补齐与真实模型验收
+
+补齐：管理器 `from-folder` 与 `GET /api/v1/local`（Codex），整合结果放到新分支（Codex），
+页面添加项目文件夹、分支表单、后台系统通知，桌面外壳的对话框/通知插件与仅限本机守护进程页面的权限。
+
+真实模型验收（用户授权，DeepSeek 官方端点 `deepseek-flash`，凭证存于 macOS 钥匙串，由 `~/.zshrc` 导出，
+只经环境变量进入守护进程）：临时 EHAI_HOME 中 `ehai init` → 从登录 shell `ehai up`（doctor 报告终端与守护进程
+均有凭证）→ 页面“添加项目文件夹”登记仓库外小项目 textkit（允许 `python3 verify.py`、git.read）→ 新线程。
+
+- 首次失败：讨论在 0.8 秒内失败，页面只显示 “Harness invocation did not yield a confirmed result”。
+  仓库外临时诊断直接经本机 Hub 启动同配置 Pi 会话，得到 Hub 原始错误
+  `Pi did not accept the authorized thinking level`：`ehai init` 默认推理强度 medium，Pi 对
+  `deepseek-flash` 只接受 off/low/high/max，会把 medium/xhigh 换成其他级别，而 EHAI 要求实际级别与授权一致。
+- 修复：`ehai init` 的推理强度默认改为 `default`（保存为 null，不向 Pi 指定，交给模型默认）；
+  指定级别仍按原规则严格校验。核心在“结果未知”错误里附上 Hub 的原始消息，页面能看到真正原因。
+  严格校验本身不放宽。
+- 重跑（全新 EHAI_HOME 与工作区）：真实 Planner 20 次工具调用（含 add_plan_node、set_final_gate 等嵌套参数）
+  给出 stats/slug 并行 → 汇合运行 verify → Reviewer 的四节点方案；页面批准并开始（执行配置显示模型、并发 2、
+  允许的命令）；Worker 与 Reviewer 共 40 次工具调用、未见工具错误，Run completed；页面整合（2 个文件 +10 −3）、
+  按文件看差异、创建分支 `ehai/run-1387f806`。核对：分支指向整合 commit，在独立 worktree 运行 `python3 verify.py`
+  输出 ok；用户仓库仍在 main，工作树干净。从建线程到完成约 2 分 40 秒。
+- 未覆盖：系统通知未实际弹出（浏览器面板拒绝通知权限，桌面窗口未实跑），桌面文件夹选择器未实跑，
+  人工 Gate 与待办（方案没有人工检查），整合冲突，Windows。
