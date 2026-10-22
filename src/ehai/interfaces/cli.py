@@ -354,7 +354,8 @@ def create_parser() -> argparse.ArgumentParser:
     initialize.add_argument("--provider")
     initialize.add_argument("--model")
     initialize.add_argument(
-        "--reasoning-effort", choices=("off", "minimal", "low", "medium", "high", "xhigh", "max")
+        "--reasoning-effort",
+        choices=("default", "off", "minimal", "low", "medium", "high", "xhigh", "max"),
     )
     initialize.add_argument("--credential-env", action="append")
     initialize.add_argument("--worker-capacity", type=int)

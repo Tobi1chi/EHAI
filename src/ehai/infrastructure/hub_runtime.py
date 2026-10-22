@@ -207,7 +207,7 @@ class HubRoleRunner:
                 )
             raise HarnessExecutionUnknownError(
                 "Harness invocation did not yield a confirmed result; "
-                "no prompt replay was attempted"
+                f"no prompt replay was attempted: {failure}"
             ) from failure
         finally:
             await executor.aclose()
