@@ -44,10 +44,11 @@
 | 10-04 | Planner 授权与验收约束（能力预览、人工判据不加命令 Gate、同节点 3 次干预暂停） | 真实 OpenCode Go DeepSeek V4.1 Flash（662 个响应，按单价约 $1.3）+ 脚本化诊断 | 复现上一行失败场景：单 Goal 两次各 7 分钟完成、全部 5 组零干预；人工拆 3 个 Goal 全流程满分（修复前 0%、9 次干预）；两任务直接规划回归仍满分；契约只在用户选了命令判据时含命令，节点只用授权命令；暂停逻辑由脚本化诊断验证（第 3、6 次干预暂停，恢复后继续） | 真实模型触发暂停与工具拒绝、跨宿主授权比较、Windows | [PLANNER_CONSTRAINTS_DESIGN](PLANNER_CONSTRAINTS_DESIGN.md#2026-10-04-验收) |
 | 10-04 | 过程审查工具被 Pi 严格模式拒绝 | 真实 Pi 0.85.1 + 脚本化模型；真实 DeepSeek V4.1 Flash 下复现 3 次 | 修复前 `review-process` 在发出模型请求前失败（对象联合不受支持），被报告为结果未知；修复后 Reviewer 请求到达模型 | 真实模型完成审查并应用草稿 | [REFACTOR_PLAN](REFACTOR_PLAN.md#2026-10-04-过程审查工具被-pi-严格模式拒绝) |
 | 10-04 | 过程调整读取已完成成果（先粗后细回放） | 真实 OpenCode Go DeepSeek V4.1 Flash（12 组，1912 个响应，按单价约 $5.1） | 12 组草稿均读取成果并 ready（修复前 8 次便签称产出缺失）；审查侧补 `block_changes` 与 Check 状态后，修复齐全且先决定 Gate 的 2 组审查通过、应用细化并满分完成；此前 Q6、Q8 亦通过 | 大型任务、其他模型族、多次调整、Windows；暂停时不能决定人工 Gate | [PROCESS_OUTPUTS_DESIGN](PROCESS_OUTPUTS_DESIGN.md#执行记录) |
-| 10-22 | 关闭严格采样后的真实模型规划 → 执行 → 验收 → integrate-run（Pi 1.3.0，DeepSeek 官方端点） | 真实 DeepSeek `deepseek-flash`（2 次运行共 60 个响应，Pi 估算约 $0.06） | discuss-plan 产出两个并行写代码节点 + 只读 Reviewer，verify.py 通过（附加 7/7），人工验收后 completed，integrate-run 只改两个模块文件、无冲突；第二次运行 55 次工具调用（Planner 22 次，含 add_plan_node/add_plan_edge/set_plan_phase/set_final_gate 等嵌套对象参数）零错误；第一次运行 43 次调用中 1 次语义错误（workspace_write 未设 overwrite 得到 already_exists，下一次即改正），零 `invalid_arguments`。第一次运行因测试仓库没有 .gitignore，两个节点的 `__pycache__` 冲突使 Reviewer 无法启动（见下方未决问题），补 .gitignore 后全新重跑 | 过程审查、路由与轨迹审查工具；强杀恢复；Windows；独立 Hub；较大任务下的参数出错频率 | [REFACTOR_PLAN](REFACTOR_PLAN.md#2026-10-22-默认关闭严格采样核心统一校验工具参数) |
+| 10-22 | 关闭严格采样后的真实模型规划 → 执行 → 验收 → integrate-run（Pi 1.3.0，DeepSeek 官方端点） | 真实 DeepSeek `deepseek-flash`（2 次运行共 60 个响应，Pi 估算约 $0.06） | discuss-plan 产出两个并行写代码节点 + 只读 Reviewer，verify.py 通过（附加 7/7），人工验收后 completed，integrate-run 只改两个模块文件、无冲突；第二次运行 55 次工具调用（Planner 22 次，含 add_plan_node/add_plan_edge/set_plan_phase/set_final_gate 等嵌套对象参数）零错误；第一次运行 43 次调用中 1 次语义错误（workspace_write 未设 overwrite 得到 already_exists，下一次即改正），零 `invalid_arguments`。第一次运行因测试仓库没有 .gitignore，两个节点的 `__pycache__` 冲突使 Reviewer 无法启动（已由同日"Reviewer 上游整合冲突时直接打开干预"处理），补 .gitignore 后全新重跑 | 过程审查、路由与轨迹审查工具；强杀恢复；Windows；独立 Hub；较大任务下的参数出错频率 | [REFACTOR_PLAN](REFACTOR_PLAN.md#2026-10-22-默认关闭严格采样核心统一校验工具参数) |
 | 10-22 | 默认关闭严格采样，核心按工具 Schema 校验参数 | 0（真实 Pi 1.3.0 + 脚本化模型服务） | 直接调用 `ToolExecutor`：合法参数执行，缺字段/多字段/类型错/嵌套错误均返回 `invalid_arguments` 并逐处列出、处理器未运行，无效 Schema 构造失败；产品 E2E 方案下工具不再带严格标记，声明与未声明 strict 的端点都完成 | 真实模型参数出错频率与纠正；Planner、过程审查、路由工具只做静态核对；经 MCP 的其他 harness | [REFACTOR_PLAN](REFACTOR_PLAN.md#2026-10-22-默认关闭严格采样核心统一校验工具参数) |
 | 10-21 | Pi 从 0.85.1 升级到 1.3.0 | 0（真实 Pi 1.3.0 + 脚本化模型服务） | 只改锁定版本时产品 E2E 超时：Pi 默认认为自定义 OpenAI 兼容端点不支持严格模式，EHAI 工具要求严格采样，Pi 发出请求前即拒绝（脚本化服务收到 0 个请求）；按用户决定改为优先而非强制严格模式：未声明的端点退回普通工具调用并完成，声明时工具仍带 `strict: true` 并完成；`inspect-agent` 控制通道通过；内置 OpenCode Go DeepSeek 自带声明 | 真实模型、Windows、独立 Hub、Planner/过程审查等 E2E 未经过的角色 | [REFACTOR_PLAN](REFACTOR_PLAN.md#2026-10-21-pi-升级到-130) |
 | 10-05 | 人工 Check 决定后保持暂停（`--hold`） | 真实 Pi + 脚本化模型；真实 OpenCode Go DeepSeek V4.1 Flash（2 组，310 个响应，按单价约 $0.85） | 决定与暂停同一事务，保持期间无派发、Gate 未结算；恢复后结算并继续；先粗后细一组应用细化后满分且无中断 Attempt，另一组审查拦下遗漏义务后按原过程满分 | 多次保持、Windows（并行 Attempt 运行时拒绝 hold） | [REFACTOR_PLAN](REFACTOR_PLAN.md#2026-10-05-人工-check-决定后保持暂停) |
+| 10-22 | Reviewer 上游整合冲突时直接打开干预 | 0（真实 Pi + 脚本化模型服务） | 起因：真实 DeepSeek 试用中，测试仓库没有 .gitignore，两个并行节点的 `__pycache__` 进入候选并冲突，Reviewer 启动失败被立即重试 5 次耗尽预算。仓库外诊断（两个节点写同一路径不同内容，Reviewer 直接依赖两者）：修复前 5 个 Reviewer Attempt 均 failed、干预只有通用说明；修复后 1 个 Attempt interrupted，干预列出冲突路径与处理方式，不再把 Endpoint 标为不健康 | 回复干预后的再次启动；Windows；真实模型 | [REFACTOR_PLAN](REFACTOR_PLAN.md#2026-10-22-reviewer-上游整合冲突时直接打开干预) |
 
 ## P3 平台后端
 
@@ -89,7 +90,6 @@
 
 由上述证据暴露、尚未处理的事项（处理后从此处移除并在对应行注明）：
 
-- 目标仓库没有忽略构建产物时，并行节点各自运行测试产生的未跟踪文件（如 `__pycache__/*.pyc`）进入候选，整合时互相冲突，下游 Reviewer 启动即失败；该失败是确定性的，却在约 2 秒内被自动重试 5 次耗尽预算后才转人工（10-22）。
 - Planner 可能生成语义重复的 human Check（09-27）。
 - 目标为整个 EHAI 仓库时，Planner 调查范围过大、未收敛（09-25）。
 - 较长 Provider 工具流间歇停顿/中断，根因未确认（09-25、09-27）。

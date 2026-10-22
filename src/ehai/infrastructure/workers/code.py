@@ -13,6 +13,7 @@ from ehai import ID, JsonValue, json_dumps, json_loads, normalize_id
 from ehai.application.async_runtime import (
     ConnectorExecution,
     ConnectorRecoveryRequest,
+    ConnectorStartBlocked,
     ConnectorStartRequest,
     HostWorkDrainingConnector,
     RuntimeConnector,
@@ -20,6 +21,7 @@ from ehai.application.async_runtime import (
     WorkerEventType,
 )
 from ehai.application.handoffs import AttemptHandoffs, HandoffSubmission, handoff_id_for
+from ehai.application.interventions import WorkerBlocker
 from ehai.application.ports import ArtifactStore, StateConflictError
 from ehai.application.queries import QueryNotFoundError
 from ehai.application.workers import (
@@ -511,9 +513,19 @@ class CodeRuntimeConnector:
         )
         if request.plan_node.kind is PlanNodeKind.REVIEWER:
             if preparation.conflicts:
-                raise MetadataError(
-                    "Reviewer cannot start with unresolved integration conflicts: "
-                    + ", ".join(preparation.conflicts)
+                # Integrating the same upstream candidates conflicts again on every retry.
+                raise ConnectorStartBlocked(
+                    WorkerBlocker(
+                        reason="Reviewer cannot start with unresolved integration conflicts",
+                        evidence="Conflicting paths: " + ", ".join(preparation.conflicts),
+                        needed=(
+                            "Upstream candidates changed these paths differently. If they are "
+                            "build output such as __pycache__, ignore them in the target "
+                            "repository and start a new Run; otherwise adjust the process "
+                            "within the approved boundary so a work node resolves the "
+                            "conflict, then confirm continuation."
+                        ),
+                    )
                 )
             self._prepared_commits[request.attempt_id] = self.code_store.prepared_commit(
                 run_id=str(request.run_id), attempt_id=str(request.attempt_id)

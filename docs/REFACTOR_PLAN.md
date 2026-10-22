@@ -414,6 +414,21 @@ Reviewer/Gate → 人工验收 → `integrate-run`，并在执行中强杀一次
 - 未覆盖：真实模型（Planner、Worker、Reviewer、过程审查）；Windows；独立 Hub。E2E 输出与宿主日志都看不到
   Pi 拒绝请求的原因，这是旁支发现，另行处理。
 
+### 2026-10-22 Reviewer 上游整合冲突时直接打开干预
+
+- 起因：Pi 1.3.0 真实 DeepSeek 试用（分支 `claude/pi-1.3.0` 的执行记录）中，测试仓库没有 .gitignore，两个并行节点运行
+  unittest 产生的 `__pycache__` 都进入候选（捕获使用 `git add --all`），整合时冲突，Reviewer 启动即失败；连接器启动的任何
+  异常都按"尚无执行句柄"重试且不退避，约 2 秒内 5 次耗尽预算后才转人工，每次还把 Endpoint 标为不健康。
+- 决定（用户选择）：候选范围保持 Git 规则不变，即 worktree 中未被忽略的全部变化；目标仓库自行忽略构建产物，写入 USAGE。
+  启动前即可确定、重试结果不会改变的失败直接打开干预。
+- 实现：`async_runtime` 新增 `ConnectorStartBlocked`（携带 `WorkerBlocker`），`_start_request` 捕获后调用既有的
+  `block_attempt`，不重试、不改变 Endpoint 健康状态；其他启动异常仍按原规则重试。代码 Worker 在 Reviewer 上游整合冲突时
+  抛出它，干预列出冲突路径，并说明构建产物应忽略后重开 Run，否则在批准边界内调整过程让写代码节点解决冲突。
+- 验证：仓库外诊断（产品 E2E 方案改为两个节点写同一路径不同内容、Reviewer 直接依赖两者）：修复前 5 个 Reviewer Attempt
+  failed、干预只有通用说明；修复后 1 个 Attempt interrupted、干预列出 `shared.txt`。静态检查、两平台 mypy、lint-imports、
+  产品 E2E 通过。
+- 未覆盖：回复干预后再次启动的行为（同一冲突会再次打开干预，同节点 3 次后按既有规则暂停 Run）；Windows；真实模型。
+
 ## 待决事项
 
 | 事项 | 说明 |
