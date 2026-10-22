@@ -133,7 +133,9 @@ EHAI 的核心、HTTP/SSE、生成 Client 与多工作区管理器已经接通�
   `deepseek-flash` 只接受 off/low/high/max，会把 medium/xhigh 换成其他级别，而 EHAI 要求实际级别与授权一致。
 - 修复：`ehai init` 的推理强度默认改为 `default`（保存为 null，不向 Pi 指定，交给模型默认）；
   指定级别仍按原规则严格校验。核心在“结果未知”错误里附上 Hub 的原始消息，页面能看到真正原因。
-  严格校验本身不放宽。
+  严格校验本身不放宽。之后按用户决定，默认改为 `high`：Pi 1.3.0 模型表的 1348 个推理模型中只有 19 个没有该档
+  （DeepSeek、Anthropic、Google 全有，OpenAI 缺 1 个），非推理模型 gpt-6-luna 以 high 启动会话也被接受；
+  `default` 仍可选，表示交给模型默认。
 - 重跑（全新 EHAI_HOME 与工作区）：真实 Planner 20 次工具调用（含 add_plan_node、set_final_gate 等嵌套参数）
   给出 stats/slug 并行 → 汇合运行 verify → Reviewer 的四节点方案；页面批准并开始（执行配置显示模型、并发 2、
   允许的命令）；Worker 与 Reviewer 共 40 次工具调用、未见工具错误，Run completed；页面整合（2 个文件 +10 −3）、

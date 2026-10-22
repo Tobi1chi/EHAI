@@ -93,9 +93,9 @@ uv run ehai down
 ~~~
 
 `init` 省略的选项会逐项询问；`--yes` 对省略项用默认值，首次仍须指定 `--model`。
-`--reasoning-effort` 默认 `default`（保存为 null，不向 Pi 指定思考级别，用模型默认）；指定级别时必须是该模型确切支持的，
+`--reasoning-effort` 默认 `high`；`default` 保存为 null，不向 Pi 指定思考级别，用模型默认。指定的级别（含默认的 high）必须是该模型确切支持的，
 Pi 会把不支持的级别换成其他级别，而 EHAI 要求实际级别与授权一致，会以 `Pi did not accept the authorized thinking level` 拒绝启动会话
-（例如 DeepSeek `deepseek-flash` 不接受 medium、xhigh）。`--credential-env` 可重复；交互时用逗号分隔多个名字。只保存变量名，不保存密钥。
+（例如 DeepSeek `deepseek-flash` 只接受 off、low、high、max；Pi 的模型表里没有 high 档的模型需另选级别或用 `default`）。`--credential-env` 可重复；交互时用逗号分隔多个名字。只保存变量名，不保存密钥。
 已有 `config.json` 时显示差异并要求确认，`--yes` 跳过确认；已有私有 settings/models 保留。
 Node 来自 PATH，Pi CLI 来自本源码仓库的锁定安装；版本分别要求 >=22.19.0 和 1.3.0。
 
@@ -107,7 +107,7 @@ Node 来自 PATH，Pi CLI 来自本源码仓库的锁定安装；版本分别要
   "config_version": 1,
   "provider": "openai",
   "model": "<model-id>",
-  "reasoning_effort": null,
+  "reasoning_effort": "high",
   "credential_env": ["OPENAI_API_KEY"],
   "node": "/absolute/path/to/node",
   "pi_cli": "/absolute/EHAI/agent-backends/pi/node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js",

@@ -70,7 +70,7 @@ $env:OPENAI_API_KEY = Read-Host '模型 API Key' -MaskInput
 
 `init` 从本仓库解析锁定的 Pi CLI，用 PATH 上的 Node 并校验版本，生成私有 Pi settings/models。
 已有配置会显示差异并要求确认，`--yes` 使用默认值并跳过确认。已有私有 Pi settings/models 保留。
-模型 ID 必须是所选 Provider 支持的值；推理强度默认交给模型自己决定，指定 `--reasoning-effort` 时必须是该模型确切支持的级别，否则 Pi 会改用其他级别而 EHAI 拒绝启动会话；自定义网关仍需配置私有 `pi/models.json`，见
+模型 ID 必须是所选 Provider 支持的值；推理强度默认 `high`，必须是该模型确切支持的级别，否则 Pi 会改用其他级别而 EHAI 拒绝启动会话；模型没有 high 档时用 `--reasoning-effort` 另选，或用 `default` 交给模型自己决定；自定义网关仍需配置私有 `pi/models.json`，见
 [安装与私有 Pi 配置](docs/USAGE.md#安装与私有-pi-配置)。
 
 | 环境变量 | 含义 |

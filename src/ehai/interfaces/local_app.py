@@ -47,10 +47,10 @@ class LocalConfig(BaseModel):
     config_version: Literal[1] = 1
     provider: Nonempty
     model: Nonempty
-    # None leaves the thinking level to Pi's model default. A named level must be one the
-    # model supports exactly: Pi maps unsupported levels and the harness refuses a mismatch.
+    # A named level must be one the model supports exactly: Pi maps unsupported levels and the
+    # harness refuses a mismatch. None leaves the thinking level to Pi's model default.
     reasoning_effort: Literal["off", "minimal", "low", "medium", "high", "xhigh", "max"] | None = (
-        None
+        "high"
     )
     credential_env: list[str]
     node: Path
@@ -134,7 +134,7 @@ def _init(home: Path, args: argparse.Namespace) -> int:
     model = _prompt("Model ID", old.model if old else None, args.model, args.yes)
     effort = _prompt(
         "Reasoning effort (default leaves it to the model)",
-        (old.reasoning_effort or "default") if old else "default",
+        (old.reasoning_effort or "default") if old else "high",
         args.reasoning_effort,
         args.yes,
     )
