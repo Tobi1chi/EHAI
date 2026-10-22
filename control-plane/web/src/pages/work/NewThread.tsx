@@ -95,6 +95,11 @@ export function NewThread() {
               setProjectChoice(null);
             }}
           >
+            {workspaces.length === 0 && (
+              <option value="" disabled>
+                还没有工作区
+              </option>
+            )}
             {workspaces.map((e) => (
               <option key={e.workspace.workspace_id} value={e.workspace.workspace_id}>
                 {e.workspace.workspace_id}
