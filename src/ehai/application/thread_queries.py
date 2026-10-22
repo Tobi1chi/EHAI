@@ -47,6 +47,7 @@ ThreadTimelineKind = Literal[
     "inbox_resolved",
     "succession_started",
     "integration_created",
+    "integration_branch_created",
 ]
 _RUN_STATUS_CHANGES = {
     EventType.RUN_PAUSED: RunStatus.PAUSED,
@@ -348,6 +349,15 @@ class ThreadQuery:
         elif event.type is EventType.INTEGRATION_CREATED:
             kind, summary = "integration_created", f"Code integration {payload['status']}"
             refs.update({"integration_id": event.correlation_id, "status": payload["status"]})
+        elif event.type is EventType.INTEGRATION_BRANCH_CREATED:
+            kind, summary = "integration_branch_created", f"Branch created: {payload['branch']}"
+            refs.update(
+                {
+                    "integration_id": event.correlation_id,
+                    "branch": payload["branch"],
+                    "commit": payload["commit"],
+                }
+            )
         elif event.type is EventType.PLAN_NODE_COMPLETED:
             kind, summary = "node_completed", "Node completed"
             refs["plan_node_id"] = event.correlation_id

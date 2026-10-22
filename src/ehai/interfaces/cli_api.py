@@ -164,7 +164,7 @@ def _request_arguments(args: argparse.Namespace) -> tuple[str, str, dict[str, Js
             f"{command} is local-only; use start-run/resume-run for API-hosted execution"
         )
     path, fields = _COMMANDS[command]
-    if command == "register-workspace":
+    if command in {"register-workspace", "add-workspace-folder"}:
         return "POST", path, _object_file(args.file)
     if command in FILE_COMMANDS:
         file_body = _object_file(args.file)

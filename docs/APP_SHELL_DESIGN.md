@@ -62,7 +62,7 @@ EHAI 的核心、HTTP/SSE、生成 Client 与多工作区管理器已经接通�
 时间线条目为 `{at, kind, refs, summary}`，`kind` 至少覆盖：`goal_created`、`discussion_message`
 （用户消息与 Planner 回复，含 `conversation_id`，回复带出的 `plan_revision_id`）、
 `plan_revision_created`、`plan_approved`、`run_started`、`run_status_changed`、`node_completed`
-（通过的 Gate 与成果）、`inbox_opened`、`inbox_resolved`、`succession_started`、`integration_created`。
+（通过的 Gate 与成果）、`inbox_opened`、`inbox_resolved`、`succession_started`、`integration_created`、`integration_branch_created`。
 条目只来自已持久化的事实；查不到来源的不补造。支持 `limit` 与按偏移的 `after` 分页；
 实时更新沿用现有事件流触发重读。
 

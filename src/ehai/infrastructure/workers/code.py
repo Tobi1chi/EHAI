@@ -20,7 +20,8 @@ from ehai.application.async_runtime import (
     WorkerEventType,
 )
 from ehai.application.handoffs import AttemptHandoffs, HandoffSubmission, handoff_id_for
-from ehai.application.ports import ArtifactStore
+from ehai.application.ports import ArtifactStore, StateConflictError
+from ehai.application.queries import QueryNotFoundError
 from ehai.application.workers import (
     AdoptedResultInputs,
     ArtifactInputSnapshot,
@@ -222,6 +223,51 @@ class CodeRuntimeConnector:
                 )
             session.commit()
         return result_document
+
+    def create_integration_branch(
+        self, run_id: ID, integration_id: ID, branch: str
+    ) -> dict[str, JsonValue]:
+        """Publish only the latest persisted successful result for this integration."""
+        with self.database.unit_of_work() as session:
+            if session.states.get_run(run_id) is None:
+                raise QueryNotFoundError("Run", run_id)
+            integration = next(
+                (
+                    stored.event.payload
+                    for stored in reversed(session.events.list_events())
+                    if stored.event.type is EventType.INTEGRATION_CREATED
+                    and stored.event.run_id == run_id
+                    and stored.event.correlation_id == integration_id
+                ),
+                None,
+            )
+            if integration is None:
+                raise QueryNotFoundError("Integration", integration_id)
+            commit = integration.get("commit")
+            if integration.get("status") != "integrated" or not isinstance(commit, str):
+                raise StateConflictError("Conflicted integration cannot be published to a branch")
+            try:
+                created = self.code_store.create_integration_branch(branch, commit)
+            except MetadataError as error:
+                raise StateConflictError(str(error)) from error
+            result: dict[str, JsonValue] = {
+                "run_id": run_id,
+                "integration_id": integration_id,
+                "branch": branch,
+                "commit": commit,
+                "created": created,
+            }
+            if created:
+                session.events.append(
+                    Event(
+                        type=EventType.INTEGRATION_BRANCH_CREATED,
+                        correlation_id=integration_id,
+                        run_id=run_id,
+                        payload=result,
+                    )
+                )
+            session.commit()
+        return result
 
     def _adopted_snapshot(self, adoption_id: ID) -> tuple[ResultAdoption, GitCodeResult]:
         """Read immutable accepted evidence without allocating a verification workspace."""

@@ -26,11 +26,11 @@
 | Agent harness Hub | 无模型验证 | 所有 Pi 角色经独立 `ehai-hub`（默认本机子进程）；Worker 路径由产品 E2E 在 Linux/Windows CI 覆盖，未用真实模型；跨机器需同路径 | [HUB](HUB.md) · [核心](EVIDENCE.md#核心执行) |
 | 阶段上下文 | 部分 | 逻辑 Phase Session 共享；物理 Pi Session 按 Attempt 隔离 | [EXECUTION_MODEL](EXECUTION_MODEL.md#实例与会话) |
 | 批准内过程调整 / Block 清单 | 真实验证 | 清单只描述变化，不批准、不授权复用成果；草稿可读已完成成果，先粗后细在中型任务上端到端通过（10-04）；暂停时不能决定人工 Gate | [核心](EVIDENCE.md#核心执行) |
-| Git 自动整合 | 无模型验证 | 用历史真实成果整合；新增结果事件持久化、Run 整合列表、1 MiB 截断 diff 的 HTTP/CLI/MCP 与 integration_created 时间线；产品 E2E 覆盖无冲突整合、重试同 ID、列表、diff 与时间线，Web 线程页的整合与差异查看经本机管理器 + 脚本化 Pi 走通；MCP 与冲突路径未实跑 | [Git 自动整合](USAGE.md#git-自动整合) · [核心](EVIDENCE.md#核心执行) |
+| Git 自动整合 | 无模型验证 | 用历史真实成果整合；结果事件持久化、Run 整合列表、1 MiB 截断 diff 与新分支发布的 HTTP/CLI/MCP 已接线；产品 E2E 覆盖无冲突整合、重试同 ID、列表、diff、创建 ehai/e2e 分支与同 commit 幂等，HEAD/工作树状态不变，两种整合时间线均去重；此前 Web 整合与差异查看经脚本化 Pi 走通，本轮分支前端、真实模型及冲突路径未实跑；MCP 本轮只读 Schema | [Git 自动整合](USAGE.md#git-自动整合) · [文件夹与分支验证](WORKSPACE_MANAGER.md#文件夹添加与整合分支后端验证2026-10-22) |
 | 跨批准后继 Run | 真实验证 | 单次接续通过；基线变化重执行、多次接续、崩溃未验证 | [核心](EVIDENCE.md#核心执行) |
 | 长任务可靠性 | 部分 | Worker/Reviewer 运行中强杀后可恢复（重启后等旧租约过期，最长 5 分钟，10-03 真实验证）；写入中断、长链接续未系统验证 | [未决问题](EVIDENCE.md#已知未决问题) |
 | Token / 费用硬限额 | 暂缓 | 2026-09-16 决定暂不实现；用量记录保留 | — |
-| 产品 E2E | 无模型验证 | 真实 Pi 经本机 Hub、Git worktree，模型为脚本化服务；覆盖无冲突的 integrate-run；不覆盖真实模型、独立 Hub、整合冲突、MCP | [REFACTOR_PLAN](REFACTOR_PLAN.md#产品-e2e) |
+| 产品 E2E | 无模型验证 | 真实 Pi 经本机 Hub、Git worktree，模型为脚本化服务；覆盖无冲突的 integrate-run、diff、新分支创建/同 commit 幂等、HEAD/工作树状态不变及时间线单条事件；不覆盖真实模型、独立 Hub、整合冲突、管理器 from-folder、MCP | [REFACTOR_PLAN](REFACTOR_PLAN.md#产品-e2e) |
 | CI | 无模型验证 | 静态检查、两平台 mypy、契约比对、TS 构建、Linux/Windows E2E | [REFACTOR_PLAN](REFACTOR_PLAN.md#执行记录) |
 | P2 总验收 | 真实验证 | 导入路径真实手动验收通过，含强杀恢复；Pi Planner 规划路径补充验收通过，未含强杀（单个小仓库、macOS，10-03）；Windows、多轮讨论与 replan 未做 | [REFACTOR_PLAN](REFACTOR_PLAN.md#四步顺序) |
 
@@ -39,9 +39,9 @@
 | 能力 | 状态 | 关键边界 | 证据 |
 | --- | --- | --- | --- |
 | P3.1 项目总览 | 无模型验证 | 按来源宿主查询，不做跨宿主聚合 | [P3](EVIDENCE.md#p3-平台后端) |
-| 线程读模型与线程式页面 | 无模型验证 | 核心摘要/详情/时间线、管理器聚合与 CLI/MCP 已接线；产品 E2E 覆盖创建/草稿/运行/人工 Gate/完成、404、时间线及分页；Web 新建线程、时间线、批准并开始、人工处理在 fake Worker 工作区走通；管理器离线聚合、MCP 调用、Pi 工作区与真实模型未验证 | [线程查询](USAGE.md#线程查询) · [P3](EVIDENCE.md#p3-平台后端) |
-| 引擎守护进程与单一配置（模块 B） | 无模型验证 | macOS 临时 EHAI_HOME 下 init→up→status→add→doctor→down、重启恢复登记与重复命令通过；doctor 如实报告终端/守护进程缺凭证；页面在 add 的 Pi 工作区展示了执行配置（未启动 Run），未覆盖真实模型、活动任务停止冲突、Windows/Linux 实跑 | [本地引擎验证](WORKSPACE_MANAGER.md#模块-b-验证记录2026-10-22) |
-| Tauri 桌面外壳 | 部分 | 启动页探测守护进程后跳转到工作台，可编辑并记住启动命令、经交互式登录 shell 执行；macOS 调试构建的窗口连上本机管理器并加载工作台（日志核对）；点击“启动 EHAI”、打包与 Windows 未验证 | [desktop](../desktop/README.md) |
+| 线程读模型与线程式页面 | 无模型验证 | 核心摘要/详情/时间线、管理器聚合与 CLI/MCP 已接线；产品 E2E 覆盖创建/草稿/运行/人工 Gate/完成、404、时间线及分页；Web 新建线程、时间线、批准并开始、人工处理在 fake Worker 工作区走通；整合、按文件看差异、刷新后重开、创建新分支（核对仓库 HEAD 与工作树未变）与非 ehai up 管理器的添加提示，在脚本化 Pi 工作区走通；页面添加文件夹与系统通知尚未在浏览器实跑；管理器离线聚合、MCP 调用、Pi 工作区与真实模型未验证 | [线程查询](USAGE.md#线程查询) · [P3](EVIDENCE.md#p3-平台后端) |
+| 引擎守护进程与单一配置（模块 B） | 无模型验证 | macOS 临时 EHAI_HOME 下 init/up/local/from-folder/down 通过，三同名 Git 目录依次 ready（-2/-3）；重复路径 409 带已有 ID，非 Git/子目录/缺失目录 422，手动管理器 local=false 且添加 409；CLI add 重复原登记仍幂等，MCP local 查询/Schema/重复路径错误实跑；既有 init/add/doctor 证据保留；本轮不覆盖前端、真实模型、活动任务停止冲突或 Windows/Linux 实跑 | [本地引擎验证](WORKSPACE_MANAGER.md#模块-b-验证记录2026-10-22) · [本轮记录](WORKSPACE_MANAGER.md#文件夹添加与整合分支后端验证2026-10-22) |
+| Tauri 桌面外壳 | 部分 | 启动页探测守护进程后跳转到工作台，可编辑并记住启动命令、经交互式登录 shell 执行；macOS 调试构建的窗口连上本机管理器并加载工作台（日志核对）；守护进程页面只获准选择文件夹和发系统通知（对话框与通知插件，已编译未实跑）；点击“启动 EHAI”、打包与 Windows 未验证 | [desktop](../desktop/README.md) |
 | P3.2 统一人工待办 | 无模型验证 | 人工 Gate 闭环通过；类型为干预、人工验收、便签与生活确认（运行中 Worker 请求已删除） | [P3](EVIDENCE.md#p3-平台后端) |
 | P3.2 便签 | 真实验证 | 便签→修订→执行→人工验收通过；propose_process 路径未验证 | [P3](EVIDENCE.md#p3-平台后端) |
 | P3.3 薄 Web 工作台 | 无模型验证 | 生活/工作两区与共用页面均接入正式 API（fake Worker、Jev 协议替身）；Run 执行图与逐次尝试轨迹用一次真实 Run 数据库的只读副本核对，分支形态只用改写的响应看过；不含创建 Goal/规划、通用 Workflow；生活分区靠浏览器偏好 | [P3](EVIDENCE.md#p3-平台后端) · [ADR 0008](adr/0008-web-workbench.md) |

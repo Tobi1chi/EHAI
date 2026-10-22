@@ -124,6 +124,22 @@ init 会保证不小于单工作区默认值）。`pi-backend.json` 是生成的
 无需另行维护；原生 `pi/settings.json` 和 `pi/models.json` 使用仓库示例初始化。
 配置更改不会覆盖已登记的不可变工作区配置；管理器端口、总容量和 UI 目录变更须 down/up。
 
+App 可先调用管理根地址的 `GET /api/v1/local`（`getLocalEngine`），返回
+`{data: {available, home, provider, model}}`，只含默认 Provider/模型与 home 路径，不含凭证。
+`ehai up` 显式向管理器传 `--local-home`；手动管理器未传此参数时 available=false，其余三项为 null，
+不会自行读取 `~/.ehai`。CLI 为 `get-local-engine`，MCP 为 `get_local_engine`。
+
+`POST /api/v1/workspaces/from-folder`（`addWorkspaceFolder`）接受
+`{path, workspace_id?, allowed_commands?, git_permissions?, available_shells?}`，返回与
+`startWorkspace` 相同的 `{data: WorkspaceDescriptor}`。它与 `ehai add` 共用登记构造函数，
+从用户 config 推导 Pi、模型、推理强度和容量，登记后启动。权限列表省略时为 `[]`，不接受 null；
+workspace_id 省略或 null 时从目录名推导，已占用则依次试 `-2`、`-3`（保持 64 字符上限）。
+路径须为存在的目录及 Git 工作树根，否则返回可读的 422；同一路径已登记返回 409 并附已有 workspace_id，
+显式 ID 已被不同登记占用、目录嵌套或容量不足也返回 409。启动失败按原生命周期返回 failed 状态，登记保留。
+未配置 local-home 的管理器返回 409，提示使用 `ehai up`。这一步不批准计划或授权执行模型。
+CLI：`add-workspace-folder --file <请求JSON>`（需要管理器 `--api-url`）；MCP：`add_workspace_folder`。
+CLI `ehai add` 重复相同登记仍保持幂等；文件夹 API 对重复路径明确返回冲突。
+
 凭证必须在运行 `up` 的环境中设置；桌面 App 第一版应连接已运行的管理器，或提示从终端启动。
 `doctor` 分别检查当前终端和守护进程实际继承的变量是否存在，不输出值；缺少变量时返回 1，
 不以工作区 ready 推断模型可用。详细启停、日志和权限行为见 [多工作区后端](WORKSPACE_MANAGER.md)。
@@ -504,6 +520,26 @@ MCP 沿用相同契约，名称为 `list_run_integrations`、`get_integration_di
 线程时间线从该事件生成 `integration_created`，refs 包含 run_id、integration_id、status。
 此前版本只持久化 Git 合并游标与补丁，未保存完整整合结果；不从游标补造历史结果或时间线，
 这些整合在显式重试后才进入列表。补丁仍保留在既有宿主存储中，不复制到数据库。
+
+审完 diff 后，可把整合 commit 放到用户仓库的新分支，再按自己的 Git 流程合并或开 PR：
+
+~~~sh
+uv run --no-sync ehai --api-url http://127.0.0.1:8000 create-integration-branch \
+  --run-id <run-id> --integration-id <integration-id> --branch ehai/result
+~~~
+
+`POST /api/v1/runs/{run_id}/integrations/{integration_id}/branch`（`createIntegrationBranch`），
+请求 `{branch: string}`，响应 `{data: {run_id, integration_id, branch, commit, created}}`。
+MCP 为 `create_integration_branch`，请求体同 HTTP。无需额外幂等键。
+只使用该 integration_id 最新持久记录，要求 status=integrated；conflicted 或没有 Git 后端返回 409，
+未知 Run/整合（含归属不符）返回 404。分支名用 `git check-ref-format --branch` 校验，非法名称返回 422，
+不接受 `@{-1}` 等展开表达式。核心在 base workspace 中用
+`git update-ref refs/heads/<branch> <commit> ""` 原子创建；commit 已在共享对象库中，
+不产生新 commit，不 checkout、不改用户工作树/索引/当前 HEAD，不 push。
+同名分支已指向该 commit 时成功且 created=false；指向其他 commit 时返回 409，说明已有指向且不覆盖。
+真正创建时才写 `IntegrationBranchCreated`（payload 为上述返回字段），时间线新增
+`integration_branch_created`，refs 含 run_id、integration_id、branch、commit（以及 event_id）；
+重复调用不重复记事件。
 
 ## 跨批准后继 Run
 

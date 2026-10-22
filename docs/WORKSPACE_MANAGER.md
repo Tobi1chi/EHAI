@@ -30,6 +30,8 @@ PID 文件保留为上次启动记录，是否运行以令牌保护的管理器�
 
 `add [path]` 默认为当前目录；工作区 ID 从目录名转小写、将非法字符换为 `-`、截断至 64 字符，
 空名称用 `workspace`，Windows 保留名加 `workspace-` 前缀；可传 `--workspace-id` 明确指定。
+省略 ID 且目录名派生的 ID 已占用时，依次尝试 `-2`、`-3`，截短前缀以保持 64 字符上限。
+目录必须存在且是 Git 工作树根；子目录错误会提示根路径。
 它调用已有登记和启动接口，沿用路径隔离、配置固定和容量预留限制；
 不批准计划、不启动 Run、不授权模型执行。相同配置登记保持幂等。
 
@@ -40,6 +42,27 @@ uv run ehai add /absolute/path/to/repo --workspace-id project-a \
 
 `--allow-command JSON_ARGV`、`--git-permission`、`--shell` 都可重复；默认三个列表为空。
 自定义 Shell 和 Git 权限仍受核心执行授权规则约束。
+
+### 从 App 选择文件夹
+
+`ehai up` 给管理器显式传入 `--local-home <EHAI_HOME>`；管理器只使用该位置的用户配置，
+与 CLI `ehai add` 调用同一登记构造函数。手动管理器没有此参数时不读取默认 `~/.ehai`。
+
+- `GET /api/v1/local`（`getLocalEngine`）：`{data: {available, home, provider, model}}`，
+  不含凭证。没有 local-home 时 available=false，其余字段均为 null。
+- `POST /api/v1/workspaces/from-folder`（`addWorkspaceFolder`）：
+  `{path: string, workspace_id?: string, allowed_commands?: string[][], git_permissions?: string[], available_shells?: string[]}`；
+  返回与 `startWorkspace` 相同的 `{data: WorkspaceDescriptor}`。权限列表省略为 `[]`（null 非法），
+  workspace_id 省略或 null 时自动派生。登记后立即启动，仍遵守目录隔离、不可变配置和容量预留。
+
+无 local-home 时添加返回 409，提示通过 `ehai up` 启动。无效目录、非 Git 或非工作树根返回可读的 422；
+同一路径（解析符号链接后）已登记返回 409，并说明已有 workspace_id。显式 ID 已绑定其他配置返回 409。
+启动冲突或失败保留登记，可查状态并修复后 `start-workspace`；重试文件夹添加会报告路径已登记。
+这与 CLI `ehai add` 的同配置重复登记幂等行为有所区别；两者推导的运行配置一致。
+读取 local、登记和启动工作区都不授权 Run 或启动模型任务。
+
+CLI 为 `get-local-engine` 和 `add-workspace-folder --file <请求JSON>`（使用管理根 `--api-url`）；
+MCP 为 `get_local_engine`、`add_workspace_folder`，写入仍传 `request_json`，契约由 `get_request_schema` 返回。
 `status` 显示守护进程和各工作区的真实生命周期状态；离线时只列出登记信息并说明健康未知，返回 1。
 `doctor` 逐项检查配置、Node/Pi 版本与私有设置、终端/守护进程凭证变量存在性、
 管理器和工作区运行时健康；全部通过返回 0，检查失败返回 1，命令本身出错返回 2。
@@ -165,7 +188,8 @@ uv run ehai --api-url http://127.0.0.1:8765 start-workspace --workspace-id proje
 ## HTTP / MCP / TypeScript
 
 管理路由位于 `/api/v1/workspaces`，含登记、查询、`/{workspace_id}/start`、
-`/{workspace_id}/stop`、`/{workspace_id}/execution-config`；总览为 `/api/v1/workspace-overview`。
+`/{workspace_id}/stop`、`/{workspace_id}/execution-config`、`/from-folder`；本地配置摘要为
+`/api/v1/local`，总览为 `/api/v1/workspace-overview`。
 业务路由位于 `/workspaces/{workspace_id}/api/v1/...`，只转发原核心公开路由，支持 SSE。
 管理 OpenAPI 为 `/openapi.json`，核心契约为 `/core-openapi.json`，工作区契约为
 `/workspaces/{workspace_id}/openapi.json`。
@@ -180,6 +204,8 @@ uv run ehai-mcp --api-url http://127.0.0.1:8765
 
 生成的 `EhaiWorkspaceManagerClient` 提供管理操作，`manager.workspace("project-a")`
 返回绑定该工作区的 `EhaiApiClient`。页面仍只消费这些公开能力。
+管理 Client 新增 `getLocalEngine()`、`addWorkspaceFolder(request)`；核心 Client 新增
+`createIntegrationBranch(runId, integrationId, {branch})`，语义见 [Git 自动整合](USAGE.md#git-自动整合)。
 
 实际薄验证、失败修复与未覆盖范围见 [运行证据](EVIDENCE.md#p3-平台后端)。
 
@@ -217,3 +243,79 @@ Ruff check/format、mypy 默认平台及 win32、两条 import 契约全部通�
 down 后两个 PID 均不存在、日志文件无进程持有、manager.lock 与 host.lock 均已释放。
 pgrep 因环境缺少 sysmond 无法列举进程，ps 也被沙箱拒绝，因此退出确认采用上述具体 PID、
 lsof 和锁检查；未据此宣称已检查系统上所有不相关进程。未保存新的试跑脚本。
+
+## 文件夹添加与整合分支后端验证（2026-10-22）
+
+macOS；临时目录 `/private/tmp/ehai-app-backend-7k2wqx15`；端口 50905（up）和 50906（手动管理器），
+Node v25.8.1、Pi 1.3.0。用户配置指定占位 openai/placeholder-model，凭证变量
+`EHAI_FOLDER_MISSING_KEY` 未设置，没有真实模型调用。下列命令在该临时目录执行，
+`repo` 指向本次源码目录；没有创建测试脚本或仓库内临时测试文件。
+
+```sh
+repo=/Users/tobiichieigetsu/Workspace/AI/EHAI-app
+trial=/private/tmp/ehai-app-backend-7k2wqx15
+cd "$trial"
+export EHAI_HOME="$trial/home"
+mkdir -p home 'one/Sample Repo' 'two/Sample Repo' 'three/Sample Repo' not-git
+git init -q 'one/Sample Repo'
+git init -q 'two/Sample Repo'
+git init -q 'three/Sample Repo'
+uv run --no-sync --project "$repo" ehai init --provider openai --model placeholder-model \
+  --credential-env EHAI_FOLDER_MISSING_KEY --worker-capacity 1 --planner-capacity 1 --port 50905 --yes
+uv run --no-sync --project "$repo" ehai up
+curl -sS -w '\nHTTP %{http_code}\n' http://127.0.0.1:50905/api/v1/local
+curl -sS -w '\nHTTP %{http_code}\n' -H 'Content-Type: application/json' \
+  -d '{"path":"/private/tmp/ehai-app-backend-7k2wqx15/one/Sample Repo"}' \
+  http://127.0.0.1:50905/api/v1/workspaces/from-folder
+curl -sS -w '\nHTTP %{http_code}\n' -H 'Content-Type: application/json' \
+  -d '{"path":"/private/tmp/ehai-app-backend-7k2wqx15/not-git"}' \
+  http://127.0.0.1:50905/api/v1/workspaces/from-folder
+```
+
+| 命令/请求 | 实际结果 |
+| --- | --- |
+| init；up | 均退出 0；私有配置生成；管理器 ready |
+| GET local | 200，data={available:true, home:"…/home", provider:"openai", model:"placeholder-model"} |
+| POST one/Sample Repo | 200，workspace_id=sample-repo，status=ready；权限三列表均空；无需初始 commit |
+| POST not-git | 422 invalid_workspace，`Workspace path must be a Git worktree root: …/not-git` |
+| 重复 POST one/Sample Repo（同上原命令） | 409 workspace_conflict，`Path is already registered as workspace_id=sample-repo` |
+| 同上 POST，分别把 path 换成 two/Sample Repo、three/Sample Repo | 各 200、ready，ID 分别 sample-repo-2、sample-repo-3 |
+| mkdir -p one/Sample Repo/subdir 后，同上 POST 该子目录 | 422，`Select the Git worktree root …/one/Sample Repo, rather than …/subdir` |
+| 同上 POST，path 换成 …/missing | 422，`Workspace path must be an existing directory: …/missing` |
+| ehai add one/Sample Repo（使用同一 home） | 退出 0，原 sample-repo: ready，CLI 同配置重加仍幂等 |
+| ehai --api-url http://127.0.0.1:50905 get-local-engine | 退出 0，显示同一可用 home/Provider/模型 |
+| ehai down | 退出 0，Manager stopped；保留登记 |
+
+手动管理器不传新参数（另一终端；不依赖 EHAI_HOME）：
+
+```sh
+uv run --no-sync --project "$repo" ehai-manager --data-dir "$trial/manual-manager" --port 50906
+curl -sS -w '\nHTTP %{http_code}\n' http://127.0.0.1:50906/api/v1/local
+curl -sS -w '\nHTTP %{http_code}\n' -H 'Content-Type: application/json' \
+  -d '{"path":"/private/tmp/ehai-app-backend-7k2wqx15/one/Sample Repo"}' \
+  http://127.0.0.1:50906/api/v1/workspaces/from-folder
+```
+
+GET 为 200，`{data:{available:false,home:null,provider:null,model:null}}`；POST 为 409，
+`Folder registration requires a manager started with ehai up`。最后 Ctrl+C 停止；日志确认
+application shutdown complete、server process finished，进程因 KeyboardInterrupt 退出 130。
+
+补充 MCP 协议检查：再次 up 显式恢复三工作区，使用安装入口 `ehai-mcp --api-url http://127.0.0.1:50905`
+连接 stdio ClientSession。工具列表包含 get_local_engine、add_workspace_folder、create_integration_branch；
+get_request_schema 能读取两个新写接口的封闭请求 Schema，get_local_engine 返回上述摘要，
+add_workspace_folder 重复已登记路径返回 isError=true 和原 409/已有 ID。然后 down 退出 0。
+首次检查误用 `-m ehai.interfaces.mcp_server`（该模块没有 `__main__` 启动入口），连接提前关闭；
+改用正式安装入口后通过，未改动 MCP 服务实现。未验证模型 Provider 接受或实际模型调用这些工具，
+也未通过 MCP 成功新增工作区或创建分支。
+
+核心分支能力由唯一产品 E2E 末尾验证：CLI create-integration-branch 创建 ehai/e2e，
+rev-parse 与整合 commit 一致；HTTP 同名重试 created=false；前后用户 HEAD、status --porcelain 一致；
+线程时间线只有一条 integration_branch_created，refs 的 run_id/integration_id/branch/commit 匹配。
+产品 E2E 使用真实 Pi 与脚本化 Provider，不验证真实模型，也不承载管理器 from-folder。
+本轮未验证前端、Windows/Linux 实跑、整合冲突或已有分支指向其他 commit 的运行路径。
+
+最终检查：Schema 生成、TS Client 生成与 npm build 均退出 0；Ruff check 通过，format --check
+为 261 files already formatted；mypy 默认平台和 win32 均为 198 source files 无问题；
+lint-imports 两条契约 kept；产品 E2E 为 1 passed（19.79 秒）；git diff --check 无输出。
+本轮无功能范围偏离：local 摘要沿用管理 API 的 data 封套，CLI add 保留原重复登记幂等语义，
+文件夹 API 按要求对重复路径返回 409。未 git commit，未改 uv.lock；前端和 desktop 的并行改动保留。

@@ -3883,7 +3883,8 @@
             "inbox_opened",
             "inbox_resolved",
             "succession_started",
-            "integration_created"
+            "integration_created",
+            "integration_branch_created"
           ],
           "title": "Kind",
           "type": "string"
@@ -4015,6 +4016,46 @@
       "properties": {
         "data": {
           "$ref": "#/$defs/CodeIntegrationDiff"
+        }
+      }
+    },
+    "IntegrationBranch": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "run_id",
+        "integration_id",
+        "branch",
+        "commit",
+        "created"
+      ],
+      "properties": {
+        "run_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "integration_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "branch": {
+          "type": "string"
+        },
+        "commit": {
+          "type": "string"
+        },
+        "created": {
+          "type": "boolean"
+        }
+      }
+    },
+    "IntegrationBranchResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "data"
+      ],
+      "properties": {
+        "data": {
+          "$ref": "#/$defs/IntegrationBranch"
         }
       }
     }

@@ -68,6 +68,7 @@ from ehai.interfaces.http_models import (
     ApprovePlanRequest,
     CancelRunRequest,
     CreateGoalRequest,
+    CreateIntegrationBranchRequest,
     CreateProjectRequest,
     DataResponse,
     DecideHumanCheckRequest,
@@ -187,6 +188,7 @@ def create_app(
     artifact_root: str | None = None,
     code_integration: Callable[[ID, ID], dict[str, JsonValue]] | None = None,
     integration_diff: Callable[[ID, ID], tuple[str, bool]] | None = None,
+    integration_branch: Callable[[ID, ID, str], dict[str, JsonValue]] | None = None,
     runtime_context: Callable[[], RuntimeContextView] | None = None,
     notes: NoteService | None = None,
     event_consumers: EventConsumerService | None = None,
@@ -341,6 +343,24 @@ def create_app(
     )
     def list_run_integrations(run_id: UuidInput) -> DataResponse:
         return _response(query_service.list_run_integrations(_id(str(run_id))))
+
+    @router.post(
+        "/runs/{run_id}/integrations/{integration_id}/branch",
+        response_model=DataResponse,
+        operation_id="createIntegrationBranch",
+        responses={
+            **_read_responses("IntegrationBranchResponse", "Publish integration to a new branch"),
+            409: {"model": ErrorResponse, "description": "Integration or branch conflict"},
+        },
+    )
+    def create_integration_branch(
+        run_id: UuidInput, integration_id: UuidInput, request: CreateIntegrationBranchRequest
+    ) -> DataResponse:
+        if integration_branch is None:
+            raise StateConflictError("This host has no Git integration backend")
+        return _response(
+            integration_branch(_id(str(run_id)), _id(str(integration_id)), request.branch)
+        )
 
     @router.get(
         "/runs/{run_id}/integrations/{integration_id}/diff",

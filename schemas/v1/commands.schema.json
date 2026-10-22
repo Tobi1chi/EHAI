@@ -1815,6 +1815,21 @@
       ],
       "title": "ExecutionCodexServerRequest",
       "type": "object"
+    },
+    "CreateIntegrationBranchRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "branch": {
+          "minLength": 1,
+          "title": "Branch",
+          "type": "string"
+        }
+      },
+      "required": [
+        "branch"
+      ],
+      "title": "CreateIntegrationBranchRequest",
+      "type": "object"
     }
   }
 }

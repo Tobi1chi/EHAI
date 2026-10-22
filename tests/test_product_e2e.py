@@ -20,8 +20,9 @@ Scenario:
 4. Decide the human Check through the CLI. The Run completes; repeating the decision
    with the same idempotency key is accepted without reopening any request.
 
-Real model calls and integrate-run are outside this deterministic E2E and are
-verified manually; see docs/REFACTOR_PLAN.md.
+5. Integrate completed results, read their diff and publish to a new user-repository branch.
+
+Real model calls are verified manually; see docs/REFACTOR_PLAN.md.
 """
 
 from __future__ import annotations
@@ -682,3 +683,52 @@ def test_product_e2e(tmp_path: Path) -> None:
             "integration_id": integration["integration_id"],
             "status": "integrated",
         }.items() <= created[0]["refs"].items()
+
+        # 6. Publish the reviewed integration without changing the user's current checkout.
+        workspace = host.root / "workspace"
+
+        def git(*arguments: str) -> str:
+            return subprocess.run(
+                ["git", "-C", str(workspace), *arguments],
+                capture_output=True,
+                text=True,
+                check=True,
+            ).stdout
+
+        head, status = git("rev-parse", "HEAD"), git("status", "--porcelain")
+        published = host.cli(
+            "create-integration-branch",
+            "--run-id",
+            run_id,
+            "--integration-id",
+            integration["integration_id"],
+            "--branch",
+            "ehai/e2e",
+        )
+        assert published == {
+            "run_id": run_id,
+            "integration_id": integration["integration_id"],
+            "branch": "ehai/e2e",
+            "commit": integration["commit"],
+            "created": True,
+        }
+        assert git("rev-parse", "refs/heads/ehai/e2e").strip() == integration["commit"]
+        repeated = host.http(
+            "POST",
+            f"/runs/{run_id}/integrations/{integration['integration_id']}/branch",
+            {"branch": "ehai/e2e"},
+        )
+        assert repeated == {**published, "created": False}
+        assert git("rev-parse", "HEAD") == head
+        assert git("status", "--porcelain") == status
+        timeline = host.cli("get-thread-timeline", "--goal-id", goal["goal_id"])
+        branches = [
+            item for item in timeline["items"] if item["kind"] == "integration_branch_created"
+        ]
+        assert len(branches) == 1
+        assert {
+            "run_id": run_id,
+            "integration_id": integration["integration_id"],
+            "branch": "ehai/e2e",
+            "commit": integration["commit"],
+        }.items() <= branches[0]["refs"].items()

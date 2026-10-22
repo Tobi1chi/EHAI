@@ -22,6 +22,7 @@ from ehai.interfaces.event_consumers_api import (
 )
 from ehai.interfaces.http_models import (
     ApprovePlanRequest,
+    CreateIntegrationBranchRequest,
     ExecutionConfigRequest,
     ImportPlanRequest,
     IntegrateRunRequest,
@@ -82,6 +83,24 @@ queries["$defs"]["CodeIntegrationDiffResponse"] = {
     "additionalProperties": False,
     "required": ["data"],
     "properties": {"data": {"$ref": "#/$defs/CodeIntegrationDiff"}},
+}
+queries["$defs"]["IntegrationBranch"] = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["run_id", "integration_id", "branch", "commit", "created"],
+    "properties": {
+        "run_id": {"$ref": "common.schema.json#/$defs/Id"},
+        "integration_id": {"$ref": "common.schema.json#/$defs/Id"},
+        "branch": {"type": "string"},
+        "commit": {"type": "string"},
+        "created": {"type": "boolean"},
+    },
+}
+queries["$defs"]["IntegrationBranchResponse"] = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["data"],
+    "properties": {"data": {"$ref": "#/$defs/IntegrationBranch"}},
 }
 
 
@@ -158,6 +177,9 @@ events["$defs"]["EventType"]["enum"] = [event.value for event in EventType]
 events_path.write_text(json.dumps(events, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 queries_path.write_text(json.dumps(queries, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 commands["$defs"]["IntegrateRunRequest"] = IntegrateRunRequest.model_json_schema()
+commands["$defs"]["CreateIntegrationBranchRequest"] = (
+    CreateIntegrationBranchRequest.model_json_schema()
+)
 for request_type in (ApprovePlanRequest, StartRunRequest):
     request_schema = request_type.model_json_schema()
     commands["$defs"].update(request_schema.pop("$defs", {}))

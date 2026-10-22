@@ -5,6 +5,72 @@
     "version": "1"
   },
   "paths": {
+    "/api/v1/local": {
+      "get": {
+        "summary": "Local Engine",
+        "operationId": "getLocalEngine",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LocalEngineResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/workspaces/from-folder": {
+      "post": {
+        "summary": "Add Folder",
+        "operationId": "addWorkspaceFolder",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AddWorkspaceFolderRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Local engine or workspace conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Invalid folder or local configuration",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/workspaces": {
       "get": {
         "summary": "List Workspaces",
@@ -274,6 +340,94 @@
   },
   "components": {
     "schemas": {
+      "AddWorkspaceFolderRequest": {
+        "properties": {
+          "path": {
+            "type": "string",
+            "maxLength": 4096,
+            "minLength": 1,
+            "title": "Path"
+          },
+          "workspace_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^[a-z0-9][a-z0-9_-]{0,63}$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Workspace Id"
+          },
+          "allowed_commands": {
+            "items": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "type": "array",
+            "title": "Allowed Commands"
+          },
+          "git_permissions": {
+            "items": {
+              "type": "string",
+              "enum": [
+                "git.read",
+                "git.local_write",
+                "git.remote_write",
+                "git.dangerous"
+              ]
+            },
+            "type": "array",
+            "title": "Git Permissions"
+          },
+          "available_shells": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Available Shells"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "path"
+        ],
+        "title": "AddWorkspaceFolderRequest"
+      },
+      "ErrorDetail": {
+        "properties": {
+          "code": {
+            "type": "string",
+            "title": "Code"
+          },
+          "message": {
+            "type": "string",
+            "title": "Message"
+          }
+        },
+        "type": "object",
+        "required": [
+          "code",
+          "message"
+        ],
+        "title": "ErrorDetail"
+      },
+      "ErrorResponse": {
+        "properties": {
+          "error": {
+            "$ref": "#/components/schemas/ErrorDetail"
+          }
+        },
+        "type": "object",
+        "required": [
+          "error"
+        ],
+        "title": "ErrorResponse"
+      },
       "HTTPValidationError": {
         "properties": {
           "detail": {
@@ -324,6 +478,67 @@
             "type": "object"
           }
         ]
+      },
+      "LocalEngineData": {
+        "properties": {
+          "available": {
+            "type": "boolean",
+            "title": "Available"
+          },
+          "home": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Home"
+          },
+          "provider": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Provider"
+          },
+          "model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model"
+          }
+        },
+        "type": "object",
+        "required": [
+          "available",
+          "home",
+          "provider",
+          "model"
+        ],
+        "title": "LocalEngineData"
+      },
+      "LocalEngineResponse": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/LocalEngineData"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "LocalEngineResponse"
       },
       "PublicRuntimeSettings": {
         "properties": {

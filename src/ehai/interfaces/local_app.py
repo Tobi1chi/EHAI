@@ -28,6 +28,7 @@ from ehai.hub.adapters.pi.config import (
 )
 from ehai.infrastructure.workspace_supervisor import ProcessFileLock
 from ehai.interfaces.workspace_models import (
+    GitPermission,
     RuntimeSettings,
     WorkspaceDescriptor,
     WorkspaceRegistration,
@@ -79,7 +80,7 @@ def write_private_json(path: Path, document: object) -> None:
     temporary.replace(path)
 
 
-def _load_config(home: Path) -> LocalConfig:
+def load_local_config(home: Path) -> LocalConfig:
     try:
         return LocalConfig.model_validate_json((home / "config.json").read_text(encoding="utf-8"))
     except FileNotFoundError as error:
@@ -108,7 +109,7 @@ def _node_version(node: Path) -> str:
 
 
 def _init(home: Path, args: argparse.Namespace) -> int:
-    old = _load_config(home) if (home / "config.json").exists() else None
+    old = load_local_config(home) if (home / "config.json").exists() else None
     node = shutil.which("node")
     if node is None:
         raise ValueError("Node not found on PATH; install Node >=22.19.0")
@@ -313,6 +314,8 @@ def _up(home: Path, config: LocalConfig, client: httpx.Client) -> int:
         str(config.max_planner_capacity),
         "--local-control-file",
         str(home / "manager.pid"),
+        "--local-home",
+        str(home),
     ]
     if config.ui_dir.is_dir():
         argv.extend(["--ui-dir", str(config.ui_dir)])
@@ -375,15 +378,34 @@ def _down(home: Path, client: httpx.Client) -> int:
     )
 
 
-def _add(
+def folder_registration(
     home: Path,
     config: LocalConfig,
-    client: httpx.Client,
-    record: dict[str, Any],
-    args: argparse.Namespace,
-) -> int:
-    path = args.path.expanduser().resolve(strict=True)
-    workspace_id = args.workspace_id
+    path: Path,
+    *,
+    workspace_id: str | None = None,
+    occupied_ids: set[str],
+    allowed_commands: list[list[str]],
+    git_permissions: list[GitPermission],
+    available_shells: list[str],
+) -> WorkspaceRegistration:
+    """Build the same fixed local runtime for CLI and manager folder registration."""
+    path = path.expanduser().resolve()
+    if not path.is_dir():
+        raise ValueError(f"Workspace path must be an existing directory: {path}")
+    git = subprocess.run(
+        ["git", "-C", str(path), "rev-parse", "--show-toplevel"],
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    if git.returncode:
+        raise ValueError(f"Workspace path must be a Git worktree root: {path}")
+    root = Path(git.stdout.strip()).resolve()
+    if path != root:
+        raise ValueError(f"Select the Git worktree root {root}, rather than {path}")
     if workspace_id is None:
         workspace_id = (
             re.sub(r"[^a-z0-9_-]+", "-", path.name.lower()).strip("-_")[:64] or "workspace"
@@ -398,6 +420,12 @@ def _add(
         }
         if workspace_id in reserved:
             workspace_id = "workspace-" + workspace_id
+        stem = workspace_id
+        suffix = 2
+        while workspace_id in occupied_ids:
+            ending = f"-{suffix}"
+            workspace_id = stem[: 64 - len(ending)] + ending
+            suffix += 1
     runtime = RuntimeSettings(
         worker_kind="pi",
         planner_kind="pi",
@@ -408,13 +436,40 @@ def _add(
         worker_capacity=config.worker_capacity,
         planner_capacity=config.planner_capacity,
         pi_config_path=str(home / "pi-backend.json"),
-        allowed_commands=[json.loads(value) for value in args.allow_command],
-        git_permissions=args.git_permission,
-        available_shells=args.shell,
+        allowed_commands=allowed_commands,
+        git_permissions=git_permissions,
+        available_shells=available_shells,
     )
     registration = WorkspaceRegistration(workspace_id=workspace_id, path=str(path), runtime=runtime)
     PiBackendConfig.from_document(config.backend_document())
     write_private_json(home / "pi-backend.json", config.backend_document())
+    return registration
+
+
+def _add(
+    home: Path,
+    config: LocalConfig,
+    client: httpx.Client,
+    record: dict[str, Any],
+    args: argparse.Namespace,
+) -> int:
+    path = args.path.expanduser().resolve()
+    workspaces = _workspaces(client, record)
+    # Preserve the CLI's idempotent re-add; the folder API reports duplicates as 409.
+    workspace_id = args.workspace_id or next(
+        (w.workspace_id for w in workspaces if Path(w.path) == path), None
+    )
+    registration = folder_registration(
+        home,
+        config,
+        path,
+        workspace_id=workspace_id,
+        occupied_ids={w.workspace_id for w in workspaces},
+        allowed_commands=[json.loads(value) for value in args.allow_command],
+        git_permissions=args.git_permission,
+        available_shells=args.shell,
+    )
+    workspace_id = registration.workspace_id
     _request(
         client, record, "POST", "/api/v1/workspaces", body=registration.model_dump(mode="json")
     )
@@ -438,7 +493,7 @@ def _doctor(home: Path, client: httpx.Client) -> int:
 
     config = None
     try:
-        config = _load_config(home)
+        config = load_local_config(home)
         report("configuration", True, str(home / "config.json"))
     except (OSError, ValueError) as error:
         report("configuration", False, f"{error}; run ehai init")
@@ -537,7 +592,7 @@ def run_local(args: argparse.Namespace) -> int:
                     return _init(home, args)
                 if args.command == "down":
                     return _down(home, client)
-                config = _load_config(home)
+                config = load_local_config(home)
                 if args.command == "up":
                     return _up(home, config, client)
                 record = _record(home)

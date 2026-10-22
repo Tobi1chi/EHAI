@@ -37,6 +37,7 @@ const managerOperations = new Set(
 for (const operationId of [
   "listWorkspaces", "registerWorkspace", "getWorkspace", "startWorkspace", "stopWorkspace",
   "getWorkspaceOverview", "getWorkspaceExecutionConfig", "listWorkspaceThreads",
+  "getLocalEngine", "addWorkspaceFolder",
 ]) {
   if (!managerOperations.has(operationId)) {
     throw new Error(`Manager OpenAPI operation is missing: ${operationId}`);
@@ -81,6 +82,7 @@ const requiredOperations = [
   "integrateRun",
   "listRunIntegrations",
   "getIntegrationDiff",
+  "createIntegrationBranch",
   "decideHumanCheck",
   "get_run_interventions_api_v1_runs__run_id__interventions_get",
   "list_result_adoptions_api_v1_runs__run_id__adoptions_get",
@@ -552,6 +554,10 @@ export class EhaiApiClient {
     return this.request("/runs/" + encodeURIComponent(runId) + "/integrations/" + encodeURIComponent(integrationId) + "/diff", "GET");
   }
 
+  createIntegrationBranch(runId: string, integrationId: string, request: CreateIntegrationBranchRequest): Promise<IntegrationBranchResponse> {
+    return this.request("/runs/" + encodeURIComponent(runId) + "/integrations/" + encodeURIComponent(integrationId) + "/branch", "POST", request);
+  }
+
   decideHumanCheck(
     checkRunId: string,
     request: DecideHumanCheckRequest,
@@ -731,6 +737,14 @@ export class EhaiWorkspaceManagerClient {
 
   registerWorkspace(request: WorkspaceRegistration): Promise<WorkspaceResponse> {
     return this.request("/workspaces", "POST", request);
+  }
+
+  getLocalEngine(): Promise<LocalEngineResponse> {
+    return this.request("/local", "GET");
+  }
+
+  addWorkspaceFolder(request: AddWorkspaceFolderRequest): Promise<WorkspaceResponse> {
+    return this.request("/workspaces/from-folder", "POST", request);
   }
 
   getWorkspace(workspaceId: string): Promise<WorkspaceResponse> {

@@ -511,6 +511,28 @@ class GitCodeWorkspace:
         decoder = codecs.getincrementaldecoder("utf-8")("replace")
         return decoder.decode(content[:limit], final=not truncated), truncated
 
+    def create_integration_branch(self, branch: str, commit: str) -> bool:
+        """Atomically publish an existing commit without touching HEAD, index or worktree."""
+        checked = self._git(
+            self.base_workspace, ("check-ref-format", "--branch", branch), check=False
+        )
+        if checked.returncode or checked.stdout.decode("utf-8").strip() != branch:
+            raise ValueError(f"Invalid Git branch name: {branch!r}")
+        commit = self._commit_id(self.base_workspace, commit)
+        reference = "refs/heads/" + branch
+        created = self._git(self.base_workspace, ("update-ref", reference, commit, ""), check=False)
+        if created.returncode == 0:
+            return True
+        existing = self._git(
+            self.base_workspace, ("show-ref", "--verify", "--hash", reference), check=False
+        )
+        if existing.returncode == 0:
+            current = existing.stdout.decode("utf-8").strip()
+            if current == commit:
+                return False
+            raise MetadataError(f"Branch {branch!r} already exists at {current}, not {commit}")
+        raise MetadataError(created.stderr.decode("utf-8", errors="replace").strip())
+
     def _integrate_results(
         self, run_id: str, process_revision_id: str, sources: list[JsonValue]
     ) -> dict[str, JsonValue]:
