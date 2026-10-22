@@ -14,10 +14,12 @@ type Prefs = {
   readonly zone: Zone;
   readonly theme: Theme;
   readonly labs: Readonly<Record<string, string>>;
+  /** System notifications when a thread needs the user while the window is in the background. */
+  readonly notify: boolean;
 };
 
 const KEY = "ehai.ui.prefs.v1";
-const DEFAULTS: Prefs = { life: null, actor: "", zone: "life", theme: "system", labs: {} };
+const DEFAULTS: Prefs = { life: null, actor: "", zone: "life", theme: "system", labs: {}, notify: true };
 const listeners = new Set<() => void>();
 
 function read(): Prefs {

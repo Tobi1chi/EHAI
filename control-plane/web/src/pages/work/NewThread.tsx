@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { AddFolderPanel } from "../../components/AddFolderPanel";
 import { ErrorBlock, Spinner } from "../../components/Status";
 import { core } from "../../lib/api";
 import { useApp } from "../../lib/app";
@@ -9,6 +10,7 @@ import { useSubmission } from "../../lib/submit";
 import { sendDiscussion } from "./discussion";
 
 const NEW_PROJECT = "";
+const ADD_FOLDER = "\u0000add-folder";
 
 /**
  * Start a thread: a Goal in a chosen project, followed by the first planning message. The
@@ -28,6 +30,7 @@ export function NewThread() {
   const [projectChoice, setProjectChoice] = useState<string | null>(null);
   const projectId = projectChoice ?? projects[0]?.project.project_id ?? NEW_PROJECT;
   const [projectName, setProjectName] = useState("");
+  const [adding, setAdding] = useState(false);
   const [objective, setObjective] = useState("");
   const [message, setMessage] = useState("");
   const createProject = useSubmission("project");
@@ -68,7 +71,12 @@ export function NewThread() {
       {overview.data !== undefined && workspaces.length === 0 && (
         <div className="banner">
           <div className="banner-title">没有在运行的工作区</div>
-          <div className="meta">先登记并启动一个工作区，再回来新建线程。</div>
+          <div className="meta">先添加一个项目文件夹，或启动已登记的工作区。</div>
+          <div className="actions" style={{ justifyContent: "flex-start" }}>
+            <button type="button" className="btn small primary" onClick={() => setAdding(true)}>
+              添加项目文件夹…
+            </button>
+          </div>
         </div>
       )}
 
@@ -79,6 +87,10 @@ export function NewThread() {
             className="select"
             value={chosenWorkspace}
             onChange={(e) => {
+              if (e.target.value === ADD_FOLDER) {
+                setAdding(true);
+                return;
+              }
               setWorkspaceId(e.target.value);
               setProjectChoice(null);
             }}
@@ -88,6 +100,7 @@ export function NewThread() {
                 {e.workspace.workspace_id}
               </option>
             ))}
+            <option value={ADD_FOLDER}>添加项目文件夹…</option>
           </select>
         </label>
         <label className="field">
@@ -150,6 +163,16 @@ export function NewThread() {
           {pending ? <Spinner /> : "开始规划"}
         </button>
       </div>
+      {adding && (
+        <AddFolderPanel
+          onClose={() => setAdding(false)}
+          onAdded={(workspace) => {
+            setAdding(false);
+            setWorkspaceId(workspace.workspace_id);
+            setProjectChoice(null);
+          }}
+        />
+      )}
     </div>
   );
 }

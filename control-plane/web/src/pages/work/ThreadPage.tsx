@@ -177,6 +177,8 @@ function eventText(item: ThreadTimelineItem): string {
       return "开始了后继 Run";
     case "integration_created":
       return ref(refs, "status") === "conflicted" ? "整合代码成果时有冲突" : "代码成果已整合";
+    case "integration_branch_created":
+      return `成果已放到分支 ${ref(refs, "branch") ?? ""}`;
     case "discussion_message":
       return item.summary;
   }

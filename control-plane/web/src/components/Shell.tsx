@@ -4,6 +4,7 @@ import { THREAD_PHASE, WORKSPACE_STATUS } from "../lib/labels";
 import { zoneCounts } from "../lib/overview";
 import { usePrefs, type Zone } from "../lib/prefs";
 import { Link } from "../lib/router";
+import { useThreadNotifications } from "../lib/notifications";
 import { threadPath, useThreads, workThreadRows } from "../lib/threads";
 import { Icon } from "./Icon";
 
@@ -114,6 +115,7 @@ export function Shell({ zone, path, children }: { zone: Zone; path: string; chil
   const counts = zoneCounts(overview.data, prefs.life);
   const items = zone === "life" ? lifeItems(counts.life) : workItems(counts.work);
   const threads = useThreads();
+  useThreadNotifications(threads.data);
   const threadRows = zone === "work" ? workThreadRows(threads.data, prefs.life).slice(0, SIDEBAR_THREADS) : [];
   const tabs: NavItem[] =
     zone === "life"

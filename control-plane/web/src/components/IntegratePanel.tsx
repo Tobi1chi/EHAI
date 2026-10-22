@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { core, type CodeIntegration } from "../lib/api";
+import { core, type CodeIntegration, type IntegrationBranch } from "../lib/api";
 import { useApp, useQuery } from "../lib/app";
 import { shortId } from "../lib/format";
 import { useSubmission } from "../lib/submit";
@@ -99,6 +99,7 @@ export function IntegratePanel({
                 <dt>工作区</dt>
                 <dd className="mono">{current.workspace}</dd>
               </dl>
+              <BranchForm workspaceId={workspaceId} runId={runId} integration={current} />
               <DiffView workspaceId={workspaceId} runId={runId} integrationId={current.integration_id} />
             </>
           ) : (
@@ -121,5 +122,64 @@ export function IntegratePanel({
       </QueryView>
       {submission.error !== undefined && <ErrorBlock error={submission.error} />}
     </Panel>
+  );
+}
+
+/**
+ * Point a new branch in the user's repository at the integrated commit. The core never checks it
+ * out or pushes it; the user merges or opens a PR with their own Git flow.
+ */
+function BranchForm({
+  workspaceId,
+  runId,
+  integration,
+}: {
+  workspaceId: string;
+  runId: string;
+  integration: CodeIntegration;
+}) {
+  const { touch } = useApp();
+  const submission = useSubmission("integration-branch");
+  const [branch, setBranch] = useState(`ehai/run-${shortId(runId)}`);
+  const [created, setCreated] = useState<IntegrationBranch | null>(null);
+
+  async function create() {
+    const outcome = await submission.run(() =>
+      core(workspaceId).createIntegrationBranch(runId, integration.integration_id, { branch: branch.trim() }),
+    );
+    if (outcome === undefined) return;
+    setCreated(outcome.data);
+    touch(workspaceId);
+  }
+
+  if (created !== null) {
+    return (
+      <div className="banner">
+        <div className="banner-title ok">
+          {created.created ? `已创建分支 ${created.branch}` : `分支 ${created.branch} 已经指向这个结果`}
+        </div>
+        <div className="meta">没有切换你当前的分支，也没有推送。用你的 Git 流程合并或开 PR：</div>
+        <div className="code">{`git switch ${created.branch}`}</div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="field">
+      <span>放到新分支</span>
+      <div className="actions" style={{ flexWrap: "nowrap" }}>
+        <input className="input mono" value={branch} onChange={(e) => setBranch(e.target.value)} />
+        <button
+          type="button"
+          className="btn primary"
+          disabled={submission.pending || !branch.trim()}
+          onClick={() => void create()}
+        >
+          {submission.pending ? <Spinner /> : "创建分支"}
+        </button>
+      </div>
+      <span className="meta">在你的仓库里新建这个分支指向整合 commit；不切换、不推送，已存在的同名分支不会被覆盖。</span>
+      {submission.error !== undefined && <ErrorBlock error={submission.error} />}
+    </div>
   );
 }
