@@ -1,6 +1,6 @@
 # 运行证据
 
-更新：2026-10-05。本页把每次正常入口试用压缩为一行：做了什么、结果、哪些没有覆盖。
+更新：2026-10-22。本页把每次正常入口试用压缩为一行：做了什么、结果、哪些没有覆盖。
 能力结论见 [STATUS](STATUS.md)；原始叙述（Run ID、用量明细、临时证据目录）保留在下列归档：
 
 - [RECORD_R2](history/RECORD_R2.md)：核心执行、导入/MCP、Git 整合、后继 Run 与模型工具契约（2026-09-14 ~ 09-27）
@@ -45,6 +45,7 @@
 | 10-04 | 过程审查工具被 Pi 严格模式拒绝 | 真实 Pi 0.85.1 + 脚本化模型；真实 DeepSeek V4.1 Flash 下复现 3 次 | 修复前 `review-process` 在发出模型请求前失败（对象联合不受支持），被报告为结果未知；修复后 Reviewer 请求到达模型 | 真实模型完成审查并应用草稿 | [REFACTOR_PLAN](REFACTOR_PLAN.md#2026-10-04-过程审查工具被-pi-严格模式拒绝) |
 | 10-04 | 过程调整读取已完成成果（先粗后细回放） | 真实 OpenCode Go DeepSeek V4.1 Flash（12 组，1912 个响应，按单价约 $5.1） | 12 组草稿均读取成果并 ready（修复前 8 次便签称产出缺失）；审查侧补 `block_changes` 与 Check 状态后，修复齐全且先决定 Gate 的 2 组审查通过、应用细化并满分完成；此前 Q6、Q8 亦通过 | 大型任务、其他模型族、多次调整、Windows；暂停时不能决定人工 Gate | [PROCESS_OUTPUTS_DESIGN](PROCESS_OUTPUTS_DESIGN.md#执行记录) |
 | 10-05 | 人工 Check 决定后保持暂停（`--hold`） | 真实 Pi + 脚本化模型；真实 OpenCode Go DeepSeek V4.1 Flash（2 组，310 个响应，按单价约 $0.85） | 决定与暂停同一事务，保持期间无派发、Gate 未结算；恢复后结算并继续；先粗后细一组应用细化后满分且无中断 Attempt，另一组审查拦下遗漏义务后按原过程满分 | 多次保持、Windows（并行 Attempt 运行时拒绝 hold） | [REFACTOR_PLAN](REFACTOR_PLAN.md#2026-10-05-人工-check-决定后保持暂停) |
+| 10-22 | Reviewer 上游整合冲突时直接打开干预 | 0（真实 Pi + 脚本化模型服务） | 起因：真实 DeepSeek 试用中，测试仓库没有 .gitignore，两个并行节点的 `__pycache__` 进入候选并冲突，Reviewer 启动失败被立即重试 5 次耗尽预算。仓库外诊断（两个节点写同一路径不同内容，Reviewer 直接依赖两者）：修复前 5 个 Reviewer Attempt 均 failed、干预只有通用说明；修复后 1 个 Attempt interrupted，干预列出冲突路径与处理方式，不再把 Endpoint 标为不健康 | 回复干预后的再次启动；Windows；真实模型 | [REFACTOR_PLAN](REFACTOR_PLAN.md#2026-10-22-reviewer-上游整合冲突时直接打开干预) |
 
 ## P3 平台后端
 
