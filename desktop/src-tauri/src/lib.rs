@@ -5,6 +5,9 @@
 //! answers, the launcher navigates to the workbench it serves. The shell holds no business
 //! state and no credentials: the daemon is started through the user's login shell, so it
 //! inherits the same environment (model credentials included) as `ehai up` typed in a terminal.
+//!
+//! The workbench served by the daemon may only pick a folder and post notifications
+//! (`capabilities/daemon.json`); everything else stays with the bundled launcher.
 
 use std::io::{Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
@@ -127,6 +130,8 @@ async fn start_daemon(command: Option<String>) -> Started {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_notification::init())
         .invoke_handler(tauri::generate_handler![probe, start_daemon])
         .run(tauri::generate_context!())
         .expect("error while running the EHAI desktop shell");
