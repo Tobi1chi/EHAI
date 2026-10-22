@@ -13,7 +13,7 @@ from typing import cast
 
 from ehai import JsonValue, json_dumps, json_loads
 
-PI_VERSION = "0.85.1"
+PI_VERSION = "1.3.0"
 
 
 @dataclass(frozen=True, slots=True)

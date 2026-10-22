@@ -365,6 +365,54 @@ Reviewer/Gate → 人工验收 → `integrate-run`，并在执行中强杀一次
   hold 返回 409、Run 继续运行、决定未记录；B 完成后 hold 正常暂停。
 - 未覆盖：多次连续保持、Windows。
 
+### 2026-10-21 Pi 升级到 1.3.0
+
+- 起因：用户决定把锁定的 Pi 从 0.85.1 跟进到上游最新的 1.3.0（10-15 发布）。
+- 依赖面核对（0.86–1.3 的变更记录）：EHAI 用到的 RPC 命令（get_state、prompt、steer、clear_queue、abort）、
+  启动参数、扩展 API（registerTool、registerCommand、ui.notify、context / before_provider_request / turn_end）
+  与事件均未出现不兼容变化；新增的内置 MCP、codemode、tool_search 扩展由已有的 `--no-extensions` 一并关闭。
+- 现象：只改锁定版本时产品 E2E 在等待人工请求处超时，宿主日志没有原因。
+- 原因：自 0.86 起，Pi 对未声明的 OpenAI 兼容端点默认 `supportsStrictMode: false`；桥接层给 EHAI 工具请求
+  `strict: "require"`，于是 Pi 在发出模型请求前拒绝（仓库外诊断：脚本化服务收到 0 个请求）。
+  内置 OpenCode Go `deepseek-v4.1-flash` 自带 `supportsStrictMode: true`，此前的真实模型配置不受影响。
+- 决定（用户选择）：不再强制严格模式。桥接层改为 `strict: "prefer"`：端点声明支持时仍严格采样，
+  否则退回普通工具调用；参数仍先经 Pi 按工具 Schema 校验，再由核心处理器校验。代价：Schema 超出严格子集时
+  （如 10-04 的对象联合）不再报错，而是该工具静默改用普通调用。产品 E2E 的脚本化 Provider 继续声明
+  `supportsStrictMode`，以覆盖严格路径；USAGE 与 README 改为"确实支持时可声明"。
+  适配层关于 Pi 没有 MCP 的注释改为说明内置 MCP 保持关闭。
+- 验证：`inspect-agent` 控制通道通过；静态检查、两平台 mypy、lint-imports、产品 E2E 通过。仓库外诊断
+  （产品 E2E 方案）：声明支持时 7 个模型请求的工具均带 `strict: true`，未声明时均不带 `strict`，两者都完成。
+
+### 2026-10-22 默认关闭严格采样，核心统一校验工具参数
+
+- 决定（用户选择）：不再依赖模型侧严格约束采样，改由 EHAI 校验。桥接层改为 `constrainedSampling: false`，
+  所有 Provider 上模型看到同一份原始工具 Schema，"省略"与"null"的含义不再随端点变化。
+- 实现：`ToolExecutor` 构造时按每个工具的 Schema（默认 Draft 2020-12）建校验器，Schema 本身无效即拒绝构造；
+  执行前校验参数，不符合时抛出可恢复的 `invalid_arguments`，最多列出 5 处 JSON 路径与原因，处理器不运行。
+  Worker/Reviewer（Hub）、Planner 与过程审查都经此入口，因此经 MCP 端点接入的其他 harness 也有同一层校验；
+  经 Pi 时 Pi 自己的参数校验仍在前面。
+- 处理器核对：除过程审查的 `obligation_mapping`（解析端已接受省略或 null）外，现有工具 Schema 均把全部字段列为必填，
+  不存在严格模式补 null、关闭后变为省略的字段；外部 MCP 工具的参数语义仍由其服务端负责。
+- 验证：仓库外诊断直接调用 `ToolExecutor`：合法参数执行；缺字段、多字段、类型错、空字符串、嵌套缺字段均返回
+  `invalid_arguments` 并逐处列出，处理器未运行；无效 Schema 构造失败。产品 E2E 方案：未声明 strict 的端点工具
+  不带 `strict`，声明支持的端点工具为 `strict: false`，两者都完成。静态检查、两平台 mypy、lint-imports、产品 E2E 通过。
+- 真实模型（同日，用户提供的 DeepSeek 测试凭证，只经宿主环境变量 `DEEPSEEK_API_KEY` 传入）：Pi 内置的 `deepseek`
+  Provider（官方端点 `api.deepseek.com`）与 `deepseek-flash`，隔离 agent_dir 的 models.json 为空。仓库外小项目
+  （`textkit/slug.py`、`textkit/roman.py` 各一个未实现函数，配 unittest 与 verify.py），经 `ehai` CLI：create-project →
+  create-goal → discuss-plan（判据 `command:exit-zero` 与人工问题）→ approve-plan → `start-run --authorize` →
+  decide-human-check → integrate-run。
+  - 第一次运行：Planner 草稿符合要求，两个写代码节点约 20 秒完成；但测试仓库没有 .gitignore，两个节点运行 unittest
+    产生的 `__pycache__` 都进入候选，整合冲突使 Reviewer 无法启动，5 次自动重试在约 2 秒内耗尽后转为干预
+    （旁支发现，记入 EVIDENCE 未决问题）。43 次工具调用中只有 1 次语义错误（`workspace_write` 未设 overwrite 得到
+    `already_exists`，下一次调用改正），没有 `invalid_arguments`。
+  - 补 .gitignore 后以全新状态重跑：草稿同样为两个并行节点 + 只读 Reviewer；verify.py 通过（附加用例 7/7），
+    人工验收（读过整合后的代码）后 Run completed，integrate-run 只改两个模块文件、无冲突。55 次工具调用
+    （Planner 22 次，含嵌套对象参数的 add_plan_node、add_plan_edge、set_plan_phase、set_final_gate；Worker/Reviewer 33 次）
+    零错误。两次运行共 60 个模型响应，Pi 估算约 $0.06。
+- 未覆盖：过程审查、路由与轨迹审查工具的真实调用；较大任务下的参数出错频率；强杀恢复；Windows；独立 Hub。
+- 未覆盖：真实模型（Planner、Worker、Reviewer、过程审查）；Windows；独立 Hub。E2E 输出与宿主日志都看不到
+  Pi 拒绝请求的原因，这是旁支发现，另行处理。
+
 ### 2026-10-22 Reviewer 上游整合冲突时直接打开干预
 
 - 起因：Pi 1.3.0 真实 DeepSeek 试用（分支 `claude/pi-1.3.0` 的执行记录）中，测试仓库没有 .gitignore，两个并行节点运行

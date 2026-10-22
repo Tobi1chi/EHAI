@@ -193,7 +193,7 @@ class PiAdapter:
     version = PI_VERSION
 
     async def launch(self, request: StartSession, mcp: McpEndpoint) -> PiSession:
-        # Pi has no MCP support by design; its business-tool bridge carries the same calls.
+        # Pi's built-in MCP extension stays off (--no-extensions); the bridge carries the calls.
         del mcp
         settings = dict(request.harness.settings)
         state_root = settings.pop("state_root", None)

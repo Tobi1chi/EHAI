@@ -27,6 +27,8 @@ environment_names 是允许传入 Pi 的模型凭证环境变量名。settings/m
 密钥仅经宿主环境传入，不放计划、命令参数、Git 或日志。原生配置见锁定 Pi 包 docs/models.md。
 
 自定义端点由 Pi models.json 配置，EHAI 不读取 OPENAI_BASE_URL 切换端点。
+EHAI 工具不使用严格约束采样，所有 Provider 上模型看到同一份工具 Schema；核心执行工具前按该 Schema 校验参数，
+不符合时向模型返回 `invalid_arguments` 并列出出错位置。models.json 无需声明 supportsStrictMode。
 当前禁用隐式资源发现和自动模型重试；配置指纹随执行授权保存，变更时不能静默恢复旧授权。
 模型 ID/推理等级须精确匹配 Provider。示例占位符必须替换，不保证任意模型可用。
 

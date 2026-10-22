@@ -51,7 +51,7 @@ npm.cmd ci --prefix agent-backends/pi --ignore-scripts --no-audit --no-fund
 uv run ehai --help
 ```
 
-从源码目录使用 `uv run`，无需全局安装 EHAI。Pi 版本由仓库锁定为 0.85.1。
+从源码目录使用 `uv run`，无需全局安装 EHAI。Pi 版本由仓库锁定为 1.3.0。
 
 准备目标仓库 `C:/work/my-project`：已有至少一个 Git commit，开发基线已提交，
 并能运行现有验收命令。示例使用 `uv run pytest`；你的项目使用其他命令时，
