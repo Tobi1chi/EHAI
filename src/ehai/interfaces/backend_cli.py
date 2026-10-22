@@ -8,12 +8,14 @@ from pathlib import Path
 from ehai.interfaces.workspace_models import WORKSPACE_ID_PATTERN as WORKSPACE_ID_PATTERN
 
 MANAGER_QUERIES = {
+    "get-local-engine": "/local",
     "list-workspaces": "/workspaces",
     "get-workspace": "/workspaces/{workspace_id}",
     "get-workspace-execution-config": "/workspaces/{workspace_id}/execution-config",
     "get-workspace-overview": "/workspace-overview",
 }
 MANAGER_COMMANDS: dict[str, tuple[str, tuple[str, ...]]] = {
+    "add-workspace-folder": ("/workspaces/from-folder", ()),
     "register-workspace": ("/workspaces", ()),
     "start-workspace": ("/workspaces/{workspace_id}/start", ()),
     "stop-workspace": ("/workspaces/{workspace_id}/stop", ()),
@@ -21,6 +23,8 @@ MANAGER_COMMANDS: dict[str, tuple[str, tuple[str, ...]]] = {
 
 QUERY_ROUTES = {
     **MANAGER_QUERIES,
+    "list-run-integrations": "/runs/{run_id}/integrations",
+    "get-integration-diff": "/runs/{run_id}/integrations/{integration_id}/diff",
     "get-planner-capacity": "/planning/capacity",
     "list-workflows": "/workflows",
     "get-routine-scheduler": "/routines/scheduler",
@@ -52,6 +56,10 @@ QUERY_ROUTES = {
 }
 COMMAND_ROUTES: dict[str, tuple[str, tuple[str, ...]]] = {
     **MANAGER_COMMANDS,
+    "create-integration-branch": (
+        "/runs/{run_id}/integrations/{integration_id}/branch",
+        ("branch",),
+    ),
     "create-routing-lab": ("/projects/{project_id}/routing-labs", ()),
     "configure-routing-fallback": ("/routing-labs/{lab_id}/fallback", ()),
     "configure-routing-project": ("/routing-labs/{lab_id}/change-project", ()),
@@ -111,6 +119,7 @@ TOKEN_COMMANDS = frozenset(
         "read-consumer-events",
         "ack-consumer-events",
         "advance-routing-lab",
+        "create-integration-branch",
         *MANAGER_COMMANDS,
     }
 )
@@ -130,10 +139,10 @@ def register_backend_commands(
     for name, (path, _) in COMMAND_ROUTES.items():
         command = commands.add_parser(name, help="call the owning backend (requires --api-url)")
         _path_arguments(command, path)
-        if name == "register-workspace":
-            command.add_argument(
-                "--file", type=Path, required=True, help="WorkspaceRegistration JSON"
-            )
+        if name in {"register-workspace", "add-workspace-folder"}:
+            command.add_argument("--file", type=Path, required=True, help="HTTP request body JSON")
+        elif name == "create-integration-branch":
+            command.add_argument("--branch", required=True)
         elif name in FILE_COMMANDS:
             command.add_argument(
                 "--file",
@@ -156,6 +165,7 @@ def _path_arguments(parser: argparse.ArgumentParser, path: str) -> None:
         "consumer_id",
         "project_id",
         "run_id",
+        "integration_id",
         "workspace_id",
         "workflow_run_id",
         "task_id",

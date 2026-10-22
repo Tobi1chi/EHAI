@@ -68,6 +68,7 @@ from ehai.interfaces.http_models import (
     ApprovePlanRequest,
     CancelRunRequest,
     CreateGoalRequest,
+    CreateIntegrationBranchRequest,
     CreateProjectRequest,
     DataResponse,
     DecideHumanCheckRequest,
@@ -186,6 +187,8 @@ def create_app(
     execution_config_validator: Callable[[ExecutionConfig], None] | None = None,
     artifact_root: str | None = None,
     code_integration: Callable[[ID, ID], dict[str, JsonValue]] | None = None,
+    integration_diff: Callable[[ID, ID], tuple[str, bool]] | None = None,
+    integration_branch: Callable[[ID, ID, str], dict[str, JsonValue]] | None = None,
     runtime_context: Callable[[], RuntimeContextView] | None = None,
     notes: NoteService | None = None,
     event_consumers: EventConsumerService | None = None,
@@ -254,6 +257,39 @@ def create_app(
         )
 
     @router.get(
+        "/threads",
+        response_model=DataResponse,
+        operation_id="listThreads",
+        responses=_read_responses("ThreadListResponse", "Thread discovery snapshot"),
+    )
+    def list_threads() -> DataResponse:
+        return _response(query_service.list_threads())
+
+    @router.get(
+        "/threads/{goal_id}",
+        response_model=DataResponse,
+        operation_id="getThread",
+        responses=_read_responses("ThreadResponse", "Thread phase and next action"),
+    )
+    def get_thread(goal_id: UuidInput) -> DataResponse:
+        return _response(query_service.get_thread(_id(str(goal_id))))
+
+    @router.get(
+        "/threads/{goal_id}/timeline",
+        response_model=DataResponse,
+        operation_id="getThreadTimeline",
+        responses=_read_responses("ThreadTimelineResponse", "Persisted thread timeline"),
+    )
+    def get_thread_timeline(
+        goal_id: UuidInput,
+        limit: Annotated[int, Query(ge=1, le=1000)] = 100,
+        after: Annotated[int, Query(ge=0)] = 0,
+    ) -> DataResponse:
+        return _response(
+            query_service.get_thread_timeline(_id(str(goal_id)), limit=limit, after=after)
+        )
+
+    @router.get(
         "/projects",
         response_model=DataResponse,
         operation_id="listProjects",
@@ -295,6 +331,68 @@ def create_app(
             raise StateConflictError("This host has no Git integration backend")
         return _response(
             code_integration(_id(str(run_id)), _id(str(request.expected_process_revision_id)))
+        )
+
+    @router.get(
+        "/runs/{run_id}/integrations",
+        response_model=DataResponse,
+        operation_id="listRunIntegrations",
+        responses=_read_responses(
+            "CodeIntegrationListResponse", "Latest persisted result per integration, oldest first"
+        ),
+    )
+    def list_run_integrations(run_id: UuidInput) -> DataResponse:
+        return _response(query_service.list_run_integrations(_id(str(run_id))))
+
+    @router.post(
+        "/runs/{run_id}/integrations/{integration_id}/branch",
+        response_model=DataResponse,
+        operation_id="createIntegrationBranch",
+        responses={
+            **_read_responses("IntegrationBranchResponse", "Publish integration to a new branch"),
+            409: {"model": ErrorResponse, "description": "Integration or branch conflict"},
+        },
+    )
+    def create_integration_branch(
+        run_id: UuidInput, integration_id: UuidInput, request: CreateIntegrationBranchRequest
+    ) -> DataResponse:
+        if integration_branch is None:
+            raise StateConflictError("This host has no Git integration backend")
+        return _response(
+            integration_branch(_id(str(run_id)), _id(str(integration_id)), request.branch)
+        )
+
+    @router.get(
+        "/runs/{run_id}/integrations/{integration_id}/diff",
+        response_model=DataResponse,
+        operation_id="getIntegrationDiff",
+        responses={
+            **_read_responses(
+                "CodeIntegrationDiffResponse",
+                "JSON-wrapped unified diff (UTF-8 replacement decoding), capped at 1048576 "
+                "source bytes; truncated is true when more bytes exist",
+            ),
+            409: {"model": ErrorResponse, "description": "No complete diff is available"},
+        },
+    )
+    def get_integration_diff(run_id: UuidInput, integration_id: UuidInput) -> DataResponse:
+        owner_id, result_id = _id(str(run_id)), _id(str(integration_id))
+        result = query_service.get_run_integration(owner_id, result_id)
+        if result["diff_path"] is None:
+            raise StateConflictError("Conflicted integration has no complete diff")
+        if integration_diff is None:
+            raise StateConflictError("This host has no Git integration diff backend")
+        try:
+            content, truncated = integration_diff(owner_id, result_id)
+        except FileNotFoundError as error:
+            raise StateConflictError("Retained integration diff is missing") from error
+        return _response(
+            {
+                "run_id": owner_id,
+                "integration_id": result_id,
+                "content": content,
+                "truncated": truncated,
+            }
         )
 
     event_stream_endpoint = create_event_stream_endpoint(

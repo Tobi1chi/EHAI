@@ -29,6 +29,7 @@
 | 用法 | [DUAL_FEEDBACK_EXPERIMENT](DUAL_FEEDBACK_EXPERIMENT.md) | Jev 双反馈环实验与固定 Pi 回退 |
 | 设计 | [PLANNER_CONSTRAINTS_DESIGN](PLANNER_CONSTRAINTS_DESIGN.md) | Planner 的授权与验收约束、干预循环保护 |
 | 设计 | [PROCESS_OUTPUTS_DESIGN](PROCESS_OUTPUTS_DESIGN.md) | 过程调整读取已完成成果与 Check 状态 |
+| 设计 | [APP_SHELL_DESIGN](APP_SHELL_DESIGN.md) | 引擎守护进程、线程对象与桌面 App 的目标设计 |
 | 设计 | [P4_WORKFLOW_DESIGN](P4_WORKFLOW_DESIGN.md) | 自定义 Workflow 目标设计（未实现） |
 | 设计 | [P4_WORKFLOW_REVISION_DESIGN](P4_WORKFLOW_REVISION_DESIGN.md) | 慢环向独立 Project 转交修改的边界 |
 | 设计 | [adr/](adr/) | 已采纳的架构决定 |

@@ -36,7 +36,8 @@ const managerOperations = new Set(
 );
 for (const operationId of [
   "listWorkspaces", "registerWorkspace", "getWorkspace", "startWorkspace", "stopWorkspace",
-  "getWorkspaceOverview", "getWorkspaceExecutionConfig",
+  "getWorkspaceOverview", "getWorkspaceExecutionConfig", "listWorkspaceThreads",
+  "getLocalEngine", "addWorkspaceFolder",
 ]) {
   if (!managerOperations.has(operationId)) {
     throw new Error(`Manager OpenAPI operation is missing: ${operationId}`);
@@ -63,6 +64,7 @@ const requiredOperations = [
   "listInbox",
   "getInboxItem",
   "listProjects",
+  "listThreads", "getThread", "getThreadTimeline",
   "getProject",
   "getRuntimeContext",
   "importPlan",
@@ -78,6 +80,9 @@ const requiredOperations = [
   "reviewProcess",
   "applyProcess",
   "integrateRun",
+  "listRunIntegrations",
+  "getIntegrationDiff",
+  "createIntegrationBranch",
   "decideHumanCheck",
   "get_run_interventions_api_v1_runs__run_id__interventions_get",
   "list_result_adoptions_api_v1_runs__run_id__adoptions_get",
@@ -230,6 +235,22 @@ export class EhaiApiClient {
 
   listProjects(): Promise<ProjectListResponse> {
     return this.request("/projects", "GET");
+  }
+
+  listThreads(): Promise<ThreadListResponse> {
+    return this.request("/threads", "GET");
+  }
+
+  getThread(goalId: string): Promise<ThreadResponse> {
+    return this.request("/threads/" + encodeURIComponent(goalId), "GET");
+  }
+
+  getThreadTimeline(goalId: string, options: { limit?: number; after?: number } = {}): Promise<ThreadTimelineResponse> {
+    const query = new URLSearchParams();
+    if (options.limit !== undefined) query.set("limit", String(options.limit));
+    if (options.after !== undefined) query.set("after", String(options.after));
+    const suffix = query.toString();
+    return this.request("/threads/" + encodeURIComponent(goalId) + "/timeline" + (suffix ? "?" + suffix : ""), "GET");
   }
 
   listInbox(filters: { projectId?: string; runId?: string } = {}): Promise<InboxListResponse> {
@@ -525,6 +546,18 @@ export class EhaiApiClient {
     return this.request("/runs/" + encodeURIComponent(runId) + "/integrate", "POST", request);
   }
 
+  listRunIntegrations(runId: string): Promise<CodeIntegrationListResponse> {
+    return this.request("/runs/" + encodeURIComponent(runId) + "/integrations", "GET");
+  }
+
+  getIntegrationDiff(runId: string, integrationId: string): Promise<CodeIntegrationDiffResponse> {
+    return this.request("/runs/" + encodeURIComponent(runId) + "/integrations/" + encodeURIComponent(integrationId) + "/diff", "GET");
+  }
+
+  createIntegrationBranch(runId: string, integrationId: string, request: CreateIntegrationBranchRequest): Promise<IntegrationBranchResponse> {
+    return this.request("/runs/" + encodeURIComponent(runId) + "/integrations/" + encodeURIComponent(integrationId) + "/branch", "POST", request);
+  }
+
   decideHumanCheck(
     checkRunId: string,
     request: DecideHumanCheckRequest,
@@ -706,6 +739,14 @@ export class EhaiWorkspaceManagerClient {
     return this.request("/workspaces", "POST", request);
   }
 
+  getLocalEngine(): Promise<LocalEngineResponse> {
+    return this.request("/local", "GET");
+  }
+
+  addWorkspaceFolder(request: AddWorkspaceFolderRequest): Promise<WorkspaceResponse> {
+    return this.request("/workspaces/from-folder", "POST", request);
+  }
+
   getWorkspace(workspaceId: string): Promise<WorkspaceResponse> {
     return this.request(this.workspacePath(workspaceId), "GET");
   }
@@ -724,6 +765,10 @@ export class EhaiWorkspaceManagerClient {
 
   getWorkspaceOverview(): Promise<WorkspaceOverviewResponse> {
     return this.request("/workspace-overview", "GET");
+  }
+
+  listThreads(): Promise<WorkspaceThreadsResponse> {
+    return this.request("/threads", "GET");
   }
 
   workspace(workspaceId: string): EhaiApiClient {

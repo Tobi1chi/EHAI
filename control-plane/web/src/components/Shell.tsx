@@ -1,9 +1,11 @@
 import type { ReactNode } from "react";
 import { useApp } from "../lib/app";
-import { WORKSPACE_STATUS } from "../lib/labels";
-import { isLife, projectRows, zoneCounts } from "../lib/overview";
+import { THREAD_PHASE, WORKSPACE_STATUS } from "../lib/labels";
+import { zoneCounts } from "../lib/overview";
 import { usePrefs, type Zone } from "../lib/prefs";
 import { Link } from "../lib/router";
+import { useThreadNotifications } from "../lib/notifications";
+import { threadPath, useThreads, workThreadRows } from "../lib/threads";
 import { Icon } from "./Icon";
 
 type NavItem = {
@@ -30,9 +32,23 @@ function lifeItems(count: number): NavItem[] {
 function workItems(count: number): NavItem[] {
   return [
     { to: "/work", label: "首页", icon: "home", count, match: exact("/work") },
+    { to: "/work/new", label: "新线程", icon: "plus", match: exact("/work/new") },
     { to: "/work/projects", label: "项目", icon: "folder", match: exact("/work/projects") },
   ];
 }
+
+const SIDEBAR_THREADS = 30;
+
+const PHASE_DOT: Record<keyof typeof THREAD_PHASE, string> = {
+  needs_attention: "var(--attn)",
+  running: "var(--ok)",
+  paused: "var(--text-3)",
+  awaiting_approval: "var(--attn)",
+  planning: "var(--text-2)",
+  completed: "var(--border-strong)",
+  failed: "var(--bad)",
+  idle: "var(--border-strong)",
+};
 
 const SHARED: NavItem[] = [
   { to: "/connections", label: "连接", icon: "plug", match: prefix("/connections") },
@@ -98,9 +114,9 @@ export function Shell({ zone, path, children }: { zone: Zone; path: string; chil
   const prefs = usePrefs();
   const counts = zoneCounts(overview.data, prefs.life);
   const items = zone === "life" ? lifeItems(counts.life) : workItems(counts.work);
-  const projects = projectRows(overview.data).filter(
-    (row) => !isLife(prefs.life, row.workspaceId, row.detail.project.project_id),
-  );
+  const threads = useThreads();
+  useThreadNotifications(threads.data);
+  const threadRows = zone === "work" ? workThreadRows(threads.data, prefs.life).slice(0, SIDEBAR_THREADS) : [];
   const tabs: NavItem[] =
     zone === "life"
       ? lifeItems(counts.life).filter((i) => i.to !== "/life/records")
@@ -119,21 +135,21 @@ export function Shell({ zone, path, children }: { zone: Zone; path: string; chil
             <NavLink key={item.to} item={item} path={path} />
           ))}
         </nav>
-        {zone === "work" && projects.length > 0 && (
-          <nav className="nav-group" aria-label="项目">
-            <div className="nav-label">项目</div>
-            {projects.map(({ workspaceId, detail }) => {
-              const to = `/work/w/${workspaceId}/projects/${detail.project.project_id}`;
+        {zone === "work" && threadRows.length > 0 && (
+          <nav className="nav-group" aria-label="线程">
+            <div className="nav-label">线程</div>
+            {threadRows.map((row) => {
+              const to = threadPath(row);
               return (
                 <Link
-                  key={workspaceId + detail.project.project_id}
-                  className="nav-item sub"
+                  key={to}
+                  className="nav-item sub thread-item"
                   to={to}
+                  title={`${row.thread.objective}\n${row.thread.project_name} · ${THREAD_PHASE[row.thread.phase]}`}
                   aria-current={path === to ? "page" : undefined}
                 >
-                  <span className="grow">
-                    {detail.project.name} <span className="meta mono">{workspaceId}</span>
-                  </span>
+                  <span className="dot" style={{ background: PHASE_DOT[row.thread.phase], marginTop: 7 }} />
+                  <span className="grow">{row.thread.objective}</span>
                 </Link>
               );
             })}

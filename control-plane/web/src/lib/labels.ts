@@ -5,6 +5,7 @@ import type {
   PlanNodeKind,
   PlanNodeStatus,
   RunStatus,
+  ThreadSummary,
   WorkspaceDescriptor,
 } from "./api";
 
@@ -17,6 +18,35 @@ export const RUN_STATUS: Record<RunStatus, string> = {
   completed: "已完成",
   failed: "失败",
   cancelled: "已取消",
+};
+
+export const THREAD_PHASE: Record<ThreadSummary["phase"], string> = {
+  needs_attention: "需要你处理",
+  running: "执行中",
+  paused: "已暂停",
+  awaiting_approval: "方案待批准",
+  planning: "规划中",
+  completed: "已完成",
+  failed: "失败",
+  idle: "未开始",
+};
+
+export function phaseTone(phase: ThreadSummary["phase"]): string {
+  if (phase === "needs_attention" || phase === "failed") return "bad";
+  if (phase === "awaiting_approval" || phase === "paused") return "attn";
+  if (phase === "completed") return "ok";
+  return "";
+}
+
+export const NEXT_ACTION: Record<ThreadSummary["next_action"]["kind"], string> = {
+  start_discussion: "开始规划",
+  continue_discussion: "继续讨论",
+  review_plan: "审查方案",
+  handle_inbox: "去处理",
+  watch_run: "看执行",
+  resume_run: "去恢复",
+  review_result: "取得成果",
+  none: "",
 };
 
 export const NODE_STATUS: Record<PlanNodeStatus, string> = {

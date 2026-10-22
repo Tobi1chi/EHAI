@@ -8,12 +8,15 @@ export function Panel({
   onClose,
   children,
   footer,
+  wide = false,
 }: {
   title: ReactNode;
   subtitle?: ReactNode;
   onClose: () => void;
   children: ReactNode;
   footer?: ReactNode;
+  /** Wider drawer for content such as diffs; phones still get the full-width sheet. */
+  wide?: boolean;
 }) {
   const ref = useRef<HTMLDivElement>(null);
 
@@ -33,7 +36,7 @@ export function Panel({
   return (
     <>
       <div className="scrim" onClick={onClose} />
-      <div className="panel" role="dialog" aria-modal="true" tabIndex={-1} ref={ref}>
+      <div className={wide ? "panel wide" : "panel"} role="dialog" aria-modal="true" tabIndex={-1} ref={ref}>
         <div className="panel-head">
           <div className="grow">
             {subtitle && <div className="meta">{subtitle}</div>}

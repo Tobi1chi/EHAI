@@ -78,8 +78,9 @@ OpenAI 兼容服务（工作节点先用 workspace_write 写一个以节点命�
 | 人工决定 | CLI 判定通过后 Run completed；同一幂等键重复判定被接受且不产生新请求 |
 | 成果查询 | get-result 的 Check 均完成；成果是新的 worktree commit，包含 A、B 与汇合节点各自写入的文件，patch 非空；get-project 只列出该 Run 并带已验证成果 |
 | Hub 与 Pi | 每个节点经本机 Hub 与真实 Pi 调用脚本化模型；强杀重启后，汇合与 Reviewer 节点经重新启动的本机 Hub 完成 |
+| 代码整合 | 完成后 HTTP integrate 得到 integrated，重试返回同一 integration_id；list-run-integrations 只有这一条，get-integration-diff 与宿主补丁一致且未截断；线程时间线有一条 integration_created |
 
-不覆盖：真实模型调用与模型行为、Pi Planner/过程审查/轨迹审查/路由回退、独立 Hub、`integrate-run`、
+不覆盖：真实模型调用与模型行为、Pi Planner/过程审查/轨迹审查/路由回退、独立 Hub、整合冲突路径、
 MCP、生活 Workflow、Connector 和 Jev 实验。这些不能由本 E2E 推断已验证。
 
 ### 真实 Pi 手动验收

@@ -857,6 +857,10 @@ details.disclosure[open] > summary::before {
   flex-direction: column;
 }
 
+.panel.wide {
+  width: min(960px, 100vw);
+}
+
 .panel-head {
   display: flex;
   align-items: center;
@@ -1336,4 +1340,164 @@ a.graph-node:focus-visible {
   .graph-mark .arc {
     animation: none;
   }
+}
+
+/* Threads: one Goal's discussion, plans, runs and requests on one timeline. */
+
+.thread-timeline {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.thread-turn {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.bubble {
+  align-self: flex-start;
+  max-width: 85%;
+  padding: 10px 14px;
+  border-radius: var(--r-lg);
+  background: var(--hover);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 15px;
+  line-height: 23px;
+}
+
+.bubble.mine {
+  align-self: flex-end;
+  background: var(--active);
+}
+
+.thread-card {
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  background: var(--surface);
+}
+
+.row.thread-card {
+  margin: 0;
+  padding: 10px var(--space-4);
+}
+
+.row.thread-card.attn {
+  border-color: var(--attn);
+}
+
+.thread-event {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  font-size: 14px;
+  line-height: 21px;
+  color: var(--text-2);
+}
+
+.thread-event .dot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  background: var(--border-strong);
+  transform: translateY(-1px);
+}
+
+.plan-nodes {
+  margin: 4px 0 0;
+  padding-left: 20px;
+  color: var(--text-2);
+  font-size: 14px;
+  line-height: 22px;
+}
+
+.thread-list-item .dot {
+  flex: none;
+}
+
+.nav-item.sub.thread-item {
+  align-items: flex-start;
+}
+
+.nav-item.sub.thread-item .grow {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ---------- diff ---------- */
+
+.diff {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.diff-file {
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  overflow: hidden;
+}
+
+.diff-file > summary {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  background: var(--sidebar);
+  cursor: pointer;
+  list-style: none;
+}
+
+.diff-file > summary::-webkit-details-marker {
+  display: none;
+}
+
+.diff-file > summary .grow {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.diff-file[open] > summary {
+  border-bottom: 1px solid var(--border);
+}
+
+.diff-body {
+  overflow-x: auto;
+  padding: var(--space-1) 0;
+}
+
+.diff-line {
+  white-space: pre;
+  padding: 0 var(--space-3);
+  min-width: max-content;
+}
+
+.diff-line.add {
+  background: color-mix(in srgb, var(--ok) 14%, transparent);
+}
+
+.diff-line.del {
+  background: color-mix(in srgb, var(--bad) 14%, transparent);
+}
+
+.diff-line.hunk {
+  color: var(--text-3);
+  background: var(--hover);
+}
+
+.diff-line.meta-line {
+  color: var(--text-3);
+}
+
+.inline-check {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: 14px;
+  line-height: 21px;
+  cursor: pointer;
 }

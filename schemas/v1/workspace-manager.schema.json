@@ -2,6 +2,85 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://schemas.ehai.local/v1/workspace-manager.schema.json",
   "$defs": {
+    "AddWorkspaceFolderRequest": {
+      "properties": {
+        "path": {
+          "type": "string",
+          "maxLength": 4096,
+          "minLength": 1,
+          "title": "Path"
+        },
+        "workspace_id": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^[a-z0-9][a-z0-9_-]{0,63}$"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Workspace Id"
+        },
+        "allowed_commands": {
+          "items": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "type": "array",
+          "title": "Allowed Commands"
+        },
+        "git_permissions": {
+          "items": {
+            "type": "string",
+            "enum": [
+              "git.read",
+              "git.local_write",
+              "git.remote_write",
+              "git.dangerous"
+            ]
+          },
+          "type": "array",
+          "title": "Git Permissions"
+        },
+        "available_shells": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "title": "Available Shells"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "path"
+      ],
+      "title": "AddWorkspaceFolderRequest"
+    },
+    "ErrorDetail": {
+      "properties": {
+        "code": {
+          "type": "string",
+          "title": "Code"
+        },
+        "message": {
+          "type": "string",
+          "title": "Message"
+        }
+      },
+      "type": "object",
+      "required": [
+        "code",
+        "message"
+      ],
+      "title": "ErrorDetail"
+    },
+    "ErrorResponse": {
+      "$ref": "common.schema.json#/$defs/ErrorResponse"
+    },
     "HTTPValidationError": {
       "properties": {
         "detail": {
@@ -20,6 +99,67 @@
     },
     "JsonValue": {
       "$ref": "commands.schema.json#/$defs/JsonValue"
+    },
+    "LocalEngineData": {
+      "properties": {
+        "available": {
+          "type": "boolean",
+          "title": "Available"
+        },
+        "home": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Home"
+        },
+        "provider": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Provider"
+        },
+        "model": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Model"
+        }
+      },
+      "type": "object",
+      "required": [
+        "available",
+        "home",
+        "provider",
+        "model"
+      ],
+      "title": "LocalEngineData"
+    },
+    "LocalEngineResponse": {
+      "properties": {
+        "data": {
+          "$ref": "#/$defs/LocalEngineData"
+        }
+      },
+      "type": "object",
+      "required": [
+        "data"
+      ],
+      "title": "LocalEngineResponse"
     },
     "PublicRuntimeSettings": {
       "properties": {
@@ -712,6 +852,90 @@
         "data"
       ],
       "title": "WorkspaceResponse"
+    },
+    "WorkspaceThreadEntry": {
+      "properties": {
+        "workspace": {
+          "$ref": "#/$defs/WorkspaceDescriptor"
+        },
+        "api_path": {
+          "type": "string",
+          "title": "Api Path"
+        },
+        "available": {
+          "type": "boolean",
+          "title": "Available"
+        },
+        "threads": {
+          "anyOf": [
+            {
+              "$ref": "queries.schema.json#/$defs/ThreadListView"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Threads"
+        },
+        "error": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/WorkspaceQueryError"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "type": "object",
+      "required": [
+        "workspace",
+        "api_path",
+        "available",
+        "threads",
+        "error"
+      ],
+      "title": "WorkspaceThreadEntry"
+    },
+    "WorkspaceThreadsData": {
+      "properties": {
+        "observed_at": {
+          "type": "string",
+          "title": "Observed At"
+        },
+        "workspaces": {
+          "items": {
+            "$ref": "#/$defs/WorkspaceThreadEntry"
+          },
+          "type": "array",
+          "title": "Workspaces"
+        },
+        "consistent_across_workspaces": {
+          "type": "boolean",
+          "const": false,
+          "title": "Consistent Across Workspaces",
+          "default": false
+        }
+      },
+      "type": "object",
+      "required": [
+        "observed_at",
+        "workspaces"
+      ],
+      "title": "WorkspaceThreadsData"
+    },
+    "WorkspaceThreadsResponse": {
+      "properties": {
+        "data": {
+          "$ref": "#/$defs/WorkspaceThreadsData"
+        }
+      },
+      "type": "object",
+      "required": [
+        "data"
+      ],
+      "title": "WorkspaceThreadsResponse"
     }
   }
 }

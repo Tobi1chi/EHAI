@@ -1,6 +1,6 @@
 # EHAI 当前用法
 
-更新：2026-10-02。能力成熟度见 [STATUS](STATUS.md)，历史用法不作为当前参数说明。
+更新：2026-10-22。能力成熟度见 [STATUS](STATUS.md)，历史用法不作为当前参数说明。
 生活 Workflow 见 [WORKFLOWS](WORKFLOWS.md)；Connector、Jev 实验分别见各自文档，索引见 [docs/README](README.md)。
 首次用 0.1 开发项目，先按 [README 快速开始](../README.md#快速开始) 配置宿主并完成一个任务；
 本页补充控制、恢复、计划变更和成果接续的详细契约。
@@ -14,12 +14,139 @@
 - **规划与执行**：[本地规划或导入](#本地规划或导入) · [草稿 Gate 工具](#草稿-gate-工具) · [审查、批准和前台执行](#审查批准和前台执行)
 - **运行中控制与人工处理**：[控制、人工回路与过程调整](#控制人工回路与过程调整) · [周期轨迹审查和定向挂起](#周期轨迹审查和定向挂起) · [统一人工待办（P3.2）](#统一人工待办p32) · [便签讨论与明确决定（P3.2 后端）](#便签讨论与明确决定p32-后端)
 - **成果与接续**：[Block 变更清单](#block-变更清单) · [Git 自动整合](#git-自动整合) · [跨批准后继 Run](#跨批准后继-run)
-- **多项目与外部 Agent**：[项目总览（P3.1）](#项目总览p31) · [外部 Agent 持久事件消费（P3.4 后端）](#外部-agent-持久事件消费p34-后端) · [项目规则、宿主绑定与执行快照（P3.5 后端）](#项目规则宿主绑定与执行快照p35-后端)
+- **多项目与外部 Agent**：[线程查询](#线程查询) · [项目总览（P3.1）](#项目总览p31) · [外部 Agent 持久事件消费（P3.4 后端）](#外部-agent-持久事件消费p34-后端) · [项目规则、宿主绑定与执行快照（P3.5 后端）](#项目规则宿主绑定与执行快照p35-后端)
+
+## 线程查询
+
+一个线程对应一个 Goal，查询包含它的讨论、方案版本、全部 Run（含后继 Run）、人工待办和成果。
+核心在一个数据库只读快照内推导状态；没有新增线程实体。验证范围见 [STATUS](STATUS.md)。
+
+~~~sh
+uv run ehai --api-url http://127.0.0.1:8000 list-threads
+uv run ehai --api-url http://127.0.0.1:8000 get-thread --goal-id <goal-id>
+uv run ehai --api-url http://127.0.0.1:8000 get-thread-timeline --goal-id <goal-id> --limit 100 --after 0
+~~~
+
+核心 HTTP 对应 `GET /api/v1/threads`、`GET /api/v1/threads/{goal_id}` 和
+`GET /api/v1/threads/{goal_id}/timeline`，均使用 `{data: ...}` 响应封装，CLI 输出其中的 data。
+未知 Goal 的详情和时间线返回 404。三个命令也可通过本地 `--database` 只读查询。
+MCP 使用 `list_threads`、`get_thread`、`get_thread_timeline`；时间线工具显式传入 `limit` 和 `after`。
+
+列表的 data 为 `{observed_at, event_offset, threads}`，按 `last_activity_at` 倒序；
+单线程 data 为摘要，包含 Goal/Project 标识和名称、objective、goal_status、phase、next_action、
+attention_count、created_at、last_activity_at、最新 plan_revision_id、最新 run_id/run_status、
+observed_at 和 event_offset。没有方案或 Run 时相应 ID/状态为 null。
+
+phase 按以下顺序取首个满足的条件，不从 Goal 的 satisfied 状态推断线程完成：
+
+| phase | 条件 | next_action.kind |
+| --- | --- | --- |
+| needs_attention | 任一 Run 有 pending 的统一待办 | handle_inbox |
+| running | 最新 Run 为 pending/running | watch_run |
+| paused | 最新 Run 为 paused | resume_run |
+| awaiting_approval | 最新方案为 draft，且没有基于它的 Run | review_plan |
+| planning | 有规划讨论，尚无方案版本 | continue_discussion |
+| completed | 最新 Run 为 completed | review_result |
+| failed | 最新 Run 为 failed/cancelled | none |
+| idle | 其余情况 | 有方案时 review_plan；无方案和 Run 时 start_discussion；否则 none |
+
+`next_action` 为 `{kind, refs}`，refs 只提供动作所需的现有 ID：讨论用 goal_id/conversation_id，
+方案用 plan_revision_id/completion_contract_id，Run 用 run_id，待办用 kind/request_id/run_id。
+handle_inbox 指向最早的 pending 项；其余项通过统一待办查询读取，动作仍提交到源接口。
+
+时间线 data 为 `{observed_at, event_offset, goal_id, items, next_after}`。
+items 中每项为 `{at, kind, refs, summary}`，按时间升序，同一时间按持久事件偏移排序。
+kind 为 goal_created、discussion_message、plan_revision_created、plan_approved、run_started、
+run_status_changed、node_completed、inbox_opened、inbox_resolved、succession_started。
+summary 是面向 CLI 阅读的简短英文描述；前端按 kind 和 refs 显示，不解析英文文案推导状态。
+run_status_changed 的 refs.status 是变更后的 RunStatus：paused、running（恢复）、completed、failed 或 cancelled。
+discussion_message 的 summary 带 User/Planner 前缀和消息正文，refs 带 conversation_id/turn_id，
+回复产生方案时带 plan_revision_id；节点成果引用已有 Gate/Checkpoint/Artifact，不补造历史。
+`limit` 默认为 100，范围 1..1000；`after` 默认为 0，是时间线条目的零基偏移，
+后续页传返回的 next_after，null 表示本次快照已读完。event_offset 是事件流位置，不能作为 after。
+多页不是同一事务；有新事件时可从头重读，实时更新继续用现有事件流触发查询。
+
+管理器的 `GET /api/v1/threads`（以及指向管理器的 `list-threads` / `list_threads`）
+返回 `{observed_at, workspaces, consistent_across_workspaces: false}`。
+每组包含 workspace、api_path、available、threads（核心列表 data，或 null）和 error；
+不可用工作区保留错误。单线程和时间线使用 `/workspaces/{workspace_id}` 作用域，
+CLI 将 `--api-url` 设为对应作用域；管理器 MCP 的详情/时间线工具显式传 workspace_id。
+管理器只聚合，不承诺跨工作区同一快照。
 
 ## 安装与私有 Pi 配置
 
 需要 Python 3.12、uv、Node >=22.19.0。运行 uv sync --frozen，
 npm.cmd ci --prefix agent-backends/pi --ignore-scripts --no-audit --no-fund。
+
+推荐从源码目录运行 `uv run ehai init`，再设置凭证环境变量，运行 `uv run ehai up` 和
+`uv run ehai add <仓库路径>`。这六个本地命令（另有 `down`、`status`、`doctor`）
+均不使用 `--api-url`，也不需要 `--database` / `--artifacts`。
+
+~~~sh
+uv run ehai init --provider openai --model '<model-id>' \
+  --credential-env OPENAI_API_KEY --worker-capacity 2 --planner-capacity 1 --port 8765 --yes
+uv run ehai up
+uv run ehai add /absolute/path/to/repo
+uv run ehai status
+uv run ehai doctor
+uv run ehai down
+~~~
+
+`init` 省略的选项会逐项询问；`--yes` 对省略项用默认值，首次仍须指定 `--model`。
+`--reasoning-effort` 默认 `high`；`default` 保存为 null，不向 Pi 指定思考级别，用模型默认。指定的级别（含默认的 high）必须是该模型确切支持的，
+Pi 会把不支持的级别换成其他级别，而 EHAI 要求实际级别与授权一致，会以 `Pi did not accept the authorized thinking level` 拒绝启动会话
+（例如 DeepSeek `deepseek-flash` 只接受 off、low、high、max；Pi 的模型表里没有 high 档的模型需另选级别或用 `default`）。`--credential-env` 可重复；交互时用逗号分隔多个名字。只保存变量名，不保存密钥。
+已有 `config.json` 时显示差异并要求确认，`--yes` 跳过确认；已有私有 settings/models 保留。
+Node 来自 PATH，Pi CLI 来自本源码仓库的锁定安装；版本分别要求 >=22.19.0 和 1.3.0。
+
+`EHAI_HOME` 覆盖默认的 `~/.ehai`，须在所有执行仓库之外；其中 `config.json` 是默认值的单一来源。
+示意形状（路径均由 init 生成实际绝对路径）：
+
+~~~json
+{
+  "config_version": 1,
+  "provider": "openai",
+  "model": "<model-id>",
+  "reasoning_effort": "high",
+  "credential_env": ["OPENAI_API_KEY"],
+  "node": "/absolute/path/to/node",
+  "pi_cli": "/absolute/EHAI/agent-backends/pi/node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js",
+  "agent_dir": "/absolute/home/.ehai/pi",
+  "worker_capacity": 2,
+  "planner_capacity": 1,
+  "max_worker_capacity": 8,
+  "max_planner_capacity": 8,
+  "port": 8765,
+  "ui_dir": "/absolute/EHAI/control-plane/web/dist"
+}
+~~~
+
+Worker/Planner 容量是新工作区的默认值，管理器上限由 `max_*_capacity` 指定（默认各 8，
+init 会保证不小于单工作区默认值）。`pi-backend.json` 是生成的兼容文件，`add` 按 config 重新生成，
+无需另行维护；原生 `pi/settings.json` 和 `pi/models.json` 使用仓库示例初始化。
+配置更改不会覆盖已登记的不可变工作区配置；管理器端口、总容量和 UI 目录变更须 down/up。
+
+App 可先调用管理根地址的 `GET /api/v1/local`（`getLocalEngine`），返回
+`{data: {available, home, provider, model}}`，只含默认 Provider/模型与 home 路径，不含凭证。
+`ehai up` 显式向管理器传 `--local-home`；手动管理器未传此参数时 available=false，其余三项为 null，
+不会自行读取 `~/.ehai`。CLI 为 `get-local-engine`，MCP 为 `get_local_engine`。
+
+`POST /api/v1/workspaces/from-folder`（`addWorkspaceFolder`）接受
+`{path, workspace_id?, allowed_commands?, git_permissions?, available_shells?}`，返回与
+`startWorkspace` 相同的 `{data: WorkspaceDescriptor}`。它与 `ehai add` 共用登记构造函数，
+从用户 config 推导 Pi、模型、推理强度和容量，登记后启动。权限列表省略时为 `[]`，不接受 null；
+workspace_id 省略或 null 时从目录名推导，已占用则依次试 `-2`、`-3`（保持 64 字符上限）。
+路径须为存在的目录及 Git 工作树根，否则返回可读的 422；同一路径已登记返回 409 并附已有 workspace_id，
+显式 ID 已被不同登记占用、目录嵌套或容量不足也返回 409。启动失败按原生命周期返回 failed 状态，登记保留。
+未配置 local-home 的管理器返回 409，提示使用 `ehai up`。这一步不批准计划或授权执行模型。
+CLI：`add-workspace-folder --file <请求JSON>`（需要管理器 `--api-url`）；MCP：`add_workspace_folder`。
+CLI `ehai add` 重复相同登记仍保持幂等；文件夹 API 对重复路径明确返回冲突。
+
+凭证必须在运行 `up` 的环境中设置；桌面 App 第一版应连接已运行的管理器，或提示从终端启动。
+`doctor` 分别检查当前终端和守护进程实际继承的变量是否存在，不输出值；缺少变量时返回 1，
+不以工作区 ready 推断模型可用。详细启停、日志和权限行为见 [多工作区后端](WORKSPACE_MANAGER.md)。
+
+### 高级/手动配置
 
 在仓库外配置 backend.json，参照 [示例](../agent-backends/pi/examples/backend.json)：
 node、cli、agent_dir 都是宿主真实绝对路径；provider 必须与原生 models.json 一致；
@@ -369,13 +496,56 @@ MCP 名称为 integrate_run，启动即可调用。调用后宿主自动选择�
 
 返回 sources 列出 block、生产 Attempt、prepared_commit、commit；旧 block 版本为 null。
 同一过程及成果集合对应同一 integration_id，重试继续原合并记录，不需要额外幂等键。
-integrated 返回独立工作区、commit、完整 diff；conflicted 返回冲突路径和保留工作区，
+integrated 返回独立工作区、commit、完整补丁的宿主本地路径 diff_path；conflicted 返回冲突路径和保留工作区，
 commit/diff_path 为 null。可显式处理并暂存冲突后重试，宿主不自动改写冲突内容。
 整合成功只代表代码可物化，不改变 Gate/Run 状态，不自动提交到用户分支或推送。
 
 节点的候选代码是其 worktree 中 Git 能看到的全部变化，包括未被忽略的未跟踪文件。目标仓库须在
 .gitignore 中忽略自己的构建产物（例如 `__pycache__/`）；否则运行测试产生的文件会进入候选与整合结果，
 并行节点产生的同名文件还会互相冲突。Reviewer 的上游成果整合冲突时不重试，直接打开干预并列出冲突路径。
+
+前端或远程客户端通过只读接口找回结果和补丁，不需要读取宿主路径或重新整合：
+
+~~~powershell
+uv run ehai --api-url http://127.0.0.1:8000 list-run-integrations --run-id <run-id>
+uv run ehai --api-url http://127.0.0.1:8000 get-integration-diff --run-id <run-id> --integration-id <integration-id>
+~~~
+
+- `GET /api/v1/runs/{run_id}/integrations`（`listRunIntegrations`）：JSON `{data: CodeIntegration[]}`，
+  每个 integration_id 只返回最新记录，按首次记录顺序排列；已知 Run 尚无记录时为 `[]`。
+- `GET /api/v1/runs/{run_id}/integrations/{integration_id}/diff`（`getIntegrationDiff`）：
+  JSON `{data: {run_id, integration_id, content, truncated}}`；`content` 是 unified diff 文本，
+  最多读取补丁前 1 MiB（1,048,576 字节），超过则 `truncated=true`，不可视为完整补丁。
+  非 UTF-8 字节替换为 `�`，截断点不输出被切开的 UTF-8 字符。
+  Run 或其整合不存在（含整合属于其他 Run）返回 404；冲突尚无完整补丁、补丁已丢失或
+  宿主没有 Git diff 后端时返回 409。读取不执行 Git 整合、不创建文件。
+
+MCP 沿用相同契约，名称为 `list_run_integrations`、`get_integration_diff`，只需对应路径 ID。
+整合结果在当前 Run/过程复核后写入现有 SQLite 事件日志 `IntegrationCreated`，刷新和重启后可读；
+相同结果重试不重复记事件，冲突修复后同一 ID 的最新结果更新为 integrated。
+线程时间线从该事件生成 `integration_created`，refs 包含 run_id、integration_id、status。
+此前版本只持久化 Git 合并游标与补丁，未保存完整整合结果；不从游标补造历史结果或时间线，
+这些整合在显式重试后才进入列表。补丁仍保留在既有宿主存储中，不复制到数据库。
+
+审完 diff 后，可把整合 commit 放到用户仓库的新分支，再按自己的 Git 流程合并或开 PR：
+
+~~~sh
+uv run --no-sync ehai --api-url http://127.0.0.1:8000 create-integration-branch \
+  --run-id <run-id> --integration-id <integration-id> --branch ehai/result
+~~~
+
+`POST /api/v1/runs/{run_id}/integrations/{integration_id}/branch`（`createIntegrationBranch`），
+请求 `{branch: string}`，响应 `{data: {run_id, integration_id, branch, commit, created}}`。
+MCP 为 `create_integration_branch`，请求体同 HTTP。无需额外幂等键。
+只使用该 integration_id 最新持久记录，要求 status=integrated；conflicted 或没有 Git 后端返回 409，
+未知 Run/整合（含归属不符）返回 404。分支名用 `git check-ref-format --branch` 校验，非法名称返回 422，
+不接受 `@{-1}` 等展开表达式。核心在 base workspace 中用
+`git update-ref refs/heads/<branch> <commit> ""` 原子创建；commit 已在共享对象库中，
+不产生新 commit，不 checkout、不改用户工作树/索引/当前 HEAD，不 push。
+同名分支已指向该 commit 时成功且 created=false；指向其他 commit 时返回 409，说明已有指向且不覆盖。
+真正创建时才写 `IntegrationBranchCreated`（payload 为上述返回字段），时间线新增
+`integration_branch_created`，refs 含 run_id、integration_id、branch、commit（以及 event_id）；
+重复调用不重复记事件。
 
 ## 跨批准后继 Run
 

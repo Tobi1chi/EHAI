@@ -76,6 +76,7 @@ from ehai.infrastructure.sqlite.project_configuration import SQLiteProjectConfig
 from ehai.infrastructure.workers import FakeWorker
 from ehai.interfaces.backend_cli import register_backend_commands
 from ehai.interfaces.cli_api import API_ONLY_COMMANDS, ApiCommandError, dispatch_api
+from ehai.interfaces.local_app import LOCAL_COMMANDS, run_local
 from ehai.interfaces.public_documents import public_json_value
 from ehai.interfaces.session_host import (
     ExecutionConfig,
@@ -349,6 +350,34 @@ def create_parser() -> argparse.ArgumentParser:
     commands = parser.add_subparsers(dest="command", required=True)
     register_backend_commands(commands)
 
+    initialize = commands.add_parser("init", help="configure the local EHAI engine")
+    initialize.add_argument("--provider")
+    initialize.add_argument("--model")
+    initialize.add_argument(
+        "--reasoning-effort",
+        choices=("default", "off", "minimal", "low", "medium", "high", "xhigh", "max"),
+    )
+    initialize.add_argument("--credential-env", action="append")
+    initialize.add_argument("--worker-capacity", type=int)
+    initialize.add_argument("--planner-capacity", type=int, dest="local_planner_capacity")
+    initialize.add_argument("--port", type=int)
+    initialize.add_argument(
+        "--yes", action="store_true", help="use defaults and confirm replacement"
+    )
+    for name in ("up", "down", "status", "doctor"):
+        commands.add_parser(name, help=f"local engine: {name}")
+    add = commands.add_parser("add", help="register and start a workspace using local defaults")
+    add.add_argument("path", type=Path, nargs="?", default=Path.cwd())
+    add.add_argument("--workspace-id")
+    add.add_argument("--allow-command", action="append", default=[], metavar="JSON_ARGV")
+    add.add_argument(
+        "--git-permission",
+        action="append",
+        default=[],
+        choices=("git.read", "git.local_write", "git.remote_write", "git.dangerous"),
+    )
+    add.add_argument("--shell", action="append", default=[])
+
     inbox = commands.add_parser("list-inbox", help="list current human requests across projects")
     inbox.add_argument("--project-id")
     inbox.add_argument("--run-id")
@@ -363,6 +392,13 @@ def create_parser() -> argparse.ArgumentParser:
     inbox_item.add_argument("--request-id", required=True)
 
     commands.add_parser("list-projects", help="discover Projects and their goal/Run counts")
+    commands.add_parser("list-threads", help="list threads by latest activity")
+    thread_query = commands.add_parser("get-thread", help="read a thread phase and next action")
+    thread_query.add_argument("--goal-id", required=True)
+    timeline = commands.add_parser("get-thread-timeline", help="read persisted thread activity")
+    timeline.add_argument("--goal-id", required=True)
+    timeline.add_argument("--limit", type=int, default=100)
+    timeline.add_argument("--after", type=int, default=0)
     project_query = commands.add_parser("get-project", help="read project goals, Runs and results")
     project_query.add_argument("--project-id", required=True)
 
@@ -655,6 +691,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             stream.reconfigure(encoding="utf-8")
     parser = create_parser()
     args = parser.parse_args(argv)
+    if args.command in LOCAL_COMMANDS:
+        if args.api_url is not None:
+            parser.error("local engine commands do not accept --api-url")
+        return run_local(args)
     if args.api_url is not None:
         local_options = (
             args.database,
@@ -706,6 +746,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(json_dumps(asyncio.run(inspect_pi_backend(node=args.node, cli=args.pi_cli))))
             return 0
         if args.command in {
+            "list-threads",
+            "get-thread",
+            "get-thread-timeline",
             "list-inbox",
             "get-inbox-item",
             "list-projects",
@@ -943,6 +986,16 @@ def _dispatch_query(args: argparse.Namespace) -> JsonValue:
         return public_json_value(queries.get_inbox_item(args.kind, normalize_id(args.request_id)))
     if args.command == "list-projects":
         return public_json_value(queries.list_projects())
+    if args.command == "list-threads":
+        return public_json_value(queries.list_threads())
+    if args.command == "get-thread":
+        return public_json_value(queries.get_thread(normalize_id(args.goal_id)))
+    if args.command == "get-thread-timeline":
+        return public_json_value(
+            queries.get_thread_timeline(
+                normalize_id(args.goal_id), limit=args.limit, after=args.after
+            )
+        )
     if args.command == "get-project":
         return public_json_value(queries.get_project(normalize_id(args.project_id)))
     if args.command == "get-plan":

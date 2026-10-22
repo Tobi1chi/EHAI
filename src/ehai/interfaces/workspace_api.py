@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import hmac
+import json
+import os
 import re
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -15,13 +18,45 @@ import httpx
 import uvicorn
 from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, StreamingResponse
-from pydantic import BaseModel, ConfigDict, WithJsonSchema
+from pydantic import BaseModel, ConfigDict, Field, WithJsonSchema
 
 from ehai import JsonValue, utc_now
-from ehai.infrastructure.workspace_supervisor import SupervisorError, WorkspaceSupervisor
-from ehai.interfaces.http_models import DataResponse
+from ehai.infrastructure.workspace_supervisor import (
+    SupervisorError,
+    WorkspaceConflict,
+    WorkspaceSupervisor,
+    WorkspaceSupervisorError,
+)
+from ehai.interfaces.http_models import DataResponse, ErrorResponse
+from ehai.interfaces.local_app import folder_registration, load_local_config, write_private_json
 from ehai.interfaces.runtime import create_local_app
-from ehai.interfaces.workspace_models import WorkspaceDescriptor, WorkspaceId, WorkspaceRegistration
+from ehai.interfaces.workspace_models import (
+    GitPermission,
+    Text,
+    WorkspaceDescriptor,
+    WorkspaceId,
+    WorkspaceRegistration,
+)
+
+
+class AddWorkspaceFolderRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    path: Text
+    workspace_id: WorkspaceId | None = None
+    allowed_commands: list[list[str]] = Field(default_factory=list)
+    git_permissions: list[GitPermission] = Field(default_factory=list)
+    available_shells: list[str] = Field(default_factory=list)
+
+
+class LocalEngineData(BaseModel):
+    available: bool
+    home: str | None
+    provider: str | None
+    model: str | None
+
+
+class LocalEngineResponse(BaseModel):
+    data: LocalEngineData
 
 
 class WorkspaceActionRequest(BaseModel):
@@ -96,6 +131,29 @@ class WorkspaceOverviewResponse(BaseModel):
     data: WorkspaceOverviewData
 
 
+class WorkspaceThreadEntry(BaseModel):
+    workspace: WorkspaceDescriptor
+    api_path: str
+    available: bool
+    threads: Annotated[
+        dict[str, JsonValue] | None,
+        WithJsonSchema(
+            {"anyOf": [{"$ref": "queries.schema.json#/$defs/ThreadListView"}, {"type": "null"}]}
+        ),
+    ]
+    error: WorkspaceQueryError | None
+
+
+class WorkspaceThreadsData(BaseModel):
+    observed_at: str
+    workspaces: list[WorkspaceThreadEntry]
+    consistent_across_workspaces: Literal[False] = False
+
+
+class WorkspaceThreadsResponse(BaseModel):
+    data: WorkspaceThreadsData
+
+
 def _core_openapi() -> dict[str, Any]:
     # Schema assembly starts no lifespan, worker or model process. Keep the normal
     # production API contract even when no registered workspace is online.
@@ -110,7 +168,12 @@ def _core_openapi() -> dict[str, Any]:
         return core.openapi()
 
 
-def create_workspace_app(supervisor: WorkspaceSupervisor, ui_dir: Path | None = None) -> FastAPI:
+def create_workspace_app(
+    supervisor: WorkspaceSupervisor,
+    ui_dir: Path | None = None,
+    *,
+    local_home: Path | None = None,
+) -> FastAPI:
     """Compose one local manager; child cores retain all business-state ownership."""
     core_schema = _core_openapi()
     allowed_routes = [
@@ -142,6 +205,7 @@ def create_workspace_app(supervisor: WorkspaceSupervisor, ui_dir: Path | None = 
         return document
 
     app.openapi = manager_openapi  # type: ignore[method-assign]
+    folder_lock = asyncio.Lock()
 
     @app.exception_handler(SupervisorError)
     async def supervisor_error(request: Request, error: SupervisorError) -> JSONResponse:
@@ -153,6 +217,64 @@ def create_workspace_app(supervisor: WorkspaceSupervisor, ui_dir: Path | None = 
     @app.get("/core-openapi.json", include_in_schema=False)
     def core_openapi() -> dict[str, Any]:
         return core_schema
+
+    @app.get("/api/v1/local", operation_id="getLocalEngine", response_model=LocalEngineResponse)
+    def local_engine() -> LocalEngineResponse:
+        if local_home is None:
+            return LocalEngineResponse(
+                data=LocalEngineData(available=False, home=None, provider=None, model=None)
+            )
+        try:
+            config = load_local_config(local_home)
+        except (OSError, ValueError) as error:
+            raise WorkspaceSupervisorError(str(error)) from error
+        return LocalEngineResponse(
+            data=LocalEngineData(
+                available=True, home=str(local_home), provider=config.provider, model=config.model
+            )
+        )
+
+    @app.post(
+        "/api/v1/workspaces/from-folder",
+        operation_id="addWorkspaceFolder",
+        response_model=WorkspaceResponse,
+        responses={
+            409: {"model": ErrorResponse, "description": "Local engine or workspace conflict"},
+            422: {"model": ErrorResponse, "description": "Invalid folder or local configuration"},
+        },
+    )
+    async def add_folder(body: AddWorkspaceFolderRequest) -> DataResponse:
+        if local_home is None:
+            raise WorkspaceConflict("Folder registration requires a manager started with ehai up")
+        async with folder_lock:
+            workspaces = await supervisor.list()
+            try:
+                path = Path(body.path).expanduser().resolve()
+            except (OSError, ValueError) as error:
+                raise WorkspaceSupervisorError(str(error)) from error
+            for workspace in workspaces:
+                if Path(workspace.path) == path:
+                    raise WorkspaceConflict(
+                        f"Path is already registered as workspace_id={workspace.workspace_id}"
+                    )
+            try:
+                registration = await asyncio.to_thread(
+                    folder_registration,
+                    local_home,
+                    load_local_config(local_home),
+                    path,
+                    workspace_id=body.workspace_id,
+                    occupied_ids={w.workspace_id for w in workspaces},
+                    allowed_commands=body.allowed_commands,
+                    git_permissions=body.git_permissions,
+                    available_shells=body.available_shells,
+                )
+            except (OSError, ValueError) as error:
+                raise WorkspaceSupervisorError(str(error)) from error
+            await supervisor.register(registration)
+        return DataResponse(
+            data=(await supervisor.start(registration.workspace_id)).model_dump(mode="json")
+        )
 
     @app.get(
         "/api/v1/workspaces", operation_id="listWorkspaces", response_model=WorkspaceListResponse
@@ -242,6 +364,48 @@ def create_workspace_app(supervisor: WorkspaceSupervisor, ui_dir: Path | None = 
                         )
                     entry["projects"] = details
                     entry["inbox"] = await read_core(client, endpoint, "/api/v1/inbox")
+                    entry["available"] = True
+                except SupervisorError as error:
+                    entry["error"] = {"code": error.code, "message": str(error)}
+                except (httpx.HTTPError, ValueError, KeyError, TypeError):
+                    entry["error"] = {
+                        "code": "workspace_query_failed",
+                        "message": "Workspace query unavailable; no request was retried",
+                    }
+                return entry
+
+        workspaces = await supervisor.list()
+        entries = await asyncio.gather(*(summarize(w.workspace_id) for w in workspaces))
+        return DataResponse(
+            data={
+                "observed_at": utc_now().isoformat(),
+                "workspaces": cast(list[JsonValue], entries),
+                "consistent_across_workspaces": False,
+            }
+        )
+
+    @app.get(
+        "/api/v1/threads",
+        operation_id="listWorkspaceThreads",
+        response_model=WorkspaceThreadsResponse,
+    )
+    async def threads(request: Request) -> DataResponse:
+        client = request.app.state.workspace_http
+        slots = asyncio.Semaphore(4)
+
+        async def summarize(workspace_id: str) -> dict[str, Any]:
+            async with slots:
+                descriptor = await supervisor.get(workspace_id)
+                entry: dict[str, Any] = {
+                    "workspace": descriptor.model_dump(mode="json"),
+                    "api_path": f"/workspaces/{workspace_id}",
+                    "available": False,
+                    "threads": None,
+                    "error": None,
+                }
+                try:
+                    endpoint = await supervisor.endpoint(workspace_id)
+                    entry["threads"] = await read_core(client, endpoint, "/api/v1/threads")
                     entry["available"] = True
                 except SupervisorError as error:
                     entry["error"] = {"code": error.code, "message": str(error)}
@@ -380,6 +544,8 @@ def main() -> int:
     parser.add_argument("--port", type=int, default=8765)
     parser.add_argument("--max-worker-capacity", type=int, default=8)
     parser.add_argument("--max-planner-capacity", type=int, default=8)
+    parser.add_argument("--local-control-file", type=Path, help=argparse.SUPPRESS)
+    parser.add_argument("--local-home", type=Path, help=argparse.SUPPRESS)
     parser.add_argument(
         "--ui-dir",
         type=Path,
@@ -392,13 +558,89 @@ def main() -> int:
         max_worker_capacity=args.max_worker_capacity,
         max_planner_capacity=args.max_planner_capacity,
     )
-    uvicorn.run(
-        create_workspace_app(supervisor, args.ui_dir),
-        host="127.0.0.1",
-        port=args.port,
-        timeout_graceful_shutdown=15,
+    app = create_workspace_app(
+        supervisor,
+        args.ui_dir,
+        local_home=args.local_home.expanduser().resolve() if args.local_home else None,
     )
+    server = uvicorn.Server(
+        uvicorn.Config(app, host="127.0.0.1", port=args.port, timeout_graceful_shutdown=15)
+    )
+    if args.local_control_file is not None:
+        _local_control(app, server, supervisor, args.local_control_file)
+    server.run()
     return 0
+
+
+def _local_control(
+    app: FastAPI, server: uvicorn.Server, supervisor: WorkspaceSupervisor, control_file: Path
+) -> None:
+    """Private daemon lifecycle, deliberately excluded from the public API contract."""
+    record = json.loads(control_file.read_text(encoding="utf-8"))
+    token = record["token"]
+    record["pid"] = os.getpid()
+    # The caller created the file privately; replacement preserves its permissions.
+    write_private_json(control_file, record)
+    stopping = False
+    active_writes = 0
+    shutdown_lock = asyncio.Lock()
+
+    def authorized(request: Request) -> bool:
+        return hmac.compare_digest(request.headers.get("X-EHAI-Manager-Token", ""), token)
+
+    @app.middleware("http")
+    async def stop_writes(request: Request, call_next: Any) -> Any:
+        nonlocal active_writes
+        if stopping and request.method not in {"GET", "HEAD", "OPTIONS"}:
+            return JSONResponse(
+                {"error": {"code": "manager_stopping", "message": "Manager is stopping"}},
+                status_code=409,
+            )
+        writing = request.method not in {
+            "GET",
+            "HEAD",
+            "OPTIONS",
+        } and not request.url.path.startswith("/_ehai_local/")
+        if writing:
+            active_writes += 1
+        try:
+            return await call_next(request)
+        finally:
+            if writing:
+                active_writes -= 1
+
+    @app.get("/_ehai_local/identity", include_in_schema=False)
+    async def identity(request: Request) -> JSONResponse:
+        if not authorized(request):
+            return JSONResponse({"error": "private daemon control"}, status_code=403)
+        return JSONResponse(
+            {
+                "pid": os.getpid(),
+                "credentials": {
+                    name: bool(os.environ.get(name)) for name in record["credential_env"]
+                },
+            }
+        )
+
+    @app.post("/_ehai_local/shutdown", include_in_schema=False)
+    async def shutdown(request: Request) -> JSONResponse:
+        nonlocal stopping
+        if not authorized(request):
+            return JSONResponse({"error": "private daemon control"}, status_code=403)
+        async with shutdown_lock:
+            if active_writes:
+                raise WorkspaceConflict("Manager has active writes; wait for them to finish")
+            stopping = True
+            try:
+                for workspace in await supervisor.list():
+                    result = await supervisor.stop(workspace.workspace_id)
+                    if result.status != "stopped":
+                        raise WorkspaceConflict(f"Workspace {workspace.workspace_id} did not stop")
+            except BaseException:
+                stopping = False
+                raise
+            asyncio.get_running_loop().call_later(0.1, setattr, server, "should_exit", True)
+        return JSONResponse({"stopping": True})
 
 
 if __name__ == "__main__":

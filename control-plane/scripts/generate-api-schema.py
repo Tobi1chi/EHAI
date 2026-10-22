@@ -8,7 +8,10 @@ import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
+from pydantic import TypeAdapter
+
 from ehai.application.plan_imports import plan_import_error_schema, plan_import_schema
+from ehai.application.thread_queries import ThreadListView, ThreadSummary, ThreadTimelineView
 from ehai.domain.events import EventType
 from ehai.infrastructure.workspace_supervisor import WorkspaceSupervisor
 from ehai.interfaces.event_consumers_api import (
@@ -19,6 +22,7 @@ from ehai.interfaces.event_consumers_api import (
 )
 from ehai.interfaces.http_models import (
     ApprovePlanRequest,
+    CreateIntegrationBranchRequest,
     ExecutionConfigRequest,
     ImportPlanRequest,
     IntegrateRunRequest,
@@ -47,6 +51,88 @@ for request_type in (CreateNoteRequest, AddNoteMessageRequest, DecideNoteRequest
 notes_path.write_text(json.dumps(notes, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 queries_path = schema_root / "queries.schema.json"
 queries = json.loads(queries_path.read_text(encoding="utf-8"))
+queries["$defs"]["CodeIntegrationListResponse"] = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["data"],
+    "properties": {
+        "data": {"type": "array", "items": {"$ref": "#/$defs/CodeIntegration"}},
+    },
+}
+queries["$defs"]["CodeIntegrationDiff"] = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["run_id", "integration_id", "content", "truncated"],
+    "properties": {
+        "run_id": {"$ref": "common.schema.json#/$defs/Id"},
+        "integration_id": {"$ref": "common.schema.json#/$defs/Id"},
+        "content": {
+            "type": "string",
+            "description": "Unified diff, UTF-8 with replacement for invalid bytes, "
+            "from at most the first 1048576 source bytes (1 MiB).",
+        },
+        "truncated": {
+            "type": "boolean",
+            "description": "True if the retained patch exceeds 1048576 bytes; "
+            "content is then a prefix, not a complete patch.",
+        },
+    },
+}
+queries["$defs"]["CodeIntegrationDiffResponse"] = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["data"],
+    "properties": {"data": {"$ref": "#/$defs/CodeIntegrationDiff"}},
+}
+queries["$defs"]["IntegrationBranch"] = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["run_id", "integration_id", "branch", "commit", "created"],
+    "properties": {
+        "run_id": {"$ref": "common.schema.json#/$defs/Id"},
+        "integration_id": {"$ref": "common.schema.json#/$defs/Id"},
+        "branch": {"type": "string"},
+        "commit": {"type": "string"},
+        "created": {"type": "boolean"},
+    },
+}
+queries["$defs"]["IntegrationBranchResponse"] = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["data"],
+    "properties": {"data": {"$ref": "#/$defs/IntegrationBranch"}},
+}
+
+
+def thread_reference(value: object) -> object:
+    if isinstance(value, list):
+        return [thread_reference(item) for item in value]
+    if not isinstance(value, dict):
+        return value
+    result = {key: thread_reference(item) for key, item in value.items()}
+    if result.get("$ref") == "#/$defs/JsonValue":
+        result["$ref"] = "commands.schema.json#/$defs/JsonValue"
+    return result
+
+
+for view_type, response_name in (
+    (ThreadListView, "ThreadListResponse"),
+    (ThreadSummary, "ThreadResponse"),
+    (ThreadTimelineView, "ThreadTimelineResponse"),
+):
+    view_schema = TypeAdapter(view_type).json_schema()
+    definitions = view_schema.pop("$defs", {})
+    definitions.pop("JsonValue", None)
+    definitions.pop("JsonScalar", None)
+    definitions.pop("RunStatus", None)
+    queries["$defs"].update(thread_reference(definitions))
+    queries["$defs"][view_type.__name__] = thread_reference(view_schema)
+    queries["$defs"][response_name] = {
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["data"],
+        "properties": {"data": {"$ref": "#/$defs/" + view_type.__name__}},
+    }
 queries["$defs"].update(event_consumer_schema_definitions())
 queries["$defs"]["PlannerCapacity"] = {
     "type": "object",
@@ -91,6 +177,9 @@ events["$defs"]["EventType"]["enum"] = [event.value for event in EventType]
 events_path.write_text(json.dumps(events, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 queries_path.write_text(json.dumps(queries, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 commands["$defs"]["IntegrateRunRequest"] = IntegrateRunRequest.model_json_schema()
+commands["$defs"]["CreateIntegrationBranchRequest"] = (
+    CreateIntegrationBranchRequest.model_json_schema()
+)
 for request_type in (ApprovePlanRequest, StartRunRequest):
     request_schema = request_type.model_json_schema()
     commands["$defs"].update(request_schema.pop("$defs", {}))

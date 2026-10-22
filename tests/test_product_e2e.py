@@ -20,8 +20,9 @@ Scenario:
 4. Decide the human Check through the CLI. The Run completes; repeating the decision
    with the same idempotency key is accepted without reopening any request.
 
-Real model calls and integrate-run are outside this deterministic E2E and are
-verified manually; see docs/REFACTOR_PLAN.md.
+5. Integrate completed results, read their diff and publish to a new user-repository branch.
+
+Real model calls are verified manually; see docs/REFACTOR_PLAN.md.
 """
 
 from __future__ import annotations
@@ -40,6 +41,7 @@ from contextlib import closing, contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 import httpx
 import pytest
@@ -462,6 +464,21 @@ def test_product_e2e(tmp_path: Path) -> None:
             "--idempotency-key",
             "g",
         )
+        thread = host.cli("get-thread", "--goal-id", goal["goal_id"])
+        assert thread["phase"] == "idle"
+        assert thread["next_action"] == {
+            "kind": "start_discussion",
+            "refs": {"goal_id": goal["goal_id"]},
+        }
+        assert thread["attention_count"] == 0 and thread["run_id"] is None
+        threads = host.cli("list-threads")
+        assert [t["goal_id"] for t in threads["threads"]] == [goal["goal_id"]]
+        assert threads["threads"][0]["event_offset"] == threads["event_offset"]
+        timeline = host.cli("get-thread-timeline", "--goal-id", goal["goal_id"])
+        assert [item["kind"] for item in timeline["items"]] == ["goal_created"]
+        unknown = str(uuid4())
+        assert httpx.get(f"{host.url}/api/v1/threads/{unknown}").status_code == 404
+        assert httpx.get(f"{host.url}/api/v1/threads/{unknown}/timeline").status_code == 404
         plan_file = tmp_path / "plan.json"
         plan_file.write_text(json.dumps(_plan_document()), encoding="utf-8")
         plan = host.cli(
@@ -474,6 +491,17 @@ def test_product_e2e(tmp_path: Path) -> None:
             "import",
         )
         assert plan["status"] == "draft"
+        thread = host.cli("get-thread", "--goal-id", goal["goal_id"])
+        assert thread["phase"] == "awaiting_approval"
+        assert thread["next_action"] == {
+            "kind": "review_plan",
+            "refs": {
+                "plan_revision_id": plan["plan_revision_id"],
+                "completion_contract_id": plan["completion_contract_id"],
+            },
+        }
+        timeline = host.http("GET", f"/threads/{goal['goal_id']}/timeline")
+        assert timeline["items"][-1]["kind"] == "plan_revision_created"
 
         # 2. Approval and execution authorization are separate explicit steps.
         approved = host.cli(
@@ -493,6 +521,9 @@ def test_product_e2e(tmp_path: Path) -> None:
             {"idempotency_key": "start", "plan_revision_id": plan["plan_revision_id"]},
         )
         run_id = run["run_id"]
+        thread = host.http("GET", f"/threads/{goal['goal_id']}")
+        assert thread["phase"] == "running"
+        assert thread["next_action"] == {"kind": "watch_run", "refs": {"run_id": run_id}}
 
         _wait(lambda: len(_human_checks(host, run_id)) == 1, "the human request", host)
         _wait(
@@ -507,6 +538,20 @@ def test_product_e2e(tmp_path: Path) -> None:
         request = _human_checks(host, run_id)[0]
         assert request["actionable"] is True
         assert request["owner"]["node_title"] == "Task A"
+        thread = host.cli("get-thread", "--goal-id", goal["goal_id"])
+        assert thread["phase"] == "needs_attention" and thread["attention_count"] == 1
+        assert thread["next_action"] == {
+            "kind": "handle_inbox",
+            "refs": {
+                "kind": "human_check",
+                "request_id": request["request_id"],
+                "run_id": run_id,
+            },
+        }
+        timeline = host.http("GET", f"/threads/{goal['goal_id']}/timeline")
+        assert {"plan_approved", "run_started", "inbox_opened", "node_completed"} <= {
+            item["kind"] for item in timeline["items"]
+        }
         batch = host.cli("read-consumer-events", "--consumer-id", "e2e-observer")
         assert batch["batch_token"] is not None and batch["events"]
 
@@ -519,6 +564,7 @@ def test_product_e2e(tmp_path: Path) -> None:
         recovered = _human_checks(host, run_id)
         assert len(recovered) == 1
         assert recovered[0]["request_token"] == request["request_token"]
+        assert host.cli("get-thread", "--goal-id", goal["goal_id"])["phase"] == "needs_attention"
         replayed = host.cli("read-consumer-events", "--consumer-id", "e2e-observer")
         assert replayed["batch_token"] == batch["batch_token"]
         assert [event["offset"] for event in replayed["events"]] == [
@@ -553,6 +599,38 @@ def test_product_e2e(tmp_path: Path) -> None:
         replay = host.cli(*decision_args)
         assert (replay["run_id"], replay["status"]) == (first["run_id"], "completed")
         assert _human_checks(host, run_id) == []
+        thread = host.cli("get-thread", "--goal-id", goal["goal_id"])
+        assert thread["phase"] == "completed" and thread["attention_count"] == 0
+        assert thread["next_action"] == {"kind": "review_result", "refs": {"run_id": run_id}}
+        timeline = host.cli("get-thread-timeline", "--goal-id", goal["goal_id"])
+        assert {"inbox_resolved", "run_status_changed"} <= {
+            item["kind"] for item in timeline["items"]
+        }
+        assert [
+            item["refs"]["status"]
+            for item in timeline["items"]
+            if item["kind"] == "run_status_changed"
+        ] == ["completed"]
+        assert [item["at"] for item in timeline["items"]] == sorted(
+            item["at"] for item in timeline["items"]
+        )
+        assert any(
+            item["kind"] == "node_completed"
+            and item["refs"].get("gate_id")
+            and item["refs"].get("artifact_ids")
+            for item in timeline["items"]
+        )
+        page = host.cli("get-thread-timeline", "--goal-id", goal["goal_id"], "--limit", "2")
+        assert page["items"] == timeline["items"][:2] and page["next_after"] == 2
+        remaining = host.cli(
+            "get-thread-timeline",
+            "--goal-id",
+            goal["goal_id"],
+            "--after",
+            str(page["next_after"]),
+        )
+        assert page["items"] + remaining["items"] == timeline["items"]
+        assert remaining["next_after"] is None
 
         result = host.cli("get-result", "--run-id", run_id)["result"]
         checks = result["check_result"]["checks"]
@@ -575,3 +653,82 @@ def test_product_e2e(tmp_path: Path) -> None:
         runs = [item for goal_view in project_view["goals"] for item in goal_view["runs"]]
         assert [item["run"]["run_id"] for item in runs] == [run_id]
         assert runs[0]["completed_results"]
+
+        # 5. Integrate the code results and read them back without the host-local patch path.
+        process = host.cli("get-run-plan", "--run-id", run_id)["process_revision_id"]
+        integration = host.http(
+            "POST", f"/runs/{run_id}/integrate", {"expected_process_revision_id": process}
+        )
+        assert integration["status"] == "integrated" and integration["commit"]
+        again = host.http(
+            "POST", f"/runs/{run_id}/integrate", {"expected_process_revision_id": process}
+        )
+        assert again["integration_id"] == integration["integration_id"]
+        assert host.cli("list-run-integrations", "--run-id", run_id) == [integration]
+        diff = host.cli(
+            "get-integration-diff",
+            "--run-id",
+            run_id,
+            "--integration-id",
+            integration["integration_id"],
+        )
+        assert diff["truncated"] is False
+        assert diff["content"] == Path(integration["diff_path"]).read_text(encoding="utf-8")
+        assert all(_node_file(title) in diff["content"] for title in ("Task A", "Task B"))
+        timeline = host.cli("get-thread-timeline", "--goal-id", goal["goal_id"])
+        created = [item for item in timeline["items"] if item["kind"] == "integration_created"]
+        assert len(created) == 1
+        assert {
+            "run_id": run_id,
+            "integration_id": integration["integration_id"],
+            "status": "integrated",
+        }.items() <= created[0]["refs"].items()
+
+        # 6. Publish the reviewed integration without changing the user's current checkout.
+        workspace = host.root / "workspace"
+
+        def git(*arguments: str) -> str:
+            return subprocess.run(
+                ["git", "-C", str(workspace), *arguments],
+                capture_output=True,
+                text=True,
+                check=True,
+            ).stdout
+
+        head, status = git("rev-parse", "HEAD"), git("status", "--porcelain")
+        published = host.cli(
+            "create-integration-branch",
+            "--run-id",
+            run_id,
+            "--integration-id",
+            integration["integration_id"],
+            "--branch",
+            "ehai/e2e",
+        )
+        assert published == {
+            "run_id": run_id,
+            "integration_id": integration["integration_id"],
+            "branch": "ehai/e2e",
+            "commit": integration["commit"],
+            "created": True,
+        }
+        assert git("rev-parse", "refs/heads/ehai/e2e").strip() == integration["commit"]
+        repeated = host.http(
+            "POST",
+            f"/runs/{run_id}/integrations/{integration['integration_id']}/branch",
+            {"branch": "ehai/e2e"},
+        )
+        assert repeated == {**published, "created": False}
+        assert git("rev-parse", "HEAD") == head
+        assert git("status", "--porcelain") == status
+        timeline = host.cli("get-thread-timeline", "--goal-id", goal["goal_id"])
+        branches = [
+            item for item in timeline["items"] if item["kind"] == "integration_branch_created"
+        ]
+        assert len(branches) == 1
+        assert {
+            "run_id": run_id,
+            "integration_id": integration["integration_id"],
+            "branch": "ehai/e2e",
+            "commit": integration["commit"],
+        }.items() <= branches[0]["refs"].items()

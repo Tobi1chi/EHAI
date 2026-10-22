@@ -35,6 +35,7 @@ from ehai.domain.checking import (
     HumanCheckEvidence,
     HumanCheckRequest,
 )
+from ehai.domain.events import EventType
 from ehai.domain.execution import Attempt, AttemptStatus, Run, RunStatus
 from ehai.domain.planning import (
     Branch,
@@ -65,6 +66,7 @@ if TYPE_CHECKING:
     from ehai.application.inbox import InboxDetailView, InboxKind, InboxListView
     from ehai.application.project_queries import ProjectDetailView, ProjectListView
     from ehai.application.runtime_control import RuntimeControlService
+    from ehai.application.thread_queries import ThreadListView, ThreadSummary, ThreadTimelineView
 
 _MAX_TRACE_SESSION_EVENTS = 512
 _MAX_TRACE_SESSION_PAYLOAD_BYTES = 8 * 1024
@@ -523,6 +525,46 @@ class QueryService:
 
         with self._read_session_factory() as session:
             return list_projects(session)
+
+    def list_run_integrations(self, run_id: ID) -> tuple[dict[str, JsonValue], ...]:
+        """Latest recorded result per integration, in first-recorded order."""
+        run_id = normalize_id(run_id)
+        with self._read_session_factory() as session:
+            _required_run(session.states.get_run(run_id), run_id)
+            results = {
+                stored.event.correlation_id: stored.event.payload
+                for stored in session.events.list_events()
+                if stored.event.type is EventType.INTEGRATION_CREATED
+                and stored.event.run_id == run_id
+            }
+            return tuple(results.values())
+
+    def get_run_integration(self, run_id: ID, integration_id: ID) -> dict[str, JsonValue]:
+        integration_id = normalize_id(integration_id)
+        for result in self.list_run_integrations(run_id):
+            if result["integration_id"] == integration_id:
+                return result
+        raise QueryNotFoundError("Integration", integration_id)
+
+    def list_threads(self) -> ThreadListView:
+        from ehai.application.thread_queries import ThreadQuery
+
+        with self._read_session_factory() as session:
+            return ThreadQuery(session).list_threads()
+
+    def get_thread(self, goal_id: ID) -> ThreadSummary:
+        from ehai.application.thread_queries import ThreadQuery
+
+        with self._read_session_factory() as session:
+            return ThreadQuery(session).get_thread(goal_id)
+
+    def get_thread_timeline(
+        self, goal_id: ID, *, limit: int = 100, after: int = 0
+    ) -> ThreadTimelineView:
+        from ehai.application.thread_queries import ThreadQuery
+
+        with self._read_session_factory() as session:
+            return ThreadQuery(session).timeline(goal_id, limit=limit, after=after)
 
     def list_inbox(
         self,

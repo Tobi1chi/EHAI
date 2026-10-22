@@ -16,6 +16,8 @@ import { LearnPage } from "./pages/shared/Learn";
 import { SettingsPage } from "./pages/shared/Settings";
 import { ProjectPage, ProjectsPage } from "./pages/work/Projects";
 import { AttemptPage } from "./pages/work/AttemptPage";
+import { NewThread } from "./pages/work/NewThread";
+import { ThreadPage } from "./pages/work/ThreadPage";
 import { RunPage } from "./pages/work/RunPage";
 import { WorkHome } from "./pages/work/WorkHome";
 import "./styles/tokens.css";
@@ -38,6 +40,13 @@ function resolve(path: string): Route | "home" {
     return { zone: "life", page: <LifeRecord key={p["id"]} workflowRunId={p["id"] as string} />, title: "记录" };
   if (path === "/life/ask") return { zone: "life", page: <LifeAsk />, title: "问" };
   if (path === "/work") return { zone: "work", page: <WorkHome />, title: "工作" };
+  if (path === "/work/new") return { zone: "work", page: <NewThread />, title: "新线程" };
+  if ((p = match("/work/w/:ws/threads/:goal", path)))
+    return {
+      zone: "work",
+      page: <ThreadPage key={path} workspaceId={p["ws"] as string} goalId={p["goal"] as string} />,
+      title: "线程",
+    };
   if (path === "/work/projects") return { zone: "work", page: <ProjectsPage />, title: "项目" };
   if ((p = match("/work/w/:ws/projects/:project", path)))
     return {

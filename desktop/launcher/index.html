@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
+    <title>EHAI</title>
+    <style>
+      :root {
+        --bg: #f7f7f5;
+        --surface: #ffffff;
+        --text: #1d1d1b;
+        --text-2: #6b6b66;
+        --border: #e4e4df;
+        --accent: #2f5bd3;
+        --bad: #b42318;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #161615;
+          --surface: #1f1f1d;
+          --text: #ececea;
+          --text-2: #9d9d97;
+          --border: #33332f;
+          --accent: #7d9cff;
+          --bad: #f97066;
+        }
+      }
+      html, body { height: 100%; margin: 0; }
+      body {
+        background: var(--bg);
+        color: var(--text);
+        font: 15px/1.5 -apple-system, BlinkMacSystemFont, "PingFang SC", "Segoe UI", sans-serif;
+        display: grid;
+        place-items: center;
+      }
+      main {
+        width: min(440px, calc(100vw - 32px));
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 14px;
+        padding: 28px;
+        display: flex;
+        flex-direction: column;
+        gap: 14px;
+      }
+      h1 { font-size: 20px; margin: 0; }
+      p { margin: 0; color: var(--text-2); }
+      button {
+        align-self: flex-start;
+        font: inherit;
+        padding: 8px 16px;
+        border-radius: 8px;
+        border: 0;
+        background: var(--accent);
+        color: #fff;
+        cursor: pointer;
+      }
+      button:disabled { opacity: 0.5; cursor: default; }
+      pre {
+        margin: 0;
+        max-height: 200px;
+        overflow: auto;
+        font: 12px/1.5 ui-monospace, Menlo, monospace;
+        color: var(--bad);
+        white-space: pre-wrap;
+      }
+      code { font: 13px ui-monospace, Menlo, monospace; }
+      input {
+        font: 13px ui-monospace, Menlo, monospace;
+        padding: 8px 10px;
+        border-radius: 8px;
+        border: 1px solid var(--border);
+        background: var(--bg);
+        color: var(--text);
+      }
+      label { display: flex; flex-direction: column; gap: 6px; font-size: 13px; color: var(--text-2); }
+      [hidden] { display: none !important; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>EHAI</h1>
+      <p id="status">正在连接本机的 EHAI…</p>
+      <label id="command-field" hidden>
+        启动命令（在登录 shell 中运行；从源码使用时可写 <code>uv run --directory &lt;EHAI 目录&gt; ehai up</code>）
+        <input id="command" type="text" spellcheck="false" />
+      </label>
+      <button id="start" type="button" hidden>启动 EHAI</button>
+      <pre id="output" hidden></pre>
+    </main>
+    <script>
+      const { invoke } = window.__TAURI__.core;
+      const status = document.getElementById("status");
+      const start = document.getElementById("start");
+      const output = document.getElementById("output");
+      const field = document.getElementById("command-field");
+      const command = document.getElementById("command");
+      const KEY = "ehai.desktop.upCommand";
+      let starting = false;
+
+      function remembered() {
+        try {
+          return window.localStorage.getItem(KEY);
+        } catch {
+          return null;
+        }
+      }
+
+      async function probe() {
+        const daemon = await invoke("probe");
+        if (daemon.ready) {
+          window.location.replace(daemon.url + "/ui/");
+          return;
+        }
+        if (!starting && start.hidden) {
+          status.innerHTML = "本机的 EHAI 没有在运行（<code>" + daemon.url + "</code>）。";
+          command.value = remembered() || daemon.default_command;
+          field.hidden = false;
+          start.hidden = false;
+        }
+        window.setTimeout(probe, 1500);
+      }
+
+      start.addEventListener("click", async () => {
+        starting = true;
+        start.disabled = true;
+        output.hidden = true;
+        status.textContent = "正在启动…";
+        try {
+          window.localStorage.setItem(KEY, command.value.trim());
+        } catch {
+          // Without storage the command is simply not remembered.
+        }
+        const result = await invoke("start_daemon", { command: command.value });
+        starting = false;
+        start.disabled = false;
+        if (!result.ok) {
+          status.textContent = "启动命令没有成功：" + result.command;
+          output.textContent = result.output;
+          output.hidden = false;
+        } else {
+          status.textContent = "已启动，正在连接…";
+        }
+      });
+
+      probe();
+    </script>
+  </body>
+</html>

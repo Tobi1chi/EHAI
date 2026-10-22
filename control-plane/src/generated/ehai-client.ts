@@ -15,7 +15,7 @@ export type ErrorResponse = {
 };
 };
 
-export type EventType = "ProjectCreated" | "GoalCreated" | "CompletionContractConfirmed" | "PlanRevisionProposed" | "PlanRevisionApproved" | "PlanningTurnStarted" | "PlanningTurnCompleted" | "PlanningTurnFailed" | "ProcessDraftStarted" | "ProcessDraftCompleted" | "ProcessDraftFailed" | "ProcessReviewStarted" | "ProcessReviewCompleted" | "ProcessReviewFailed" | "ProcessRevisionApplied" | "ProcessAdjustmentStarted" | "ProcessAdjustmentFinished" | "ProcessAdjustmentSkipped" | "PlanNodeReadied" | "PlanNodeStalled" | "PlanNodeSuspended" | "PlanNodeRecovered" | "PlanNodeStarted" | "PlanNodeCandidateSubmitted" | "PlanNodeCompleted" | "PlanNodeFailed" | "PlanNodeReopened" | "PlanNodePruned" | "BranchSelected" | "BranchPruned" | "BranchSelectionInvalidated" | "RunConfigurationCaptured" | "RunStarted" | "RunSuccessorCreated" | "RunPaused" | "RunResumed" | "RunCompleted" | "RunFailed" | "RunCancelled" | "AttemptStarted" | "AttemptQueued" | "AttemptDispatched" | "AttemptBound" | "AttemptHeartbeatObserved" | "AttemptWaiting" | "AttemptDeadlineExtended" | "AttemptRetryScheduled" | "AttemptSucceeded" | "AttemptFailed" | "AttemptTimedOut" | "AttemptCancelled" | "AttemptInterrupted" | "DispatchWorkClaimed" | "EndpointHealthChanged" | "ProviderUsageRecorded" | "ArtifactCreated" | "CheckStarted" | "CheckPassed" | "CheckFailed" | "CheckInterrupted" | "GatePassed" | "GateFailed" | "CheckpointCreated" | "CheckpointRestored" | "WorkspacePreserved" | "PhaseSessionOpened" | "PhaseSessionJoined" | "PhaseContextPublished" | "AttemptHandoffConfirmed" | "NoteCreated" | "WorkflowRunChanged" | "LifeTaskChanged" | "RoutineChanged" | "ConnectorCallChanged" | "ConnectorEventReceived" | "RoutingRequestChanged" | "RoutingCatalogChanged" | "RoutingCandidateCreated" | "NoteMessageAdded" | "NoteDecisionStarted" | "NoteDecisionCompleted" | "NoteDecisionFailed" | "InterventionOpened" | "InterventionReplied";
+export type EventType = "ProjectCreated" | "GoalCreated" | "CompletionContractConfirmed" | "PlanRevisionProposed" | "PlanRevisionApproved" | "PlanningTurnStarted" | "PlanningTurnCompleted" | "PlanningTurnFailed" | "ProcessDraftStarted" | "ProcessDraftCompleted" | "ProcessDraftFailed" | "ProcessReviewStarted" | "ProcessReviewCompleted" | "ProcessReviewFailed" | "ProcessRevisionApplied" | "ProcessAdjustmentStarted" | "ProcessAdjustmentFinished" | "ProcessAdjustmentSkipped" | "PlanNodeReadied" | "PlanNodeStalled" | "PlanNodeSuspended" | "PlanNodeRecovered" | "PlanNodeStarted" | "PlanNodeCandidateSubmitted" | "PlanNodeCompleted" | "PlanNodeFailed" | "PlanNodeReopened" | "PlanNodePruned" | "BranchSelected" | "BranchPruned" | "BranchSelectionInvalidated" | "RunConfigurationCaptured" | "RunStarted" | "RunSuccessorCreated" | "RunPaused" | "RunResumed" | "RunCompleted" | "RunFailed" | "RunCancelled" | "IntegrationCreated" | "IntegrationBranchCreated" | "AttemptStarted" | "AttemptQueued" | "AttemptDispatched" | "AttemptBound" | "AttemptHeartbeatObserved" | "AttemptWaiting" | "AttemptDeadlineExtended" | "AttemptRetryScheduled" | "AttemptSucceeded" | "AttemptFailed" | "AttemptTimedOut" | "AttemptCancelled" | "AttemptInterrupted" | "DispatchWorkClaimed" | "EndpointHealthChanged" | "ProviderUsageRecorded" | "ArtifactCreated" | "CheckStarted" | "CheckPassed" | "CheckFailed" | "CheckInterrupted" | "GatePassed" | "GateFailed" | "CheckpointCreated" | "CheckpointRestored" | "WorkspacePreserved" | "PhaseSessionOpened" | "PhaseSessionJoined" | "PhaseContextPublished" | "AttemptHandoffConfirmed" | "NoteCreated" | "WorkflowRunChanged" | "LifeTaskChanged" | "RoutineChanged" | "ConnectorCallChanged" | "ConnectorEventReceived" | "RoutingRequestChanged" | "RoutingCatalogChanged" | "RoutingCandidateCreated" | "NoteMessageAdded" | "NoteDecisionStarted" | "NoteDecisionCompleted" | "NoteDecisionFailed" | "InterventionOpened" | "InterventionReplied";
 
 export type EventEnvelope = {
   readonly id: Id;
@@ -903,6 +903,91 @@ export type PlannerCapacityResponse = {
   readonly data: PlannerCapacity;
 };
 
+export type GoalStatus = "open" | "satisfied";
+
+export type ThreadNextAction = {
+  readonly kind: "start_discussion" | "continue_discussion" | "review_plan" | "handle_inbox" | "watch_run" | "resume_run" | "review_result" | "none";
+  readonly refs: Readonly<Record<string, JsonValue>>;
+};
+
+export type ThreadSummary = {
+  readonly goal_id: string;
+  readonly project_id: string;
+  readonly project_name: string;
+  readonly objective: string;
+  readonly goal_status: GoalStatus;
+  readonly phase: "needs_attention" | "running" | "paused" | "awaiting_approval" | "planning" | "completed" | "failed" | "idle";
+  readonly next_action: ThreadNextAction;
+  readonly attention_count: number;
+  readonly created_at: string;
+  readonly last_activity_at: string;
+  readonly plan_revision_id: string | null;
+  readonly run_id: string | null;
+  readonly run_status: RunStatus | null;
+  readonly observed_at: string;
+  readonly event_offset: number;
+};
+
+export type ThreadListView = {
+  readonly observed_at: string;
+  readonly event_offset: number;
+  readonly threads: ReadonlyArray<ThreadSummary>;
+};
+
+export type ThreadListResponse = {
+  readonly data: ThreadListView;
+};
+
+export type ThreadResponse = {
+  readonly data: ThreadSummary;
+};
+
+export type ThreadTimelineItem = {
+  readonly at: string;
+  readonly kind: "goal_created" | "discussion_message" | "plan_revision_created" | "plan_approved" | "run_started" | "run_status_changed" | "node_completed" | "inbox_opened" | "inbox_resolved" | "succession_started" | "integration_created" | "integration_branch_created";
+  readonly refs: Readonly<Record<string, JsonValue>>;
+  readonly summary: string;
+};
+
+export type ThreadTimelineView = {
+  readonly observed_at: string;
+  readonly event_offset: number;
+  readonly goal_id: string;
+  readonly items: ReadonlyArray<ThreadTimelineItem>;
+  readonly next_after: number | null;
+};
+
+export type ThreadTimelineResponse = {
+  readonly data: ThreadTimelineView;
+};
+
+export type CodeIntegrationListResponse = {
+  readonly data: ReadonlyArray<CodeIntegration>;
+};
+
+export type CodeIntegrationDiff = {
+  readonly run_id: Id;
+  readonly integration_id: Id;
+  readonly content: string;
+  readonly truncated: boolean;
+};
+
+export type CodeIntegrationDiffResponse = {
+  readonly data: CodeIntegrationDiff;
+};
+
+export type IntegrationBranch = {
+  readonly run_id: Id;
+  readonly integration_id: Id;
+  readonly branch: string;
+  readonly commit: string;
+  readonly created: boolean;
+};
+
+export type IntegrationBranchResponse = {
+  readonly data: IntegrationBranch;
+};
+
 export type JsonScalar = boolean | number | number | string | null;
 
 export type JsonValue = JsonScalar | ReadonlyArray<JsonValue> | { readonly [key: string]: JsonValue };
@@ -1242,6 +1327,10 @@ export type ExecutionCodexServerRequest = {
   readonly executable: ReadonlyArray<string>;
   readonly approval_policy: "untrusted" | "on-request" | "never";
   readonly sandbox: "read-only" | "workspace-write" | "danger-full-access";
+};
+
+export type CreateIntegrationBranchRequest = {
+  readonly branch: string;
 };
 
 export type NoteSource = {
@@ -2054,8 +2143,32 @@ export type SubmitRoutingRequest = {
   readonly case_role?: "learning" | "validation";
 };
 
+export type AddWorkspaceFolderRequest = {
+  readonly path: string;
+  readonly workspace_id?: string | null;
+  readonly allowed_commands?: ReadonlyArray<ReadonlyArray<string>>;
+  readonly git_permissions?: ReadonlyArray<"git.read" | "git.local_write" | "git.remote_write" | "git.dangerous">;
+  readonly available_shells?: ReadonlyArray<string>;
+};
+
+export type ErrorDetail = {
+  readonly code: string;
+  readonly message: string;
+};
+
 export type HTTPValidationError = {
   readonly detail?: ReadonlyArray<ValidationError>;
+};
+
+export type LocalEngineData = {
+  readonly available: boolean;
+  readonly home: string | null;
+  readonly provider: string | null;
+  readonly model: string | null;
+};
+
+export type LocalEngineResponse = {
+  readonly data: LocalEngineData;
 };
 
 export type PublicRuntimeSettings = {
@@ -2168,6 +2281,24 @@ export type WorkspaceResponse = {
   readonly data: WorkspaceDescriptor;
 };
 
+export type WorkspaceThreadEntry = {
+  readonly workspace: WorkspaceDescriptor;
+  readonly api_path: string;
+  readonly available: boolean;
+  readonly threads: ThreadListView | null;
+  readonly error: WorkspaceQueryError | null;
+};
+
+export type WorkspaceThreadsData = {
+  readonly observed_at: string;
+  readonly workspaces: ReadonlyArray<WorkspaceThreadEntry>;
+  readonly consistent_across_workspaces?: false;
+};
+
+export type WorkspaceThreadsResponse = {
+  readonly data: WorkspaceThreadsData;
+};
+
 export class EhaiApiError extends Error {
   readonly status: number;
   readonly detail: ErrorResponse | null;
@@ -2200,6 +2331,22 @@ export class EhaiApiClient {
 
   listProjects(): Promise<ProjectListResponse> {
     return this.request("/projects", "GET");
+  }
+
+  listThreads(): Promise<ThreadListResponse> {
+    return this.request("/threads", "GET");
+  }
+
+  getThread(goalId: string): Promise<ThreadResponse> {
+    return this.request("/threads/" + encodeURIComponent(goalId), "GET");
+  }
+
+  getThreadTimeline(goalId: string, options: { limit?: number; after?: number } = {}): Promise<ThreadTimelineResponse> {
+    const query = new URLSearchParams();
+    if (options.limit !== undefined) query.set("limit", String(options.limit));
+    if (options.after !== undefined) query.set("after", String(options.after));
+    const suffix = query.toString();
+    return this.request("/threads/" + encodeURIComponent(goalId) + "/timeline" + (suffix ? "?" + suffix : ""), "GET");
   }
 
   listInbox(filters: { projectId?: string; runId?: string } = {}): Promise<InboxListResponse> {
@@ -2495,6 +2642,18 @@ export class EhaiApiClient {
     return this.request("/runs/" + encodeURIComponent(runId) + "/integrate", "POST", request);
   }
 
+  listRunIntegrations(runId: string): Promise<CodeIntegrationListResponse> {
+    return this.request("/runs/" + encodeURIComponent(runId) + "/integrations", "GET");
+  }
+
+  getIntegrationDiff(runId: string, integrationId: string): Promise<CodeIntegrationDiffResponse> {
+    return this.request("/runs/" + encodeURIComponent(runId) + "/integrations/" + encodeURIComponent(integrationId) + "/diff", "GET");
+  }
+
+  createIntegrationBranch(runId: string, integrationId: string, request: CreateIntegrationBranchRequest): Promise<IntegrationBranchResponse> {
+    return this.request("/runs/" + encodeURIComponent(runId) + "/integrations/" + encodeURIComponent(integrationId) + "/branch", "POST", request);
+  }
+
   decideHumanCheck(
     checkRunId: string,
     request: DecideHumanCheckRequest,
@@ -2676,6 +2835,14 @@ export class EhaiWorkspaceManagerClient {
     return this.request("/workspaces", "POST", request);
   }
 
+  getLocalEngine(): Promise<LocalEngineResponse> {
+    return this.request("/local", "GET");
+  }
+
+  addWorkspaceFolder(request: AddWorkspaceFolderRequest): Promise<WorkspaceResponse> {
+    return this.request("/workspaces/from-folder", "POST", request);
+  }
+
   getWorkspace(workspaceId: string): Promise<WorkspaceResponse> {
     return this.request(this.workspacePath(workspaceId), "GET");
   }
@@ -2694,6 +2861,10 @@ export class EhaiWorkspaceManagerClient {
 
   getWorkspaceOverview(): Promise<WorkspaceOverviewResponse> {
     return this.request("/workspace-overview", "GET");
+  }
+
+  listThreads(): Promise<WorkspaceThreadsResponse> {
+    return this.request("/threads", "GET");
   }
 
   workspace(workspaceId: string): EhaiApiClient {

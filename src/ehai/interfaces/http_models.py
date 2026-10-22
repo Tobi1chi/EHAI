@@ -233,6 +233,10 @@ class IntegrateRunRequest(_StrictRequest):
     expected_process_revision_id: UuidInput
 
 
+class CreateIntegrationBranchRequest(_StrictRequest):
+    branch: Annotated[str, StringConstraints(min_length=1)]
+
+
 class SuspendAttemptRequest(RunActionRequest):
     review_id: UuidInput
     through_sequence: Annotated[int, Field(strict=True, ge=1)]
