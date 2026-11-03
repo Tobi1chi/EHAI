@@ -357,8 +357,14 @@ def create_parser() -> argparse.ArgumentParser:
     initialize.add_argument(
         "--yes", action="store_true", help="use defaults and confirm replacement"
     )
-    for name in ("up", "down", "status", "doctor"):
+    for name in ("up", "down", "status"):
         commands.add_parser(name, help=f"local engine: {name}")
+    doctor = commands.add_parser("doctor", help="local engine: doctor")
+    doctor.add_argument(
+        "--probe",
+        action="store_true",
+        help="start one Pi session through a local Hub to confirm the model settings (no prompt)",
+    )
     add = commands.add_parser("add", help="register and start a workspace using local defaults")
     add.add_argument("path", type=Path, nargs="?", default=Path.cwd())
     add.add_argument("--workspace-id")

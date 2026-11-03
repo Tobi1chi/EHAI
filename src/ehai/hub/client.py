@@ -210,6 +210,11 @@ class HubClient:
             atexit.register(self._local.stop)
         return self._local.endpoint()
 
+    def close(self) -> None:
+        """Stop the local sidecar Hub this client started, if any."""
+        if self._local is not None:
+            self._local.stop()
+
     @asynccontextmanager
     async def connect(self) -> AsyncIterator[HubConnection]:
         # One HTTP client per call keeps the client usable from any event loop.
