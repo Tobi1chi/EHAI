@@ -193,6 +193,10 @@ uv run ehai @Api start-run --plan-revision-id '<plan-id>' --execution-config C:/
 
 API 模式也可用 discuss-plan/propose-plan。每一步先确认退出码和结果，再使用实际返回 ID。
 后台 start-run 要完整 HTTP ExecutionConfigRequest 对象，路径在宿主解析；不是前台简写文件。
+`--execution-config` 与 `--authorize` 一起给出；都省略时宿主按自身固定装配执行（例如 scripted 宿主），
+只给其中一个会在发送请求前报错。
+同一幂等键用于不同内容时，所有写命令（核心、便签、Workflow、Connector、路由实验）都返回 409 `conflict`；
+同键同内容的重放返回首次的响应。
 可复制 [执行配置示例](../examples/execution-api.json)，修改 model、workspace 和 pi 路径/Provider。
 该示例与 README 的宿主启动参数配套；调整命令、并发、推理档位或超时也须同步修改两端。
 旧配置中的 endpoint_capabilities 与 codex_server 块仍被接受，只为保持已授权配置的指纹，没有执行效果；
@@ -410,6 +414,9 @@ Planner 工具生成的 origin=planner 和 actor=planner 由宿主固定。
 向 `add-note-message --note-id ... --file ... --idempotency-key ...` 提供
 `{"request_token":"<note-token>","actor":"user","message":"补充事实或回复"}`。
 每次消息产生新的 note request_token，下一次消息/决定使用新 token；旧 token 拒绝。
+create-note / add-note-message / decide-note 同键重放返回首次的响应（含当时的 request_token），
+不是便签的当前状态；需要最新状态时用 get-note。11-03 之前保存的回执只记了 ID，重放仍返回当前状态。
+决定在后续操作完成后才有响应；结果未知或仍在进行时，重放返回便签当前状态，不重发后续操作。
 `list-notes` 可按 project/goal/run 筛选，`--include-resolved` 包含已关闭讨论。
 
 向 `decide-note --note-id ... --file ... --idempotency-key ...` 提供：

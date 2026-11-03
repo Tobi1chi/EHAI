@@ -429,9 +429,25 @@ Reviewer/Gate → 人工验收 → `integrate-run`，并在执行中强杀一次
   产品 E2E 通过。
 - 未覆盖：回复干预后再次启动的行为（同一冲突会再次打开干预，同节点 3 次后按既有规则暂停 Run）；Windows；真实模型。
 
+### 2026-11-03 小决定落地（11-03 计划第 2 步）
+
+- 幂等键冲突：`IdempotencyConflictError` 移到共用的 `application/idempotency.py`（继承 `StateConflictError`），
+  便签、Workflow、Connector、路由实验与核心命令都抛它，HTTP 统一为 409 `conflict`（原为 409 `state_conflict`
+  或便签 422 `invalid_request`）。CLI 退出码不变（仍为 2）。
+- 便签重放：create-note / add-note-message 的回执带上首次响应；decide-note 的响应在后续操作完成的事务中另存一张
+  同键回执（scope `note-decision-response`），重放先返回它。旧回执只有 ID，读时退回当前状态；结果未知或进行中的决定
+  仍只返回当前状态，不重发。
+- `--worker-timeout-seconds`：从 `ehai` 与 `ehai-api` 删除，`build_service`/`create_local_app` 不再接收；
+  多工作区登记的 `runtime.worker_timeout_seconds` 读时丢弃（已保存的登记照常加载），公开的工作区描述不再含该字段。
+- CLI start-run：`--execution-config` 与 `--authorize` 必须同时出现或同时省略；省略时不发送执行配置，由宿主按自身装配执行。
+- 验证：产品 E2E 的启动改为经 CLI（不带执行配置）；新增第 7 段：便签创建/回复重放返回首次响应（request_token 已变），
+  同键不同内容 409 `conflict`，resolve 决定重放与首次一致。静态检查、两平台 mypy、lint-imports、Schema/Client 重新生成。
+- 未覆盖：Workflow/Connector/路由实验的 409 只做了代码核对，未在正常入口实跑；decide-note 的 continue / propose_process /
+  revise_plan 重放。
+
 ## 待决事项
 
-2026-11-03 已决定（[路线图](ROADMAP.md#11-03-已定的架构决定)），在 11-03 计划第 2 步落地：
+2026-11-03 已决定（[路线图](ROADMAP.md#11-03-已定的架构决定)），已在 11-03 计划第 2 步落地（见上方执行记录）：
 
 | 事项 | 说明 | 决定 |
 | --- | --- | --- |

@@ -188,9 +188,12 @@ def _request_arguments(args: argparse.Namespace) -> tuple[str, str, dict[str, Js
             else args.message_file.read_text(encoding="utf-8-sig")
         )
     if command == "start-run":
-        if not args.authorize or args.execution_config is None:
-            raise ValueError("API start-run requires --execution-config and explicit --authorize")
-        body["execution_config"] = _object_file(args.execution_config)
+        # Without --execution-config the host runs its own fixed assembly (for example a
+        # scripted host); an explicit configuration must be authorized explicitly.
+        if args.authorize != (args.execution_config is not None):
+            raise ValueError("API start-run uses --execution-config together with --authorize")
+        if args.execution_config is not None:
+            body["execution_config"] = _object_file(args.execution_config)
         body["predecessor_run_id"] = values["predecessor_run_id"]
         if args.result_adoptions_file is not None:
             adoptions = json_loads(args.result_adoptions_file.read_text(encoding="utf-8-sig"))

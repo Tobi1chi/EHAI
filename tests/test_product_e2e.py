@@ -515,11 +515,13 @@ def test_product_e2e(tmp_path: Path) -> None:
             "approve",
         )
         assert approved["status"] == "approved"
-        # The HTTP start uses the host's own execution configuration.
-        run = host.http(
-            "POST",
-            "/runs/start",
-            {"idempotency_key": "start", "plan_revision_id": plan["plan_revision_id"]},
+        # Without --execution-config the start uses the host's own execution configuration.
+        run = host.cli(
+            "start-run",
+            "--plan-revision-id",
+            plan["plan_revision_id"],
+            "--idempotency-key",
+            "start",
         )
         run_id = run["run_id"]
         thread = host.http("GET", f"/threads/{goal['goal_id']}")
