@@ -18,6 +18,7 @@ from ehai.application.planner import (
     PhaseTemplate,
     PlanNodeTemplate,
     PlanTemplate,
+    normalize_human_question,
 )
 from ehai.domain.planning import EdgeType, PlanNodeKind, PlanRevision
 from ehai.domain.process import (
@@ -144,6 +145,7 @@ class PlanGraphToolRuntime:
         planner_event_types: tuple[str, ...] = (),
         require_final_gate: bool = False,
         allow_final_command: bool = True,
+        criteria_human_questions: tuple[str, ...] = (),
     ) -> None:
         self._budget = budget
         self._planner_event_types = planner_event_types
@@ -155,6 +157,8 @@ class PlanGraphToolRuntime:
         # False when the user's explicit criteria leave out command:exit-zero: a final command
         # Gate would then silently add a completion condition the user did not choose.
         self._allow_final_command = allow_final_command
+        # Human questions the user's completion criteria already ask at the final Gate.
+        self._criteria_human_questions = criteria_human_questions
         self._nodes: dict[str, _DraftNode] = {}
         self._edges: dict[tuple[str, str, EdgeType, str | None], _DraftEdge] = {}
         self._branches: dict[str, _DraftBranch] = {}
@@ -1107,6 +1111,7 @@ class PlanGraphToolRuntime:
                     "Set the final behavioral gate with set_final_gate before finishing",
                 )
             )
+        issues.extend(self._validate_human_questions())
         issues.extend(self._validate_cycle())
         fork_nodes = {branch.fork for branch in self._branches.values()}
         merge_nodes = {branch.merge for branch in self._branches.values()}
@@ -1182,6 +1187,38 @@ class PlanGraphToolRuntime:
 
     def _has_gate_owner(self, node_key: str) -> bool:
         return node_key in self._node_gates or node_key in self._retained_check_ids
+
+    def _validate_human_questions(self) -> list[PlanIssue]:
+        """Refuse a human Check that repeats another one's question after normalization.
+
+        A final Gate question equal to a criterion's question is that same Check.
+        """
+        final: dict[str, str] = {
+            normalize_human_question(q): "the completion criteria"
+            for q in self._criteria_human_questions
+        }
+        if self._final_human_question is not None and not self._process_mode:
+            final.setdefault(normalize_human_question(self._final_human_question), "the final Gate")
+        seen = dict(final)
+        issues: list[PlanIssue] = []
+        for gate in self._node_gates.values():
+            if gate.human_question is None:
+                continue
+            key = normalize_human_question(gate.human_question)
+            if key in seen:
+                issues.append(
+                    PlanIssue(
+                        "HUMAN_CHECK_DUPLICATE",
+                        f"node_gates.{gate.node_key}.human_question",
+                        f"This human question is already asked by {seen[key]}; the user would "
+                        "answer the same Check twice. Remove it from this node Gate or ask about "
+                        "something the other Check does not cover",
+                        (gate.node_key,),
+                    )
+                )
+            else:
+                seen[key] = f"the node Gate on {gate.node_key}"
+        return issues
 
     def _validate_process_final_gate(self, terminal_key: str) -> list[PlanIssue]:
         if self._process_final_gate_id is None:

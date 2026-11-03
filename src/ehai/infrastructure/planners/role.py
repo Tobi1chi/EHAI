@@ -44,6 +44,7 @@ from ehai.application.planner import (
     PlanTemplate,
     ReplanContext,
     build_plan_proposal,
+    criteria_human_questions,
     discussion_proposal_criteria,
     normalize_discussion_criteria,
     replan_from_template,
@@ -381,6 +382,7 @@ class PlannerRole:
                 input_document,
                 require_final_gate=_requires_final_gate(normalized_criteria),
                 allow_final_command=_allows_final_command(normalized_criteria),
+                criteria_human_questions=criteria_human_questions(normalized_criteria),
             )
         )
         return build_plan_proposal(
@@ -424,6 +426,7 @@ class PlannerRole:
                 discussion=True,
                 require_final_gate=(True if not normalized else _requires_final_gate(normalized)),
                 allow_final_command=_allows_final_command(normalized),
+                criteria_human_questions=criteria_human_questions(normalized),
                 session_ref_id=session_ref_id,
             )
         )
@@ -574,12 +577,14 @@ class PlannerRole:
         *,
         require_final_gate: bool,
         allow_final_command: bool = True,
+        criteria_human_questions: tuple[str, ...] = (),
     ) -> PlanTemplate:
         template, _, _ = await self._run_planner(
             input_document,
             discussion=False,
             require_final_gate=require_final_gate,
             allow_final_command=allow_final_command,
+            criteria_human_questions=criteria_human_questions,
         )
         if template is None:
             raise PlannerError("Proposal finished without a plan")
@@ -592,6 +597,7 @@ class PlannerRole:
         discussion: bool,
         require_final_gate: bool,
         allow_final_command: bool = True,
+        criteria_human_questions: tuple[str, ...] = (),
         process_graph: PlanGraphToolRuntime | None = None,
         session_ref_id: ID | None = None,
     ) -> tuple[PlanTemplate | None, str, ID]:
@@ -600,6 +606,7 @@ class PlannerRole:
             planner_event_types=(self._completion_event_type,),
             require_final_gate=require_final_gate,
             allow_final_command=allow_final_command,
+            criteria_human_questions=criteria_human_questions,
         )
         design: dict[str, str] = {}
         answer: dict[str, str] = {}
