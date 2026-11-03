@@ -1,0 +1,1 @@
+"""Claude Code compatibility layer."""

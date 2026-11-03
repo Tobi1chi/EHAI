@@ -33,6 +33,7 @@ from ehai.hub.adapters import (
     HarnessSession,
     McpEndpoint,
 )
+from ehai.hub.adapters.claude_code.adapter import ClaudeCodeAdapter
 from ehai.hub.adapters.pi.adapter import PiAdapter
 from ehai.hub.mcp_endpoint import SessionToolEndpoint, new_session_token
 from ehai.hub.protocol import (
@@ -93,6 +94,8 @@ class _Session:
         if self.finished:
             # Same rule as the native bridge: nothing runs after an accepted result.
             raise RuntimeError("EHAI result already submitted; no further tools allowed")
+        # The model message that asked for this call must be in the log first.
+        await self.native.await_tool_call(name, arguments)
         call_id = "mcp-" + uuid.uuid4().hex
         result: asyncio.Future[ToolResult] = asyncio.get_running_loop().create_future()
         self.mcp_pending[call_id] = result
@@ -281,7 +284,10 @@ def create_app(
         raise ValueError(
             f"Session idle timeout must be at least {MIN_SESSION_IDLE_SECONDS:g} seconds"
         )
-    hub = Hub(adapters or {"pi": PiAdapter()}, idle_seconds=idle_seconds)
+    hub = Hub(
+        adapters or {"pi": PiAdapter(), "claude-code": ClaudeCodeAdapter()},
+        idle_seconds=idle_seconds,
+    )
     tool_endpoint = SessionToolEndpoint(hub.session_for_mcp_token)
 
     @asynccontextmanager

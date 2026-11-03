@@ -160,6 +160,10 @@ class PiSession:
         except PiRpcError as error:
             raise HarnessFailure(str(error)) from error
 
+    async def await_tool_call(self, name: str, arguments: dict[str, JsonValue]) -> None:
+        # Pi calls EHAI tools through its own bridge, never through MCP.
+        del name, arguments
+
     async def steer(self, messages: list[str]) -> None:
         for message in messages:
             await self._request("steer", {"message": message})

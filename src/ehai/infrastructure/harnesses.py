@@ -88,12 +88,26 @@ def resolve_harness(
     )
 
 
-def load_harness_file(path: Path, *, kind: str = "pi") -> HarnessConfig:
-    """Resolve a private settings file such as ``pi-backend.json``."""
+def load_harness_file(path: Path) -> HarnessConfig:
+    """Resolve a private settings file.
+
+    The file is either a harness document ``{kind, version, settings}`` (``version``
+    optional) or, as written by ``ehai init``, the settings of a Pi harness alone.
+    """
     document = json_loads(path.read_text(encoding="utf-8"))
     if not isinstance(document, dict):
         raise ValueError("Harness settings file must contain an object")
-    return resolve_harness(kind, document)
+    if "kind" not in document:
+        return resolve_harness("pi", document)
+    kind, version, settings = document["kind"], document.get("version"), document.get("settings")
+    if (
+        set(document) - {"kind", "version", "settings"}
+        or not isinstance(kind, str)
+        or not isinstance(settings, dict)
+        or (version is not None and not isinstance(version, str))
+    ):
+        raise ValueError("A harness document takes kind, settings and optionally version")
+    return resolve_harness(kind, settings, version=version)
 
 
 def inspect_harness(

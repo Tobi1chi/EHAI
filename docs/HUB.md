@@ -1,7 +1,7 @@
 # Agent harness Hub
 
 更新：2026-11-03。Hub 是 EHAI 核心运行 Agent harness 的唯一入口，作为独立进程 `ehai-hub` 运行。
-设计依据见 [ADR 0007](adr/0007-agent-harness-port.md)；当前只有 Pi 兼容层。
+设计依据见 [ADR 0007](adr/0007-agent-harness-port.md)；兼容层有 Pi 与 Claude Code 两个。
 
 ## 分工
 
@@ -10,6 +10,7 @@
 | 核心（`ehai-api`、`ehai` 本地命令） | 轨迹记录、工具执行与持久化、注入消息、判断本轮是否以合法结果结束 | 启动 harness、解析原生输出 |
 | Hub（`ehai-hub`） | 启动和关闭 harness 会话、转发事件与工具结果、取消、空闲回收 | 任何 EHAI 事实；不执行工具，不判定完成 |
 | Pi 兼容层（`ehai.hub.adapters.pi`） | 以 RPC 模式启动未修改的 Pi、隔离配置目录、业务工具桥、事件归一化 | 工具语义与业务规则 |
+| Claude Code 兼容层（`ehai.hub.adapters.claude_code`） | 以 stream-json 模式启动未修改的 Claude Code，经每会话 MCP 端点提供工具、权限翻译、事件归一化 | 工具语义与业务规则 |
 
 ## 使用方式
 
@@ -88,7 +89,25 @@ Hub 本身只提供令牌认证，不提供 TLS；跨机器使用时应放在受
 | 启动中 | 令牌在兼容层启动前即生效：可列出工具，调用会被拒绝；启动失败即撤销 |
 | 关闭 | 会话关闭后令牌失效（401），等待中的调用返回错误 |
 
-Pi 不支持 MCP，继续使用扩展桥。目前没有使用该端点的 harness，只用合成客户端验证过。
+Pi 不支持 MCP，继续使用扩展桥。Claude Code 兼容层使用该端点（见下节）。
+
+### Claude Code 兼容层
+
+`ehai.hub.adapters.claude_code` 以 `claude --bare -p` 的 stream-json 模式启动未修改的 Claude Code（2.x，
+自 2.1.0 起；harness `version` 为 `"2"`，设置里记录确切的 CLI 版本并计入指纹，CLI 升级后旧授权会被拒绝）。
+
+| 项目 | 做法 |
+| --- | --- |
+| 设置 | `executable`（原生可执行文件）、`environment_names`（凭证变量名，从 Hub 进程环境读取）、可选 `base_url`（`ANTHROPIC_BASE_URL`）、`state_dir`；`cli_version` 由 resolve 填写 |
+| 权限翻译 | `--tools ""` 关闭全部内置工具，`--strict-mcp-config` 只加载本会话的 MCP 端点（令牌写在私有文件里，不进命令行），`--permission-mode dontAsk` 加 `--allowedTools mcp__ehai`；启动时用 `mcp_status` 核对只有该端点且工具与本会话一致，每轮开始再核对 `init` 中的工具清单，不符即失败 |
+| 隔离 | 每个状态键一个目录，作为 `CLAUDE_CONFIG_DIR`、`HOME` 与固定工作目录；`--bare` 不读钩子、插件、CLAUDE.md 与钥匙串；环境变量只传本地化与 Windows 进程基本项 |
+| 事件 | 回放的用户消息 → `input_prepared`；每条模型消息在其第一个工具调用前发出 `assistant_message`，MCP 调用等待该消息入日志后才转给核心；`result` 成功 → `settled`，否则 `failed` |
+| 续用 | 全新会话用 `--session-id`，续用用 `--resume`；原生历史按固定工作目录保存，可跨 Attempt 续用；全新会话遇到已有历史、续用时缺少历史都拒绝启动 |
+| 取消 | `interrupt` 控制请求；进行中的 MCP 调用由 Claude Code 中止，本轮以 `failed` 结束，不确认已停止 |
+| 中途消息 | `steer` 写入用户消息，Claude Code 在当前工具返回后加入本轮，回放即为送达确认 |
+
+能力：`session.resume`、`tools.native.restrictable`、`tools.mcp`、`usage.reported` 为真，其余为假。
+已知：每个会话 Claude Code 自己会发一次不带工具的小请求（生成标题）；`inspect` 只核对控制通道，不调用模型。
 
 事件类型：
 
@@ -125,4 +144,5 @@ Pi 不支持 MCP，继续使用扩展桥。目前没有使用该端点的 harnes
 
 见 [EVIDENCE](EVIDENCE.md#核心执行) 2026-10-02 一行与 [重构计划执行记录](REFACTOR_PLAN.md#执行记录)。
 产品 E2E 的每个 Worker 节点都经本机 Hub 与真实 Pi 运行（模型为脚本化服务），由 CI 在 Linux 与 Windows 上执行；
-独立 Hub 模式不在 E2E 中。
+独立 Hub 模式不在 E2E 中。Claude Code 兼容层只有仓库外诊断（真实 Claude Code + 脚本化 Anthropic 服务），
+见 [EVIDENCE](EVIDENCE.md#核心执行) 2026-11-03 一行。

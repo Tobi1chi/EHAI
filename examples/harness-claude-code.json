@@ -1,0 +1,10 @@
+{
+  "kind": "claude-code",
+  "version": "2",
+  "settings": {
+    "executable": "C:/replace-with/claude.exe",
+    "environment_names": ["ANTHROPIC_API_KEY"],
+    "base_url": null,
+    "state_dir": "C:/private/ehai/claude-code"
+  }
+}

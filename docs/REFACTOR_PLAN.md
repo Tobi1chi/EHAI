@@ -469,6 +469,23 @@ Reviewer/Gate → 人工验收 → `integrate-run`，并在执行中强杀一次
   仓库外诊断见 [EVIDENCE](EVIDENCE.md#核心执行) 11-03 行。
 - 未覆盖：升级前未完成 Run 的跨版本恢复只核对了文档与指纹，未实跑；远端 Hub 下的 resolve；Windows。
 
+### 2026-11-03 Claude Code 兼容层（ADR 0007 第 8 步）
+
+- 新增 `hub/adapters/claude_code/`：以 `claude --bare -p` 的 stream-json 模式运行未修改的 Claude Code，
+  工具只经每会话 MCP 端点；Hub 默认装上 `pi` 与 `claude-code` 两个兼容层。做法与取舍见 [HUB](HUB.md#claude-code-兼容层)。
+- 先用仓库外脚本化 Anthropic SSE 服务探查了 2.1.109 的行为，再定实现：`initialize`/`mcp_status` 控制请求在任何
+  提示前即可应答（用于启动核对）；`system/init` 每轮一次；每个内容块单独一条 `assistant` 事件、共用消息 id；
+  中途写入的用户消息在当前工具返回后加入本轮并回放；`--resume` 按工作目录查找会话，因此每个状态键用固定工作目录；
+  `interrupt` 会中止进行中的 MCP 调用；每个会话还有一次不带工具的标题请求。
+- 兼容层接口增加 `await_tool_call`：MCP 调用和标准输出上的模型消息走两条通道，Hub 在把调用转给核心前等兼容层
+  报告发起它的模型消息（最多 10 秒），批次因此与模型消息一致。Pi 不用 MCP，实现为空操作。
+- 小决定：harness `version` 取协议大版本 `"2"`，确切 CLI 版本记在设置里并计入指纹；角色仍用 `--worker pi`/
+  `--planner pi`（意为经 Hub 运行的角色），WorkerProfile 不变；系统提示词末尾加一句工具前缀 `mcp__ehai__` 的说明；
+  `--pi-config` 增加别名 `--harness-config` 并接受 harness 文档；`inspect-agent` 增加 `--claude-code`；
+  管理器与 `ehai init` 仍只配置 Pi。
+- 验证：静态检查、两平台 mypy、lint-imports、产品 E2E（Pi 路径不变）；仓库外诊断见 [EVIDENCE](EVIDENCE.md#核心执行) 11-03 行。
+- 未覆盖：真实模型（列入 11-03 计划第 8 步）、Windows、独立 Hub、权限核对的拒绝路径实跑。
+
 ## 待决事项
 
 2026-11-03 已决定（[路线图](ROADMAP.md#11-03-已定的架构决定)），已在 11-03 计划第 2 步落地（见上方执行记录）：

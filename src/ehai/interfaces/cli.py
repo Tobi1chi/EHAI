@@ -281,7 +281,13 @@ def create_parser() -> argparse.ArgumentParser:
         type=float,
         help="optional HTTP socket timeout; timeout does not cancel host work or retry it",
     )
-    parser.add_argument("--pi-config", type=Path, help="explicit native Pi backend configuration")
+    parser.add_argument(
+        "--pi-config",
+        "--harness-config",
+        dest="pi_config",
+        type=Path,
+        help="harness settings: Pi settings, or a {kind, version, settings} document",
+    )
     parser.add_argument("--database", type=Path, help="local SQLite database path")
     parser.add_argument(
         "--artifacts",
@@ -658,11 +664,13 @@ def create_parser() -> argparse.ArgumentParser:
     conversation.add_argument("--conversation-id", required=True)
 
     inspect_agent = commands.add_parser(
-        "inspect-agent", help="inspect the isolated Pi RPC backend without model calls"
+        "inspect-agent", help="inspect an installed harness through the Hub without model calls"
     )
     inspect_agent.add_argument("--node", default="node", help="native Node executable")
-    inspect_agent.add_argument(
-        "--pi-cli", type=Path, required=True, help="installed Pi dist/bundle/cli.js"
+    installed = inspect_agent.add_mutually_exclusive_group(required=True)
+    installed.add_argument("--pi-cli", type=Path, help="installed Pi dist/bundle/cli.js")
+    installed.add_argument(
+        "--claude-code", type=Path, help="installed Claude Code executable (native binary)"
     )
     for name, help_text in (
         ("get-runtime-context", "read the current host workspace and execution binding"),
@@ -751,8 +759,14 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(json_dumps(plan_import_schema()))
             return 0
         if args.command == "inspect-agent":
-            report = inspect_harness(
-                "pi", {"node": args.node, "cli": str(args.pi_cli.expanduser().resolve())}
+            report = (
+                inspect_harness(
+                    "claude-code", {"executable": str(args.claude_code.expanduser().resolve())}
+                )
+                if args.claude_code is not None
+                else inspect_harness(
+                    "pi", {"node": args.node, "cli": str(args.pi_cli.expanduser().resolve())}
+                )
             )
             print(json_dumps(report))
             return 0
