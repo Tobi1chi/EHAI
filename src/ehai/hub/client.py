@@ -23,8 +23,12 @@ from ehai.hub.protocol import (
     URL_ENVIRONMENT,
     ErrorBody,
     EventBatch,
+    HarnessReport,
     Health,
+    InspectHarness,
     PromptMessage,
+    ResolvedHarness,
+    ResolveHarness,
     SessionStarted,
     SessionState,
     StartSession,
@@ -148,6 +152,18 @@ class HubConnection:
 
     async def health(self) -> Health:
         result = await self._call("GET", "/v1/health", Health)
+        assert result is not None
+        return result
+
+    async def resolve(self, request: ResolveHarness) -> ResolvedHarness:
+        result = await self._call("POST", "/v1/harnesses/resolve", ResolvedHarness, body=request)
+        assert result is not None
+        return result
+
+    async def inspect_harness(self, request: InspectHarness) -> HarnessReport:
+        result = await self._call(
+            "POST", "/v1/harnesses/inspect", HarnessReport, body=request, timeout=120.0
+        )
         assert result is not None
         return result
 

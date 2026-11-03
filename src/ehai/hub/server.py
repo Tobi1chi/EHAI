@@ -41,9 +41,13 @@ from ehai.hub.protocol import (
     ErrorBody,
     EventBatch,
     HarnessInfo,
+    HarnessReport,
     Health,
     HubEvent,
+    InspectHarness,
     PromptMessage,
+    ResolvedHarness,
+    ResolveHarness,
     SessionStarted,
     SessionState,
     StartSession,
@@ -160,6 +164,12 @@ class Hub:
         session = None if session_id is None else self.sessions.get(session_id)
         return session if session is not None and session.state == "running" else None
 
+    def adapter(self, kind: str) -> HarnessAdapter:
+        adapter = self.adapters.get(kind)
+        if adapter is None:
+            raise HubError(422, "invalid_request", "Harness kind is not installed in this Hub")
+        return adapter
+
     def require(self, session_id: str) -> _Session:
         session = self.sessions.get(session_id)
         if session is None:
@@ -168,9 +178,11 @@ class Hub:
         return session
 
     async def start(self, request: StartSession) -> SessionStarted:
-        adapter = self.adapters.get(request.harness.kind)
-        if adapter is None:
-            raise HubError(422, "invalid_request", "Harness kind is not installed in this Hub")
+        adapter = self.adapter(request.harness.kind)
+        if request.harness.version not in (None, adapter.version):
+            raise HubError(
+                422, "invalid_request", f"Hub has {adapter.kind} {adapter.version} installed"
+            )
         token = new_session_token()
         endpoint = McpEndpoint(url=f"{self.public_url}/v1/mcp/", token=token)
         # A harness may connect to its MCP server while it starts, so the token resolves
@@ -303,10 +315,33 @@ def create_app(
     async def health() -> Health:
         return Health(
             harnesses=[
-                HarnessInfo(kind=adapter.kind, version=adapter.version)
+                HarnessInfo(
+                    kind=adapter.kind, version=adapter.version, capabilities=adapter.capabilities
+                )
                 for adapter in hub.adapters.values()
             ]
         )
+
+    @app.post("/v1/harnesses/resolve")
+    async def resolve(request: ResolveHarness) -> ResolvedHarness:
+        adapter = hub.adapter(request.kind)
+        try:
+            # Settings name files on this machine; reading them must not block other sessions.
+            return await asyncio.to_thread(
+                adapter.resolve, dict(request.settings), request.pin_directory
+            )
+        except HarnessRequestError as error:
+            raise HubError(422, "invalid_request", str(error)) from error
+
+    @app.post("/v1/harnesses/inspect")
+    async def inspect_harness(request: InspectHarness) -> HarnessReport:
+        adapter = hub.adapter(request.kind)
+        try:
+            return HarnessReport(report=await adapter.inspect(dict(request.settings)))
+        except HarnessRequestError as error:
+            raise HubError(422, "invalid_request", str(error)) from error
+        except HarnessFailure as error:
+            raise HubError(502, "harness_failed", str(error)) from error
 
     @app.post("/v1/sessions")
     async def start(request: StartSession) -> SessionStarted:

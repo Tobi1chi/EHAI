@@ -15,8 +15,9 @@ from pathlib import Path
 from ehai import JsonValue, json_dumps, json_loads
 from ehai.hub.adapters import HarnessFailure, HarnessRequestError, McpEndpoint
 from ehai.hub.adapters.pi.config import PI_VERSION, PiBackendConfig, check_node_version
+from ehai.hub.adapters.pi.probe import inspect_pi_backend
 from ehai.hub.adapters.pi.rpc import PiRpcError, PiRpcProcess
-from ehai.hub.protocol import StartSession, ToolResult
+from ehai.hub.protocol import ResolvedHarness, StartSession, ToolResult
 
 _LIFECYCLE = frozenset(
     {
@@ -188,9 +189,65 @@ class PiSession:
         await self._rpc.shutdown(abort=abort)
 
 
+# Native sessions live next to the private Pi settings unless the caller names a root.
+_STATE_DIRECTORY = "ehai-sessions"
+_CAPABILITIES: dict[str, JsonValue] = {
+    "session.resume": True,
+    "session.fork": False,
+    "requests.interactive": False,
+    "tools.native.restrictable": True,
+    "tools.mcp": False,
+    "usage.reported": True,
+    "cancel.confirmed": False,
+    "schema.unique_items": False,
+}
+
+
 class PiAdapter:
     kind = "pi"
     version = PI_VERSION
+
+    @property
+    def capabilities(self) -> dict[str, JsonValue]:
+        return dict(_CAPABILITIES)
+
+    def resolve(self, settings: dict[str, JsonValue], pin_directory: str | None) -> ResolvedHarness:
+        try:
+            backend = PiBackendConfig.from_document(settings)
+            if pin_directory is not None:
+                directory = Path(pin_directory)
+                if not directory.is_absolute():
+                    raise ValueError("Pin directory must be an absolute path")
+                directory.mkdir(parents=True, exist_ok=True)
+                for name, document in backend.native_documents().items():
+                    temporary = directory / (name + ".tmp")
+                    temporary.write_text(json_dumps(document), encoding="utf-8")
+                    temporary.replace(directory / name)
+                pinned = backend.to_document()
+                pinned["agent_dir"] = str(directory)
+                backend = PiBackendConfig.from_document(pinned)
+        except (OSError, ValueError) as error:
+            raise HarnessRequestError(str(error)) from error
+        return ResolvedHarness(
+            kind=self.kind,
+            version=self.version,
+            settings=backend.to_document(),
+            fingerprint=backend.configuration_hash,
+            environment_names=list(backend.environment_names),
+            protected_paths=[str(backend.agent_dir), str(backend.cli.parent.parent.parent)],
+            capabilities=dict(self.capabilities),
+        )
+
+    async def inspect(self, settings: dict[str, JsonValue]) -> dict[str, JsonValue]:
+        node, cli = settings.get("node"), settings.get("cli")
+        if not isinstance(node, str) or not isinstance(cli, str) or set(settings) - {"node", "cli"}:
+            raise HarnessRequestError("Pi inspection takes exactly node and cli")
+        try:
+            return await inspect_pi_backend(node=node, cli=Path(cli))
+        except (OSError, ValueError) as error:
+            raise HarnessRequestError(str(error)) from error
+        except PiRpcError as error:
+            raise HarnessFailure(str(error)) from error
 
     async def launch(self, request: StartSession, mcp: McpEndpoint) -> PiSession:
         # Pi's built-in MCP extension stays off (--no-extensions); the bridge carries the calls.
@@ -198,9 +255,11 @@ class PiAdapter:
         settings = dict(request.harness.settings)
         state_root = settings.pop("state_root", None)
         try:
+            backend = PiBackendConfig.from_document(settings)
+            if state_root is None:
+                state_root = str(backend.agent_dir / _STATE_DIRECTORY)
             if not isinstance(state_root, str) or not Path(state_root).is_absolute():
                 raise ValueError("Pi settings require an absolute state_root")
-            backend = PiBackendConfig.from_document(settings)
             native = backend.native_documents()
             home = Path(state_root).resolve() / request.state_key
             home.mkdir(parents=True, exist_ok=True)
