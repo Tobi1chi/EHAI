@@ -101,6 +101,7 @@ class EventType(StrEnum):
     ATTEMPT_HANDOFF_CONFIRMED = "AttemptHandoffConfirmed"
     NOTE_CREATED = "NoteCreated"
     WORKFLOW_RUN_CHANGED = "WorkflowRunChanged"
+    WORKFLOW_EXECUTION_CHANGED = "WorkflowExecutionChanged"
     LIFE_TASK_CHANGED = "LifeTaskChanged"
     ROUTINE_CHANGED = "RoutineChanged"
     CONNECTOR_CALL_CHANGED = "ConnectorCallChanged"

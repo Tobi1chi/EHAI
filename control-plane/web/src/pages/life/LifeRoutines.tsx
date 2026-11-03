@@ -105,7 +105,14 @@ function Routines({ life }: { life: Life }) {
                     <dd className={r.enabled ? undefined : "meta"}>{r.enabled ? when(r.next_due_at) : "已关闭"}</dd>
                     <dt>上次</dt>
                     <dd>
-                      {r.last_workflow_run_id ? <Link to={`/life/records/${r.last_workflow_run_id}`}>查看回顾</Link> : "还没运行过"}
+                      {!r.last_workflow_run_id ? (
+                        "还没运行过"
+                      ) : r.workflow === "life.review" ? (
+                        <Link to={`/life/records/${r.last_workflow_run_id}`}>查看回顾</Link>
+                      ) : (
+                        // Custom workflow runs have no page yet; they are read through the CLI/API.
+                        `自定义流程 v${r.workflow_version}`
+                      )}
                     </dd>
                   </dl>
                 </div>

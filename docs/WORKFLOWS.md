@@ -1,7 +1,7 @@
 # 生活 Workflow 与 Routine
 
-更新：2026-10-02。本页是已实现的两个固定生活流程的用法与契约。
-自定义流程、条件分支和事件触发尚未实现，目标设计见 [自定义 Workflow 设计](P4_WORKFLOW_DESIGN.md)；
+更新：2026-11-03。本页是已实现的两个固定生活流程与[自定义 Workflow](#自定义-workflow)的用法与契约。
+事件触发、并行与子流程尚未实现，目标设计见 [自定义 Workflow 设计](P4_WORKFLOW_DESIGN.md)；
 运行证据见 [EVIDENCE](EVIDENCE.md#p4-生活事务与外部连接)。
 
 ## 范围
@@ -16,11 +16,11 @@ Worker 或 Git 工作树，也不使用假 Goal 表达生活事项。
 | Workflow | 只读目录提供 `life.capture` / `life.review` v1；固定步骤由应用服务实现 | 不开放任意脚本、DAG 或动态步骤；未知名称拒绝 |
 | Workflow Run | Project 拥有；输入快照、候选待办、决定、task_ids 或回顾快照 | 与核心 Run 身份分开；确认前无正式待办；批准一次，拒绝零待办 |
 | LifeTask | Project 拥有，回指来源 Workflow Run；标题、截止时间、状态和版本 | 显式修改/完成/取消/重开；旧版本修改 409，不覆盖别人更新 |
-| Routine | Project 拥有；绑定 `life.review` v1，UTC 时间、固定间隔、启停和版本 | 到期后事务性生成回顾并推进下次时间；宿主停机不触发，重启合并错过的触发 |
-| Inbox | 聚合 `workflow_confirmation`；Goal/core Run 为空，提供 workflow_run_id | 源 Workflow Run 决定状态；批准仅创建待办，不执行生活事务，不替代 Gate |
+| Routine | Project 拥有；绑定 `life.review` v1 或一个自定义流程版本，UTC 时间、固定间隔、启停和版本 | 到期后事务性生成回顾并推进下次时间；宿主停机不触发，重启合并错过的触发；自定义流程的规则见下文 |
+| Inbox | 聚合 `workflow_confirmation` 与 `workflow_reconciliation`；Goal/core Run 为空，提供 workflow_run_id | 源 Workflow Run 决定状态；批准仅创建待办，不执行生活事务，不替代 Gate |
 
-暂不提供用户创建 Workflow 的接口。Workflow 不复制核心的 Worker/Attempt 状态机；
-编码执行仍走核心计划与代码工作区路径。
+固定流程之外，用户或外部 Agent 可以保存[自定义 Workflow](#自定义-workflow)。
+Workflow 不复制核心的 Worker/Attempt 状态机；编码执行仍走核心计划与代码工作区路径。
 
 ## 时间、幂等和恢复语义
 
@@ -119,6 +119,79 @@ uv run ehai --api-url $api create-routine --project-id $projectId --file C:/priv
 uv run ehai --api-url $api get-routine-scheduler
 ```
 
+## 自定义 Workflow
+
+用户或外部 Agent 提交结构化图定义，保存为 Project 内不可变的版本（SQLite schema 24 起）。
+第一版是有限、无环、单活动路径的图：条件分支可以重新汇合，但没有并行、循环、子流程或任意代码表达式。
+执行在核心宿主的调度 tick（约每秒）里推进；Run 只按启动时固定的定义快照执行，
+保存新版本不改变已启动的 Run 或绑定旧版本的 Routine。
+
+| HTTP | CLI 命令 | 说明 |
+| --- | --- | --- |
+| GET `/projects/{project_id}/connector-actions` | `list-connector-actions --project-id` | 动作目录：各连接的动作、版本、是否只读与输入/输出 Schema |
+| POST/GET `/projects/{project_id}/workflow-definitions` | `save-workflow-definition` / `list-workflow-definitions` | 保存时校验；同名再次保存产生下一版本 |
+| GET `/workflow-definitions/{definition_id}` | `get-workflow-definition --definition-id` | 一个版本的完整定义与摘要 |
+| POST `/workflow-definitions/{definition_id}/runs` | `start-custom-workflow --definition-id` | 以 `{"inputs": {...}}` 启动该版本，返回执行视图 |
+| POST `/workflow-runs/{workflow_run_id}/step-decisions` | `decide-workflow-step --workflow-run-id` | 决定 Run 正在等待的人工步骤，返回执行视图 |
+| GET `/projects/{project_id}/workflow-executions` | `list-workflow-executions --project-id` | 项目全部 Workflow Run（固定与自定义）的运行记录 |
+
+自定义 Run 通过 `get-workflow-execution` 读取；`get-workflow-run` / `list-workflow-runs`
+只返回两个固定流程的原 DTO，读取自定义 Run 时返回 409。
+
+### 定义
+
+请求体为 `name`、`description`、`inputs_schema`、`start`、`steps` 和 `expected_revision`
+（新名称为 null，否则为最新版本号；不一致返回 409）。`name` 为小写字母开头的 `[a-z0-9_.-]`，
+`life.` 前缀留给固定流程。`inputs_schema` 是对象 JSON Schema，规则同 Connector Schema
+（仅本地引用、不含 `uniqueItems`）。步骤按 `type` 区分，`id` 为 `[a-z][a-z0-9_]*`：
+
+| type | 字段 | 语义 |
+| --- | --- | --- |
+| `action` | connector_id、action、action_version、inputs、next；写动作另需 approval_step 或 standing_write | 先保存调用意图并排队 Connector 调用，由 Connector 进程执行；输出为调用结果 |
+| `condition` | cases（when、next）、default | 选第一个成立的 case，否则 default；所选出口与序号记入步骤输出，之后不重新判定 |
+| `human` | question、subject、on_approve、on_reject；可选 timeout_seconds 与 on_timeout（成对） | 进入时解析并冻结 subject，等待进入统一 Inbox；输出为决定、操作者、理由、时间与 subject |
+| `wait` | until、offset_seconds、next | 等到 until（带偏移的 ISO 时间）加偏移；已到期立即继续；输出 until 与 fired_at |
+| `end` | outcome、result | 以业务结果结束，例如 `booked`、`no_suitable_train`；业务无票不是技术失败 |
+
+值写作 `{"ref": "<路径>"}`、`{"value": <JSON>}` 或 `{"template": "文本 {路径} 文本"}`。
+路径为 `input.<字段>[.<键>...]` 或 `steps.<步骤id>[.<键>...]`，数字键按下标读列表；
+模板中非字符串值以 JSON 文本嵌入。条件为 `{"op": "eq"|"ne"|"lt"|"le"|"gt"|"ge", "left", "right"}`、
+`{"op": "exists", "ref"}`（存在且非 null）、`{"op": "all"|"any", "conditions": [...]}`、
+`{"op": "not", "condition"}`；比较大小只接受两个数字或两个字符串。
+
+保存时拒绝而不在执行时猜测：重复或缺失的步骤、从 start 不可达的步骤、循环；
+inputs_schema 声明 properties 时引用其中没有的输入，或引用不是每条路径都先经过的步骤；
+项目未登记的连接或动作版本、缺少动作 Schema 要求的输入、`additionalProperties: false` 时多给的输入；
+只读动作带写授权，或写动作没有恰好一种授权。`approval_step` 必须是每条路径上都先经过的人工步骤，
+且从它的拒绝/超时出口到达不了该动作；`standing_write: true` 记录定义者给出的持续授权。
+
+### 执行、失败与恢复
+
+- 启动时按 inputs_schema 校验输入（不符返回 400），保存运行记录与定义快照，然后在同一事务内推进，
+  直到需要等待（Connector 结果、人工、时间）或结束。Run 状态为 `running`、`waiting`、`completed`、`failed`。
+- 动作步骤在同一事务里写调用记录（`prepared`，幂等身份为该次步骤执行 ID）并排队 Connector 调用，
+  调用记录的 `connector_call_id` 指向调用本身，调用的状态与 `external_operation_ref` 即收据。
+  数据库事务从不等待网络；Connector 进程领取后执行并回传，下一次 tick 应用结果。
+- Connector 回传 `failed` 时步骤与 Run 失败（result 含 error 与 failed_step），不走业务分支；
+  引用缺值、比较类型不符、等待时间无效、解析后的输入不符合动作 Schema 同样使 Run 失败。
+- 回传 `unknown` 时 Run 保持等待，调用记录标为 unknown，Inbox 出现 `workflow_reconciliation`，
+  动作为 `reconcile-connector-call`：由原 worker 核对同一调用，不以新身份重放写入；核对得到结果后继续。
+- 人工步骤以 `workflow_confirmation` 出现在 Inbox，动作 `decide-workflow-step`，参数含
+  workflow_run_id 与 `expected_version`（Run 版本；过期返回 409）。决定只针对进入步骤时冻结的 subject；
+  后续动作应引用 `steps.<人工步骤>.subject.*`，使执行内容与批准内容一致。超时按 on_timeout 继续。
+- 时间等待与人工等待都是持久记录，不保持进程或模型会话；宿主重启后下一次 tick 判断到期并继续。
+- 每次推进提交一条 `WorkflowExecutionChanged` 事件，payload 为 run、steps、invocations、waits 快照。
+
+### Routine 绑定流程版本
+
+`create-routine` / `update-routine` 可加 `workflow_definition_id`、`inputs` 与 `missed_run_policy`
+（三者同给；不给时仍是 `life.review` v1，语义不变）。Routine 记录 `workflow=custom`、
+`workflow_version` 为绑定的版本号；创建时按该版本的 inputs_schema 校验输入。
+到期时启动该版本的一个 Run，trigger 记录 routine_id、routine_version、scheduled_for 与 coalesced_occurrences。
+上一 Run 仍为 running/waiting 时本次跳过（`skipped_occurrences` 增加），不重叠执行；
+`missed_run_policy=run_once` 对错过的多次触发只运行一次，`skip` 在晚于 60 秒时跳过。
+停用只阻止新触发，不取消已有 Run；第一版没有取消 Run 的接口。
+
 ## 执行记录
 
 每个 Workflow Run 拆分为独立的运行、步骤、调用与等待记录（SQLite schema 20 起），
@@ -129,7 +202,7 @@ compatibility 状态，来自同一只读数据库快照。读取不会创建记
 | --- | --- | --- |
 | Workflow Run | Project 归属、定义版本/快照、inputs/result/trigger、状态和来源 | 原生活 Workflow DTO 由它投影，只有一个状态来源 |
 | 步骤 | 定义节点 node_id 与该次 step_execution_id 分离，执行序号、输入输出、等待/完成/跳过 | 与业务写入在同一事务保存；人工决定沿用原步骤 ID |
-| 调用 | invocation_id 关联 Workflow Run 和步骤，动作契约、幂等身份、结果与种类 | 当前只记录本地业务动作；外部意图/未知结果字段是结构预留 |
+| 调用 | invocation_id 关联 Workflow Run 和步骤，动作契约、幂等身份、结果与种类 | 固定流程记录本地业务动作；自定义流程的 Connector 调用先存意图，结果含 connector_call_id 与外部操作引用 |
 | 等待 | wait_id 关联 Workflow Run 和步骤，等待条件与明确决定收据 | 人工等待跨重启可读；完成后原 wait_id 标记 resolved |
 
 schema 19 的旧运行在首次打开时迁移，标记 `recording_origin=legacy_snapshot`，
@@ -144,4 +217,4 @@ CLI/API/环境变量/Routine 都没有启用入口，不能声称跨版本适配
 
 - [Connector 协议与 Google Calendar](CONNECTOR_PROTOCOL.md)：外部进程领取动作、回传结果与事件。
 - [Jev 双反馈环实验](DUAL_FEEDBACK_EXPERIMENT.md)：只读路由配方（与 Routine 无关）。
-- [自定义 Workflow 设计](P4_WORKFLOW_DESIGN.md)：尚未实现的通用流程目标。
+- [自定义 Workflow 设计](P4_WORKFLOW_DESIGN.md)：通用流程的目标设计与第一版取舍。

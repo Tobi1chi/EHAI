@@ -33,6 +33,7 @@ from ehai.application.commands import (
     ReviewProcess,
     StartRun,
 )
+from ehai.application.inbox import INBOX_KINDS
 from ehai.application.notes import NoteService
 from ehai.application.orchestrator import OrchestrationError, Orchestrator
 from ehai.application.plan_imports import PlanImportError, plan_import_schema
@@ -396,7 +397,7 @@ def create_parser() -> argparse.ArgumentParser:
     )
     inbox_item.add_argument(
         "--kind",
-        choices=("intervention", "human_check", "note", "workflow_confirmation"),
+        choices=INBOX_KINDS,
         required=True,
     )
     inbox_item.add_argument("--request-id", required=True)

@@ -15,11 +15,14 @@ from ehai.infrastructure.sqlite.p4_execution_migration import (
     migrate_workflow_execution_records,
 )
 from ehai.infrastructure.sqlite.p4_routing_migration import ROUTING_MIGRATION
-from ehai.infrastructure.sqlite.p4_workflow_migration import WORKFLOW_MIGRATION
+from ehai.infrastructure.sqlite.p4_workflow_migration import (
+    WORKFLOW_DEFINITION_MIGRATION,
+    WORKFLOW_MIGRATION,
+)
 from ehai.infrastructure.sqlite.receipt_migration import RECEIPT_MIGRATION, merge_receipt_tables
 
 P1_SCHEMA_VERSION = 2
-LATEST_SCHEMA_VERSION = 23
+LATEST_SCHEMA_VERSION = 24
 
 
 class SchemaVersionError(RuntimeError):
@@ -665,6 +668,7 @@ _MIGRATIONS: dict[int, Sequence[str]] = {
     21: CONNECTOR_MIGRATION,
     22: ROUTING_MIGRATION,
     23: RECEIPT_MIGRATION,
+    24: WORKFLOW_DEFINITION_MIGRATION,
 }
 
 

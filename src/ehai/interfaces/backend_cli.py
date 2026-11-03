@@ -31,6 +31,10 @@ QUERY_ROUTES = {
     "list-workflow-runs": "/projects/{project_id}/workflow-runs",
     "get-workflow-run": "/workflow-runs/{workflow_run_id}",
     "get-workflow-execution": "/workflow-runs/{workflow_run_id}/execution",
+    "list-workflow-executions": "/projects/{project_id}/workflow-executions",
+    "list-workflow-definitions": "/projects/{project_id}/workflow-definitions",
+    "get-workflow-definition": "/workflow-definitions/{definition_id}",
+    "list-connector-actions": "/projects/{project_id}/connector-actions",
     "list-connectors": "/projects/{project_id}/connectors",
     "get-connector": "/connectors/{connector_id}",
     "list-connector-calls": "/connectors/{connector_id}/calls",
@@ -76,6 +80,9 @@ COMMAND_ROUTES: dict[str, tuple[str, tuple[str, ...]]] = {
     "reconcile-connector-call": ("/connector-calls/{call_id}/reconcile", ()),
     "start-workflow": ("/projects/{project_id}/workflow-runs", ()),
     "decide-workflow": ("/workflow-runs/{workflow_run_id}/decisions", ()),
+    "save-workflow-definition": ("/projects/{project_id}/workflow-definitions", ()),
+    "start-custom-workflow": ("/workflow-definitions/{definition_id}/runs", ()),
+    "decide-workflow-step": ("/workflow-runs/{workflow_run_id}/step-decisions", ()),
     "update-life-task": ("/life-tasks/{task_id}", ()),
     "create-routine": ("/projects/{project_id}/routines", ()),
     "update-routine": ("/routines/{routine_id}", ()),
@@ -95,6 +102,9 @@ FILE_COMMANDS = frozenset(
         "configure-project",
         "start-workflow",
         "decide-workflow",
+        "save-workflow-definition",
+        "start-custom-workflow",
+        "decide-workflow-step",
         "update-life-task",
         "create-routine",
         "update-routine",
@@ -176,6 +186,7 @@ def _path_arguments(parser: argparse.ArgumentParser, path: str) -> None:
         "request_id",
         "recipe_id",
         "replay_id",
+        "definition_id",
     ):
         if "{" + field + "}" in path:
             parser.add_argument("--" + field.replace("_", "-"), required=True)

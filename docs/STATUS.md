@@ -58,7 +58,8 @@
 | 生活 capture / review 与 Routine | 无模型验证 | 两个固定流程、固定间隔；不是通用 Workflow 引擎 | [WORKFLOWS](WORKFLOWS.md) · [P4](EVIDENCE.md#p4-生活事务与外部连接) |
 | Workflow 执行记录 | 无模型验证 | schema 19→20 迁移与续办通过；历史轨迹不补造 | [P4](EVIDENCE.md#p4-生活事务与外部连接) |
 | Workflow 版本兼容 | 关闭 | 代码接口存在，生产无适配器、无启用开关 | [WORKFLOWS](WORKFLOWS.md#执行记录) |
-| 自定义 Workflow / 条件分支 / 事件触发 | 未实现 | 只有目标设计 | [P4_WORKFLOW_DESIGN](P4_WORKFLOW_DESIGN.md) |
+| 自定义 Workflow / 条件分支 | 无模型验证 | 有限无环单路径图、人工与时间等待、Routine 绑定版本；Connector 替身走通订票场景；无真实服务、无事件触发/取消 | [WORKFLOWS](WORKFLOWS.md#自定义-workflow) · [P4](EVIDENCE.md#p4-生活事务与外部连接) |
+| Workflow 事件触发 / 并行 / 子流程 | 未实现 | 只有目标设计 | [P4_WORKFLOW_DESIGN](P4_WORKFLOW_DESIGN.md) |
 | Connector HTTP 协议 | 无模型验证 | 本地分进程试用；结果未知需显式核对 | [CONNECTOR_PROTOCOL](CONNECTOR_PROTOCOL.md) |
 | Google Calendar Connector | 无模型验证 | 只有本地替身；真实 OAuth/日历未授权验证 | [P4](EVIDENCE.md#p4-生活事务与外部连接) |
 | Jev 双反馈环实验 | 真实验证 | 只读、显式推进；不是自动学习或通用 Workflow | [DUAL_FEEDBACK_EXPERIMENT](DUAL_FEEDBACK_EXPERIMENT.md) |

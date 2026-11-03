@@ -123,6 +123,67 @@
       ],
       "title": "ConnectorAction"
     },
+    "ConnectorActionEntry": {
+      "properties": {
+        "connector_id": {
+          "type": "string",
+          "title": "Connector Id"
+        },
+        "connector_name": {
+          "type": "string",
+          "title": "Connector Name"
+        },
+        "connector_type": {
+          "type": "string",
+          "title": "Connector Type"
+        },
+        "action": {
+          "type": "string",
+          "title": "Action"
+        },
+        "action_version": {
+          "type": "string",
+          "title": "Action Version"
+        },
+        "description": {
+          "type": "string",
+          "title": "Description"
+        },
+        "read_only": {
+          "type": "boolean",
+          "title": "Read Only"
+        },
+        "input_schema": {
+          "additionalProperties": {
+            "$ref": "commands.schema.json#/$defs/JsonValue"
+          },
+          "type": "object",
+          "title": "Input Schema"
+        },
+        "output_schema": {
+          "additionalProperties": {
+            "$ref": "commands.schema.json#/$defs/JsonValue"
+          },
+          "type": "object",
+          "title": "Output Schema"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "connector_id",
+        "connector_name",
+        "connector_type",
+        "action",
+        "action_version",
+        "description",
+        "read_only",
+        "input_schema",
+        "output_schema"
+      ],
+      "title": "ConnectorActionEntry",
+      "description": "One action a workflow step can name, as registered by a project connection."
+    },
     "ConnectorCall": {
       "properties": {
         "call_id": {
@@ -551,6 +612,23 @@
         "data"
       ],
       "title": "ConnectorResponse[Union[ConnectorClaim, NoneType]]"
+    },
+    "ConnectorResponse_list_ConnectorActionEntry__": {
+      "properties": {
+        "data": {
+          "items": {
+            "$ref": "#/$defs/ConnectorActionEntry"
+          },
+          "type": "array",
+          "title": "Data"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "data"
+      ],
+      "title": "ConnectorResponse[list[ConnectorActionEntry]]"
     },
     "ConnectorResponse_list_ConnectorCall__": {
       "properties": {

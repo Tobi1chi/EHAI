@@ -1,4 +1,8 @@
-"""Small atomic life workflows; no Worker, Git, model loop or external effects."""
+"""Project workflows: the two fixed life workflows and custom step graphs.
+
+Life workflows are small and atomic, with no Worker, Git, model loop or external effects.
+Custom workflows reach external services only through registered connector calls.
+"""
 
 from __future__ import annotations
 
@@ -7,7 +11,22 @@ from contextlib import AbstractContextManager
 from datetime import UTC, datetime, timedelta
 from typing import Literal, Protocol, TypeVar
 
-from ehai import JsonValue, new_id, utc_now
+from ehai import JsonValue, new_id, normalize_id, utc_now
+from ehai.application.custom_workflow_models import (
+    SaveWorkflowDefinitionRequest,
+    StartCustomWorkflowRequest,
+    WorkflowDefinitionBody,
+    WorkflowDefinitionRevision,
+)
+from ehai.application.custom_workflows import (
+    CustomWorkflowTransaction,
+    decide_custom_run,
+    definition_digest,
+    poll_custom_run,
+    start_custom_run,
+    validate_definition,
+    validate_inputs,
+)
 from ehai.application.idempotency import (
     IdempotencyConflictError,
     content_fingerprint,
@@ -18,6 +37,7 @@ from ehai.application.ports import CommandReceipt, CommandReceiptStore, StateCon
 from ehai.application.queries import QueryNotFoundError
 from ehai.application.workflow_compatibility import WorkflowCompatibility
 from ehai.application.workflow_execution_models import (
+    WorkflowExecutionRecord,
     WorkflowExecutionView,
     WorkflowInvocationRecord,
     WorkflowStepExecution,
@@ -38,7 +58,7 @@ from ehai.application.workflow_models import (
     WorkflowModel,
     WorkflowRun,
 )
-from ehai.application.workflow_recording import WorkflowRecordStore, record_workflow_run
+from ehai.application.workflow_recording import record_workflow_run
 from ehai.domain.events import Event, EventType
 
 WorkflowEntity = Literal["run", "task", "routine"]
@@ -46,7 +66,7 @@ _RECEIPT_SCOPE = "workflow"
 T = TypeVar("T", bound=WorkflowModel)
 
 
-class WorkflowTransaction(WorkflowRecordStore, Protocol):
+class WorkflowTransaction(CustomWorkflowTransaction, Protocol):
     def require_project(self, project_id: str) -> None: ...
     def get(self, kind: WorkflowEntity, entity_id: str) -> dict[str, JsonValue]: ...
     def list(self, kind: WorkflowEntity, project_id: str | None) -> list[dict[str, JsonValue]]: ...
@@ -97,28 +117,113 @@ class WorkflowService:
         )
 
     def execution(self, run_id: str) -> WorkflowExecutionView:
-        from ehai import normalize_id
-
         with self.store.transaction(write=False) as tx:
+            return self._view(tx, run_id)
+
+    def _view(self, tx: WorkflowTransaction, run_id: str) -> WorkflowExecutionView:
+        record = tx.execution_record(run_id)
+        if record is None:
+            raise QueryNotFoundError("Workflow run", normalize_id(run_id))
+        return WorkflowExecutionView(
+            run=record,
+            steps=[
+                WorkflowStepExecution.model_validate(s)
+                for s in tx.execution_children("step", run_id)
+            ],
+            invocations=[
+                WorkflowInvocationRecord.model_validate(i)
+                for i in tx.execution_children("invocation", run_id)
+            ],
+            waits=[
+                WorkflowWaitRecord.model_validate(w) for w in tx.execution_children("wait", run_id)
+            ],
+            compatibility=self._compatibility.status(),
+        )
+
+    def executions(self, project_id: str) -> list[WorkflowExecutionRecord]:
+        """Every workflow Run of the project, fixed and custom, as independent records."""
+        with self.store.transaction(write=False) as tx:
+            tx.require_project(project_id)
+            return tx.execution_records(project_id)
+
+    def definition(self, definition_id: str) -> WorkflowDefinitionRevision:
+        with self.store.transaction(write=False) as tx:
+            return tx.definition(definition_id)
+
+    def list_definitions(self, project_id: str) -> list[WorkflowDefinitionRevision]:
+        with self.store.transaction(write=False) as tx:
+            tx.require_project(project_id)
+            return tx.definitions(project_id)
+
+    def save_definition(
+        self, project_id: str, request: SaveWorkflowDefinitionRequest
+    ) -> WorkflowDefinitionRevision:
+        body = WorkflowDefinitionBody.model_validate(
+            request.model_dump(exclude={"idempotency_key", "expected_revision"})
+        )
+
+        def action(tx: WorkflowTransaction) -> WorkflowDefinitionRevision:
+            tx.require_project(project_id)
+            latest = max(
+                (d.revision for d in tx.definitions(project_id) if d.name == body.name),
+                default=None,
+            )
+            if latest != request.expected_revision:
+                raise StateConflictError(
+                    f"Expected revision {request.expected_revision}; latest revision is {latest}"
+                )
+            validate_definition(
+                body, {c.connector_id: c for c in tx.connectors.connections(project_id)}
+            )
+            revision = WorkflowDefinitionRevision(
+                definition_id=str(new_id()),
+                project_id=project_id,
+                name=body.name,
+                revision=1 if latest is None else latest + 1,
+                digest=definition_digest(body),
+                definition=body,
+                created_at=utc_now(),
+            )
+            tx.save_definition(revision)
+            return revision
+
+        return self._command(
+            "save_definition",
+            project_id,
+            request,
+            request.idempotency_key,
+            WorkflowDefinitionRevision,
+            action,
+        )
+
+    def start_custom(
+        self, definition_id: str, request: StartCustomWorkflowRequest
+    ) -> WorkflowExecutionView:
+        def action(tx: WorkflowTransaction) -> WorkflowExecutionView:
+            revision = tx.definition(definition_id)
+            record = start_custom_run(tx, revision, request.inputs, {"kind": "manual"}, utc_now())
+            return self._view(tx, record.workflow_run_id)
+
+        return self._command(
+            "start_custom",
+            definition_id,
+            request,
+            request.idempotency_key,
+            WorkflowExecutionView,
+            action,
+        )
+
+    def decide_step(self, run_id: str, request: DecideWorkflowRequest) -> WorkflowExecutionView:
+        def action(tx: WorkflowTransaction) -> WorkflowExecutionView:
             record = tx.execution_record(run_id)
             if record is None:
                 raise QueryNotFoundError("Workflow run", normalize_id(run_id))
-            return WorkflowExecutionView(
-                run=record,
-                steps=[
-                    WorkflowStepExecution.model_validate(s)
-                    for s in tx.execution_children("step", run_id)
-                ],
-                invocations=[
-                    WorkflowInvocationRecord.model_validate(i)
-                    for i in tx.execution_children("invocation", run_id)
-                ],
-                waits=[
-                    WorkflowWaitRecord.model_validate(w)
-                    for w in tx.execution_children("wait", run_id)
-                ],
-                compatibility=self._compatibility.status(),
-            )
+            decide_custom_run(tx, record, request, utc_now())
+            return self._view(tx, run_id)
+
+        return self._command(
+            "decide_step", run_id, request, request.idempotency_key, WorkflowExecutionView, action
+        )
 
     def get(self, kind: WorkflowEntity, entity_id: str, model: type[T]) -> T:
         with self.store.transaction(write=False) as tx:
@@ -302,17 +407,20 @@ class WorkflowService:
         def action(tx: WorkflowTransaction) -> LifeRoutine:
             tx.require_project(project_id)
             now = utc_now()
-            routine = LifeRoutine(
-                routine_id=str(new_id()),
-                project_id=project_id,
-                name=request.name,
-                interval_seconds=request.interval_seconds,
-                next_due_at=request.next_due_at.astimezone(UTC),
-                enabled=request.enabled,
-                version=1,
-                last_workflow_run_id=None,
-                created_at=now,
-                updated_at=now,
+            routine = LifeRoutine.model_validate(
+                {
+                    "routine_id": str(new_id()),
+                    "project_id": project_id,
+                    "name": request.name,
+                    "interval_seconds": request.interval_seconds,
+                    "next_due_at": request.next_due_at.astimezone(UTC),
+                    "enabled": request.enabled,
+                    "version": 1,
+                    "last_workflow_run_id": None,
+                    "created_at": now,
+                    "updated_at": now,
+                    **self._binding(tx, project_id, request),
+                }
             )
             self._save_routine(tx, routine)
             return routine
@@ -338,6 +446,7 @@ class WorkflowService:
                     "enabled": request.enabled,
                     "version": routine.version + 1,
                     "updated_at": utc_now(),
+                    **self._binding(tx, routine.project_id, request),
                 }
             )
             self._save_routine(tx, routine)
@@ -352,8 +461,34 @@ class WorkflowService:
             action,
         )
 
+    @staticmethod
+    def _binding(
+        tx: WorkflowTransaction, project_id: str, request: CreateRoutineRequest
+    ) -> dict[str, JsonValue]:
+        """The routine's workflow fields; a custom revision is checked against its inputs."""
+        if request.workflow_definition_id is None:
+            return {
+                "workflow": "life.review",
+                "workflow_version": 1,
+                "workflow_definition_id": None,
+                "inputs": None,
+                "missed_run_policy": None,
+            }
+        revision = tx.definition(str(normalize_id(request.workflow_definition_id)))
+        if revision.project_id != project_id:
+            raise StateConflictError("The workflow definition belongs to another project")
+        assert request.inputs is not None
+        validate_inputs(revision.definition.inputs_schema, request.inputs)
+        return {
+            "workflow": "custom",
+            "workflow_version": revision.revision,
+            "workflow_definition_id": revision.definition_id,
+            "inputs": request.inputs,
+            "missed_run_policy": request.missed_run_policy,
+        }
+
     def tick(self) -> None:
-        """One transaction per due routine: run, events and next due are indivisible."""
+        """One transaction per due routine or ready custom Run; each is indivisible."""
         with self.store.transaction(write=False) as tx:
             routines = [LifeRoutine.model_validate(r) for r in tx.list("routine", None)]
         now = utc_now()
@@ -370,27 +505,74 @@ class WorkflowService:
                 next_due = routine.next_due_at + timedelta(
                     seconds=occurrences * routine.interval_seconds
                 )
-                run = self._run(
-                    tx,
-                    routine.project_id,
-                    StartWorkflowRequest(idempotency_key="routine", workflow="life.review"),
-                    now,
-                    routine,
-                    occurrences,
-                )
+                update: dict[str, object] = {}
+                if routine.workflow == "custom":
+                    run_id = self._routine_custom_run(tx, routine, occurrences, now)
+                    if run_id is None:
+                        update["skipped_occurrences"] = routine.skipped_occurrences + occurrences
+                    else:
+                        update["last_workflow_run_id"] = run_id
+                else:
+                    run = self._run(
+                        tx,
+                        routine.project_id,
+                        StartWorkflowRequest(idempotency_key="routine", workflow="life.review"),
+                        now,
+                        routine,
+                        occurrences,
+                    )
+                    update["last_workflow_run_id"] = run.workflow_run_id
                 self._save_routine(
                     tx,
                     routine.model_copy(
                         update={
+                            **update,
                             "next_due_at": next_due,
-                            "last_workflow_run_id": run.workflow_run_id,
                             "version": routine.version + 1,
                             "updated_at": now,
                         }
                     ),
                 )
+        with self.store.transaction(write=False) as tx:
+            ready = [
+                run_id
+                for run_id in tx.waiting_custom_runs()
+                if poll_custom_run(tx, run_id, now, apply=False)
+            ]
+        for run_id in ready:
+            with self.store.transaction(write=True) as tx:
+                poll_custom_run(tx, run_id, utc_now(), apply=True)
         self.last_tick_at = now
         self.last_error = None
+
+    @staticmethod
+    def _routine_custom_run(
+        tx: WorkflowTransaction, routine: LifeRoutine, occurrences: int, now: datetime
+    ) -> str | None:
+        """Start the bound revision, or return None when this occurrence is skipped."""
+        if routine.last_workflow_run_id is not None:
+            previous = tx.execution_record(routine.last_workflow_run_id)
+            if previous is not None and previous.status in ("running", "waiting"):
+                return None
+        if routine.missed_run_policy == "skip" and now - routine.next_due_at > timedelta(
+            seconds=60
+        ):
+            return None
+        assert routine.workflow_definition_id is not None and routine.inputs is not None
+        record = start_custom_run(
+            tx,
+            tx.definition(routine.workflow_definition_id),
+            routine.inputs,
+            {
+                "kind": "routine",
+                "routine_id": routine.routine_id,
+                "routine_version": routine.version,
+                "scheduled_for": routine.next_due_at.isoformat(),
+                "coalesced_occurrences": occurrences,
+            },
+            now,
+        )
+        return record.workflow_run_id
 
     def _save_run(self, tx: WorkflowTransaction, run: WorkflowRun) -> None:
         record_workflow_run(tx, run)

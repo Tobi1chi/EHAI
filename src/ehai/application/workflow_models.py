@@ -7,6 +7,8 @@ from typing import Annotated, Literal
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, StringConstraints, model_validator
 
+from ehai import JsonValue
+
 WorkflowName = Literal["life.capture", "life.review"]
 LifeText = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=10000)]
 WorkflowKey = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=200)]
@@ -64,10 +66,15 @@ class UpdateLifeTaskRequest(WorkflowModel):
 
 
 class CreateRoutineRequest(WorkflowModel):
-    """Schedule life.review v1 at a fixed interval, with no external or model side effects.
+    """Schedule a workflow at a fixed interval.
 
-    next_due_at must include a timezone offset. A past time triggers a single coalesced review
-    when the host next ticks. enabled=false persists the routine without scheduling it.
+    Without workflow_definition_id the routine runs life.review v1, with no external or
+    model side effects, and a past time triggers a single coalesced review when the host
+    next ticks. With it, the routine starts that exact custom workflow revision with
+    ``inputs``; a new occurrence is skipped while the previous Run still waits, and
+    missed_run_policy (required) says whether a late occurrence runs once ("run_once") or is
+    skipped when more than 60 seconds late ("skip"). next_due_at must include a timezone
+    offset. enabled=false persists the routine without scheduling it.
     """
 
     idempotency_key: WorkflowKey
@@ -75,6 +82,21 @@ class CreateRoutineRequest(WorkflowModel):
     interval_seconds: int = Field(ge=60, le=31536000, strict=True)
     next_due_at: AwareDatetime
     enabled: bool = True
+    workflow_definition_id: str | None = None
+    inputs: dict[str, JsonValue] | None = None
+    missed_run_policy: Literal["run_once", "skip"] | None = None
+
+    @model_validator(mode="after")
+    def binding(self) -> CreateRoutineRequest:
+        if self.workflow_definition_id is None and (
+            self.inputs is not None or self.missed_run_policy is not None
+        ):
+            raise ValueError("inputs and missed_run_policy apply only to a custom workflow")
+        if self.workflow_definition_id is not None and (
+            self.inputs is None or self.missed_run_policy is None
+        ):
+            raise ValueError("A custom workflow routine requires inputs and missed_run_policy")
+        return self
 
 
 class UpdateRoutineRequest(CreateRoutineRequest):
@@ -111,11 +133,18 @@ class WorkflowDecision(WorkflowModel):
 
 
 class LifeRoutine(WorkflowModel):
+    """``workflow`` is "custom" when the routine is bound to a custom workflow revision;
+    ``workflow_version`` is then that revision."""
+
     routine_id: str
     project_id: str
     name: str
-    workflow: Literal["life.review"] = "life.review"
-    workflow_version: Literal[1] = 1
+    workflow: Literal["life.review", "custom"] = "life.review"
+    workflow_version: int = 1
+    workflow_definition_id: str | None = None
+    inputs: dict[str, JsonValue] | None = None
+    missed_run_policy: Literal["run_once", "skip"] | None = None
+    skipped_occurrences: int = 0
     interval_seconds: int
     next_due_at: datetime
     enabled: bool

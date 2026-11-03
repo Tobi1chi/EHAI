@@ -12,6 +12,7 @@ from referencing.exceptions import Unresolvable
 from ehai import JsonValue, json_dumps, new_id, normalize_id, utc_now
 from ehai.application.connector_models import (
     ClaimConnectorCallRequest,
+    ConnectorActionEntry,
     ConnectorCall,
     ConnectorClaim,
     ConnectorConnection,
@@ -123,6 +124,50 @@ def _validate(schema: dict[str, JsonValue], value: dict[str, JsonValue]) -> None
         raise ValueError("Connector payload does not match its registered schema") from error
 
 
+def queue_connector_call(
+    tx: ConnectorTransaction,
+    connector_id: str,
+    action_name: str,
+    action_version: str,
+    inputs: dict[str, JsonValue],
+    *,
+    authorize_write: bool,
+) -> ConnectorCall:
+    """Store the call intent; the connector's own process claims it and performs the I/O."""
+    connection, _ = tx.connection(connector_id)
+    action = next(
+        (
+            a
+            for a in connection.manifest.actions
+            if a.name == action_name and a.version == action_version
+        ),
+        None,
+    )
+    if action is None:
+        raise ValueError("Unknown connector action/version")
+    if not action.read_only and not authorize_write:
+        raise StateConflictError("This connector action requires explicit write authorization")
+    _validate(action.input_schema, inputs)
+    now = utc_now()
+    call = ConnectorCall(
+        call_id=str(new_id()),
+        connector_id=connector_id,
+        project_id=connection.project_id,
+        action=action,
+        inputs=inputs,
+        write_authorized=authorize_write,
+        status="queued",
+        output=None,
+        error=None,
+        external_operation_ref=None,
+        created_at=now,
+        updated_at=now,
+    )
+    tx.save_call(call, None, None)
+    ConnectorService._call_event(tx, call)
+    return call
+
+
 class ConnectorService:
     def __init__(self, store: ConnectorStore) -> None:
         self.store = store
@@ -181,39 +226,14 @@ class ConnectorService:
             old = _receipt(tx, "invoke:" + connector_id, request.idempotency_key, fingerprint)
             if old is not None:
                 return ConnectorCall.model_validate(old)
-            connection, _ = tx.connection(connector_id)
-            action = next(
-                (
-                    a
-                    for a in connection.manifest.actions
-                    if a.name == request.action and a.version == request.action_version
-                ),
-                None,
+            call = queue_connector_call(
+                tx,
+                connector_id,
+                request.action,
+                request.action_version,
+                request.inputs,
+                authorize_write=request.authorize_write,
             )
-            if action is None:
-                raise ValueError("Unknown connector action/version")
-            if not action.read_only and not request.authorize_write:
-                raise StateConflictError(
-                    "This connector action requires explicit write authorization"
-                )
-            _validate(action.input_schema, request.inputs)
-            now = utc_now()
-            call = ConnectorCall(
-                call_id=str(new_id()),
-                connector_id=connector_id,
-                project_id=connection.project_id,
-                action=action,
-                inputs=request.inputs,
-                write_authorized=request.authorize_write,
-                status="queued",
-                output=None,
-                error=None,
-                external_operation_ref=None,
-                created_at=now,
-                updated_at=now,
-            )
-            tx.save_call(call, None, None)
-            self._call_event(tx, call)
             _remember(
                 tx,
                 "invoke:" + connector_id,
@@ -222,6 +242,26 @@ class ConnectorService:
                 call.model_dump(mode="json"),
             )
             return call
+
+    def actions(self, project_id: str) -> list[ConnectorActionEntry]:
+        """The action catalog a workflow definition can name, across project connections."""
+        with self.store.transaction(write=False) as tx:
+            tx.require_project(project_id)
+            return [
+                ConnectorActionEntry(
+                    connector_id=connection.connector_id,
+                    connector_name=connection.name,
+                    connector_type=connection.manifest.connector_type,
+                    action=action.name,
+                    action_version=action.version,
+                    description=action.description,
+                    read_only=action.read_only,
+                    input_schema=action.input_schema,
+                    output_schema=action.output_schema,
+                )
+                for connection in tx.connections(project_id)
+                for action in connection.manifest.actions
+            ]
 
     @staticmethod
     def _authorize(tx: ConnectorTransaction, connector_id: str, token: str) -> ConnectorConnection:

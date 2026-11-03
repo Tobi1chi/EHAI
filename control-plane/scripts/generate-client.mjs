@@ -49,6 +49,9 @@ const requiredOperations = [
   "listLifeTasks", "getLifeTask", "updateLifeTask", "createRoutine", "listRoutines",
   "getRoutine", "updateRoutine", "getRoutineScheduler",
   "getWorkflowExecution",
+  "listWorkflowExecutions", "saveWorkflowDefinition", "listWorkflowDefinitions",
+  "getWorkflowDefinition", "startCustomWorkflow", "decideWorkflowStep",
+  "listConnectorActions",
   "registerConnector", "listConnectors", "getConnector", "invokeConnector",
   "listConnectorCalls", "getConnectorCall",
   "reconcileConnectorCall",
@@ -381,6 +384,10 @@ export class EhaiApiClient {
     return this.request("/connector-calls/" + encodeURIComponent(callId) + "/reconcile", "POST", request);
   }
 
+  listConnectorActions(projectId: string): Promise<{ data: ConnectorActionEntry[] }> {
+    return this.request("/projects/" + encodeURIComponent(projectId) + "/connector-actions", "GET");
+  }
+
   startWorkflow(projectId: string, request: StartWorkflowRequest): Promise<{ data: WorkflowRun }> {
     return this.request("/projects/" + encodeURIComponent(projectId) + "/workflow-runs", "POST", request);
   }
@@ -399,6 +406,30 @@ export class EhaiApiClient {
 
   decideWorkflow(workflowRunId: string, request: DecideWorkflowRequest): Promise<{ data: WorkflowRun }> {
     return this.request("/workflow-runs/" + encodeURIComponent(workflowRunId) + "/decisions", "POST", request);
+  }
+
+  listWorkflowExecutions(projectId: string): Promise<{ data: WorkflowExecutionRecord[] }> {
+    return this.request("/projects/" + encodeURIComponent(projectId) + "/workflow-executions", "GET");
+  }
+
+  saveWorkflowDefinition(projectId: string, request: SaveWorkflowDefinitionRequest): Promise<{ data: WorkflowDefinitionRevision }> {
+    return this.request("/projects/" + encodeURIComponent(projectId) + "/workflow-definitions", "POST", request);
+  }
+
+  listWorkflowDefinitions(projectId: string): Promise<{ data: WorkflowDefinitionRevision[] }> {
+    return this.request("/projects/" + encodeURIComponent(projectId) + "/workflow-definitions", "GET");
+  }
+
+  getWorkflowDefinition(definitionId: string): Promise<{ data: WorkflowDefinitionRevision }> {
+    return this.request("/workflow-definitions/" + encodeURIComponent(definitionId), "GET");
+  }
+
+  startCustomWorkflow(definitionId: string, request: StartCustomWorkflowRequest): Promise<{ data: WorkflowExecutionView }> {
+    return this.request("/workflow-definitions/" + encodeURIComponent(definitionId) + "/runs", "POST", request);
+  }
+
+  decideWorkflowStep(workflowRunId: string, request: DecideWorkflowRequest): Promise<{ data: WorkflowExecutionView }> {
+    return this.request("/workflow-runs/" + encodeURIComponent(workflowRunId) + "/step-decisions", "POST", request);
   }
 
   listLifeTasks(projectId: string): Promise<{ data: LifeTask[] }> {

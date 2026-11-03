@@ -1,4 +1,4 @@
-"""Normal HTTP entry points for life workflows; MCP consumes the same OpenAPI."""
+"""Normal HTTP entry points for project workflows; MCP consumes the same OpenAPI."""
 
 from __future__ import annotations
 
@@ -10,7 +10,15 @@ from fastapi import APIRouter, FastAPI
 from pydantic import BaseModel, ConfigDict
 
 from ehai import normalize_id
-from ehai.application.workflow_execution_models import WorkflowExecutionView
+from ehai.application.custom_workflow_models import (
+    SaveWorkflowDefinitionRequest,
+    StartCustomWorkflowRequest,
+    WorkflowDefinitionRevision,
+)
+from ehai.application.workflow_execution_models import (
+    WorkflowExecutionRecord,
+    WorkflowExecutionView,
+)
 from ehai.application.workflow_models import (
     CreateRoutineRequest,
     DecideWorkflowRequest,
@@ -69,6 +77,48 @@ def build_workflows_router(service: WorkflowService) -> APIRouter:
         """Read independent Run, step, local invocation and wait records from one snapshot."""
         return WorkflowResponse(data=service.execution(normalize_id(workflow_run_id)))
 
+    @router.get("/projects/{project_id}/workflow-executions", operation_id="listWorkflowExecutions")
+    def executions(project_id: UuidInput) -> WorkflowResponse[list[WorkflowExecutionRecord]]:
+        """Every workflow Run of the project, fixed and custom."""
+        return WorkflowResponse(data=service.executions(normalize_id(project_id)))
+
+    @router.post(
+        "/projects/{project_id}/workflow-definitions", operation_id="saveWorkflowDefinition"
+    )
+    def save_definition(
+        project_id: UuidInput, body: SaveWorkflowDefinitionRequest
+    ) -> WorkflowResponse[WorkflowDefinitionRevision]:
+        """Validate and save the next immutable revision of a custom workflow."""
+        return WorkflowResponse(data=service.save_definition(normalize_id(project_id), body))
+
+    @router.get(
+        "/projects/{project_id}/workflow-definitions", operation_id="listWorkflowDefinitions"
+    )
+    def definitions_list(
+        project_id: UuidInput,
+    ) -> WorkflowResponse[list[WorkflowDefinitionRevision]]:
+        return WorkflowResponse(data=service.list_definitions(normalize_id(project_id)))
+
+    @router.get("/workflow-definitions/{definition_id}", operation_id="getWorkflowDefinition")
+    def definition(definition_id: UuidInput) -> WorkflowResponse[WorkflowDefinitionRevision]:
+        return WorkflowResponse(data=service.definition(normalize_id(definition_id)))
+
+    @router.post("/workflow-definitions/{definition_id}/runs", operation_id="startCustomWorkflow")
+    def start_custom(
+        definition_id: UuidInput, body: StartCustomWorkflowRequest
+    ) -> WorkflowResponse[WorkflowExecutionView]:
+        """Start a Run of exactly this revision; it advances until it waits or ends."""
+        return WorkflowResponse(data=service.start_custom(normalize_id(definition_id), body))
+
+    @router.post(
+        "/workflow-runs/{workflow_run_id}/step-decisions", operation_id="decideWorkflowStep"
+    )
+    def decide_step(
+        workflow_run_id: UuidInput, body: DecideWorkflowRequest
+    ) -> WorkflowResponse[WorkflowExecutionView]:
+        """Decide the human step a custom workflow Run is waiting on."""
+        return WorkflowResponse(data=service.decide_step(normalize_id(workflow_run_id), body))
+
     @router.get("/projects/{project_id}/life-tasks", operation_id="listLifeTasks")
     def tasks(project_id: UuidInput) -> WorkflowResponse[list[LifeTask]]:
         return WorkflowResponse(
@@ -123,7 +173,7 @@ def install_routine_scheduler(app: FastAPI, service: WorkflowService) -> None:
                     await asyncio.to_thread(service.tick)
                 except Exception:
                     service.last_error = (
-                        "Routine tick failed; individual transactions remain atomic"
+                        "Workflow tick failed; individual transactions remain atomic"
                     )
                     logging.getLogger(__name__).exception("Routine tick failed")
                 with suppress(TimeoutError):

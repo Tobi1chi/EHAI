@@ -7,6 +7,7 @@ from fastapi import APIRouter, Header
 from ehai import normalize_id
 from ehai.application.connector_models import (
     ClaimConnectorCallRequest,
+    ConnectorActionEntry,
     ConnectorCall,
     ConnectorClaim,
     ConnectorConnection,
@@ -40,6 +41,11 @@ def build_connectors_router(service: ConnectorService) -> APIRouter:
     @router.get("/projects/{project_id}/connectors", operation_id="listConnectors")
     def connections(project_id: UuidInput) -> ConnectorResponse[list[ConnectorConnection]]:
         return ConnectorResponse(data=service.list_connections(normalize_id(project_id)))
+
+    @router.get("/projects/{project_id}/connector-actions", operation_id="listConnectorActions")
+    def actions(project_id: UuidInput) -> ConnectorResponse[list[ConnectorActionEntry]]:
+        """The actions, with input and output schemas, a workflow definition can name."""
+        return ConnectorResponse(data=service.actions(normalize_id(project_id)))
 
     @router.get("/connectors/{connector_id}", operation_id="getConnector")
     def connection(connector_id: UuidInput) -> ConnectorResponse[ConnectorConnection]:

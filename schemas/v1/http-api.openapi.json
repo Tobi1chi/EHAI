@@ -918,6 +918,278 @@
         }
       }
     },
+    "/api/v1/projects/{project_id}/workflow-executions": {
+      "get": {
+        "summary": "Executions",
+        "description": "Every workflow Run of the project, fixed and custom.",
+        "operationId": "listWorkflowExecutions",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$",
+              "title": "Project Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkflowResponse_list_WorkflowExecutionRecord__"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/projects/{project_id}/workflow-definitions": {
+      "post": {
+        "summary": "Save Definition",
+        "description": "Validate and save the next immutable revision of a custom workflow.",
+        "operationId": "saveWorkflowDefinition",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$",
+              "title": "Project Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SaveWorkflowDefinitionRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkflowResponse_WorkflowDefinitionRevision_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "summary": "Definitions List",
+        "operationId": "listWorkflowDefinitions",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$",
+              "title": "Project Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkflowResponse_list_WorkflowDefinitionRevision__"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/workflow-definitions/{definition_id}": {
+      "get": {
+        "summary": "Definition",
+        "operationId": "getWorkflowDefinition",
+        "parameters": [
+          {
+            "name": "definition_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$",
+              "title": "Definition Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkflowResponse_WorkflowDefinitionRevision_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/workflow-definitions/{definition_id}/runs": {
+      "post": {
+        "summary": "Start Custom",
+        "description": "Start a Run of exactly this revision; it advances until it waits or ends.",
+        "operationId": "startCustomWorkflow",
+        "parameters": [
+          {
+            "name": "definition_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$",
+              "title": "Definition Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StartCustomWorkflowRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkflowResponse_WorkflowExecutionView_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/workflow-runs/{workflow_run_id}/step-decisions": {
+      "post": {
+        "summary": "Decide Step",
+        "description": "Decide the human step a custom workflow Run is waiting on.",
+        "operationId": "decideWorkflowStep",
+        "parameters": [
+          {
+            "name": "workflow_run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$",
+              "title": "Workflow Run Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DecideWorkflowRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkflowResponse_WorkflowExecutionView_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/projects/{project_id}/life-tasks": {
       "get": {
         "summary": "Tasks",
@@ -1293,6 +1565,47 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ConnectorResponse_list_ConnectorConnection__"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/projects/{project_id}/connector-actions": {
+      "get": {
+        "summary": "Actions",
+        "description": "The actions, with input and output schemas, a workflow definition can name.",
+        "operationId": "listConnectorActions",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$",
+              "title": "Project Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConnectorResponse_list_ConnectorActionEntry__"
                 }
               }
             }
@@ -2669,7 +2982,8 @@
                 "intervention",
                 "human_check",
                 "note",
-                "workflow_confirmation"
+                "workflow_confirmation",
+                "workflow_reconciliation"
               ],
               "type": "string",
               "title": "Kind"
@@ -6466,6 +6780,168 @@
         ],
         "title": "AcknowledgeEventConsumerRequest"
       },
+      "ActionStep-Input": {
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "action",
+            "title": "Type"
+          },
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]{0,63}$",
+            "title": "Id"
+          },
+          "connector_id": {
+            "type": "string",
+            "title": "Connector Id"
+          },
+          "action": {
+            "type": "string",
+            "pattern": "^[a-zA-Z0-9_.-]{1,100}$",
+            "title": "Action"
+          },
+          "action_version": {
+            "type": "string",
+            "maxLength": 300,
+            "minLength": 1,
+            "title": "Action Version"
+          },
+          "inputs": {
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/RefValue"
+                },
+                {
+                  "$ref": "#/components/schemas/LiteralValue-Input"
+                },
+                {
+                  "$ref": "#/components/schemas/TemplateValue"
+                }
+              ]
+            },
+            "type": "object",
+            "maxProperties": 100,
+            "title": "Inputs"
+          },
+          "approval_step": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9_]{0,63}$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Approval Step"
+          },
+          "standing_write": {
+            "type": "boolean",
+            "title": "Standing Write",
+            "default": false
+          },
+          "next": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]{0,63}$",
+            "title": "Next"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "type",
+          "id",
+          "connector_id",
+          "action",
+          "action_version",
+          "next"
+        ],
+        "title": "ActionStep",
+        "description": "Call a registered connector action and continue with its structured output.\n\nA write action needs exactly one authorization: ``approval_step`` names a human step\non every path to this one whose approval leads here, or ``standing_write`` records the\ndefiner's standing permission. Read-only actions take neither. A failed or unknown\nresult never continues on a business branch."
+      },
+      "ActionStep-Output": {
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "action",
+            "title": "Type"
+          },
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]{0,63}$",
+            "title": "Id"
+          },
+          "connector_id": {
+            "type": "string",
+            "title": "Connector Id"
+          },
+          "action": {
+            "type": "string",
+            "pattern": "^[a-zA-Z0-9_.-]{1,100}$",
+            "title": "Action"
+          },
+          "action_version": {
+            "type": "string",
+            "maxLength": 300,
+            "minLength": 1,
+            "title": "Action Version"
+          },
+          "inputs": {
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/RefValue"
+                },
+                {
+                  "$ref": "#/components/schemas/LiteralValue-Output"
+                },
+                {
+                  "$ref": "#/components/schemas/TemplateValue"
+                }
+              ]
+            },
+            "type": "object",
+            "maxProperties": 100,
+            "title": "Inputs"
+          },
+          "approval_step": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9_]{0,63}$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Approval Step"
+          },
+          "standing_write": {
+            "type": "boolean",
+            "title": "Standing Write",
+            "default": false
+          },
+          "next": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]{0,63}$",
+            "title": "Next"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "type",
+          "id",
+          "connector_id",
+          "action",
+          "action_version",
+          "next"
+        ],
+        "title": "ActionStep",
+        "description": "Call a registered connector action and continue with its structured output.\n\nA write action needs exactly one authorization: ``approval_step`` names a human step\non every path to this one whose approval leads here, or ``standing_write`` records the\ndefiner's standing permission. Read-only actions take neither. A failed or unknown\nresult never continues on a business branch."
+      },
       "AddNoteMessageRequest": {
         "properties": {
           "idempotency_key": {
@@ -6499,6 +6975,230 @@
           "message"
         ],
         "title": "AddNoteMessageRequest"
+      },
+      "AllCondition-Input": {
+        "properties": {
+          "op": {
+            "type": "string",
+            "const": "all",
+            "title": "Op"
+          },
+          "conditions": {
+            "items": {
+              "oneOf": [
+                {
+                  "$ref": "#/components/schemas/CompareCondition-Input"
+                },
+                {
+                  "$ref": "#/components/schemas/ExistsCondition"
+                },
+                {
+                  "$ref": "#/components/schemas/AllCondition-Input"
+                },
+                {
+                  "$ref": "#/components/schemas/AnyCondition-Input"
+                },
+                {
+                  "$ref": "#/components/schemas/NotCondition-Input"
+                }
+              ],
+              "discriminator": {
+                "propertyName": "op",
+                "mapping": {
+                  "all": "#/components/schemas/AllCondition-Input",
+                  "any": "#/components/schemas/AnyCondition-Input",
+                  "eq": "#/components/schemas/CompareCondition-Input",
+                  "exists": "#/components/schemas/ExistsCondition",
+                  "ge": "#/components/schemas/CompareCondition-Input",
+                  "gt": "#/components/schemas/CompareCondition-Input",
+                  "le": "#/components/schemas/CompareCondition-Input",
+                  "lt": "#/components/schemas/CompareCondition-Input",
+                  "ne": "#/components/schemas/CompareCondition-Input",
+                  "not": "#/components/schemas/NotCondition-Input"
+                }
+              }
+            },
+            "type": "array",
+            "maxItems": 20,
+            "minItems": 1,
+            "title": "Conditions"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "op",
+          "conditions"
+        ],
+        "title": "AllCondition"
+      },
+      "AllCondition-Output": {
+        "properties": {
+          "op": {
+            "type": "string",
+            "const": "all",
+            "title": "Op"
+          },
+          "conditions": {
+            "items": {
+              "oneOf": [
+                {
+                  "$ref": "#/components/schemas/CompareCondition-Output"
+                },
+                {
+                  "$ref": "#/components/schemas/ExistsCondition"
+                },
+                {
+                  "$ref": "#/components/schemas/AllCondition-Output"
+                },
+                {
+                  "$ref": "#/components/schemas/AnyCondition-Output"
+                },
+                {
+                  "$ref": "#/components/schemas/NotCondition-Output"
+                }
+              ],
+              "discriminator": {
+                "propertyName": "op",
+                "mapping": {
+                  "all": "#/components/schemas/AllCondition-Output",
+                  "any": "#/components/schemas/AnyCondition-Output",
+                  "eq": "#/components/schemas/CompareCondition-Output",
+                  "exists": "#/components/schemas/ExistsCondition",
+                  "ge": "#/components/schemas/CompareCondition-Output",
+                  "gt": "#/components/schemas/CompareCondition-Output",
+                  "le": "#/components/schemas/CompareCondition-Output",
+                  "lt": "#/components/schemas/CompareCondition-Output",
+                  "ne": "#/components/schemas/CompareCondition-Output",
+                  "not": "#/components/schemas/NotCondition-Output"
+                }
+              }
+            },
+            "type": "array",
+            "maxItems": 20,
+            "minItems": 1,
+            "title": "Conditions"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "op",
+          "conditions"
+        ],
+        "title": "AllCondition"
+      },
+      "AnyCondition-Input": {
+        "properties": {
+          "op": {
+            "type": "string",
+            "const": "any",
+            "title": "Op"
+          },
+          "conditions": {
+            "items": {
+              "oneOf": [
+                {
+                  "$ref": "#/components/schemas/CompareCondition-Input"
+                },
+                {
+                  "$ref": "#/components/schemas/ExistsCondition"
+                },
+                {
+                  "$ref": "#/components/schemas/AllCondition-Input"
+                },
+                {
+                  "$ref": "#/components/schemas/AnyCondition-Input"
+                },
+                {
+                  "$ref": "#/components/schemas/NotCondition-Input"
+                }
+              ],
+              "discriminator": {
+                "propertyName": "op",
+                "mapping": {
+                  "all": "#/components/schemas/AllCondition-Input",
+                  "any": "#/components/schemas/AnyCondition-Input",
+                  "eq": "#/components/schemas/CompareCondition-Input",
+                  "exists": "#/components/schemas/ExistsCondition",
+                  "ge": "#/components/schemas/CompareCondition-Input",
+                  "gt": "#/components/schemas/CompareCondition-Input",
+                  "le": "#/components/schemas/CompareCondition-Input",
+                  "lt": "#/components/schemas/CompareCondition-Input",
+                  "ne": "#/components/schemas/CompareCondition-Input",
+                  "not": "#/components/schemas/NotCondition-Input"
+                }
+              }
+            },
+            "type": "array",
+            "maxItems": 20,
+            "minItems": 1,
+            "title": "Conditions"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "op",
+          "conditions"
+        ],
+        "title": "AnyCondition"
+      },
+      "AnyCondition-Output": {
+        "properties": {
+          "op": {
+            "type": "string",
+            "const": "any",
+            "title": "Op"
+          },
+          "conditions": {
+            "items": {
+              "oneOf": [
+                {
+                  "$ref": "#/components/schemas/CompareCondition-Output"
+                },
+                {
+                  "$ref": "#/components/schemas/ExistsCondition"
+                },
+                {
+                  "$ref": "#/components/schemas/AllCondition-Output"
+                },
+                {
+                  "$ref": "#/components/schemas/AnyCondition-Output"
+                },
+                {
+                  "$ref": "#/components/schemas/NotCondition-Output"
+                }
+              ],
+              "discriminator": {
+                "propertyName": "op",
+                "mapping": {
+                  "all": "#/components/schemas/AllCondition-Output",
+                  "any": "#/components/schemas/AnyCondition-Output",
+                  "eq": "#/components/schemas/CompareCondition-Output",
+                  "exists": "#/components/schemas/ExistsCondition",
+                  "ge": "#/components/schemas/CompareCondition-Output",
+                  "gt": "#/components/schemas/CompareCondition-Output",
+                  "le": "#/components/schemas/CompareCondition-Output",
+                  "lt": "#/components/schemas/CompareCondition-Output",
+                  "ne": "#/components/schemas/CompareCondition-Output",
+                  "not": "#/components/schemas/NotCondition-Output"
+                }
+              }
+            },
+            "type": "array",
+            "maxItems": 20,
+            "minItems": 1,
+            "title": "Conditions"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "op",
+          "conditions"
+        ],
+        "title": "AnyCondition"
       },
       "ApplyProcessRequest": {
         "properties": {
@@ -6605,6 +7305,290 @@
           "worker_id"
         ],
         "title": "ClaimConnectorCallRequest"
+      },
+      "CompareCondition-Input": {
+        "properties": {
+          "op": {
+            "type": "string",
+            "enum": [
+              "eq",
+              "ne",
+              "lt",
+              "le",
+              "gt",
+              "ge"
+            ],
+            "title": "Op"
+          },
+          "left": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RefValue"
+              },
+              {
+                "$ref": "#/components/schemas/LiteralValue-Input"
+              },
+              {
+                "$ref": "#/components/schemas/TemplateValue"
+              }
+            ],
+            "title": "Left"
+          },
+          "right": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RefValue"
+              },
+              {
+                "$ref": "#/components/schemas/LiteralValue-Input"
+              },
+              {
+                "$ref": "#/components/schemas/TemplateValue"
+              }
+            ],
+            "title": "Right"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "op",
+          "left",
+          "right"
+        ],
+        "title": "CompareCondition",
+        "description": "Equality works on any JSON; ordering needs two numbers or two strings."
+      },
+      "CompareCondition-Output": {
+        "properties": {
+          "op": {
+            "type": "string",
+            "enum": [
+              "eq",
+              "ne",
+              "lt",
+              "le",
+              "gt",
+              "ge"
+            ],
+            "title": "Op"
+          },
+          "left": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RefValue"
+              },
+              {
+                "$ref": "#/components/schemas/LiteralValue-Output"
+              },
+              {
+                "$ref": "#/components/schemas/TemplateValue"
+              }
+            ],
+            "title": "Left"
+          },
+          "right": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RefValue"
+              },
+              {
+                "$ref": "#/components/schemas/LiteralValue-Output"
+              },
+              {
+                "$ref": "#/components/schemas/TemplateValue"
+              }
+            ],
+            "title": "Right"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "op",
+          "left",
+          "right"
+        ],
+        "title": "CompareCondition",
+        "description": "Equality works on any JSON; ordering needs two numbers or two strings."
+      },
+      "ConditionCase-Input": {
+        "properties": {
+          "when": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/CompareCondition-Input"
+              },
+              {
+                "$ref": "#/components/schemas/ExistsCondition"
+              },
+              {
+                "$ref": "#/components/schemas/AllCondition-Input"
+              },
+              {
+                "$ref": "#/components/schemas/AnyCondition-Input"
+              },
+              {
+                "$ref": "#/components/schemas/NotCondition-Input"
+              }
+            ],
+            "title": "When",
+            "discriminator": {
+              "propertyName": "op",
+              "mapping": {
+                "all": "#/components/schemas/AllCondition-Input",
+                "any": "#/components/schemas/AnyCondition-Input",
+                "eq": "#/components/schemas/CompareCondition-Input",
+                "exists": "#/components/schemas/ExistsCondition",
+                "ge": "#/components/schemas/CompareCondition-Input",
+                "gt": "#/components/schemas/CompareCondition-Input",
+                "le": "#/components/schemas/CompareCondition-Input",
+                "lt": "#/components/schemas/CompareCondition-Input",
+                "ne": "#/components/schemas/CompareCondition-Input",
+                "not": "#/components/schemas/NotCondition-Input"
+              }
+            }
+          },
+          "next": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]{0,63}$",
+            "title": "Next"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "when",
+          "next"
+        ],
+        "title": "ConditionCase"
+      },
+      "ConditionCase-Output": {
+        "properties": {
+          "when": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/CompareCondition-Output"
+              },
+              {
+                "$ref": "#/components/schemas/ExistsCondition"
+              },
+              {
+                "$ref": "#/components/schemas/AllCondition-Output"
+              },
+              {
+                "$ref": "#/components/schemas/AnyCondition-Output"
+              },
+              {
+                "$ref": "#/components/schemas/NotCondition-Output"
+              }
+            ],
+            "title": "When",
+            "discriminator": {
+              "propertyName": "op",
+              "mapping": {
+                "all": "#/components/schemas/AllCondition-Output",
+                "any": "#/components/schemas/AnyCondition-Output",
+                "eq": "#/components/schemas/CompareCondition-Output",
+                "exists": "#/components/schemas/ExistsCondition",
+                "ge": "#/components/schemas/CompareCondition-Output",
+                "gt": "#/components/schemas/CompareCondition-Output",
+                "le": "#/components/schemas/CompareCondition-Output",
+                "lt": "#/components/schemas/CompareCondition-Output",
+                "ne": "#/components/schemas/CompareCondition-Output",
+                "not": "#/components/schemas/NotCondition-Output"
+              }
+            }
+          },
+          "next": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]{0,63}$",
+            "title": "Next"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "when",
+          "next"
+        ],
+        "title": "ConditionCase"
+      },
+      "ConditionStep-Input": {
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "condition",
+            "title": "Type"
+          },
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]{0,63}$",
+            "title": "Id"
+          },
+          "cases": {
+            "items": {
+              "$ref": "#/components/schemas/ConditionCase-Input"
+            },
+            "type": "array",
+            "maxItems": 20,
+            "minItems": 1,
+            "title": "Cases"
+          },
+          "default": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]{0,63}$",
+            "title": "Default"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "type",
+          "id",
+          "cases",
+          "default"
+        ],
+        "title": "ConditionStep",
+        "description": "Take the first matching case, otherwise ``default``; the choice is recorded once."
+      },
+      "ConditionStep-Output": {
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "condition",
+            "title": "Type"
+          },
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]{0,63}$",
+            "title": "Id"
+          },
+          "cases": {
+            "items": {
+              "$ref": "#/components/schemas/ConditionCase-Output"
+            },
+            "type": "array",
+            "maxItems": 20,
+            "minItems": 1,
+            "title": "Cases"
+          },
+          "default": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]{0,63}$",
+            "title": "Default"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "type",
+          "id",
+          "cases",
+          "default"
+        ],
+        "title": "ConditionStep",
+        "description": "Take the first matching case, otherwise ``default``; the choice is recorded once."
       },
       "ConfigureRoutingFallbackRequest": {
         "properties": {
@@ -6781,6 +7765,67 @@
           "output_schema"
         ],
         "title": "ConnectorAction"
+      },
+      "ConnectorActionEntry": {
+        "properties": {
+          "connector_id": {
+            "type": "string",
+            "title": "Connector Id"
+          },
+          "connector_name": {
+            "type": "string",
+            "title": "Connector Name"
+          },
+          "connector_type": {
+            "type": "string",
+            "title": "Connector Type"
+          },
+          "action": {
+            "type": "string",
+            "title": "Action"
+          },
+          "action_version": {
+            "type": "string",
+            "title": "Action Version"
+          },
+          "description": {
+            "type": "string",
+            "title": "Description"
+          },
+          "read_only": {
+            "type": "boolean",
+            "title": "Read Only"
+          },
+          "input_schema": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JsonValue-Output"
+            },
+            "type": "object",
+            "title": "Input Schema"
+          },
+          "output_schema": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JsonValue-Output"
+            },
+            "type": "object",
+            "title": "Output Schema"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "connector_id",
+          "connector_name",
+          "connector_type",
+          "action",
+          "action_version",
+          "description",
+          "read_only",
+          "input_schema",
+          "output_schema"
+        ],
+        "title": "ConnectorActionEntry",
+        "description": "One action a workflow step can name, as registered by a project connection."
       },
       "ConnectorCall": {
         "properties": {
@@ -7211,6 +8256,23 @@
         ],
         "title": "ConnectorResponse[Union[ConnectorClaim, NoneType]]"
       },
+      "ConnectorResponse_list_ConnectorActionEntry__": {
+        "properties": {
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/ConnectorActionEntry"
+            },
+            "type": "array",
+            "title": "Data"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "ConnectorResponse[list[ConnectorActionEntry]]"
+      },
       "ConnectorResponse_list_ConnectorCall__": {
         "properties": {
           "data": {
@@ -7436,6 +8498,46 @@
             "type": "boolean",
             "title": "Enabled",
             "default": true
+          },
+          "workflow_definition_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Workflow Definition Id"
+          },
+          "inputs": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "$ref": "#/components/schemas/JsonValue-Input"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Inputs"
+          },
+          "missed_run_policy": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "run_once",
+                  "skip"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Missed Run Policy"
           }
         },
         "additionalProperties": false,
@@ -7447,7 +8549,7 @@
           "next_due_at"
         ],
         "title": "CreateRoutineRequest",
-        "description": "Schedule life.review v1 at a fixed interval, with no external or model side effects.\n\nnext_due_at must include a timezone offset. A past time triggers a single coalesced review\nwhen the host next ticks. enabled=false persists the routine without scheduling it."
+        "description": "Schedule a workflow at a fixed interval.\n\nWithout workflow_definition_id the routine runs life.review v1, with no external or\nmodel side effects, and a past time triggers a single coalesced review when the host\nnext ticks. With it, the routine starts that exact custom workflow revision with\n``inputs``; a new occurrence is skipped while the previous Run still waits, and\nmissed_run_policy (required) says whether a late occurrence runs once (\"run_once\") or is\nskipped when more than 60 seconds late (\"skip\"). next_due_at must include a timezone\noffset. enabled=false persists the routine without scheduling it."
       },
       "CreateRoutingLabRequest": {
         "properties": {
@@ -7769,6 +8871,98 @@
         ],
         "title": "DiscussPlanRequest"
       },
+      "EndStep-Input": {
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "end",
+            "title": "Type"
+          },
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]{0,63}$",
+            "title": "Id"
+          },
+          "outcome": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]{0,63}$",
+            "title": "Outcome"
+          },
+          "result": {
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/RefValue"
+                },
+                {
+                  "$ref": "#/components/schemas/LiteralValue-Input"
+                },
+                {
+                  "$ref": "#/components/schemas/TemplateValue"
+                }
+              ]
+            },
+            "type": "object",
+            "maxProperties": 50,
+            "title": "Result"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "type",
+          "id",
+          "outcome"
+        ],
+        "title": "EndStep",
+        "description": "Finish with a business outcome, such as ``booked`` or ``no_suitable_train``."
+      },
+      "EndStep-Output": {
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "end",
+            "title": "Type"
+          },
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]{0,63}$",
+            "title": "Id"
+          },
+          "outcome": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]{0,63}$",
+            "title": "Outcome"
+          },
+          "result": {
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/RefValue"
+                },
+                {
+                  "$ref": "#/components/schemas/LiteralValue-Output"
+                },
+                {
+                  "$ref": "#/components/schemas/TemplateValue"
+                }
+              ]
+            },
+            "type": "object",
+            "maxProperties": 50,
+            "title": "Result"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "type",
+          "id",
+          "outcome"
+        ],
+        "title": "EndStep",
+        "description": "Finish with a business outcome, such as ``booked`` or ``no_suitable_train``."
+      },
       "ErrorDetail": {
         "properties": {
           "code": {
@@ -8062,6 +9256,28 @@
         ],
         "title": "ExecutionEndpointCapabilitiesRequest"
       },
+      "ExistsCondition": {
+        "properties": {
+          "op": {
+            "type": "string",
+            "const": "exists",
+            "title": "Op"
+          },
+          "ref": {
+            "type": "string",
+            "pattern": "^(input|steps\\.[a-z][a-z0-9_]{0,63})(\\.[A-Za-z0-9_-]{1,100}){0,20}$",
+            "title": "Ref"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "op",
+          "ref"
+        ],
+        "title": "ExistsCondition",
+        "description": "True when the path resolves to a value other than null."
+      },
       "ExtendAttemptDeadlineRequest": {
         "properties": {
           "idempotency_key": {
@@ -8142,6 +9358,174 @@
         ],
         "title": "HarnessConfigRequest",
         "description": "The harness that runs every role, validated by the Hub on its own machine."
+      },
+      "HumanStep-Input": {
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "human",
+            "title": "Type"
+          },
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]{0,63}$",
+            "title": "Id"
+          },
+          "question": {
+            "type": "string",
+            "maxLength": 500,
+            "minLength": 1,
+            "title": "Question"
+          },
+          "subject": {
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/RefValue"
+                },
+                {
+                  "$ref": "#/components/schemas/LiteralValue-Input"
+                },
+                {
+                  "$ref": "#/components/schemas/TemplateValue"
+                }
+              ]
+            },
+            "type": "object",
+            "maxProperties": 50,
+            "title": "Subject"
+          },
+          "on_approve": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]{0,63}$",
+            "title": "On Approve"
+          },
+          "on_reject": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]{0,63}$",
+            "title": "On Reject"
+          },
+          "timeout_seconds": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 31536000.0,
+                "minimum": 60.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Timeout Seconds"
+          },
+          "on_timeout": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9_]{0,63}$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "On Timeout"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "type",
+          "id",
+          "question",
+          "on_approve",
+          "on_reject"
+        ],
+        "title": "HumanStep",
+        "description": "Wait for an approve/reject decision on the subject as resolved when the step starts.\n\n``timeout_seconds`` and ``on_timeout`` go together; without them the step waits until\ndecided."
+      },
+      "HumanStep-Output": {
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "human",
+            "title": "Type"
+          },
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]{0,63}$",
+            "title": "Id"
+          },
+          "question": {
+            "type": "string",
+            "maxLength": 500,
+            "minLength": 1,
+            "title": "Question"
+          },
+          "subject": {
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/RefValue"
+                },
+                {
+                  "$ref": "#/components/schemas/LiteralValue-Output"
+                },
+                {
+                  "$ref": "#/components/schemas/TemplateValue"
+                }
+              ]
+            },
+            "type": "object",
+            "maxProperties": 50,
+            "title": "Subject"
+          },
+          "on_approve": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]{0,63}$",
+            "title": "On Approve"
+          },
+          "on_reject": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]{0,63}$",
+            "title": "On Reject"
+          },
+          "timeout_seconds": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 31536000.0,
+                "minimum": 60.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Timeout Seconds"
+          },
+          "on_timeout": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9_]{0,63}$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "On Timeout"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "type",
+          "id",
+          "question",
+          "on_approve",
+          "on_reject"
+        ],
+        "title": "HumanStep",
+        "description": "Wait for an approve/reject decision on the subject as resolved when the step starts.\n\n``timeout_seconds`` and ``on_timeout`` go together; without them the step waits until\ndecided."
       },
       "ImportPlanRequest": {
         "properties": {
@@ -8730,15 +10114,62 @@
           },
           "workflow": {
             "type": "string",
-            "const": "life.review",
+            "enum": [
+              "life.review",
+              "custom"
+            ],
             "title": "Workflow",
             "default": "life.review"
           },
           "workflow_version": {
             "type": "integer",
-            "const": 1,
             "title": "Workflow Version",
             "default": 1
+          },
+          "workflow_definition_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Workflow Definition Id"
+          },
+          "inputs": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "$ref": "#/components/schemas/JsonValue-Output"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Inputs"
+          },
+          "missed_run_policy": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "run_once",
+                  "skip"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Missed Run Policy"
+          },
+          "skipped_occurrences": {
+            "type": "integer",
+            "title": "Skipped Occurrences",
+            "default": 0
           },
           "interval_seconds": {
             "type": "integer",
@@ -8793,7 +10224,8 @@
           "created_at",
           "updated_at"
         ],
-        "title": "LifeRoutine"
+        "title": "LifeRoutine",
+        "description": "``workflow`` is \"custom\" when the routine is bound to a custom workflow revision;\n``workflow_version`` is then that revision."
       },
       "LifeTask": {
         "properties": {
@@ -8891,6 +10323,134 @@
           "title"
         ],
         "title": "LifeTaskInput"
+      },
+      "LiteralValue-Input": {
+        "properties": {
+          "value": {
+            "$ref": "#/components/schemas/JsonValue-Input"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "value"
+        ],
+        "title": "LiteralValue"
+      },
+      "LiteralValue-Output": {
+        "properties": {
+          "value": {
+            "$ref": "#/components/schemas/JsonValue-Output"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "value"
+        ],
+        "title": "LiteralValue"
+      },
+      "NotCondition-Input": {
+        "properties": {
+          "op": {
+            "type": "string",
+            "const": "not",
+            "title": "Op"
+          },
+          "condition": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/CompareCondition-Input"
+              },
+              {
+                "$ref": "#/components/schemas/ExistsCondition"
+              },
+              {
+                "$ref": "#/components/schemas/AllCondition-Input"
+              },
+              {
+                "$ref": "#/components/schemas/AnyCondition-Input"
+              },
+              {
+                "$ref": "#/components/schemas/NotCondition-Input"
+              }
+            ],
+            "title": "Condition",
+            "discriminator": {
+              "propertyName": "op",
+              "mapping": {
+                "all": "#/components/schemas/AllCondition-Input",
+                "any": "#/components/schemas/AnyCondition-Input",
+                "eq": "#/components/schemas/CompareCondition-Input",
+                "exists": "#/components/schemas/ExistsCondition",
+                "ge": "#/components/schemas/CompareCondition-Input",
+                "gt": "#/components/schemas/CompareCondition-Input",
+                "le": "#/components/schemas/CompareCondition-Input",
+                "lt": "#/components/schemas/CompareCondition-Input",
+                "ne": "#/components/schemas/CompareCondition-Input",
+                "not": "#/components/schemas/NotCondition-Input"
+              }
+            }
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "op",
+          "condition"
+        ],
+        "title": "NotCondition"
+      },
+      "NotCondition-Output": {
+        "properties": {
+          "op": {
+            "type": "string",
+            "const": "not",
+            "title": "Op"
+          },
+          "condition": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/CompareCondition-Output"
+              },
+              {
+                "$ref": "#/components/schemas/ExistsCondition"
+              },
+              {
+                "$ref": "#/components/schemas/AllCondition-Output"
+              },
+              {
+                "$ref": "#/components/schemas/AnyCondition-Output"
+              },
+              {
+                "$ref": "#/components/schemas/NotCondition-Output"
+              }
+            ],
+            "title": "Condition",
+            "discriminator": {
+              "propertyName": "op",
+              "mapping": {
+                "all": "#/components/schemas/AllCondition-Output",
+                "any": "#/components/schemas/AnyCondition-Output",
+                "eq": "#/components/schemas/CompareCondition-Output",
+                "exists": "#/components/schemas/ExistsCondition",
+                "ge": "#/components/schemas/CompareCondition-Output",
+                "gt": "#/components/schemas/CompareCondition-Output",
+                "le": "#/components/schemas/CompareCondition-Output",
+                "lt": "#/components/schemas/CompareCondition-Output",
+                "ne": "#/components/schemas/CompareCondition-Output",
+                "not": "#/components/schemas/NotCondition-Output"
+              }
+            }
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "op",
+          "condition"
+        ],
+        "title": "NotCondition"
       },
       "PauseRoutingRecipeRequest": {
         "properties": {
@@ -9184,6 +10744,22 @@
           "idempotency_key"
         ],
         "title": "ReconcileConnectorCallRequest"
+      },
+      "RefValue": {
+        "properties": {
+          "ref": {
+            "type": "string",
+            "pattern": "^(input|steps\\.[a-z][a-z0-9_]{0,63})(\\.[A-Za-z0-9_-]{1,100}){0,20}$",
+            "title": "Ref"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "ref"
+        ],
+        "title": "RefValue",
+        "description": "The value at a path in the Run inputs or in an earlier step's output."
       },
       "RegisterConnectorRequest": {
         "properties": {
@@ -10693,6 +12269,123 @@
         ],
         "title": "RunActionRequest"
       },
+      "SaveWorkflowDefinitionRequest": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_.-]{0,99}$",
+            "title": "Name"
+          },
+          "description": {
+            "type": "string",
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "Description"
+          },
+          "inputs_schema": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JsonValue-Input"
+            },
+            "type": "object",
+            "title": "Inputs Schema"
+          },
+          "start": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]{0,63}$",
+            "title": "Start"
+          },
+          "steps": {
+            "items": {
+              "oneOf": [
+                {
+                  "$ref": "#/components/schemas/ActionStep-Input"
+                },
+                {
+                  "$ref": "#/components/schemas/ConditionStep-Input"
+                },
+                {
+                  "$ref": "#/components/schemas/HumanStep-Input"
+                },
+                {
+                  "$ref": "#/components/schemas/WaitStep-Input"
+                },
+                {
+                  "$ref": "#/components/schemas/EndStep-Input"
+                }
+              ],
+              "discriminator": {
+                "propertyName": "type",
+                "mapping": {
+                  "action": "#/components/schemas/ActionStep-Input",
+                  "condition": "#/components/schemas/ConditionStep-Input",
+                  "end": "#/components/schemas/EndStep-Input",
+                  "human": "#/components/schemas/HumanStep-Input",
+                  "wait": "#/components/schemas/WaitStep-Input"
+                }
+              }
+            },
+            "type": "array",
+            "maxItems": 100,
+            "minItems": 1,
+            "title": "Steps"
+          },
+          "idempotency_key": {
+            "type": "string",
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Idempotency Key"
+          },
+          "expected_revision": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Revision"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "name",
+          "description",
+          "inputs_schema",
+          "start",
+          "steps",
+          "idempotency_key",
+          "expected_revision"
+        ],
+        "title": "SaveWorkflowDefinitionRequest",
+        "description": "Save the next immutable revision of ``name`` in this project.\n\n``expected_revision`` is null for a new name, otherwise the latest saved revision."
+      },
+      "StartCustomWorkflowRequest": {
+        "properties": {
+          "idempotency_key": {
+            "type": "string",
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Idempotency Key"
+          },
+          "inputs": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JsonValue-Input"
+            },
+            "type": "object",
+            "title": "Inputs"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "idempotency_key",
+          "inputs"
+        ],
+        "title": "StartCustomWorkflowRequest"
+      },
       "StartRoutingReplayRequest": {
         "properties": {
           "idempotency_key": {
@@ -11057,6 +12750,23 @@
         ],
         "title": "SuspendAttemptRequest"
       },
+      "TemplateValue": {
+        "properties": {
+          "template": {
+            "type": "string",
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "Template"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "template"
+        ],
+        "title": "TemplateValue",
+        "description": "Text with ``{path}`` placeholders, each a reference rendered as text."
+      },
       "TrajectoryReviewPolicyRequest": {
         "properties": {
           "interval_seconds": {
@@ -11223,6 +12933,46 @@
             "title": "Enabled",
             "default": true
           },
+          "workflow_definition_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Workflow Definition Id"
+          },
+          "inputs": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "$ref": "#/components/schemas/JsonValue-Input"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Inputs"
+          },
+          "missed_run_policy": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "run_once",
+                  "skip"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Missed Run Policy"
+          },
           "expected_version": {
             "type": "integer",
             "minimum": 1.0,
@@ -11280,6 +13030,106 @@
           "type"
         ],
         "title": "ValidationError"
+      },
+      "WaitStep-Input": {
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "wait",
+            "title": "Type"
+          },
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]{0,63}$",
+            "title": "Id"
+          },
+          "until": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RefValue"
+              },
+              {
+                "$ref": "#/components/schemas/LiteralValue-Input"
+              },
+              {
+                "$ref": "#/components/schemas/TemplateValue"
+              }
+            ],
+            "title": "Until"
+          },
+          "offset_seconds": {
+            "type": "integer",
+            "maximum": 31536000.0,
+            "minimum": -31536000.0,
+            "title": "Offset Seconds",
+            "default": 0
+          },
+          "next": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]{0,63}$",
+            "title": "Next"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "type",
+          "id",
+          "until",
+          "next"
+        ],
+        "title": "WaitStep",
+        "description": "Wait until a time with an offset; ``until`` must resolve to an ISO time with offset."
+      },
+      "WaitStep-Output": {
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "wait",
+            "title": "Type"
+          },
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]{0,63}$",
+            "title": "Id"
+          },
+          "until": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RefValue"
+              },
+              {
+                "$ref": "#/components/schemas/LiteralValue-Output"
+              },
+              {
+                "$ref": "#/components/schemas/TemplateValue"
+              }
+            ],
+            "title": "Until"
+          },
+          "offset_seconds": {
+            "type": "integer",
+            "maximum": 31536000.0,
+            "minimum": -31536000.0,
+            "title": "Offset Seconds",
+            "default": 0
+          },
+          "next": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]{0,63}$",
+            "title": "Next"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "type",
+          "id",
+          "until",
+          "next"
+        ],
+        "title": "WaitStep",
+        "description": "Wait until a time with an offset; ``until`` must resolve to an ISO time with offset."
       },
       "WorkflowCompatibilityStatus": {
         "properties": {
@@ -11410,6 +13260,122 @@
           "steps"
         ],
         "title": "WorkflowDefinition"
+      },
+      "WorkflowDefinitionBody": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_.-]{0,99}$",
+            "title": "Name"
+          },
+          "description": {
+            "type": "string",
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "Description"
+          },
+          "inputs_schema": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JsonValue-Output"
+            },
+            "type": "object",
+            "title": "Inputs Schema"
+          },
+          "start": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]{0,63}$",
+            "title": "Start"
+          },
+          "steps": {
+            "items": {
+              "oneOf": [
+                {
+                  "$ref": "#/components/schemas/ActionStep-Output"
+                },
+                {
+                  "$ref": "#/components/schemas/ConditionStep-Output"
+                },
+                {
+                  "$ref": "#/components/schemas/HumanStep-Output"
+                },
+                {
+                  "$ref": "#/components/schemas/WaitStep-Output"
+                },
+                {
+                  "$ref": "#/components/schemas/EndStep-Output"
+                }
+              ],
+              "discriminator": {
+                "propertyName": "type",
+                "mapping": {
+                  "action": "#/components/schemas/ActionStep-Output",
+                  "condition": "#/components/schemas/ConditionStep-Output",
+                  "end": "#/components/schemas/EndStep-Output",
+                  "human": "#/components/schemas/HumanStep-Output",
+                  "wait": "#/components/schemas/WaitStep-Output"
+                }
+              }
+            },
+            "type": "array",
+            "maxItems": 100,
+            "minItems": 1,
+            "title": "Steps"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "name",
+          "description",
+          "inputs_schema",
+          "start",
+          "steps"
+        ],
+        "title": "WorkflowDefinitionBody"
+      },
+      "WorkflowDefinitionRevision": {
+        "properties": {
+          "definition_id": {
+            "type": "string",
+            "title": "Definition Id"
+          },
+          "project_id": {
+            "type": "string",
+            "title": "Project Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "revision": {
+            "type": "integer",
+            "title": "Revision"
+          },
+          "digest": {
+            "type": "string",
+            "title": "Digest"
+          },
+          "definition": {
+            "$ref": "#/components/schemas/WorkflowDefinitionBody"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "definition_id",
+          "project_id",
+          "name",
+          "revision",
+          "digest",
+          "definition",
+          "created_at"
+        ],
+        "title": "WorkflowDefinitionRevision"
       },
       "WorkflowExecutionRecord": {
         "properties": {
@@ -11651,6 +13617,17 @@
               }
             ],
             "title": "Completed At"
+          },
+          "connector_call_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Connector Call Id"
           }
         },
         "additionalProperties": false,
@@ -11710,6 +13687,19 @@
           "data"
         ],
         "title": "WorkflowResponse[RoutineSchedulerStatus]"
+      },
+      "WorkflowResponse_WorkflowDefinitionRevision_": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/WorkflowDefinitionRevision"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "WorkflowResponse[WorkflowDefinitionRevision]"
       },
       "WorkflowResponse_WorkflowExecutionView_": {
         "properties": {
@@ -11771,6 +13761,23 @@
         ],
         "title": "WorkflowResponse[list[LifeTask]]"
       },
+      "WorkflowResponse_list_WorkflowDefinitionRevision__": {
+        "properties": {
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/WorkflowDefinitionRevision"
+            },
+            "type": "array",
+            "title": "Data"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "WorkflowResponse[list[WorkflowDefinitionRevision]]"
+      },
       "WorkflowResponse_list_WorkflowDefinition__": {
         "properties": {
           "data": {
@@ -11787,6 +13794,23 @@
           "data"
         ],
         "title": "WorkflowResponse[list[WorkflowDefinition]]"
+      },
+      "WorkflowResponse_list_WorkflowExecutionRecord__": {
+        "properties": {
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/WorkflowExecutionRecord"
+            },
+            "type": "array",
+            "title": "Data"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "WorkflowResponse[list[WorkflowExecutionRecord]]"
       },
       "WorkflowResponse_list_WorkflowRun__": {
         "properties": {
@@ -11979,7 +14003,8 @@
             "enum": [
               "completed",
               "waiting",
-              "skipped"
+              "skipped",
+              "failed"
             ],
             "title": "Status"
           },

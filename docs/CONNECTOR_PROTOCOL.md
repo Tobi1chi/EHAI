@@ -174,7 +174,8 @@ Python Ruff/format/mypy、锁文件检查、Schema/Client 生成及 TS typecheck
 
 这些是本地替身协议证据，不是 Google OAuth 或真实日历验收，也不是唯一产品 E2E。
 Workspace Manager 的桥接身份头已接线，跨 workspace 的 Connector 实跑未单独验证。
-版本兼容保持关闭；完整自定义 Workflow 图、Connector 事件触发 Routine 和外部账号实际授权仍未完成。
+版本兼容保持关闭；Connector 事件触发 Routine 和外部账号实际授权仍未完成。
+2026-11-03 起自定义 Workflow 的动作步骤经同一调用队列使用已登记动作，见 [WORKFLOWS](WORKFLOWS.md#自定义-workflow)。
 
 官方依据：[创建日程](https://developers.google.com/workspace/calendar/api/v3/reference/events/insert)、
 [日程查询](https://developers.google.com/workspace/calendar/api/v3/reference/events/list)、

@@ -57,6 +57,20 @@ class RegisterConnectorRequest(ConnectorModel):
     credential_sha256: Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{64}$")]
 
 
+class ConnectorActionEntry(ConnectorModel):
+    """One action a workflow step can name, as registered by a project connection."""
+
+    connector_id: str
+    connector_name: str
+    connector_type: str
+    action: str
+    action_version: str
+    description: str
+    read_only: bool
+    input_schema: dict[str, JsonValue]
+    output_schema: dict[str, JsonValue]
+
+
 class ConnectorConnection(ConnectorModel):
     connector_id: str
     project_id: str
