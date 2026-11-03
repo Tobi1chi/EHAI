@@ -22,7 +22,7 @@ from ehai.application.connector_models import (
     ReportConnectorResultRequest,
     SubmitConnectorEventRequest,
 )
-from ehai.application.idempotency import record_result, recorded_result
+from ehai.application.idempotency import IdempotencyConflictError, record_result, recorded_result
 from ehai.application.ports import CommandReceipt, CommandReceiptStore, StateConflictError
 from ehai.application.queries import QueryNotFoundError
 from ehai.domain.events import Event, EventType
@@ -51,7 +51,7 @@ class ConnectorStore(Protocol):
 
 def _receipt_conflict(receipt: CommandReceipt) -> Exception:
     del receipt
-    return StateConflictError("Connector receipt ID already belongs to different content")
+    return IdempotencyConflictError("Connector receipt ID already belongs to different content")
 
 
 def _receipt(

@@ -2,7 +2,8 @@
 
 Core Commands, life Workflows, Connectors and the routing lab all look up and record their
 receipts here, inside the transaction that performs the command. Each caller keeps its own
-key namespace (``scope``) and decides which error a reused key raises.
+key namespace (``scope``); a key reused for other content raises ``IdempotencyConflictError``
+(HTTP 409 ``conflict``) everywhere.
 """
 
 from __future__ import annotations
@@ -12,7 +13,16 @@ from datetime import datetime
 from hashlib import sha256
 
 from ehai import JsonValue, json_dumps
-from ehai.application.ports import COMMAND_RECEIPT_SCOPE, CommandReceipt, CommandReceiptStore
+from ehai.application.ports import (
+    COMMAND_RECEIPT_SCOPE,
+    CommandReceipt,
+    CommandReceiptStore,
+    StateConflictError,
+)
+
+
+class IdempotencyConflictError(StateConflictError):
+    """Raised before side effects when an idempotency key changes meaning."""
 
 
 def content_fingerprint(content: JsonValue) -> str:

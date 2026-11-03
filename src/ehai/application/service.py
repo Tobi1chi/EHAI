@@ -13,13 +13,12 @@ from ehai.application.checkpointing import (
 from ehai.application.execution_service.common import (
     ApplicationError,
     EntityNotFoundError,
-    IdempotencyConflictError,
     UnitOfWorkFactory,
 )
 from ehai.application.execution_service.planning import PlanningCommandsMixin
 from ehai.application.execution_service.process import ProcessCommandsMixin
 from ehai.application.execution_service.runs import RunCommandsMixin
-from ehai.application.idempotency import recorded_result
+from ehai.application.idempotency import IdempotencyConflictError, recorded_result
 from ehai.application.orchestrator import Orchestrator
 from ehai.application.planner import (
     Planner,

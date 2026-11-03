@@ -21,6 +21,7 @@ Scenario:
    with the same idempotency key is accepted without reopening any request.
 
 5. Integrate completed results, read their diff and publish to a new user-repository branch.
+6. Replay note commands: the original response returns; a reused key is a 409 conflict.
 
 Real model calls are verified manually; see docs/REFACTOR_PLAN.md.
 """
@@ -732,3 +733,28 @@ def test_product_e2e(tmp_path: Path) -> None:
             "branch": "ehai/e2e",
             "commit": integration["commit"],
         }.items() <= branches[0]["refs"].items()
+
+        # 7. Note commands replay their original response; a reused key with other content
+        # is the same 409 conflict as for any other command.
+        note_body = {
+            "idempotency_key": "note",
+            "goal_id": goal["goal_id"],
+            "actor": "e2e",
+            "question": "Is the published branch name final?",
+        }
+        note = host.http("POST", "/notes", note_body)
+        reply = {"idempotency_key": "note-reply", "request_token": note["request_token"]}
+        reply |= {"actor": "e2e", "message": "Yes, keep ehai/e2e."}
+        replied = host.http("POST", f"/notes/{note['note_id']}/messages", reply)
+        assert replied["request_token"] != note["request_token"]
+        assert host.http("POST", "/notes", note_body) == note
+        assert host.http("POST", f"/notes/{note['note_id']}/messages", reply) == replied
+        reused = httpx.post(
+            f"{host.url}/api/v1/notes", json={**note_body, "question": "Other"}, timeout=30
+        )
+        assert reused.status_code == 409 and reused.json()["error"]["code"] == "conflict"
+        decision = {**reply, "idempotency_key": "note-decide", "action": "resolve"}
+        decision["request_token"] = replied["request_token"]
+        resolved = host.http("POST", f"/notes/{note['note_id']}/decisions", decision)
+        assert resolved["status"] == "resolved"
+        assert host.http("POST", f"/notes/{note['note_id']}/decisions", decision) == resolved

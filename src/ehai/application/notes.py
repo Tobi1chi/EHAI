@@ -6,8 +6,13 @@ from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, cast
 
 from ehai import ID, JsonValue, format_utc_datetime, new_id, normalize_id, utc_now
-from ehai.application.idempotency import content_fingerprint, record_result, recorded_result
-from ehai.application.ports import ReadSession, UnitOfWork
+from ehai.application.idempotency import (
+    IdempotencyConflictError,
+    content_fingerprint,
+    record_result,
+    recorded_result,
+)
+from ehai.application.ports import COMMAND_RECEIPT_SCOPE, ReadSession, UnitOfWork
 from ehai.application.queries import QueryNotFoundError
 from ehai.application.sanitization import redact_sensitive_text
 from ehai.domain.events import Event, EventType
@@ -55,6 +60,23 @@ def note_documents(session: ReadSession | UnitOfWork) -> list[NoteDocument]:
                 )
             note["request_token"] = str(event.id)
     return list(notes.values())
+
+
+_DECISION_RESPONSE_SCOPE = "note-decision-response"
+
+
+def _response(session: ReadSession | UnitOfWork, note_id: ID) -> NoteDocument:
+    note = _get(session, note_id)
+    note["stale_reason"] = note_stale_reason(session, note)
+    return note
+
+
+def _replayed(session: ReadSession | UnitOfWork, receipt: NoteDocument) -> NoteDocument:
+    """Return the response recorded with a receipt; receipts from before 11-03 kept only the ID."""
+    response = receipt.get("response")
+    if isinstance(response, dict):
+        return response
+    return _get(session, cast(ID, receipt["note_id"]))
 
 
 def _get(session: ReadSession | UnitOfWork, note_id: ID) -> NoteDocument:
@@ -264,7 +286,7 @@ class NoteService:
         with self._uow() as uow:
             existing = self._replay(uow, idempotency_key, "CreateNote", payload)
             if existing is not None:
-                return _get(uow, cast(ID, existing["note_id"]))
+                return _replayed(uow, existing)
             source = _source(
                 uow,
                 cast(ID, payload["goal_id"]),
@@ -284,9 +306,16 @@ class NoteService:
                 "request_token": str(new_id()),
             }
             self._append(uow, EventType.NOTE_CREATED, note_id, document, run_id)
-            self._receipt(uow, idempotency_key, "CreateNote", payload, {"note_id": note_id})
+            response = _response(uow, note_id)
+            self._receipt(
+                uow,
+                idempotency_key,
+                "CreateNote",
+                payload,
+                {"note_id": note_id, "response": response},
+            )
             uow.commit()
-        return self.get(note_id)
+        return response
 
     def message(
         self, *, idempotency_key: str, note_id: ID, request_token: str, actor: str, message: str
@@ -298,8 +327,9 @@ class NoteService:
             "message": _text(message, "message"),
         }
         with self._uow() as uow:
-            if self._replay(uow, idempotency_key, "AddNoteMessage", payload) is not None:
-                return _get(uow, note_id)
+            existing = self._replay(uow, idempotency_key, "AddNoteMessage", payload)
+            if existing is not None:
+                return _replayed(uow, existing)
             note = self._open(uow, note_id, request_token)
             self._append(
                 uow,
@@ -308,9 +338,16 @@ class NoteService:
                 {**payload, "message_id": new_id(), "created_at": format_utc_datetime(utc_now())},
                 cast(ID | None, cast(NoteDocument, note["source"])["run_id"]),
             )
-            self._receipt(uow, idempotency_key, "AddNoteMessage", payload, {"note_id": note_id})
+            response = _response(uow, note_id)
+            self._receipt(
+                uow,
+                idempotency_key,
+                "AddNoteMessage",
+                payload,
+                {"note_id": note_id, "response": response},
+            )
             uow.commit()
-        return self.get(note_id)
+        return response
 
     async def decide(
         self,
@@ -337,6 +374,11 @@ class NoteService:
         with self._uow() as uow:
             previous = self._replay(uow, idempotency_key, "DecideNote", payload)
             if previous is not None:
+                completed = self._replay(
+                    uow, idempotency_key, "DecideNote", payload, scope=_DECISION_RESPONSE_SCOPE
+                )
+                if completed is not None:
+                    return _replayed(uow, completed)
                 retained = _get(uow, note_id)
                 decision = retained.get("decision")
                 operation_key = previous.get("operation_key")
@@ -370,8 +412,9 @@ class NoteService:
                             {**decision, "status": "completed", "result": downstream.result},
                             cast(ID | None, source["run_id"]),
                         )
+                        response = self._decision_response(uow, idempotency_key, payload, note_id)
                         uow.commit()
-                        return self.get(note_id)
+                        return response
                 return retained  # Pending/unknown operations are never blindly replayed.
             note = self._open(uow, note_id, request_token)
             if (error := note_decision_error(uow, note, action, passed)) is not None:
@@ -442,8 +485,9 @@ class NoteService:
                 },
                 cast(ID | None, source["run_id"]),
             )
+            response = self._decision_response(uow, idempotency_key, payload, note_id)
             uow.commit()
-        return self.get(note_id)
+        return response
 
     @staticmethod
     def _open(uow: UnitOfWork, note_id: ID, token: str) -> NoteDocument:
@@ -469,19 +513,35 @@ class NoteService:
         )
 
     @staticmethod
-    def _replay(uow: UnitOfWork, key: str, name: str, payload: NoteDocument) -> NoteDocument | None:
+    def _replay(
+        uow: UnitOfWork,
+        key: str,
+        name: str,
+        payload: NoteDocument,
+        *,
+        scope: str = COMMAND_RECEIPT_SCOPE,
+    ) -> NoteDocument | None:
         _text(key, "idempotency_key", 500)
         return recorded_result(
             uow.command_receipts,
             key,
             name,
             content_fingerprint(payload),
-            conflict=lambda _: ValueError("Idempotency key was used with different content"),
+            conflict=lambda receipt: IdempotencyConflictError(
+                f"idempotency key {key!r} already belongs to {receipt.command_name}"
+            ),
+            scope=scope,
         )
 
     @staticmethod
     def _receipt(
-        uow: UnitOfWork, key: str, name: str, payload: NoteDocument, result: NoteDocument
+        uow: UnitOfWork,
+        key: str,
+        name: str,
+        payload: NoteDocument,
+        result: NoteDocument,
+        *,
+        scope: str = COMMAND_RECEIPT_SCOPE,
     ) -> None:
         record_result(
             uow.command_receipts,
@@ -490,7 +550,24 @@ class NoteService:
             content_fingerprint(payload),
             result,
             created_at=utc_now(),
+            scope=scope,
         )
+
+    def _decision_response(
+        self, uow: UnitOfWork, key: str, payload: NoteDocument, note_id: ID
+    ) -> NoteDocument:
+        # A decision completes after its downstream operation, in a later transaction than
+        # the one that claimed the key, so its response is a second receipt for the same key.
+        response = _response(uow, note_id)
+        self._receipt(
+            uow,
+            key,
+            "DecideNote",
+            payload,
+            {"note_id": note_id, "response": response},
+            scope=_DECISION_RESPONSE_SCOPE,
+        )
+        return response
 
 
 if TYPE_CHECKING:
