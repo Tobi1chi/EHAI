@@ -460,6 +460,12 @@ class NoteService:
                 uow.commit()
             raise
         with self._uow() as uow:
+            # A retry may have completed this decision while the operation was running.
+            completed = self._replay(
+                uow, idempotency_key, "DecideNote", payload, scope=_DECISION_RESPONSE_SCOPE
+            )
+            if completed is not None:
+                return _replayed(uow, completed)
             # Re-read ownership and versions after dispatch. Source services have already
             # checked their own concurrency tokens; preserve their committed outcome even
             # when a subsequent independent change makes this note's baseline historical.
