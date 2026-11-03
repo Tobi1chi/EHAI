@@ -20,6 +20,7 @@
 
 | 日期 | 场景 | 模型 | 结果 | 未覆盖 | 原文 |
 | --- | --- | --- | --- | --- | --- |
+| 11-03 | Claude Code 兼容层（ADR 0007 第 8 步） | 0（真实 Claude Code 2.1.109 + 仓库外脚本化 Anthropic SSE 服务） | 产品 E2E 场景的仓库外副本改用 `--harness-config` 的 Claude Code 文档后通过：两个任务、汇合与 Reviewer 共 4 个原生会话全部经 MCP 调用 `workspace_write`/`submit_candidate`，强杀重启、人工 Check、整合与建分支照常；Hub 级诊断：健康含能力清单，resolve 记录 CLI 版本；工具执行中发出的中途消息在工具返回后加入本轮，回放哈希与核心一致；续用会话带上 7 条历史，全新会话遇到已有历史被拒；取消后本轮以 `error_during_execution` 结束；`inspect-agent --claude-code` 无凭证通过。探查中发现：会话恢复按工作目录查找（改用固定工作目录），每个会话有一次不带工具的标题请求（脚本服务需单独应答） | 真实模型；Windows；独立 Hub；权限核对的拒绝路径只做了代码核对；Planner/过程审查等 E2E 未经过的角色 | [REFACTOR_PLAN](REFACTOR_PLAN.md#2026-11-03-claude-code-兼容层adr-0007-第-8-步) |
 | 11-03 | 执行配置 `harness` 形状与 Hub 侧 Pi 配置校验（ADR 0007 第 6 步） | 0（真实 Pi 1.3.0 + 脚本化模型服务；诊断不启动模型） | 产品 E2E 通过（主机配置为 `harness` 形状，角色经 Hub 启动前检查能力）；仓库外诊断：用上一版代码生成旧形状文档，新代码读回逐字节相同、指纹不变，主机新形状配置的比较形式等于旧文档，Pi 指纹等于旧 `configuration_hash`，版本不符被拒；旧代码登记的管理器工作区在新代码下启动、执行配置以 `harness` 形状返回，此前完成的 Run 与线程可读；`ehai doctor` 经 Hub 探查 Node/Pi 并校验设置 | 升级前未完成 Run 的跨版本恢复（只核对了文档与指纹）；远端 Hub；Windows | [REFACTOR_PLAN](REFACTOR_PLAN.md#2026-11-03-harness-执行配置与能力清单adr-0007-第-6-步) |
 | 09-14 | 真实 Pi 并发编码（Luna） | 真实 | 两个 Work 重叠；代码挂起时文档独立完成，回复后 Reviewer/Gate passed，Run completed | 强杀、完整 handoff、周期纠偏 | [R2](history/RECORD_R2.md#既有代表性证据) |
 | 09-15 | Planner 草稿 Gate 冲突自修 | 真实 Go | 重复 Gate 被拒后 remove_node_gate → finish_plan，草稿保存 | — | [R2](history/RECORD_R2.md#既有代表性证据) |

@@ -692,7 +692,13 @@ async def _close_runtime_connectors(composition: LocalRuntimeComposition) -> Non
 def create_parser() -> argparse.ArgumentParser:
     """Create the local API server command line."""
     parser = argparse.ArgumentParser(prog="ehai-api", description="EHAI Core HTTP API host")
-    parser.add_argument("--pi-config", type=Path)
+    parser.add_argument(
+        "--pi-config",
+        "--harness-config",
+        dest="pi_config",
+        type=Path,
+        help="harness settings: Pi settings, or a {kind, version, settings} document",
+    )
     parser.add_argument("--routing-model", help="opt in to the fixed Pi routing fallback")
     parser.add_argument(
         "--routing-reasoning-effort",

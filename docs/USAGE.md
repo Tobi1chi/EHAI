@@ -202,6 +202,14 @@ $Server = @('--database','C:/private/ehai/state.sqlite','--artifacts','C:/privat
 uv run ehai-api @Server
 ~~~
 
+`--pi-config` 也可写作 `--harness-config`，内容为 Pi 设置，或 `{kind, version, settings}` 形式的
+harness 文档。改用 Claude Code 运行全部角色时，复制 [Claude Code 示例](../examples/harness-claude-code.json)，
+填写原生 `claude` 可执行文件（不是 `.cmd` 脚本）、空的私有状态目录、凭证变量名（默认 `ANTHROPIC_API_KEY`，
+在启动宿主的终端里设置），以及可选的 Anthropic 兼容地址 `base_url`；`--worker`/`--planner` 仍写 `pi`
+（表示经 Hub 运行的角色），推理强度只接受 low/medium/high/max。先用
+`uv run ehai inspect-agent --claude-code <claude 路径>` 做无凭证检查。Claude Code 每个会话会额外发出
+一次不带工具的小请求（生成标题），会计入 Provider 用量。管理器（`ehai init`/`add`）目前只配置 Pi。
+
 宿主拥有运行和 Pi 子进程。另一个终端的客户端不读取本地数据库、不启动另一套 Scheduler：
 
 ~~~powershell
