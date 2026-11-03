@@ -7,6 +7,7 @@ It owns no EHAI business rules and never executes EHAI tools itself.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -20,6 +21,18 @@ class McpEndpoint:
 
     url: str
     token: str
+
+
+@dataclass(frozen=True, slots=True)
+class ToolBatch:
+    """One MCP call matched to its model message: its own key and every call that message made.
+
+    Keys are the harness's own call identities, in the order the model requested them, so
+    the core can tell whether a finish tool came alone or last.
+    """
+
+    key: str
+    batch: tuple[str, ...]
 
 
 class HarnessRequestError(ValueError):
@@ -38,8 +51,13 @@ class HarnessSession(Protocol):
         """Return one normalized event body without ``seq``; raise HarnessFailure on loss."""
         ...
 
-    async def await_tool_call(self, name: str, arguments: dict[str, JsonValue]) -> None:
-        """Return once the model message that requested this MCP call has been emitted."""
+    async def await_tool_call(
+        self, name: str, arguments: dict[str, JsonValue], meta: Mapping[str, JsonValue]
+    ) -> ToolBatch:
+        """Return once the model message that requested this MCP call has been emitted.
+
+        Raise HarnessFailure when the call cannot be matched to that message.
+        """
         ...
 
     async def steer(self, messages: list[str]) -> None: ...

@@ -10,10 +10,11 @@ from __future__ import annotations
 import base64
 import math
 import secrets
+from collections.abc import Mapping
 from pathlib import Path
 
 from ehai import JsonValue, json_dumps, json_loads
-from ehai.hub.adapters import HarnessFailure, HarnessRequestError, McpEndpoint
+from ehai.hub.adapters import HarnessFailure, HarnessRequestError, McpEndpoint, ToolBatch
 from ehai.hub.adapters.pi.config import PI_VERSION, PiBackendConfig, check_node_version
 from ehai.hub.adapters.pi.probe import inspect_pi_backend
 from ehai.hub.adapters.pi.rpc import PiRpcError, PiRpcProcess
@@ -160,9 +161,11 @@ class PiSession:
         except PiRpcError as error:
             raise HarnessFailure(str(error)) from error
 
-    async def await_tool_call(self, name: str, arguments: dict[str, JsonValue]) -> None:
-        # Pi calls EHAI tools through its own bridge, never through MCP.
-        del name, arguments
+    async def await_tool_call(
+        self, name: str, arguments: dict[str, JsonValue], meta: Mapping[str, JsonValue]
+    ) -> ToolBatch:
+        del name, arguments, meta
+        raise HarnessFailure("Pi calls EHAI tools through its own bridge, never through MCP")
 
     async def steer(self, messages: list[str]) -> None:
         for message in messages:
