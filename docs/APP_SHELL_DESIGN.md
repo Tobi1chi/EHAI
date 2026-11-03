@@ -1,6 +1,6 @@
 # 应用外壳：引擎、线程与桌面 App
 
-更新：2026-11-03。状态：第一轮已接通，第二轮（doctor 探测与终端会话）实施中；实现与验证以 [STATUS](STATUS.md) 为准。
+更新：2026-11-03。状态：第一轮与第二轮（doctor 探测、终端会话）已接通；实现与验证以 [STATUS](STATUS.md) 为准。
 
 ## 为什么
 
@@ -147,3 +147,20 @@ EHAI 的核心、HTTP/SSE、生成 Client 与多工作区管理器已经接通�
   输出 ok；用户仓库仍在 main，工作树干净。从建线程到完成约 2 分 40 秒。
 - 未覆盖：系统通知未实际弹出（浏览器面板拒绝通知权限，桌面窗口未实跑），桌面文件夹选择器未实跑，
   人工 Gate 与待办（方案没有人工检查），整合冲突，Windows。
+
+### 2026-11-03 第二轮：doctor 探测与终端交互会话（11-03 计划第 3 步）
+
+- `ehai doctor --probe`：本地命令自己启动一个本机 Hub（不读 `EHAI_HUB_URL`，与工作区宿主一致），用 `config.json`
+  的 Pi 设置、模型和思考级别发出 Hub `start`，兼容层照常核对 Pi 选中的 Provider/模型/思考级别，随后在发送任务前
+  以 `abort` 关闭会话。`HubClient` 增加 `close()` 以停止它启动的本机 Hub。
+- 无参数 `ehai` 进入 `interfaces/interactive.py` 的会话：从 `EHAI_HOME/manager.pid` 找到守护进程，经管理器的
+  `/api/v1/threads`、`execution-config` 与 `/workspaces/<id>/api/v1/...` 调用核心；不读库、不推导状态。
+- 验证（临时 EHAI_HOME，仓库外小项目 textkit，允许 `python3 verify.py` 与 git.read）：
+  - doctor --probe：`deepseek-flash` + high 通过（约 2 秒）；medium 报告 `Pi did not accept the authorized thinking level`；
+    不存在的模型 ID 也通过——Pi 启动时不校验模型是否存在，已写入用法。
+  - 会话（标准输入脚本驱动，真实 DeepSeek `deepseek-flash`，用户终端已有的凭证经 `ehai up` 进入守护进程）：
+    `new` → Planner 约 30 秒给出 Worker + Reviewer 两节点草稿 → `plan` → `approve`（显示执行配置并确认）→ `watch`
+    看到节点依次 running/completed/verifying → `todo` 列出人工 Check → 读过产出代码后 `pass` → Run completed →
+    `integrate` → `diff` → `branch ehai/terminal-slugify`（重复执行报告已指向同一 commit）。核对：分支上 `python3 verify.py`
+    输出 ok，用户仓库仍在 main、工作树干净。首次运行发现并修复：项目列表响应是 `{projects: [...]}` 而不是数组。
+- 未覆盖：`reply` 与 `fail`、多工作区下的选择、Ctrl-C 中断 `watch`、写请求结果未知时的提示、Windows。

@@ -1,6 +1,6 @@
 # 运行证据
 
-更新：2026-10-22。本页把每次正常入口试用压缩为一行：做了什么、结果、哪些没有覆盖。
+更新：2026-11-03。本页把每次正常入口试用压缩为一行：做了什么、结果、哪些没有覆盖。
 能力结论见 [STATUS](STATUS.md)；原始叙述（Run ID、用量明细、临时证据目录）保留在下列归档：
 
 - [RECORD_R2](history/RECORD_R2.md)：核心执行、导入/MCP、Git 整合、后继 Run 与模型工具契约（2026-09-14 ~ 09-27）
@@ -54,6 +54,7 @@
 
 | 日期 | 场景 | 模型 | 结果 | 未覆盖 | 原文 |
 | --- | --- | --- | --- | --- | --- |
+| 11-03 | 终端交互会话与 doctor --probe（应用外壳第二轮） | 真实 DeepSeek `deepseek-flash`（Planner、Worker、Reviewer 各一轮）；probe 0 | 会话中 new → 讨论（约 30 秒得到两节点草稿）→ approve → watch → todo → pass → integrate → diff → branch，分支上 verify.py 输出 ok，用户仓库 HEAD/工作树不变，重复 branch 幂等；probe 对 high 通过、medium 被拒并显示 Pi 原因，不存在的模型 ID 也通过 | reply/fail、多工作区、Ctrl-C、结果未知提示、Windows | [应用外壳](APP_SHELL_DESIGN.md#2026-11-03-第二轮doctor-探测与终端交互会话11-03-计划第-3-步) |
 | 10-22 | 应用外壳第 3 步真实模型验收：页面添加文件夹 → 讨论 → 批准 → 执行 → 整合 → 新分支 | 真实 DeepSeek `deepseek-flash`（Planner 20 次、Worker/Reviewer 40 次工具调用） | 首次因 `ehai init` 默认 medium 被 Pi 换级、核心拒绝而在 0.8 秒失败，页面只见“结果未知”；改为默认不指定思考级别并在错误中附 Hub 原因后，全新环境重跑通过：四节点方案（并行两节点 → 汇合 verify → Reviewer），Run completed，整合 2 个文件，分支 `ehai/run-1387f806` 上 `python3 verify.py` 输出 ok，用户仓库 HEAD/工作树不变，约 2 分 40 秒 | 系统通知与桌面文件夹选择器实跑、人工 Gate/待办、整合冲突、Windows | [应用外壳](APP_SHELL_DESIGN.md#2026-10-22-第-3-步补齐与真实模型验收) |
 | 10-22 | 整合结果持久化、整合列表与 diff 读取，线程页差异查看 | 0（真实 Pi + 脚本化模型） | 产品 E2E 1 passed：integrate 得到 integrated，重试同一 integration_id，列表一条，diff 与宿主补丁一致且未截断，时间线一条 integration_created（refs 另带 event_id）。本机管理器登记脚本化 Pi 工作区后，浏览器中批准并开始 → 人工 Gate 通过 → 整合成果 → 按文件显示差异，刷新后从时间线卡片重开同一结果，手机宽度为底部面板 | 冲突与冲突后重试、超过 1 MiB 截断、MCP、旧版本未持久化的整合、真实模型 | [Git 自动整合](USAGE.md#git-自动整合) |
 | 10-22 | 模块 B 本地引擎与用户配置 | 0 | macOS 临时 EHAI_HOME：init→up→status→add 临时 Git 仓库→doctor→down；重启恢复登记、重复 up/add/down 通过；doctor 如实报告终端/守护进程缺凭证，UI 静态页 200；审查回退了停止超时改为不结束子进程的改动（failed 状态下可再次启动导致双进程）；独立复跑同一流程，并在页面打开批准确认框核对 Pi 执行配置 | 真实模型、凭证齐全、交互确认、活动任务停止冲突、Windows/Linux 实跑、浏览器交互 | [验证记录](WORKSPACE_MANAGER.md#模块-b-验证记录2026-10-22) |
