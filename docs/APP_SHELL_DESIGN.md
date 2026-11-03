@@ -163,4 +163,8 @@ EHAI 的核心、HTTP/SSE、生成 Client 与多工作区管理器已经接通�
     看到节点依次 running/completed/verifying → `todo` 列出人工 Check → 读过产出代码后 `pass` → Run completed →
     `integrate` → `diff` → `branch ehai/terminal-slugify`（重复执行报告已指向同一 commit）。核对：分支上 `python3 verify.py`
     输出 ok，用户仓库仍在 main、工作树干净。首次运行发现并修复：项目列表响应是 `{projects: [...]}` 而不是数组。
+- 评审修正：`todo` 记下每个编号对应的待办（类型与 request_id），`pass`/`fail`/`reply` 按编号找回同一项并用其当前
+  令牌；该项已不在待办时提示重新 `todo`，不再把编号套到刷新后的列表上。`show` 与讨论续接读取线程时间线的全部分页
+  （原先只读前 100 条）。仓库外桩诊断确认：A、B、C 中先 `pass 1` 再 `pass 2` 决定的是 B，重复的编号被拒；
+  对真实管理器 `open`/`show`/`todo` 照常。
 - 未覆盖：`reply` 与 `fail`、多工作区下的选择、Ctrl-C 中断 `watch`、写请求结果未知时的提示、Windows。
