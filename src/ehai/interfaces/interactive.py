@@ -88,6 +88,9 @@ class Session:
         self._out = out
         self._read_line = read_line
         self._listed: list[_Thread] = []
+        # The (kind, request_id) behind each number todo printed, so a number keeps naming
+        # the item the user saw even after other items are resolved.
+        self._numbered: list[tuple[str, str]] = []
         self._thread: _Thread | None = None
         self._actor = getpass.getuser() or "terminal"
         self._commands: dict[str, tuple[Callable[[list[str]], None], str]] = {
@@ -210,17 +213,28 @@ class Session:
         del arguments
         thread = self._selected()
         summary = self._summary()
-        timeline = self._engine.core(
-            thread.workspace_id, "GET", f"/threads/{thread.goal_id}/timeline"
-        )
+        items = self._timeline(thread)
         self.print(f"{summary['objective']}")
         self.print(
             f"  {thread.workspace_id}/{summary['project_name']} · phase {summary['phase']}"
             + (f" · Run {summary['run_status']}" if summary["run_id"] else "")
             + f" · next: {_next_hint(summary['next_action']['kind'])}"
         )
-        for item in timeline["items"][-15:]:
+        for item in items[-15:]:
             self.print(f"  {_clock(item['at'])}  {item['kind']:<22} {_short(item['summary'])}")
+
+    def _timeline(self, thread: _Thread) -> list[dict[str, Any]]:
+        items: list[dict[str, Any]] = []
+        after: int | None = 0
+        while after is not None:
+            page = self._engine.core(
+                thread.workspace_id,
+                "GET",
+                f"/threads/{thread.goal_id}/timeline?limit=1000&after={after}",
+            )
+            items.extend(page["items"])
+            after = page["next_after"]
+        return items
 
     def _new(self, arguments: list[str]) -> None:
         overview = self._engine.request("GET", "/api/v1/threads")
@@ -277,12 +291,9 @@ class Session:
 
     def _discuss(self, message: str) -> None:
         thread = self._selected()
-        timeline = self._engine.core(
-            thread.workspace_id, "GET", f"/threads/{thread.goal_id}/timeline"
-        )
         conversations = [
             item["refs"]["conversation_id"]
-            for item in timeline["items"]
+            for item in self._timeline(thread)
             if item["kind"] == "discussion_message" and item["refs"].get("conversation_id")
         ]
         self.print("Planner is working; this can take minutes (Ctrl-C stops waiting only).")
@@ -404,6 +415,7 @@ class Session:
     def _todo(self, arguments: list[str]) -> None:
         del arguments
         items = self._inbox()
+        self._numbered = [(item["kind"], item["request_id"]) for item in items]
         if not items:
             self.print("  Nothing is waiting for you in this thread.")
         for number, item in enumerate(items, 1):
@@ -430,11 +442,14 @@ class Session:
     def _item(self, arguments: list[str], kind: str) -> tuple[dict[str, Any], list[str]]:
         if not arguments or not arguments[0].isdigit():
             raise SessionError("Give the item number from todo")
-        items = self._inbox()
         index = int(arguments[0])
-        if not 1 <= index <= len(items):
+        if not 1 <= index <= len(self._numbered):
             raise SessionError("No such item; run todo again")
-        item = items[index - 1]
+        identity = self._numbered[index - 1]
+        # Act on the item that number showed, with its current request token.
+        item = next((i for i in self._inbox() if (i["kind"], i["request_id"]) == identity), None)
+        if item is None:
+            raise SessionError(f"Item {index} is no longer waiting; run todo again")
         if item["kind"] != kind or not item["actionable"]:
             raise SessionError(f"Item {index} is not an actionable {kind}")
         return item, arguments[1:]
