@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from typing import Protocol
 
 from ehai import JsonValue
-from ehai.hub.protocol import StartSession, ToolResult
+from ehai.hub.protocol import ResolvedHarness, StartSession, ToolResult
 
 
 @dataclass(frozen=True, slots=True)
@@ -55,6 +55,19 @@ class HarnessAdapter(Protocol):
 
     @property
     def version(self) -> str: ...
+
+    @property
+    def capabilities(self) -> dict[str, JsonValue]:
+        """The capability manifest (ADR 0007, section 5) the Hub reports in its health."""
+        ...
+
+    def resolve(self, settings: dict[str, JsonValue], pin_directory: str | None) -> ResolvedHarness:
+        """Validate settings on this machine; raise HarnessRequestError when they are invalid."""
+        ...
+
+    async def inspect(self, settings: dict[str, JsonValue]) -> dict[str, JsonValue]:
+        """Check the installation without credentials or model requests."""
+        ...
 
     async def launch(self, request: StartSession, mcp: McpEndpoint) -> HarnessSession:
         """Start and verify a session; raise HarnessRequestError or HarnessFailure.

@@ -32,6 +32,8 @@ class _Message(BaseModel):
 
 class HarnessSelection(_Message):
     kind: Text
+    # Omitted means whatever version the Hub has installed for this kind.
+    version: Text | None = None
     settings: dict[str, JsonValue]
 
 
@@ -144,11 +146,52 @@ class SessionState(_Message):
 class HarnessInfo(_Message):
     kind: Text
     version: Text
+    # Declared by the compatibility layer (ADR 0007, section 5); the core matches on these,
+    # never on the harness name. Keys such as ``session.resume`` or ``tools.mcp``.
+    capabilities: dict[str, JsonValue] = Field(default_factory=dict)
 
 
 class Health(_Message):
     protocol_version: Literal[1] = PROTOCOL_VERSION
     harnesses: list[HarnessInfo]
+
+
+class ResolveHarness(_Message):
+    """Validate harness settings where the harness runs and return their canonical form.
+
+    With ``pin_directory`` the layer first copies the mutable native configuration it reads
+    into that directory, so later changes to the original files do not reach this profile.
+    """
+
+    kind: Text
+    settings: dict[str, JsonValue]
+    pin_directory: str | None = None
+
+
+class ResolvedHarness(_Message):
+    """Canonical harness settings; the core fingerprints them and passes them back unchanged."""
+
+    kind: Text
+    version: Text
+    settings: dict[str, JsonValue]
+    # Identity of the native configuration the settings name; it changes when that does.
+    fingerprint: Text
+    # Credential variables the harness reads from the Hub's environment (names only).
+    environment_names: list[str]
+    # Installation and configuration paths an agent must not edit.
+    protected_paths: list[str]
+    capabilities: dict[str, JsonValue]
+
+
+class InspectHarness(_Message):
+    """Check an installed harness without credentials, prompts or model requests."""
+
+    kind: Text
+    settings: dict[str, JsonValue]
+
+
+class HarnessReport(_Message):
+    report: dict[str, JsonValue]
 
 
 class ErrorBody(_Message):
