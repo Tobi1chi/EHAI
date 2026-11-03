@@ -28,7 +28,7 @@
 | 批准内过程调整 / Block 清单 | 真实验证 | 清单只描述变化，不批准、不授权复用成果；草稿可读已完成成果，先粗后细在中型任务上端到端通过（10-04）；暂停时不能决定人工 Gate | [核心](EVIDENCE.md#核心执行) |
 | Git 自动整合 | 无模型验证 | 用历史真实成果整合；结果事件持久化、Run 整合列表、1 MiB 截断 diff 与新分支发布的 HTTP/CLI/MCP 已接线；产品 E2E 覆盖无冲突整合、重试同 ID、列表、diff、创建 ehai/e2e 分支与同 commit 幂等，HEAD/工作树状态不变，两种整合时间线均去重；此前 Web 整合与差异查看经脚本化 Pi 走通，本轮分支前端、真实模型及冲突路径未实跑；MCP 本轮只读 Schema | [Git 自动整合](USAGE.md#git-自动整合) · [文件夹与分支验证](WORKSPACE_MANAGER.md#文件夹添加与整合分支后端验证2026-10-22) |
 | 跨批准后继 Run | 真实验证 | 单次接续通过；基线变化重执行、多次接续、崩溃未验证 | [核心](EVIDENCE.md#核心执行) |
-| 长任务可靠性 | 部分 | Worker/Reviewer 运行中强杀后可恢复（重启后等旧租约过期，最长 5 分钟，10-03 真实验证）；写入中断、长链接续未系统验证 | [未决问题](EVIDENCE.md#已知未决问题) |
+| 长任务可靠性 | 部分 | Worker/Reviewer 运行中强杀后可恢复（重启后等旧租约过期，最长 5 分钟，10-03 真实验证）；写入前/写入后未提交/Reviewer 中强杀的长链接续经脚本化 Pi 验证（11-03）；真实模型下的写入中断、工具执行中强杀未验证 | [未决问题](EVIDENCE.md#已知未决问题) |
 | Token / 费用硬限额 | 暂缓 | 2026-09-16 决定暂不实现；用量记录保留 | — |
 | 产品 E2E | 无模型验证 | 真实 Pi 经本机 Hub、Git worktree，模型为脚本化服务；覆盖无冲突的 integrate-run、diff、新分支创建/同 commit 幂等、HEAD/工作树状态不变及时间线单条事件；不覆盖真实模型、独立 Hub、整合冲突、管理器 from-folder、MCP | [REFACTOR_PLAN](REFACTOR_PLAN.md#产品-e2e) |
 | CI | 无模型验证 | 静态检查、两平台 mypy、契约比对、TS 构建、Linux/Windows E2E | [REFACTOR_PLAN](REFACTOR_PLAN.md#执行记录) |
