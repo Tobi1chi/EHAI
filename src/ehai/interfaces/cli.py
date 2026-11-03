@@ -472,7 +472,11 @@ def create_parser() -> argparse.ArgumentParser:
     start = commands.add_parser("start-run", help="execute locally or enqueue on the API host")
     start.add_argument("--idempotency-key", required=True)
     start.add_argument("--plan-revision-id", required=True)
-    start.add_argument("--execution-config", type=Path, help="API mode: exact host execution JSON")
+    start.add_argument(
+        "--execution-config",
+        type=Path,
+        help="API mode: exact host execution JSON; omit to use the host's own assembly",
+    )
     start.add_argument("--authorize", action="store_true", help="authorize API execution config")
     start.add_argument("--predecessor-run-id")
     start.add_argument(
