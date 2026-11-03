@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import inspect
+import unicodedata
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, replace
 from datetime import datetime
@@ -1288,9 +1289,11 @@ def build_plan_proposal(
         )
         for criterion in normalized_criteria
     ]
+    # A final Gate restating a human criterion is that same Check, not a second one.
     if template.final_human_question is not None and not any(
-        _human_question(criterion) == template.final_human_question
-        for criterion in normalized_criteria
+        normalize_human_question(question)
+        == normalize_human_question(template.final_human_question)
+        for question in criteria_human_questions(normalized_criteria)
     ):
         final_check_specs.append(
             CheckSpec(
@@ -1328,6 +1331,14 @@ def build_plan_proposal(
                 )
             )
         local_checks[gate.node_key] = tuple(gate_specs)
+    _reject_duplicate_human_checks(
+        [("final Gate", spec.description) for spec in check_specs if spec.kind is CheckKind.HUMAN]
+        + [
+            (f"node Gate {gate.node_key}", gate.human_question)
+            for gate in template.node_gates
+            if gate.human_question is not None
+        ]
+    )
     contract = CompletionContract.draft(
         goal_id=goal.goal_id,
         criteria=normalized_criteria,
@@ -1423,6 +1434,9 @@ def require_p1_criteria(criteria: tuple[str, ...], owner: str) -> tuple[str, ...
         raise ValueError(f"{owner} requires non-empty completion criteria")
     if len(set(normalized)) != len(normalized):
         raise ValueError(f"{owner} completion criteria must be unique")
+    _reject_duplicate_human_checks(
+        [(f"criterion {c!r}", q) for c in normalized if (q := _human_question(c)) is not None]
+    )
     if any(
         criterion not in P1_COMPLETION_CRITERIA and _human_question(criterion) is None
         for criterion in normalized
@@ -1552,6 +1566,39 @@ def _check_name(criterion: str) -> str:
         COMMAND_EXIT_ZERO_CRITERION: "completion-command",
         SEMANTIC_REQUIRED_TERMS_CRITERION: "completion-semantic",
     }[criterion]
+
+
+# NFKC already folds full-width ASCII punctuation; 。 and 、 have no ASCII form.
+_QUESTION_EDGE = " \t\r\n.!?,;:。、"
+
+
+def normalize_human_question(question: str) -> str:
+    """Compare human Check questions ignoring width, case, spacing and edge punctuation.
+
+    This finds the same question written twice, not two wordings of the same request.
+    """
+    text = " ".join(unicodedata.normalize("NFKC", question).casefold().split())
+    return text.strip(_QUESTION_EDGE)
+
+
+def criteria_human_questions(criteria: tuple[str, ...]) -> tuple[str, ...]:
+    return tuple(q for q in (_human_question(c) for c in criteria) if q is not None)
+
+
+def _reject_duplicate_human_checks(questions: list[tuple[str, str]]) -> None:
+    """``questions`` pairs a location with its human question; repeats are refused."""
+    seen: dict[str, str] = {}
+    repeats: list[str] = []
+    for location, question in questions:
+        key = normalize_human_question(question)
+        if key in seen:
+            repeats.append(f"{location} repeats {seen[key]}")
+        else:
+            seen[key] = location
+    if repeats:
+        raise ValueError(
+            "Plan contains the same human Check question more than once: " + "; ".join(repeats)
+        )
 
 
 def _human_question(criterion: str) -> str | None:
