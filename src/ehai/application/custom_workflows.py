@@ -191,7 +191,7 @@ def validate_definition(
     for node in topological:
         step = steps[node]
         for ref in _step_refs(step):
-            if not _REF.match(ref):
+            if not _REF.fullmatch(ref):
                 problems.append(f"step {node} has an invalid reference {{{ref}}}")
                 continue
             parts = ref.split(".")
@@ -364,11 +364,11 @@ class _Execution:
         if isinstance(condition, AnyCondition):
             return any(self._condition(item) for item in condition.conditions)
         left, right = self._value(condition.left), self._value(condition.right)
-        if condition.op == "eq":
-            return json_dumps(left) == json_dumps(right)
-        if condition.op == "ne":
-            return json_dumps(left) != json_dumps(right)
         numbers = all(isinstance(v, int | float) and not isinstance(v, bool) for v in (left, right))
+        if condition.op in ("eq", "ne"):
+            # 1 and 1.0 are the same JSON number; everything else compares by its JSON form.
+            same = left == right if numbers else json_dumps(left) == json_dumps(right)
+            return same if condition.op == "eq" else not same
         if not numbers and not (isinstance(left, str) and isinstance(right, str)):
             raise _StepError(f"Cannot order {json_dumps(left)} and {json_dumps(right)}")
         a, b = left, right
@@ -537,7 +537,8 @@ class _Execution:
                 inputs,
                 authorize_write=step.approval_step is not None or step.standing_write,
             )
-        except ValueError as error:
+        except (ValueError, StateConflictError) as error:
+            # The connector changed since the definition was saved; this Run cannot go on.
             self._fail_invocation(invocation, str(error))
             self._fail(step, execution, str(error))
             return
