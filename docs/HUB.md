@@ -1,6 +1,6 @@
 # Agent harness Hub
 
-更新：2026-10-02。Hub 是 EHAI 核心运行 Agent harness 的唯一入口，作为独立进程 `ehai-hub` 运行。
+更新：2026-11-03。Hub 是 EHAI 核心运行 Agent harness 的唯一入口，作为独立进程 `ehai-hub` 运行。
 设计依据见 [ADR 0007](adr/0007-agent-harness-port.md)；当前只有 Pi 兼容层。
 
 ## 分工
@@ -44,9 +44,11 @@ Hub 本身只提供令牌认证，不提供 TLS；跨机器使用时应放在受
 ### 当前限制
 
 - harness 凭证从 **Hub 进程**的环境读取（按 Pi 配置中的 `environment_names`），不经协议传输。
-- Pi 配置中的路径（`node`、`cli`、`agent_dir`）、Pi 会话状态目录和工作区路径，目前必须在 Hub
-  所在机器上存在；核心仍在本机校验 Pi 配置并计算授权指纹。真正跨机器执行需要先完成
-  ADR 0007 迁移第 6 步，并决定工作区如何到达 Hub 一侧。
+- Pi 配置由 Hub 校验并计算授权指纹（`/v1/harnesses/resolve`），但其中的路径（`node`、`cli`、
+  `agent_dir`）、Pi 会话状态目录和工作区路径仍必须在 Hub 所在机器上存在。真正跨机器执行还需要
+  决定工作区如何到达 Hub 一侧。
+- 读取 Pi 配置的本地命令（`ehai init`、`doctor`、`add`、带 `--pi-config` 的主机）也经 Hub 校验；
+  未配置远端 Hub 时会先启动本机 Hub 子进程。
 - [多工作区管理器](WORKSPACE_MANAGER.md)按白名单传递环境变量，工作区宿主不继承 `EHAI_HUB_URL`，
   各自使用本机 Hub 子进程。
 - Pi 使用 `--no-builtin-tools`，文件、命令和 Git 操作都是核心执行的业务工具，因此 Pi 本身不直接读写工作区。
@@ -58,8 +60,10 @@ Hub 本身只提供令牌认证，不提供 TLS；跨机器使用时应放在受
 
 | 接口 | 请求 → 响应 |
 | --- | --- |
-| GET `/v1/health` | → 协议版本、已安装的 harness 及版本 |
-| POST `/v1/sessions` | 调用身份、状态键、原生会话 ID、harness `{kind, settings}`、是否全新会话、系统提示词、工具清单、模型、推理强度、工作区 → `session_id`、原生会话引用。启动并核对会话，但不发送任务 |
+| GET `/v1/health` | → 协议版本、已安装的 harness、版本及能力清单（ADR 0007 第 5 条） |
+| POST `/v1/harnesses/resolve` | `kind`、`settings`、可选 `pin_directory` → 规范化 `settings`、`version`、指纹、所需凭证变量名、受保护路径、能力清单。给出 `pin_directory` 时先把原生配置文件复制进去，返回的设置指向副本。设置无效时返回 422 |
+| POST `/v1/harnesses/inspect` | `kind`、`settings`（Pi：`node`、`cli`）→ 无凭证、无模型请求的安装探查报告 |
+| POST `/v1/sessions` | 调用身份、状态键、原生会话 ID、harness `{kind, version, settings}`（`version` 可省略，给出时须与 Hub 安装的版本一致）、是否全新会话、系统提示词、工具清单、模型、推理强度、工作区 → `session_id`、原生会话引用。启动并核对会话，但不发送任务 |
 | POST `/v1/sessions/{id}/steer` | 要注入的用户消息 |
 | POST `/v1/sessions/{id}/prompt` | 任务消息（指令与上下文） |
 | GET `/v1/sessions/{id}/events?after=N&wait=S` | 长轮询，返回序号大于 N 的事件和会话状态，最多等待 30 秒 |

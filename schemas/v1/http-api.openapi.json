@@ -7848,9 +7848,26 @@
             "minimum": 1.0,
             "title": "Config Version"
           },
+          "harness": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/HarnessConfigRequest"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "worker_kind": {
-            "type": "string",
-            "const": "pi",
+            "anyOf": [
+              {
+                "type": "string",
+                "const": "pi"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Worker Kind"
           },
           "model": {
@@ -7992,7 +8009,6 @@
         "type": "object",
         "required": [
           "config_version",
-          "worker_kind",
           "model",
           "reasoning_effort",
           "capacity",
@@ -8094,6 +8110,38 @@
         },
         "type": "object",
         "title": "HTTPValidationError"
+      },
+      "HarnessConfigRequest": {
+        "properties": {
+          "kind": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^[^\\x00]*[^\\s\\x00][^\\x00]*$",
+            "title": "Kind"
+          },
+          "version": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^[^\\x00]*[^\\s\\x00][^\\x00]*$",
+            "title": "Version"
+          },
+          "settings": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JsonValue-Input"
+            },
+            "type": "object",
+            "title": "Settings"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "kind",
+          "version",
+          "settings"
+        ],
+        "title": "HarnessConfigRequest",
+        "description": "The harness that runs every role, validated by the Hub on its own machine."
       },
       "ImportPlanRequest": {
         "properties": {

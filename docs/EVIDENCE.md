@@ -20,6 +20,7 @@
 
 | 日期 | 场景 | 模型 | 结果 | 未覆盖 | 原文 |
 | --- | --- | --- | --- | --- | --- |
+| 11-03 | 执行配置 `harness` 形状与 Hub 侧 Pi 配置校验（ADR 0007 第 6 步） | 0（真实 Pi 1.3.0 + 脚本化模型服务；诊断不启动模型） | 产品 E2E 通过（主机配置为 `harness` 形状，角色经 Hub 启动前检查能力）；仓库外诊断：用上一版代码生成旧形状文档，新代码读回逐字节相同、指纹不变，主机新形状配置的比较形式等于旧文档，Pi 指纹等于旧 `configuration_hash`，版本不符被拒；旧代码登记的管理器工作区在新代码下启动、执行配置以 `harness` 形状返回，此前完成的 Run 与线程可读；`ehai doctor` 经 Hub 探查 Node/Pi 并校验设置 | 升级前未完成 Run 的跨版本恢复（只核对了文档与指纹）；远端 Hub；Windows | [REFACTOR_PLAN](REFACTOR_PLAN.md#2026-11-03-harness-执行配置与能力清单adr-0007-第-6-步) |
 | 09-14 | 真实 Pi 并发编码（Luna） | 真实 | 两个 Work 重叠；代码挂起时文档独立完成，回复后 Reviewer/Gate passed，Run completed | 强杀、完整 handoff、周期纠偏 | [R2](history/RECORD_R2.md#既有代表性证据) |
 | 09-15 | Planner 草稿 Gate 冲突自修 | 真实 Go | 重复 Gate 被拒后 remove_node_gate → finish_plan，草稿保存 | — | [R2](history/RECORD_R2.md#既有代表性证据) |
 | 09-15 | CLI API 客户端 | 0 | 回环宿主创建/提案/批准/查询、幂等与错误保留 | 真实 Pi 编码 | [R2](history/RECORD_R2.md#既有代表性证据) |

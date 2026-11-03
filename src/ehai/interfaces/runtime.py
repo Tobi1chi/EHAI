@@ -52,9 +52,9 @@ from ehai.domain.workers import (
     WorkerKind,
     WorkerProfile,
 )
-from ehai.hub.adapters.pi.config import PiBackendConfig
 from ehai.infrastructure.agent_traces import SQLiteAgentTraceStore
 from ehai.infrastructure.artifacts import FilesystemArtifactStore
+from ehai.infrastructure.harnesses import HarnessConfig, load_harness_file
 from ehai.infrastructure.hub_runtime import HubRoleRunner
 from ehai.infrastructure.routing_pi import PiRoutingFallback
 from ehai.infrastructure.routing_projects import RoutingProjectBoundary, RoutingProjectDispatcher
@@ -125,25 +125,25 @@ def create_local_app(
     p2_runtime: bool = False,
     runtime_autostart: bool = True,
     endpoint_capabilities: ResponsesEndpointCapabilities | None = None,
-    pi_backend: PiBackendConfig | None = None,
+    harness: HarnessConfig | None = None,
     routing_model: str | None = None,
     routing_reasoning_effort: str | None = None,
     routing_timeout_seconds: float = 300.0,
 ) -> FastAPI:
     """Construct one Command service and, optionally, its local P2 Runtime."""
-    if routing_model is not None and (not routing_model.strip() or pi_backend is None):
+    if routing_model is not None and (not routing_model.strip() or harness is None):
         raise ValueError("Routing fallback requires an explicit model and --pi-config")
     if not math.isfinite(routing_timeout_seconds) or routing_timeout_seconds <= 0:
         raise ValueError("Routing timeout must be finite and positive")
     worker_kind = worker_kind or (
-        "pi" if agent_model is not None or (pi_backend is not None and p2_runtime) else "fake"
+        "pi" if agent_model is not None or (harness is not None and p2_runtime) else "fake"
     )
     planner_kind = resolve_planner_kind(
-        planner_kind, pi_configured=pi_backend is not None, model=planner_model
+        planner_kind, pi_configured=harness is not None, model=planner_model
     )
     if worker_kind == "builtin" or planner_kind == "builtin":
         raise ValueError("Built-in execution is retired; old authorizations cannot be used for Pi")
-    if (worker_kind == "pi" or planner_kind == "pi") and pi_backend is None:
+    if (worker_kind == "pi" or planner_kind == "pi") and harness is None:
         raise ValueError("Pi execution requires an explicit --pi-config")
     host_execution_config = None
     configured_kind = _canonical_runtime_worker_kind(worker_kind)
@@ -161,7 +161,7 @@ def create_local_app(
             workspace=worker_workspace or Path.cwd(),
             endpoint_capabilities=endpoint_capabilities or ResponsesEndpointCapabilities(),
             command_timeout_seconds=command_check_timeout_seconds,
-            pi_backend=pi_backend,
+            harness=harness,
             trajectory_review=trajectory_review,
         )
         # Use the same canonical values for execution and later authorization.
@@ -196,7 +196,7 @@ def create_local_app(
     event_consumers = EventConsumerService(SQLiteEventConsumerRepository(query_database))
     project_configuration = ProjectConfigurationService(
         SQLiteProjectConfigurationStore(query_database),
-        None if host_execution_config is None else host_execution_config.to_document(),
+        None if host_execution_config is None else host_execution_config.canonical_document(),
         workspace=worker_workspace or Path.cwd(),
         role_configuration={
             "worker_kind": worker_kind,
@@ -219,7 +219,7 @@ def create_local_app(
         command_check_timeout_seconds=command_check_timeout_seconds,
         background_start=p2_runtime,
         endpoint_capabilities=endpoint_capabilities,
-        pi_backend=pi_backend,
+        harness=harness,
         notes=notes,
         project_configuration=project_configuration,
         worker_capability_preview=(
@@ -250,8 +250,8 @@ def create_local_app(
         return {"inbox": data}
 
     protected_roots = [Path(__file__).resolve().parents[2], artifact_root, database_path.parent]
-    if pi_backend is not None:
-        protected_roots.extend((pi_backend.agent_dir, pi_backend.cli.parent.parent.parent))
+    if harness is not None:
+        protected_roots.extend(harness.protected_paths)
     project_boundary = RoutingProjectBoundary(tuple(protected_roots))
     routing_labs = RoutingLabService(
         SQLiteRoutingStore(query_database),
@@ -262,7 +262,7 @@ def create_local_app(
     )
 
     def install_routing(app: FastAPI) -> None:
-        if routing_model is None or pi_backend is None or not runtime_autostart:
+        if routing_model is None or harness is None or not runtime_autostart:
             return
         workspace = artifact_root.resolve() / "routing-fallback-workspace"
         workspace.mkdir(parents=True, exist_ok=True)
@@ -272,7 +272,7 @@ def create_local_app(
                 RoutingFallbackService(routing_labs),
                 HubRoleRunner(
                     builtin_sessions,
-                    backend=pi_backend,
+                    harness=harness,
                     state_root=artifact_root.resolve() / "routing-pi",
                 ),
                 execution_service.planner_capacity,
@@ -400,9 +400,9 @@ def create_local_app(
             allocation = workspace_manager.allocation_for_attempt(attempt_id)
             return None if allocation is None else Path(allocation.reference.path)
 
-        assert pi_backend is not None
+        assert harness is not None
         connector = PiAgentConnector(
-            backend=pi_backend,
+            harness=harness,
             uow_factory=query_database.unit_of_work,
             orchestrator=execution_service.orchestrator,
             session_store=builtin_sessions,
@@ -493,8 +493,9 @@ def create_local_app(
     def validate_execution_config(config: ExecutionConfig) -> None:
         if host_execution_config is None:
             raise StateConflictError("This Worker host has no full execution configuration")
-        if replace(config, process_adjustment=None).to_document() != (
-            host_execution_config.to_document()
+        # Either document shape names the same settings; compare them in the current one.
+        if replace(config, process_adjustment=None).canonical_document() != (
+            host_execution_config.canonical_document()
         ):
             raise StateConflictError("Execution configuration does not match this host")
         adjustment_policy = config.process_adjustment
@@ -817,7 +818,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         command_check_argv=_parse_command_argv(args.command_check_argv),
         command_check_timeout_seconds=args.command_check_timeout_seconds,
         semantic_required_terms=tuple(args.semantic_required_term),
-        pi_backend=None if args.pi_config is None else PiBackendConfig.from_path(args.pi_config),
+        harness=None if args.pi_config is None else load_harness_file(args.pi_config),
         routing_model=args.routing_model,
         routing_reasoning_effort=args.routing_reasoning_effort,
         routing_timeout_seconds=args.routing_timeout_seconds,

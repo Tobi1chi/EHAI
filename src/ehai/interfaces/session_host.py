@@ -26,8 +26,8 @@ from ehai.domain.events import Event, EventType
 from ehai.domain.execution import AttemptStatus, Run, RunStatus
 from ehai.domain.runtime import DispatchWork, DispatchWorkStatus
 from ehai.domain.workers import AttemptActivity
-from ehai.hub.adapters.pi.config import PiBackendConfig
 from ehai.infrastructure.agent_traces import SQLiteAgentTraceStore
+from ehai.infrastructure.harnesses import HarnessConfig, resolve_harness
 from ehai.infrastructure.sqlite import SQLiteDatabase
 from ehai.interfaces.public_documents import public_json_value
 
@@ -101,6 +101,21 @@ class ResponsesEndpointCapabilities:
                 raise ValueError(f"{name} must be a boolean")
 
 
+def canonical_execution_document(document: Mapping[str, JsonValue]) -> dict[str, JsonValue]:
+    """Write a Pi harness the pre-11-03 way (``worker_kind: pi`` plus ``pi``).
+
+    Project bindings saved before the ``harness`` shape hold fingerprints of that form, so
+    comparing in it keeps them valid whichever shape a host or caller now uses.
+    """
+    result = dict(document)
+    harness = result.get("harness")
+    if isinstance(harness, dict) and harness.get("kind") == "pi":
+        del result["harness"]
+        result["worker_kind"] = "pi"
+        result["pi"] = harness.get("settings")
+    return result
+
+
 @dataclass(frozen=True, slots=True)
 class ExecutionConfig:
     """The exact, credential-free settings pinned to one execution Run."""
@@ -122,8 +137,11 @@ class ExecutionConfig:
     codex_server_sandbox: str = "workspace-write"
     process_adjustment: ProcessAdjustmentPolicy | None = None
     goal_worker_budget: GoalWorkerBudget | None = None
-    pi_backend: PiBackendConfig | None = None
+    harness: HarnessConfig | None = None
     trajectory_review: TrajectoryReviewPolicy | None = None
+    # Documents authorized before 11-03 carry ``worker_kind: pi`` plus a ``pi`` block; they
+    # keep that shape so their fingerprints do not change. New documents carry ``harness``.
+    legacy_pi_shape: bool = False
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "worker_kind", _worker_kind(self.worker_kind))
@@ -134,8 +152,10 @@ class ExecutionConfig:
                 "reasoning_effort",
                 _text(self.reasoning_effort, "reasoning_effort"),
             )
-        if self.worker_kind == "pi" and self.pi_backend is None:
-            raise ValueError("Pi execution config requires the pi backend object")
+        if (self.worker_kind == "pi") != (self.harness is not None):
+            raise ValueError("A harness Worker requires exactly one harness configuration")
+        if self.legacy_pi_shape and (self.harness is None or self.harness.kind != "pi"):
+            raise ValueError("The legacy execution shape only describes a Pi harness")
         if self.trajectory_review is not None and (
             self.worker_kind != "pi"
             or not isinstance(self.trajectory_review, TrajectoryReviewPolicy)
@@ -222,6 +242,7 @@ class ExecutionConfig:
             "process_adjustment",
             "goal_worker_budget",
             "pi",
+            "harness",
             "trajectory_review",
         }
         unknown = sorted(set(document) - allowed)
@@ -235,9 +256,13 @@ class ExecutionConfig:
         unknown_server = sorted(set(server) - {"executable", "approval_policy", "sandbox"})
         if unknown_server:
             raise ValueError(f"codex_server contains unknown fields: {unknown_server}")
-        worker_kind = document.get("worker_kind")
+        harness_document = document.get("harness")
+        pi_document = document.get("pi")
+        worker_kind = document.get("worker_kind", "pi" if harness_document is not None else None)
         model = document.get("model")
         workspace = document.get("workspace")
+        if harness_document is not None and (pi_document is not None or "worker_kind" in document):
+            raise ValueError("harness replaces worker_kind and pi; do not combine them")
         if not isinstance(worker_kind, str):
             raise ValueError("worker_kind must be text")
         if not isinstance(model, str) or not model.strip():
@@ -263,14 +288,31 @@ class ExecutionConfig:
         goal_budget = document.get("goal_worker_budget")
         if goal_budget is not None and not isinstance(goal_budget, dict):
             raise ValueError("goal_worker_budget must be an object or null")
-        pi_document = document.get("pi")
         trajectory = document.get("trajectory_review")
         if trajectory is not None and not isinstance(trajectory, dict):
             raise ValueError("trajectory_review must be an object or null")
         if pi_document is not None and not isinstance(pi_document, dict):
             raise ValueError("pi must be a backend configuration object")
+        harness = None
+        if harness_document is not None:
+            if not isinstance(harness_document, dict) or set(harness_document) != {
+                "kind",
+                "version",
+                "settings",
+            }:
+                raise ValueError("harness requires exactly kind, version and settings")
+            kind, version = harness_document["kind"], harness_document["version"]
+            settings = harness_document["settings"]
+            if not isinstance(kind, str) or not isinstance(version, str):
+                raise ValueError("harness kind and version must be text")
+            if not isinstance(settings, dict):
+                raise ValueError("harness settings must be an object")
+            harness = resolve_harness(kind, settings, version=version)
+        elif pi_document is not None:
+            harness = resolve_harness("pi", pi_document)
         return cls(
-            pi_backend=None if pi_document is None else PiBackendConfig.from_document(pi_document),
+            harness=harness,
+            legacy_pi_shape=pi_document is not None,
             trajectory_review=(
                 None if trajectory is None else TrajectoryReviewPolicy.from_document(trajectory)
             ),
@@ -337,11 +379,18 @@ class ExecutionConfig:
             document["process_adjustment"] = self.process_adjustment.to_document()
         if self.goal_worker_budget is not None:
             document["goal_worker_budget"] = self.goal_worker_budget.to_document()
-        if self.pi_backend is not None:
-            document["pi"] = self.pi_backend.to_document()
+        if self.harness is not None and self.legacy_pi_shape:
+            document["pi"] = self.harness.settings
+        elif self.harness is not None:
+            del document["worker_kind"]
+            document["harness"] = self.harness.to_document()
         if self.trajectory_review is not None:
             document["trajectory_review"] = self.trajectory_review.to_document()
         return document
+
+    def canonical_document(self) -> dict[str, JsonValue]:
+        """One form for both document shapes, for comparisons and host bindings."""
+        return canonical_execution_document(self.to_document())
 
     @property
     def fingerprint(self) -> str:
@@ -372,7 +421,11 @@ def authorize_run(database: SQLiteDatabase, run_id: ID, config: ExecutionConfig)
             run.goal_id,
             None if config.goal_worker_budget is None else config.goal_worker_budget.to_document(),
         )
-        if stored is not None and ExecutionConfig.from_document(stored).to_document() != expected:
+        if (
+            stored is not None
+            and ExecutionConfig.from_document(stored).canonical_document()
+            != config.canonical_document()
+        ):
             raise SessionHostError(f"Run {normalized_id} already has another execution config")
         if stored is not None and not _authorized(events, normalized_id):
             raise SessionHostError(f"Run {normalized_id} has no explicit authorization")

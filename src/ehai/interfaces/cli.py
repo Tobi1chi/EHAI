@@ -59,8 +59,7 @@ from ehai.application.workers import WorkerAdapter
 from ehai.domain.checking import CheckKind
 from ehai.domain.goal import Goal
 from ehai.domain.planning import PlanRevision
-from ehai.hub.adapters.pi.config import PiBackendConfig
-from ehai.hub.adapters.pi.rpc import PiRpcError
+from ehai.hub.client import HubUnavailableError
 from ehai.infrastructure.agent_traces import SQLiteAgentTraceStore
 from ehai.infrastructure.artifacts import FilesystemArtifactStore
 from ehai.infrastructure.checks import (
@@ -69,6 +68,7 @@ from ehai.infrastructure.checks import (
     CommandCheckAdapter,
     SemanticCheckAdapter,
 )
+from ehai.infrastructure.harnesses import HarnessConfig, inspect_harness, load_harness_file
 from ehai.infrastructure.hub_runtime import HarnessExecutionUnknownError
 from ehai.infrastructure.planners import PiPlannerAdapter, PiPlannerError
 from ehai.infrastructure.sqlite import SQLiteDatabase
@@ -83,6 +83,7 @@ from ehai.interfaces.session_host import (
     ForegroundSessionHost,
     ResponsesEndpointCapabilities,
     SessionHostError,
+    canonical_execution_document,
     get_result_document,
     load_execution_config,
     prepare_execute_run,
@@ -140,7 +141,7 @@ def build_service(
     command_check_timeout_seconds: float = 30.0,
     background_start: bool = False,
     endpoint_capabilities: ResponsesEndpointCapabilities | None = None,
-    pi_backend: PiBackendConfig | None = None,
+    harness: HarnessConfig | None = None,
     project_configuration: ProjectConfigurationService | None = None,
     notes: NoteService | None = None,
     worker_capability_preview: Mapping[str, JsonValue] | None = None,
@@ -149,12 +150,12 @@ def build_service(
     from ehai.interfaces.agent_backends import resolve_planner_kind
 
     planner_kind = resolve_planner_kind(
-        planner_kind, pi_configured=pi_backend is not None, model=planner_model
+        planner_kind, pi_configured=harness is not None, model=planner_model
     )
     if worker_kind == "builtin" or planner_kind == "builtin":
         raise ValueError("The self-written Built-in Runtime was removed; configure Pi explicitly")
     if planner_kind == "pi":
-        if pi_backend is None:
+        if harness is None:
             raise ValueError("Pi Planner requires --pi-config")
         if planner_model is None or not planner_model.strip():
             raise ValueError("Pi Planner requires --planner-model")
@@ -186,9 +187,9 @@ def build_service(
     elif planner_kind == "exploration":
         planner = _ExplorationPlannerAdapter()
     elif planner_kind == "pi":
-        assert pi_backend is not None and planner_model is not None
+        assert harness is not None and planner_model is not None
         planner = PiPlannerAdapter(
-            backend=pi_backend,
+            harness=harness,
             model=planner_model,
             timeout_seconds=planner_timeout_seconds,
             reasoning_effort=planner_reasoning_effort,
@@ -246,7 +247,11 @@ def build_service(
         background_start=background_start,
         planning_workspace=str((worker_workspace or Path.cwd()).resolve()),
         planner_capacity=planner_capacity,
-        project_configuration_resolver=project_configuration.resolve_for_run,
+        project_configuration_resolver=lambda project_id, config: (
+            project_configuration.resolve_for_run(
+                project_id, None if config is None else canonical_execution_document(config)
+            )
+        ),
     )
 
 
@@ -746,9 +751,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(json_dumps(plan_import_schema()))
             return 0
         if args.command == "inspect-agent":
-            from ehai.hub.adapters.pi.probe import inspect_pi_backend
-
-            print(json_dumps(asyncio.run(inspect_pi_backend(node=args.node, cli=args.pi_cli))))
+            report = inspect_harness(
+                "pi", {"node": args.node, "cli": str(args.pi_cli.expanduser().resolve())}
+            )
+            print(json_dumps(report))
             return 0
         if args.command in {
             "list-threads",
@@ -791,9 +797,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             command_check_argv=_parse_command_argv(args.command_check_argv),
             semantic_required_terms=tuple(args.semantic_required_term),
             command_check_timeout_seconds=args.command_check_timeout_seconds,
-            pi_backend=None
+            harness=None
             if args.pi_config is None or args.command == "import-plan"
-            else PiBackendConfig.from_path(args.pi_config),
+            else load_harness_file(args.pi_config),
         )
         if args.command == "discuss-plan":
             message = (
@@ -867,7 +873,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         RecoveryError,
         RunControlError,
         SessionHostError,
-        PiRpcError,
+        HubUnavailableError,
         HarnessExecutionUnknownError,
         ValueError,
         OSError,
@@ -964,7 +970,7 @@ def _build_foreground_app(
         git_permissions=tuple(config.git_permissions),
         worker_capacity=config.capacity,
         endpoint_capabilities=config.endpoint_capabilities,
-        pi_backend=config.pi_backend,
+        harness=config.harness,
         p2_runtime=True,
         runtime_autostart=False,
     )

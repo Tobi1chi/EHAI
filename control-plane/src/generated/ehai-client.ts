@@ -1084,7 +1084,8 @@ export type GoalWorkerBudgetRequest = {
 
 export type ExecutionConfigRequest = {
   readonly config_version: number;
-  readonly worker_kind: "pi";
+  readonly harness?: HarnessConfigRequest | null;
+  readonly worker_kind?: "pi" | null;
   readonly model: string;
   readonly reasoning_effort: string | null;
   readonly capacity: number;
@@ -1331,6 +1332,12 @@ export type ExecutionCodexServerRequest = {
 
 export type CreateIntegrationBranchRequest = {
   readonly branch: string;
+};
+
+export type HarnessConfigRequest = {
+  readonly kind: string;
+  readonly version: string;
+  readonly settings: Readonly<Record<string, JsonValue>>;
 };
 
 export type NoteSource = {

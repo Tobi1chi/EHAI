@@ -28,16 +28,16 @@
           "$ref": "#/$defs/JsonScalar"
         },
         {
-          "type": "array",
           "items": {
             "$ref": "#/$defs/JsonValue"
-          }
+          },
+          "type": "array"
         },
         {
-          "type": "object",
           "additionalProperties": {
             "$ref": "#/$defs/JsonValue"
-          }
+          },
+          "type": "object"
         }
       ]
     },
@@ -479,10 +479,29 @@
           "title": "Config Version",
           "type": "integer"
         },
+        "harness": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/HarnessConfigRequest"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "worker_kind": {
-          "const": "pi",
-          "title": "Worker Kind",
-          "type": "string"
+          "anyOf": [
+            {
+              "const": "pi",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Worker Kind"
         },
         "model": {
           "minLength": 1,
@@ -627,7 +646,6 @@
       },
       "required": [
         "config_version",
-        "worker_kind",
         "model",
         "reasoning_effort",
         "capacity",
@@ -1829,6 +1847,38 @@
         "branch"
       ],
       "title": "CreateIntegrationBranchRequest",
+      "type": "object"
+    },
+    "HarnessConfigRequest": {
+      "additionalProperties": false,
+      "description": "The harness that runs every role, validated by the Hub on its own machine.",
+      "properties": {
+        "kind": {
+          "minLength": 1,
+          "pattern": "^[^\\x00]*[^\\s\\x00][^\\x00]*$",
+          "title": "Kind",
+          "type": "string"
+        },
+        "version": {
+          "minLength": 1,
+          "pattern": "^[^\\x00]*[^\\s\\x00][^\\x00]*$",
+          "title": "Version",
+          "type": "string"
+        },
+        "settings": {
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          },
+          "title": "Settings",
+          "type": "object"
+        }
+      },
+      "required": [
+        "kind",
+        "version",
+        "settings"
+      ],
+      "title": "HarnessConfigRequest",
       "type": "object"
     }
   }

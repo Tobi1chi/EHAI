@@ -12,7 +12,7 @@ from ehai.application.agent_trace import AgentTraceStore
 from ehai.application.notes import NoteService
 from ehai.application.planner import ExplorationBudget
 from ehai.application.ports import ArtifactStore
-from ehai.hub.adapters.pi.config import PiBackendConfig
+from ehai.infrastructure.harnesses import HarnessConfig
 from ehai.infrastructure.hub_runtime import HubRoleRunner
 from ehai.infrastructure.planners.role import PlannerError, PlannerRole
 
@@ -28,7 +28,7 @@ class PiPlannerAdapter(PlannerRole):
         self,
         *,
         model: str,
-        backend: PiBackendConfig,
+        harness: HarnessConfig,
         reasoning_effort: str | None = None,
         timeout_seconds: float = 120.0,
         budget: ExplorationBudget | None = None,
@@ -45,8 +45,7 @@ class PiPlannerAdapter(PlannerRole):
         super().__init__(
             runner=HubRoleRunner(
                 session_store or MemoryAgentTraceStore(),
-                backend=backend,
-                state_root=backend.agent_dir / "ehai-sessions",
+                harness=harness,
             ),
             model=model,
             reasoning_effort=reasoning_effort,

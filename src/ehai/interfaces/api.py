@@ -645,7 +645,7 @@ def create_app(
                 )
             )
         document = request.execution_config.model_dump(mode="json")
-        for legacy in ("codex_server", "endpoint_capabilities"):
+        for legacy in ("codex_server", "endpoint_capabilities", "worker_kind", "pi", "harness"):
             if document.get(legacy) is None:
                 document.pop(legacy, None)
         try:

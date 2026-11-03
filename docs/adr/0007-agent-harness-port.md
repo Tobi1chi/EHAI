@@ -55,7 +55,8 @@ Planner、Worker、Reviewer、Evaluator、过程/轨迹审查、路由回退等�
 - 工具调用以 `tool_call` 事件交给核心，核心执行并持久化后回传结果，Hub 再交还 harness；Hub 只转交。
   每会话 MCP 端点（第 4 条）实现后，MCP 调用也转成同样的事件。
 - 协议 v1 已实现 start、steer、prompt、events、tool-results、cancel、inspect、close（见 [HUB](../HUB.md)）；
-  `recover` 与 `capabilities` 尚未实现。
+  能力清单随 `/v1/health` 返回，harness 设置经 `/v1/harnesses/resolve` 校验、经 `/v1/harnesses/inspect`
+  做无凭证探查（2026-11-03）。`recover` 尚未实现。
 - 接口参数只用可序列化数据（角色规格由核心从 `AgentRoleConfig` 转换得到），不传对象引用，
   使 Hub 可以运行在另一个进程或另一台机器上（见第 6 条）。
 - Hub 不持久化 EHAI 事实：原生会话引用和恢复句柄随响应和事件返回，由核心记录在 Attempt 或角色调用上，
@@ -112,8 +113,8 @@ Inbox 不感知具体后端。
 - harness 凭证只从 Hub 进程自己的环境读取，不经协议传输。
 - 导入方向由 CI（`lint-imports`）检查：核心只导入 `ehai.hub.protocol` 与 `ehai.hub.client`；
   Hub 与兼容层不导入核心模块（唯一例外是纯函数 `application.sanitization`）。
-  过渡期例外：核心仍直接读取 Pi 配置（`ehai.hub.adapters.pi.config`、`probe`）做授权指纹与本机探查，
-  在第 6 步执行配置改为 `harness` 形状后移除。
+  核心不读取 harness 的原生配置：授权指纹、本机探查和工作区固定副本都经 Hub 的 resolve / inspect
+  完成，原先读取 Pi 配置的过渡例外已在第 6 步移除（2026-11-03）。
 
 ### 7. 失败处理
 
@@ -139,6 +140,12 @@ harness 不是沙箱。工作区隔离（EHAI 拥有的 Git worktree）、凭证
 - 旧配置（`worker_kind` + `pi` 等字段，以及无执行效果的 `codex_server` 块）继续可读并保持原指纹，
   供已授权 Run 恢复。
 
+实现（2026-11-03）：主机组装的配置写成 `harness` 形状；`settings` 由 Hub 上的兼容层校验并返回规范值、
+指纹、所需凭证变量名、受保护路径与能力清单，`version` 必须与 Hub 安装的版本一致。比较配置
+（主机校验、Run 授权、项目配置绑定）时，Pi harness 统一按旧形状比较，旧形状文档原样保存、指纹不变，
+因此升级前授权的 Run 和保存的项目绑定继续有效。`settings_schema` 未单独登记：闭合对象校验由兼容层
+在 resolve 时完成。
+
 ### 10. 验收
 
 - 产品 E2E 经 Hub 运行真实 Pi，模型替换为脚本化的 OpenAI 兼容服务，使 Hub 与 Pi 兼容层受 CI 保护
@@ -158,13 +165,15 @@ harness 不是沙箱。工作区隔离（EHAI 拥有的 Git worktree）、凭证
 4. 产品 E2E 经 Hub 与真实 Pi 运行，模型为脚本化服务（2026-10-02 完成）。
 5. 规划逻辑上移为与后端无关的 `PlannerRole`（`infrastructure/planners/role.py`，经 application 层 `RoleRunner`
    端口运行；`PiPlannerAdapter` 只注入 Pi 配置。提示词仍提到 Pi，改动需真实模型验收，2026-10-02 完成）。
-6. 能力清单；执行配置支持 `harness` 形状，旧形状保持可读与原指纹。
+6. 能力清单；执行配置支持 `harness` 形状，旧形状保持可读与原指纹。兼容层声明能力清单，Hub 在
+   `/v1/health` 汇总；角色调用在启动前检查所需能力（关闭原生工具、续用原生会话），不按后端名称判断。
+   目前只有一个 harness，计划节点也不写后端名称，所以尚无多 harness 间的选择（2026-11-03 完成）。
 7. Hub 提供每会话 MCP 端点（`/v1/mcp/`，会话令牌与 Hub 令牌分开，调用转为 `tool_call` 事件）。
    锁定版本的 Pi 按设计不支持 MCP（其 README："No MCP"），保留扩展桥。目前没有使用该端点的 harness，
    只用合成 MCP 客户端验证；按用户决定提前实现，接入第一个 MCP harness 时可能需要调整（2026-10-02 完成）。
 8. 需要第二个 harness 时按接入清单编写兼容层（例如 Claude Code 或 Codex）。
-9. 远端执行：Pi 设置中的路径与工作区目前须在 Hub 所在机器上存在，核心仍在本机校验 Pi 配置；
-   跨机器使用需先完成第 6 步，并决定工作区如何到达 Hub 一侧。
+9. 远端执行：Pi 设置经 Hub 校验（第 6 步），但其中的路径与工作区仍须在 Hub 所在机器上存在；
+   跨机器使用还需决定工作区如何到达 Hub 一侧。
 
 ## 后果
 

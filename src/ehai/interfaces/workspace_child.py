@@ -18,7 +18,7 @@ from starlette.responses import Response
 
 from ehai import json_loads
 from ehai.domain.execution import AttemptStatus, RunStatus
-from ehai.hub.adapters.pi.config import PiBackendConfig
+from ehai.infrastructure.harnesses import load_harness_file
 from ehai.infrastructure.sqlite import SQLiteDatabase
 from ehai.infrastructure.workspace_supervisor import ProcessFileLock
 from ehai.interfaces.runtime import create_local_app
@@ -60,11 +60,7 @@ async def _serve(configuration: Path, port: int) -> None:
     registration = WorkspaceRegistration.model_validate(value.get("registration"))
     settings = registration.runtime
     private_backend = value.get("pi_backend_path")
-    backend = (
-        PiBackendConfig.from_path(Path(private_backend))
-        if isinstance(private_backend, str)
-        else None
-    )
+    harness = load_harness_file(Path(private_backend)) if isinstance(private_backend, str) else None
     data_root = configuration.parent.resolve(strict=True)
     lock = ProcessFileLock(data_root / "host.lock")
     try:
@@ -88,7 +84,7 @@ async def _serve(configuration: Path, port: int) -> None:
             command_check_argv=settings.command_check_argv,
             semantic_required_terms=settings.semantic_required_terms,
             attempt_deadline_seconds=settings.attempt_deadline_seconds,
-            pi_backend=backend,
+            harness=harness,
             p2_runtime=True,
         )
         app.state.manager_active_writes = 0

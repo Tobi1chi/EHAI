@@ -89,9 +89,7 @@ class PiRoutingFallback:
         # Reserve an existing host model slot BEFORE persisting or invoking anything.
         try:
             with self.capacity.slot():
-                record = self.service.claim(
-                    request_id, self.model, self.runner.backend.configuration_hash
-                )
+                record = self.service.claim(request_id, self.model, self.runner.harness.fingerprint)
                 if record is not None:
                     await self._execute(record)
         except PlannerCapacityExceeded:
