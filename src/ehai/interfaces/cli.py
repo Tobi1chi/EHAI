@@ -138,7 +138,6 @@ def build_service(
     command_check_argv: Sequence[str] | None = None,
     semantic_required_terms: Sequence[str] = (),
     command_check_timeout_seconds: float = 30.0,
-    worker_timeout_seconds: float = 300.0,
     background_start: bool = False,
     endpoint_capabilities: ResponsesEndpointCapabilities | None = None,
     pi_backend: PiBackendConfig | None = None,
@@ -318,12 +317,6 @@ def create_parser() -> argparse.ArgumentParser:
         "--planner-reasoning-effort",
         choices=("off", "minimal", "low", "medium", "high", "xhigh", "max"),
         help="OpenAI reasoning effort for Pi Planner",
-    )
-    parser.add_argument(
-        "--worker-timeout-seconds",
-        type=float,
-        default=300.0,
-        help="accepted for compatibility; no current Worker uses it (default: 300)",
     )
     parser.add_argument(
         "--command-check-timeout-seconds",
@@ -712,7 +705,6 @@ def main(argv: Sequence[str] | None = None) -> int:
             or args.semantic_required_term
             or args.planner_timeout_seconds != 120.0
             or args.planner_capacity != 1
-            or args.worker_timeout_seconds != 300.0
             or args.command_check_timeout_seconds != 30.0
         ):
             parser.error("--api-url cannot be mixed with local storage, model or Worker options")
@@ -786,7 +778,6 @@ def main(argv: Sequence[str] | None = None) -> int:
             command_check_argv=_parse_command_argv(args.command_check_argv),
             semantic_required_terms=tuple(args.semantic_required_term),
             command_check_timeout_seconds=args.command_check_timeout_seconds,
-            worker_timeout_seconds=args.worker_timeout_seconds,
             pi_backend=None
             if args.pi_config is None or args.command == "import-plan"
             else PiBackendConfig.from_path(args.pi_config),

@@ -610,10 +610,6 @@
             "type": "integer",
             "title": "Planner Capacity"
           },
-          "worker_timeout_seconds": {
-            "type": "number",
-            "title": "Worker Timeout Seconds"
-          },
           "planner_timeout_seconds": {
             "type": "number",
             "title": "Planner Timeout Seconds"
@@ -696,7 +692,6 @@
           "planner_reasoning_effort",
           "worker_capacity",
           "planner_capacity",
-          "worker_timeout_seconds",
           "planner_timeout_seconds",
           "command_timeout_seconds",
           "allowed_commands",
@@ -793,13 +788,6 @@
             "minimum": 1.0,
             "title": "Planner Capacity",
             "default": 1
-          },
-          "worker_timeout_seconds": {
-            "type": "number",
-            "maximum": 86400.0,
-            "exclusiveMinimum": 0.0,
-            "title": "Worker Timeout Seconds",
-            "default": 300
           },
           "planner_timeout_seconds": {
             "type": "number",
