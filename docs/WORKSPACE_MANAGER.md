@@ -65,7 +65,8 @@ CLI 为 `get-local-engine` 和 `add-workspace-folder --file <请求JSON>`（使�
 MCP 为 `get_local_engine`、`add_workspace_folder`，写入仍传 `request_json`，契约由 `get_request_schema` 返回。
 `status` 显示守护进程和各工作区的真实生命周期状态；离线时只列出登记信息并说明健康未知，返回 1。
 `doctor` 逐项检查配置、Node/Pi 版本与私有设置、终端/守护进程凭证变量存在性、
-管理器和工作区运行时健康；全部通过返回 0，检查失败返回 1，命令本身出错返回 2。
+管理器和工作区运行时健康；`--probe` 另经本机 Hub 启动一次 Pi 会话核对模型与思考级别（不调用模型，见
+[USAGE](USAGE.md#安装与私有-pi-配置)）；全部通过返回 0，检查失败返回 1，命令本身出错返回 2。
 
 `down` 通过私有本地控制接口逐个调用正常停止，再退出管理器；
 有活动执行、规划或写请求时返回冲突，须先完成或暂停相应任务；子进程停止超时仍沿用

@@ -7,6 +7,8 @@
 | --- | --- |
 | [cli.py](cli.py) | ehai 命令解析与本地入口 |
 | [cli_api.py](cli_api.py) | 共用查询/命令路由及 HTTP 客户端，不回退直写数据库 |
+| [local_app.py](local_app.py) | 本机引擎命令 init/up/down/status/add/doctor 与用户配置 |
+| [interactive.py](interactive.py) | 无参数 `ehai` 的终端会话，只经管理器与核心的 HTTP 接口 |
 | [session_host.py](session_host.py) | execute-plan / resume-session 前台宿主 |
 | [api.py](api.py)、[http_models.py](http_models.py) | HTTP 路由、严格请求、错误与响应 |
 | [mcp_server.py](mcp_server.py) | 独立 stdio MCP，转发已支持的 HTTP 操作 |

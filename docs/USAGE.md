@@ -88,7 +88,8 @@ uv run ehai init --provider openai --model '<model-id>' \
 uv run ehai up
 uv run ehai add /absolute/path/to/repo
 uv run ehai status
-uv run ehai doctor
+uv run ehai doctor --probe
+uv run ehai          # 终端交互会话，见下节
 uv run ehai down
 ~~~
 
@@ -98,6 +99,30 @@ Pi 会把不支持的级别换成其他级别，而 EHAI 要求实际级别与�
 （例如 DeepSeek `deepseek-flash` 只接受 off、low、high、max；Pi 的模型表里没有 high 档的模型需另选级别或用 `default`）。`--credential-env` 可重复；交互时用逗号分隔多个名字。只保存变量名，不保存密钥。
 已有 `config.json` 时显示差异并要求确认，`--yes` 跳过确认；已有私有 settings/models 保留。
 Node 来自 PATH，Pi CLI 来自本源码仓库的锁定安装；版本分别要求 >=22.19.0 和 1.3.0。
+
+`doctor --probe` 额外经一个新的本机 Hub 用用户配置真实启动一次 Pi 会话，核对 Pi 选中了配置中的 Provider、
+模型与思考级别，然后在发送任何任务前关闭（不调用模型，凭证与模型行为仍未核对）。失败时显示 Hub 的原因，
+例如 `Pi did not accept the authorized thinking level`。Pi 会接受某个 Provider 下不认识的模型 ID，
+所以通过探测不代表模型存在。
+
+### 终端交互会话
+
+不带参数运行 `ehai`（守护进程须已由 `ehai up` 启动）进入交互会话。它只调用管理器与各工作区核心的正式 HTTP 接口，
+与 Web 工作台相同；会话只记住当前选中的线程，每次显示都重新读取。
+
+| 命令 | 作用 |
+| --- | --- |
+| `threads` / `open <序号或 goal_id 前缀>` | 列出全部工作区的线程；选中一条并显示状态与最近的时间线 |
+| `new [工作区]` | 依次询问目标和给 Planner 的说明，在该工作区的第一个项目（没有则以工作区名新建）下创建线程并开始讨论 |
+| `show` / `say <消息>` | 当前线程的状态和时间线；继续与 Planner 讨论（沿用最近的讨论会话） |
+| `plan` / `approve` | 显示最新方案；显示工作区执行配置并确认后依次 `approve-plan`、`start-run` |
+| `watch` | 每 3 秒刷新节点状态，直到线程需要处理或 Run 结束；Ctrl-C 只停止等待 |
+| `todo` / `pass` / `fail` / `reply` | 当前线程的待办；对人工 Check 判定通过或不通过、回复干预。便签与生活确认请用 Web 或 CLI |
+| `integrate` / `diff` / `branch <名称>` | 整合已完成成果、显示差异（最多 400 行）、把整合结果放到新分支（不切换、不推送） |
+| `help` / `quit` | 命令列表；离开 |
+
+标准输入不是终端时逐行读取命令、不显示提示符，便于脚本驱动。写请求的结果未知时（连接中断）会话不重发，
+提示先 `show` 再决定。
 
 `EHAI_HOME` 覆盖默认的 `~/.ehai`，须在所有执行仓库之外；其中 `config.json` 是默认值的单一来源。
 示意形状（路径均由 init 生成实际绝对路径）：

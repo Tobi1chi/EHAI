@@ -76,7 +76,7 @@ from ehai.infrastructure.sqlite.project_configuration import SQLiteProjectConfig
 from ehai.infrastructure.workers import FakeWorker
 from ehai.interfaces.backend_cli import register_backend_commands
 from ehai.interfaces.cli_api import API_ONLY_COMMANDS, ApiCommandError, dispatch_api
-from ehai.interfaces.local_app import LOCAL_COMMANDS, run_local
+from ehai.interfaces.local_app import LOCAL_COMMANDS, run_local, run_terminal_session
 from ehai.interfaces.public_documents import public_json_value
 from ehai.interfaces.session_host import (
     ExecutionConfig,
@@ -692,8 +692,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     for stream in (sys.stdout, sys.stderr):
         if isinstance(stream, TextIOWrapper):
             stream.reconfigure(encoding="utf-8")
+    arguments = sys.argv[1:] if argv is None else list(argv)
+    if not arguments:
+        return run_terminal_session()
     parser = create_parser()
-    args = parser.parse_args(argv)
+    args = parser.parse_args(arguments)
     if args.command in LOCAL_COMMANDS:
         if args.api_url is not None:
             parser.error("local engine commands do not accept --api-url")

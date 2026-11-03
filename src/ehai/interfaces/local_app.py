@@ -628,6 +628,22 @@ def _doctor(home: Path, client: httpx.Client, *, probe: bool = False) -> int:
     return 0 if passed else 1
 
 
+def run_terminal_session() -> int:
+    """Open the interactive session against the manager that ``ehai up`` started."""
+    from ehai.interfaces.interactive import run_interactive
+
+    home = Path(os.environ.get("EHAI_HOME", "~/.ehai")).expanduser().resolve()
+    try:
+        with httpx.Client(trust_env=False, timeout=10) as client:
+            record = _record(home)
+            if record is None or not _identity(client, record):
+                raise ValueError("Manager is not running; run ehai up (check EHAI_HOME)")
+    except (OSError, ValueError, httpx.HTTPError) as error:
+        print(f"Error: {error}", file=sys.stderr)
+        return 2
+    return run_interactive(f"http://127.0.0.1:{record['port']}")
+
+
 def run_local(args: argparse.Namespace) -> int:
     """Dispatch local operations without requiring API or database CLI options."""
     home = Path(os.environ.get("EHAI_HOME", "~/.ehai")).expanduser().resolve()
