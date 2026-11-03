@@ -82,10 +82,6 @@ class EntityNotFoundError(ApplicationError):
     """Raised when a Command references a missing persisted entity."""
 
 
-class IdempotencyConflictError(ApplicationError):
-    """Raised before side effects when an idempotency key changes meaning."""
-
-
 def _required_contract_for_plan(uow: UnitOfWork, plan: PlanRevision) -> CompletionContract:
     contract = _required_contract(uow, plan.completion_contract_id)
     if contract.goal_id != plan.goal_id or contract.version != plan.completion_contract_version:

@@ -18,7 +18,6 @@ from ehai.application.commands import (
 )
 from ehai.application.execution_service.common import (
     ApplicationError,
-    IdempotencyConflictError,
     _config_fingerprint,
     _required_execution_plan,
     _required_goal,
@@ -28,6 +27,7 @@ from ehai.application.execution_service.common import (
 )
 from ehai.application.execution_service.host import ExecutionServiceHost
 from ehai.application.goal_budgets import validate_goal_worker_budget
+from ehai.application.idempotency import IdempotencyConflictError
 from ehai.application.interventions import list_interventions
 from ehai.application.orchestrator import GateRejectedError
 from ehai.application.pause_causes import PauseCause, pause_event_payload, require_pause_cause

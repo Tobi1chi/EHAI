@@ -10,7 +10,12 @@ from typing import TypeVar
 from ehai import JsonValue, new_id, normalize_id, utc_now
 from ehai.application.connector_models import ConnectorModel, InvokeConnectorRequest
 from ehai.application.connectors import ConnectorService
-from ehai.application.idempotency import content_fingerprint, record_result, recorded_result
+from ehai.application.idempotency import (
+    IdempotencyConflictError,
+    content_fingerprint,
+    record_result,
+    recorded_result,
+)
 from ehai.application.ports import CommandReceipt, StateConflictError
 from ehai.application.routing_models import (
     ConfigureRoutingFallbackRequest,
@@ -49,7 +54,7 @@ _ESCALATE = (
 
 def _receipt_conflict(receipt: CommandReceipt) -> Exception:
     del receipt
-    return StateConflictError("Routing idempotency key belongs to different content")
+    return IdempotencyConflictError("Routing idempotency key belongs to different content")
 
 
 class RoutingLabService:

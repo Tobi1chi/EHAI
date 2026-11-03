@@ -8,7 +8,12 @@ from datetime import UTC, datetime, timedelta
 from typing import Literal, Protocol, TypeVar
 
 from ehai import JsonValue, new_id, utc_now
-from ehai.application.idempotency import content_fingerprint, record_result, recorded_result
+from ehai.application.idempotency import (
+    IdempotencyConflictError,
+    content_fingerprint,
+    record_result,
+    recorded_result,
+)
 from ehai.application.ports import CommandReceipt, CommandReceiptStore, StateConflictError
 from ehai.application.queries import QueryNotFoundError
 from ehai.application.workflow_compatibility import WorkflowCompatibility
@@ -53,7 +58,7 @@ class WorkflowTransaction(WorkflowRecordStore, Protocol):
 
 def _receipt_conflict(receipt: CommandReceipt) -> Exception:
     del receipt
-    return StateConflictError("idempotency_key already belongs to another workflow command")
+    return IdempotencyConflictError("idempotency_key already belongs to another workflow command")
 
 
 class WorkflowStore(Protocol):
