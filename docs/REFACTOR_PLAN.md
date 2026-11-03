@@ -431,10 +431,17 @@ Reviewer/Gate → 人工验收 → `integrate-run`，并在执行中强杀一次
 
 ## 待决事项
 
+2026-11-03 已决定（[路线图](ROADMAP.md#11-03-已定的架构决定)），在 11-03 计划第 2 步落地：
+
+| 事项 | 说明 | 决定 |
+| --- | --- | --- |
+| `--worker-timeout-seconds` | 原只用于 Codex Worker，现无使用方 | 删除 CLI 参数；多工作区登记中的同名字段读时忽略 |
+| CLI 启动 scripted 宿主 Run | `ehai --api-url ... start-run` 要求 `--execution-config`，而执行配置只接受 pi | scripted 宿主下 `--execution-config` 可选 |
+| 幂等键冲突的错误码 | 核心命令 409 `conflict`，Workflow/Connector/路由 409 `state_conflict`，便签 422 `invalid_request` | 统一为 409 `conflict` |
+| 便签命令重放的响应 | create-note / add-note-message / decide-note 同键重放返回便签当前状态 | 改为返回原回执，与其它命令一致 |
+
+仍待决：
+
 | 事项 | 说明 |
 | --- | --- |
-| `--worker-timeout-seconds` | 原只用于 Codex Worker，现无使用方；参数与多工作区登记字段保留以免破坏接口，是否删除待定 |
-| CLI 启动 scripted 宿主 Run | `ehai --api-url ... start-run` 要求 `--execution-config`，而执行配置只接受 pi；scripted 宿主只能经 HTTP 启动。E2E 暂用 HTTP，是否调整 CLI 待定 |
 | 幂等重放返回值 | 重复人工判定返回当前 Run 状态而非原回执；如需原回执语义需单独设计 |
-| 幂等键冲突的错误码 | 同一个键用于不同内容时，核心命令返回 409 `conflict`，Workflow/Connector/路由返回 409 `state_conflict`，便签返回 422 `invalid_request`；回执合并时按"保持行为"原样保留，是否统一待定 |
-| 便签命令重放的响应 | create-note / add-note-message / decide-note 同键重放返回便签的当前状态，不是当时的响应：没有首次响应中的 `stale_reason: null`，便签之后有回复或决定时内容也随之不同（合并前已如此）；与上一条同类，是否改为原回执语义待定 |
