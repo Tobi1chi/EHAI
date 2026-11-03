@@ -114,7 +114,6 @@ def create_local_app(
     command_check_argv: Sequence[str] | None = None,
     semantic_required_terms: Sequence[str] = (),
     command_check_timeout_seconds: float = 30.0,
-    worker_timeout_seconds: float = 300.0,
     attempt_deadline_seconds: float | None = None,
     agent_model: str | None = None,
     agent_reasoning_effort: str | None = None,
@@ -218,7 +217,6 @@ def create_local_app(
         command_check_argv=command_check_argv,
         semantic_required_terms=semantic_required_terms,
         command_check_timeout_seconds=command_check_timeout_seconds,
-        worker_timeout_seconds=worker_timeout_seconds,
         background_start=p2_runtime,
         endpoint_capabilities=endpoint_capabilities,
         pi_backend=pi_backend,
@@ -727,7 +725,6 @@ def create_parser() -> argparse.ArgumentParser:
         "--planner-reasoning-effort",
         choices=("off", "minimal", "low", "medium", "high", "xhigh", "max"),
     )
-    parser.add_argument("--worker-timeout-seconds", type=float, default=300.0)
     parser.add_argument("--command-check-timeout-seconds", type=float, default=30.0)
     parser.add_argument(
         "--attempt-deadline-seconds",
@@ -804,7 +801,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         planner_model=args.planner_model,
         planner_reasoning_effort=args.planner_reasoning_effort,
         planner_capacity=args.planner_capacity,
-        worker_timeout_seconds=args.worker_timeout_seconds,
         attempt_deadline_seconds=args.attempt_deadline_seconds,
         agent_model=args.agent_model,
         trajectory_review=(

@@ -77,7 +77,6 @@ async def _serve(configuration: Path, port: int) -> None:
             planner_model=settings.planner_model,
             planner_reasoning_effort=settings.planner_reasoning_effort,
             planner_timeout_seconds=settings.planner_timeout_seconds,
-            worker_timeout_seconds=settings.worker_timeout_seconds,
             command_check_timeout_seconds=settings.command_timeout_seconds,
             worker_capacity=settings.worker_capacity,
             planner_capacity=settings.planner_capacity,

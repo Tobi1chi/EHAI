@@ -31,7 +31,6 @@ class RuntimeSettings(BaseModel):
     planner_reasoning_effort: Text | None = None
     worker_capacity: int = Field(default=1, ge=1, le=64, strict=True)
     planner_capacity: int = Field(default=1, ge=1, le=64, strict=True)
-    worker_timeout_seconds: float = Field(default=300, gt=0, le=86400, allow_inf_nan=False)
     planner_timeout_seconds: float = Field(default=120, gt=0, le=86400, allow_inf_nan=False)
     command_timeout_seconds: float = Field(default=30, gt=0, le=3600, allow_inf_nan=False)
     pi_config_path: Text | None = None
@@ -43,6 +42,14 @@ class RuntimeSettings(BaseModel):
     attempt_deadline_seconds: float | None = Field(
         default=None, gt=0, le=86400, allow_inf_nan=False
     )
+
+    @model_validator(mode="before")
+    @classmethod
+    def ignore_retired_fields(cls, data: object) -> object:
+        # Registrations written before 11-03 carry the unused Worker timeout; read them unchanged.
+        if isinstance(data, dict) and "worker_timeout_seconds" in data:
+            return {key: value for key, value in data.items() if key != "worker_timeout_seconds"}
+        return data
 
     @model_validator(mode="after")
     def validate_roles(self) -> Self:
@@ -98,7 +105,6 @@ class PublicRuntimeSettings(BaseModel):
     planner_reasoning_effort: str | None
     worker_capacity: int
     planner_capacity: int
-    worker_timeout_seconds: float
     planner_timeout_seconds: float
     command_timeout_seconds: float
     allowed_commands: list[list[str]]

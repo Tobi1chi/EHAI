@@ -2180,7 +2180,6 @@ export type PublicRuntimeSettings = {
   readonly planner_reasoning_effort: string | null;
   readonly worker_capacity: number;
   readonly planner_capacity: number;
-  readonly worker_timeout_seconds: number;
   readonly planner_timeout_seconds: number;
   readonly command_timeout_seconds: number;
   readonly allowed_commands: ReadonlyArray<ReadonlyArray<string>>;
@@ -2200,7 +2199,6 @@ export type RuntimeSettings = {
   readonly planner_reasoning_effort?: string | null;
   readonly worker_capacity?: number;
   readonly planner_capacity?: number;
-  readonly worker_timeout_seconds?: number;
   readonly planner_timeout_seconds?: number;
   readonly command_timeout_seconds?: number;
   readonly pi_config_path?: string | null;
