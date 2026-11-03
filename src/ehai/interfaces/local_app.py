@@ -16,6 +16,7 @@ import time
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Annotated, Any, Literal
+from uuid import uuid4
 
 import httpx
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints
@@ -26,6 +27,8 @@ from ehai.hub.adapters.pi.config import (
     check_node_version,
     validate_pi_cli,
 )
+from ehai.hub.client import HubClient, HubRequestError, HubUnavailableError
+from ehai.hub.protocol import HarnessSelection, StartSession, ToolSpec
 from ehai.infrastructure.workspace_supervisor import ProcessFileLock
 from ehai.interfaces.workspace_models import (
     GitPermission,
@@ -487,7 +490,54 @@ def _add(
     return 0 if workspace.status == "ready" else 1
 
 
-def _doctor(home: Path, client: httpx.Client) -> int:
+def _probe_session(config: LocalConfig) -> str:
+    """Start one Pi session through a fresh local Hub and close it before any prompt.
+
+    The Hub's launch verifies that Pi selected the exact provider, model and thinking level;
+    no model request is made, so credentials and model behaviour stay unverified.
+    """
+    hub = HubClient()
+    with TemporaryDirectory(prefix="ehai-doctor-") as directory:
+        root = Path(directory)
+        (root / "workspace").mkdir()
+        request = StartSession(
+            invocation_id="doctor-probe",
+            state_key="doctor-probe",
+            native_session_id=str(uuid4()),
+            harness=HarnessSelection(
+                kind="pi",
+                settings={**config.backend_document(), "state_root": str(root / "state")},
+            ),
+            fresh=True,
+            system_prompt="EHAI doctor probe. No task follows.",
+            tools=[
+                ToolSpec(
+                    name="ehai_probe",
+                    description="Never called: the probe closes the session before any prompt.",
+                    parameters={"type": "object", "properties": {}, "additionalProperties": False},
+                )
+            ],
+            model=config.model,
+            reasoning_effort=config.reasoning_effort,
+            workspace=str(root / "workspace"),
+        )
+
+        async def probe() -> None:
+            async with hub.connect() as connection:
+                started = await connection.start(request)
+                await connection.close(started.session_id, abort=True)
+
+        try:
+            asyncio.run(probe())
+        finally:
+            hub.close()
+    return (
+        f"Pi accepted {config.provider}/{config.model}, thinking "
+        f"{config.reasoning_effort or 'model default'}; no model request sent"
+    )
+
+
+def _doctor(home: Path, client: httpx.Client, *, probe: bool = False) -> int:
     passed = True
 
     def report(label: str, ok: bool, detail: str) -> None:
@@ -511,6 +561,15 @@ def _doctor(home: Path, client: httpx.Client) -> int:
             report("Pi", True, f"{PI_VERSION}; private settings valid")
         except (OSError, ValueError) as error:
             report("Pi", False, f"{error}; install pinned Pi and check private settings")
+        if probe:
+            try:
+                report("Pi session", True, _probe_session(config))
+            except (HubRequestError, HubUnavailableError, OSError, ValueError) as error:
+                report(
+                    "Pi session",
+                    False,
+                    f"{error}; check the model ID and reasoning effort, then rerun ehai init",
+                )
         for name in config.credential_env:
             exists = bool(os.environ.get(name))
             report(
@@ -576,7 +635,7 @@ def run_local(args: argparse.Namespace) -> int:
         home.mkdir(parents=True, exist_ok=True, mode=0o700)
         with httpx.Client(trust_env=False, timeout=60) as client:
             if args.command == "doctor":
-                return _doctor(home, client)
+                return _doctor(home, client, probe=args.probe)
             if args.command == "status":
                 record = _record(home)
                 if record is None or not _identity(client, record):
