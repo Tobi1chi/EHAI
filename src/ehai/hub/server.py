@@ -82,24 +82,28 @@ class _Session:
     tools: list[ToolSpec] = field(default_factory=list)
     mcp_token: str = ""
     mcp_pending: dict[str, asyncio.Future[ToolResult]] = field(default_factory=dict)
-    # MCP carries no model-turn grouping. Calls since the harness last reported a model
-    # message count as one batch, so the core can tell whether a finish tool came alone.
-    mcp_turn_calls: list[str] = field(default_factory=list)
     finished: bool = False
 
-    async def call_tool_via_mcp(self, name: str, arguments: dict[str, JsonValue]) -> ToolResult:
+    async def call_tool_via_mcp(
+        self, name: str, arguments: dict[str, JsonValue], meta: Mapping[str, JsonValue]
+    ) -> ToolResult:
         """Hand an MCP tool call to the core as a tool_call event and wait for its result."""
         if self.state != "running":
             raise RuntimeError("EHAI tool session is no longer running")
         if self.finished:
             # Same rule as the native bridge: nothing runs after an accepted result.
             raise RuntimeError("EHAI result already submitted; no further tools allowed")
-        # The model message that asked for this call must be in the log first.
-        await self.native.await_tool_call(name, arguments)
-        call_id = "mcp-" + uuid.uuid4().hex
+        # The model message that asked for this call must be in the log first. MCP carries
+        # no model-turn grouping, so the harness names every call that message made.
+        try:
+            matched = await self.native.await_tool_call(name, arguments, meta)
+        except HarnessFailure as error:
+            # The log no longer shows what the harness runs; nothing more may execute.
+            await self.append({"type": "failed", "reason": str(error) or "Harness failed"})
+            raise RuntimeError("EHAI tool call could not be matched to the model") from error
+        call_id = "mcp-" + matched.key
         result: asyncio.Future[ToolResult] = asyncio.get_running_loop().create_future()
         self.mcp_pending[call_id] = result
-        self.mcp_turn_calls.append(call_id)
         try:
             self.touched = time.monotonic()
             await self.append(
@@ -108,7 +112,7 @@ class _Session:
                     "call_id": call_id,
                     "name": name,
                     "arguments": arguments,
-                    "batch_call_ids": list(self.mcp_turn_calls),
+                    "batch_call_ids": ["mcp-" + key for key in matched.batch],
                 }
             )
             return await result
@@ -122,10 +126,6 @@ class _Session:
 
     async def append(self, body: Mapping[str, JsonValue]) -> None:
         event = _EVENT.validate_python({**body, "seq": len(self.events) + 1})
-        if event.type == "assistant_message" or (
-            event.type == "lifecycle" and event.name == "turn_end"
-        ):
-            self.mcp_turn_calls.clear()
         async with self.changed:
             self.events.append(event)
             if event.type == "failed":
@@ -146,7 +146,9 @@ class _StartingTools:
 
     tools: list[ToolSpec]
 
-    async def call_tool_via_mcp(self, name: str, arguments: dict[str, JsonValue]) -> ToolResult:
+    async def call_tool_via_mcp(
+        self, name: str, arguments: dict[str, JsonValue], meta: Mapping[str, JsonValue]
+    ) -> ToolResult:
         raise RuntimeError("EHAI tool session is still starting")
 
 

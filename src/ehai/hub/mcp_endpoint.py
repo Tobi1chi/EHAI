@@ -8,7 +8,7 @@ result the core sends back is returned to the harness. Nothing is executed here.
 from __future__ import annotations
 
 import secrets
-from collections.abc import Awaitable, Callable, MutableMapping
+from collections.abc import Awaitable, Callable, Mapping, MutableMapping
 from typing import Any, Protocol
 
 import mcp.types as types
@@ -28,7 +28,9 @@ class SessionTools(Protocol):
     @property
     def tools(self) -> list[ToolSpec]: ...
 
-    async def call_tool_via_mcp(self, name: str, arguments: dict[str, JsonValue]) -> ToolResult: ...
+    async def call_tool_via_mcp(
+        self, name: str, arguments: dict[str, JsonValue], meta: Mapping[str, JsonValue]
+    ) -> ToolResult: ...
 
 
 def _bearer(scope: Scope) -> str:
@@ -72,7 +74,10 @@ class SessionToolEndpoint:
                     content=[types.TextContent(type="text", text="Tool is not in this session")],
                     isError=True,
                 )
-            result = await session.call_tool_via_mcp(name, dict(arguments or {}))
+            # Request metadata lets the harness name the model tool call behind this request.
+            meta = server.request_context.meta
+            extra = (meta.model_extra if meta is not None else None) or {}
+            result = await session.call_tool_via_mcp(name, dict(arguments or {}), extra)
             return types.CallToolResult(
                 content=[types.TextContent(type="text", text=json_dumps(result.result))],
                 isError=result.is_error,

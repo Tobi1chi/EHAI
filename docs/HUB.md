@@ -84,7 +84,7 @@ Hub 本身只提供令牌认证，不提供 TLS；跨机器使用时应放在受
 | 认证 | 每个会话一个随机 Bearer 令牌，与 Hub 令牌分开；Hub 令牌不能访问该端点 |
 | 工具 | 只列出该会话的工具；不在其中的名称直接拒绝 |
 | 调用 | 转为 `tool_call` 事件交给核心执行和记录，核心回传的结果返回给 harness；参数由核心校验 |
-| 批次 | MCP 不带模型轮次信息；兼容层上次报告 `assistant_message` 以来的调用算作同一批，核心据此检查结束工具是否单独调用。使用 MCP 的兼容层须在每条模型消息的工具调用执行前发出该事件 |
+| 批次 | MCP 不带模型轮次信息；兼容层按调用的请求元数据把它对到发起它的模型消息，报告该消息请求的全部工具调用（按模型顺序），核心据此检查结束工具是否单独或最后调用。对不上（缺少标识、10 秒内没在输出中出现、名称或参数不同）时会话失败，调用不交给核心。使用 MCP 的兼容层须在每条模型消息的工具调用执行前发出 `assistant_message` |
 | 结束后 | 核心接受结束工具后，该会话的后续 MCP 调用由 Hub 直接拒绝，与 Pi 扩展桥一致 |
 | 启动中 | 令牌在兼容层启动前即生效：可列出工具，调用会被拒绝；启动失败即撤销 |
 | 关闭 | 会话关闭后令牌失效（401），等待中的调用返回错误 |
@@ -101,7 +101,7 @@ Pi 不支持 MCP，继续使用扩展桥。Claude Code 兼容层使用该端点�
 | 设置 | `executable`（原生可执行文件）、`environment_names`（凭证变量名，从 Hub 进程环境读取）、可选 `base_url`（`ANTHROPIC_BASE_URL`）、`state_dir`；`cli_version` 由 resolve 填写 |
 | 权限翻译 | `--tools ""` 关闭全部内置工具，`--strict-mcp-config` 只加载本会话的 MCP 端点（令牌写在私有文件里，不进命令行），`--permission-mode dontAsk` 加 `--allowedTools mcp__ehai`；启动时用 `mcp_status` 核对只有该端点且工具与本会话一致，每轮开始再核对 `init` 中的工具清单，不符即失败 |
 | 隔离 | 每个状态键一个目录，作为 `CLAUDE_CONFIG_DIR`、`HOME` 与固定工作目录；`--bare` 不读钩子、插件、CLAUDE.md 与钥匙串；环境变量只传本地化与 Windows 进程基本项 |
-| 事件 | 回放的用户消息 → `input_prepared`；每条模型消息在其第一个工具调用前发出 `assistant_message`，MCP 调用等待该消息入日志后才转给核心；`result` 成功 → `settled`，否则 `failed` |
+| 事件 | 回放的用户消息 → `input_prepared`；每条模型消息在其第一个工具调用前发出 `assistant_message`，MCP 调用按请求元数据 `claudecode/toolUseId` 对到其 `tool_use` 块，等该消息入日志后才转给核心，批次为该消息全部 `tool_use`；`result` 成功 → `settled`，否则 `failed` |
 | 续用 | 全新会话用 `--session-id`，续用用 `--resume`；原生历史按固定工作目录保存，可跨 Attempt 续用；全新会话遇到已有历史、续用时缺少历史都拒绝启动 |
 | 取消 | `interrupt` 控制请求；进行中的 MCP 调用由 Claude Code 中止，本轮以 `failed` 结束，不确认已停止 |
 | 中途消息 | `steer` 写入用户消息，Claude Code 在当前工具返回后加入本轮，回放即为送达确认 |

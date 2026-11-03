@@ -23,13 +23,14 @@ import subprocess
 import sys
 import uuid
 from collections import deque
+from collections.abc import Mapping
 from contextlib import suppress
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import cast
 
 from ehai import JsonValue, json_dumps, json_loads
-from ehai.hub.adapters import HarnessFailure, HarnessRequestError, McpEndpoint
+from ehai.hub.adapters import HarnessFailure, HarnessRequestError, McpEndpoint, ToolBatch
 from ehai.hub.protocol import ResolvedHarness, StartSession, ToolResult
 
 KIND = "claude-code"
@@ -56,6 +57,11 @@ _CAPABILITIES: dict[str, JsonValue] = {
 }
 _CONTROL_TIMEOUT_SECONDS = 30.0
 _CORRELATION_TIMEOUT_SECONDS = 10.0
+# Claude Code names the tool_use block behind every MCP call in the request metadata.
+_TOOL_USE_META = "claudecode/toolUseId"
+# Claude Code starts a message's tools only after writing the whole model message out, so
+# its later tool_use blocks are already in the pipe; this lets the reader take them.
+_BATCH_SETTLE_SECONDS = 0.05
 _TOOL_PROMPT = (
     "\n\nThe tools named in these instructions are available with the prefix "
     f"`{_PREFIX}` (for example `{_PREFIX}<name>`)."
@@ -358,9 +364,11 @@ class ClaudeCodeSession:
         self._text: list[str] = []
         self._usage: dict[str, JsonValue] | None = None
         self._announced = False
-        # Tool uses whose model message the Hub has logged, and those still waiting for it.
-        self._published: list[tuple[str, str]] = []
-        self._unpublished: list[tuple[str, str]] = []
+        # Tool uses of the current message, in order; shared with each of its uses below.
+        self._batch: list[str] = []
+        # Tool uses by id whose model message the Hub has logged, and those still waiting.
+        self._published: dict[str, tuple[str, str, list[str]]] = {}
+        self._unpublished: list[tuple[str, tuple[str, str, list[str]]]] = []
         self._announcement_returned = False
 
     @property
@@ -381,7 +389,7 @@ class ClaudeCodeSession:
 
     def _publish(self) -> None:
         if self._announcement_returned and self._unpublished:
-            self._published.extend(self._unpublished)
+            self._published.update(self._unpublished)
             self._unpublished.clear()
 
     def _normalize(self, event: dict[str, JsonValue]) -> None:
@@ -430,11 +438,15 @@ class ClaudeCodeSession:
             if block.get("type") == "text" and isinstance(block.get("text"), str):
                 self._text.append(str(block["text"]))
             elif block.get("type") == "tool_use":
-                name, arguments = block.get("name"), block.get("input")
+                use_id, name, arguments = block.get("id"), block.get("name"), block.get("input")
                 if not isinstance(name, str) or name not in self._tools:
                     raise HarnessFailure("Claude Code requested a tool outside the session")
+                if not isinstance(use_id, str) or not use_id:
+                    raise HarnessFailure("Claude Code requested a tool without identity")
                 # The Hub needs the model message before its MCP calls run.
-                self._unpublished.append((name.removeprefix(_PREFIX), json_dumps(arguments)))
+                self._batch.append(use_id)
+                use = (name.removeprefix(_PREFIX), json_dumps(arguments), self._batch)
+                self._unpublished.append((use_id, use))
                 self._announce("toolUse")
 
     def _announce(self, stop_reason: str) -> None:
@@ -456,17 +468,27 @@ class ClaudeCodeSession:
         self._announce("stop")
         self._out.append({"type": "lifecycle", "name": "turn_end"})
         self._message, self._text, self._usage, self._announced = None, [], None, False
+        self._batch = []
         self._announcement_returned = False
 
-    async def await_tool_call(self, name: str, arguments: dict[str, JsonValue]) -> None:
-        use = (name, json_dumps(arguments))
+    async def await_tool_call(
+        self, name: str, arguments: dict[str, JsonValue], meta: Mapping[str, JsonValue]
+    ) -> ToolBatch:
+        use_id = meta.get(_TOOL_USE_META)
+        if not isinstance(use_id, str):
+            raise HarnessFailure("Claude Code made an MCP call without its tool use identity")
         # Bounded: a call never waits forever for output Claude Code did not write.
         loop = asyncio.get_running_loop()
         deadline = loop.time() + _CORRELATION_TIMEOUT_SECONDS
-        while use not in self._published and loop.time() < deadline:
+        while use_id not in self._published and loop.time() < deadline:
             await asyncio.sleep(0.02)
-        if use in self._published:
-            self._published.remove(use)
+        use = self._published.pop(use_id, None)
+        if use is None:
+            raise HarnessFailure("Claude Code made an MCP call its output never requested")
+        if use[:2] != (name, json_dumps(arguments)):
+            raise HarnessFailure("Claude Code made an MCP call that differs from its request")
+        await asyncio.sleep(_BATCH_SETTLE_SECONDS)
+        return ToolBatch(use_id, tuple(use[2]))
 
     async def _user(self, text: str) -> None:
         await self._process.write(
