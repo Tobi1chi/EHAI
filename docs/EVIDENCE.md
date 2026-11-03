@@ -16,10 +16,24 @@
 - 一次通过只证明该路径；未覆盖范围必须写明，不能由接口存在、HTTP 200 或工具数量推断。
 - 薄验证、模型工具试用和隔离能力试用都不是产品 E2E；产品 E2E 见 [REFACTOR_PLAN](REFACTOR_PLAN.md#产品-e2e)。
 
+## 真实验收清单（11-03 计划第 8 步）
+
+本机有凭证的两项已执行（见核心执行 11-04 行）；其余需要用户本人的桌面操作或账号，按下表自行完成后补一行证据。
+
+| 项目 | 状态 | 命令 | 核对点 |
+| --- | --- | --- | --- |
+| DeepSeek Planner/Worker | 已执行 | `ehai init --provider deepseek --model deepseek-flash --credential-env DEEPSEEK_API_KEY`，`ehai up`，`ehai add <仓库> --shell '<验收命令>'`，无参数 `ehai` | doctor 全 PASS；草稿可批准；Run completed；integrate 只含预期文件；新分支指向整合 commit，用户仓库不切换 |
+| Claude Code 真实会话 | 已执行（DeepSeek 兼容端点） | Hub 级会话，`kind: claude-code`，设置含 `executable`、`base_url`、`environment_names` | MCP 工具调用逐个对到 tool_use；结束工具单独调用；会话 settled。用 Anthropic 模型复验需用户的 `ANTHROPIC_API_KEY` |
+| 系统通知 | 待用户 | `npm ci --prefix desktop`，`npm --prefix desktop run dev`，在工作台制造一条新待办（例如带人工检查的 Run） | 窗口在后台时弹出系统通知；首次需在系统设置允许通知；点击回到工作台 |
+| 桌面文件夹选择器 | 待用户 | 同上，工作台“添加项目文件夹…” | 弹出系统文件夹对话框；选中后工作区登记成功并显示 ready；取消不登记 |
+| Google Calendar 真实账号 | 待用户 | 见 [Connector 协议](CONNECTOR_PROTOCOL.md#google-calendar-配置和调用)：`ehai-google-calendar init` → `authorize`（用户本人浏览器登录） → `run` | 列出日历；只在允许的 primary 上建日程并能在 Google Calendar 看到；重复调用不重复创建；授权文件不进 EHAI 主进程 |
+
 ## 核心执行
 
 | 日期 | 场景 | 模型 | 结果 | 未覆盖 | 原文 |
 | --- | --- | --- | --- | --- | --- |
+| 11-04 | 真实验收：终端交互会话走完一条线程（11-03 计划第 8 步） | 真实 DeepSeek `deepseek-flash`（官方端点，凭证只经 `DEEPSEEK_API_KEY`） | 全新 EHAI_HOME：`ehai init --provider deepseek` → `up` → `add` → `doctor --probe` 全部 PASS；无参数 `ehai` 以脚本输入 `new` 建线程，Planner 约 1 分钟给出两个并行写代码节点 + 只读 Reviewer + 人工检查；`approve` 显示执行配置后开始，两个节点约 1 分钟完成，Reviewer 后打开人工检查；`todo` → `pass` 后 Run completed，`integrate` 只改两个模块文件，`branch` 建出 `ehai/accept-deepseek`，用户仓库仍在 main、工作树干净；3 个 Attempt 全部 succeeded，`verify.py` 隐藏用例全部通过。发现：`ehai add` 未给 `--shell` 时执行配置没有允许的命令，说明里“verify.py 退出 0”的要求没有成为命令 Gate（批准前显示 `commands none`）；新会话里 `pass 1` 先要 `todo`（按设计） | 命令 Gate 路径（本次没有允许的命令）、整合冲突、Windows、桌面窗口 | 本行 |
+| 11-04 | 真实验收：Claude Code 真实会话（11-03 计划第 8 步） | 真实 Claude Code 2.1.109 + DeepSeek 的 Anthropic 兼容端点（`deepseek-chat`，凭证经 `ANTHROPIC_API_KEY` 只传给 DeepSeek） | 经本机 Hub 的 claude-code 兼容层启动会话（只开放 EHAI 的 wait/finish 两个 MCP 工具）：模型先调 wait、拿到结果后单独调 finish，两次 MCP 调用都按 `claudecode/toolUseId` 对到各自的 tool_use、批次只含自身，会话 settled | Anthropic 模型；经 `ehai-api` 的完整 Run（Planner/Worker/Reviewer 走 Claude Code）；取消与续用的真实模型路径；Windows | 本行 |
 | 11-03 | 写入中断与长链接续、重复人工 Check（11-03 计划第 7 步） | 0（真实 Pi 1.3.0 + 脚本化模型服务，仓库外诊断） | 六节点串行链 + 只读 Reviewer + 命令 Gate，在 Step 2 写入前、Step 4 写入后未提交、Reviewer 第一次请求处各强杀并重启一次：每次约 297 秒后旧 Attempt 记为 interrupted、新 Attempt 完成；Run completed，整合 diff 中六个文件各一次，整合 commit 与结果 commit 一致；重复的节点 Gate 问题（大小写、空白、全角标点不同）与节点/最终 Gate 重复在导入时 422 `HUMAN_CHECK_DUPLICATE` | 真实模型；`workspace_write` 执行中的强杀；并行分支同时中断；措辞不同的语义重复；Windows | [REFACTOR_PLAN](REFACTOR_PLAN.md#2026-11-03-p2-加固写入中断长链接续与重复人工-check11-03-计划第-7-步) |
 | 11-03 | Claude Code 兼容层（ADR 0007 第 8 步） | 0（真实 Claude Code 2.1.109 + 仓库外脚本化 Anthropic SSE 服务） | 产品 E2E 场景的仓库外副本改用 `--harness-config` 的 Claude Code 文档后通过：两个任务、汇合与 Reviewer 共 4 个原生会话全部经 MCP 调用 `workspace_write`/`submit_candidate`，强杀重启、人工 Check、整合与建分支照常；Hub 级诊断：健康含能力清单，resolve 记录 CLI 版本；工具执行中发出的中途消息在工具返回后加入本轮，回放哈希与核心一致；续用会话带上 7 条历史，全新会话遇到已有历史被拒；取消后本轮以 `error_during_execution` 结束；`inspect-agent --claude-code` 无凭证通过。探查中发现：会话恢复按工作目录查找（改用固定工作目录），每个会话有一次不带工具的标题请求（脚本服务需单独应答） | 真实模型；Windows；独立 Hub；权限核对的拒绝路径只做了代码核对；Planner/过程审查等 E2E 未经过的角色 | [REFACTOR_PLAN](REFACTOR_PLAN.md#2026-11-03-claude-code-兼容层adr-0007-第-8-步) |
 | 11-03 | 执行配置 `harness` 形状与 Hub 侧 Pi 配置校验（ADR 0007 第 6 步） | 0（真实 Pi 1.3.0 + 脚本化模型服务；诊断不启动模型） | 产品 E2E 通过（主机配置为 `harness` 形状，角色经 Hub 启动前检查能力）；仓库外诊断：用上一版代码生成旧形状文档，新代码读回逐字节相同、指纹不变，主机新形状配置的比较形式等于旧文档，Pi 指纹等于旧 `configuration_hash`，版本不符被拒；旧代码登记的管理器工作区在新代码下启动、执行配置以 `harness` 形状返回，此前完成的 Run 与线程可读；`ehai doctor` 经 Hub 探查 Node/Pi 并校验设置 | 升级前未完成 Run 的跨版本恢复（只核对了文档与指纹）；远端 Hub；Windows | [REFACTOR_PLAN](REFACTOR_PLAN.md#2026-11-03-harness-执行配置与能力清单adr-0007-第-6-步) |
