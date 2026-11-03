@@ -15,3 +15,18 @@ WORKFLOW_MIGRATION = (
         response_json TEXT NOT NULL CHECK(json_valid(response_json))
     )""",
 )
+
+# Custom workflow definitions: immutable revisions, one name per project.
+WORKFLOW_DEFINITION_MIGRATION = (
+    """CREATE TABLE workflow_definitions (
+        definition_id TEXT PRIMARY KEY,
+        project_id TEXT NOT NULL REFERENCES projects(project_id),
+        name TEXT NOT NULL,
+        revision INTEGER NOT NULL CHECK(revision > 0),
+        snapshot_json TEXT NOT NULL CHECK(json_valid(snapshot_json)),
+        UNIQUE(project_id, name, revision),
+        CHECK(json_extract(snapshot_json,'$.definition_id') = definition_id),
+        CHECK(json_extract(snapshot_json,'$.revision') = revision)
+    )""",
+    "CREATE INDEX workflow_definition_project ON workflow_definitions(project_id)",
+)

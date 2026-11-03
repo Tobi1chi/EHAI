@@ -1,13 +1,18 @@
 # P4 自定义生活 Workflow 设计
 
-更新：2026-09-24。本文是根据用户澄清形成的目标设计，不是已实现 API 或执行能力说明。
+更新：2026-11-03。本文是根据用户澄清形成的目标设计，不是已实现 API 或执行能力说明。
 现有实现见 [WORKFLOWS](WORKFLOWS.md)，运行证据见 [EVIDENCE](EVIDENCE.md#p4-生活事务与外部连接)。
+
+2026-11-03 增量：自定义 Workflow 第一版已接通（[用法](WORKFLOWS.md#自定义-workflow)、[执行记录](#执行记录)）：
+定义版本与保存时校验、条件分支、Connector 动作步骤（先存意图再排队调用，结果即收据）、
+人工步骤进统一 Inbox、持久时间等待、Routine 绑定流程版本。事件触发、并行、子流程、取消 Run、
+带时区的日历重复规则和真实票务服务仍未实现。
 
 2026-09-24 增量：按用户要求先实现版本兼容的代码接口，但生产保持关闭；
 已接通独立 Run/步骤/调用/等待记录及查询，应用于现有两个固定流程。
 随后已接通独立进程的 Connector HTTP 协议和 Google Calendar 适配器，并通过本地替身试用，
 见 [Connector 协议与用法](CONNECTOR_PROTOCOL.md)；真实 Google 账号尚未授权验证。
-自定义图、分支运行和事件触发仍未实现，不能据这些增量推断通用引擎完成。
+（09-24 时）自定义图、分支运行和事件触发仍未实现；11-03 增量见上。
 
 ## 用户结果与范围修正
 
@@ -158,5 +163,44 @@ Connector 按注册动作接入通用调用入口，不在调度器中加入 Goo
    Routine 引用流程版本，取消对 life.review 的硬绑定；旧 Routine 保持原回顾语义。
 3. 完成上述正常入口场景和一个真实 Connector 的有界试用，再进入前端设计。
 
-上述通用图执行尚未实现；独立记录、关闭的兼容代码和独立 Connector 协议分别记录实际能力与证据。
+第 1、2 步的第一版已在 11-03 接通，其中事件等待与事件触发未做；第 3 步的真实 Connector 试用待用户授权。
 不在使用文档中提前添加不存在的命令、状态值或配置格式。
+
+## 执行记录
+
+### 2026-11-03 自定义 Workflow 第一版（11-03 计划第 6 步）
+
+实现取舍，均按 11-03 已定决定“有限无环单路径图；动作/条件/人工/等待/结束；先存意图再发请求；
+Routine 绑定流程版本”落地，未扩大范围：
+
+- 定义保存为 Project 内不可变版本（`workflow_definitions`，schema 23→24），同名再保存需给出最新
+  `expected_revision`。Run 的 `definition_snapshot` 带完整定义，执行只读快照，不回查定义表。
+- 数据引用只能读每条路径都先经过的步骤（按支配关系判断），保存时拒绝；因此重新汇合后读不到只在
+  某一分支执行的步骤输出。需要分支各自输出时用不同的结束步骤，或在汇合前分别处理。
+- 写动作授权二选一：`approval_step`（人工步骤支配该动作，且其拒绝/超时出口到达不了该动作）
+  或 `standing_write`。批准绑定进入人工步骤时冻结的 subject，示例流程的预订输入引用
+  `steps.approve.subject.*`，执行的就是批准的车次与价格。价格/有效期的再确认由 Connector 自身校验
+  （例如预订动作以批准价为上限），引擎不为特定服务加分支。
+- 动作步骤与 Connector 调用排队同在一个 SQLite 事务；结果由调度 tick 轮询调用状态后应用，
+  未在 Connector 回传事务里回调 Workflow，保持两个服务的边界。未知结果进 Inbox
+  （新增 `workflow_reconciliation` 类别），沿用既有 reconcile，不自动重试写入。
+- Connector 失败与引用/类型/Schema 错误使 Run `failed`，不选择业务分支；第一版不提供失败出口或取消 Run。
+- Routine：旧记录缺少新字段时按 `life.review` 默认值读取，语义不变；自定义绑定要求显式
+  `missed_run_policy`，不把回顾的合并规则默认用于订票；上一 Run 未结束时跳过本次触发。
+  `skip` 的 60 秒宽限是为每秒一次的 tick 留余量。
+- 人工步骤沿用 `DecideWorkflowRequest`（expected_version 为 Run 版本），走新端点
+  `step-decisions`，固定流程的 `decisions` 端点与响应不变。
+
+验证（仓库外临时驱动，未提交；0 次模型调用）：真实 `ehai-api`（fake Worker）+ CLI 写入，
+桥接接口上的 Connector 替身（查票、预订、写日程、通知四个动作），32 项核对全部通过：
+动作目录；保存时拒绝无授权写动作、循环、引用后续步骤；版本重放与 409；
+查票 → 条件 → 人工（Inbox、过期版本 409）→ 预订 → 写日程 → 等待 → 通知 → booked；
+等待期间停止并重启宿主后等待到期继续；通知回传 unknown 后进 Inbox，reconcile 后同一调用核对完成，
+没有第二次执行；价格超限走 no_suitable_train；拒绝走 user_declined 且不预订；查票 503 使 Run failed；
+不符 inputs_schema 的输入 400；Routine 绑定版本 1、错过 3 次只运行一次、上一 Run 等待时跳过；
+无绑定 Routine 仍生成 life.review；固定流程列表不含自定义 Run。另用一个 schema 23 的既有数据库
+验证迁移到 24。场景中修复了一处问题：CLI 路径参数表缺 `definition_id`，`start-custom-workflow`
+无法传入版本 ID，已补上后重跑通过。
+
+未覆盖：真实票务/日历/通知服务、事件等待与事件触发、多宿主共库并发推进、Connector 长时间不回传、
+Web 页面。产品 E2E 未扩展（主路径未变），仍为编码场景。

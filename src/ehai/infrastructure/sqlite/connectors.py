@@ -22,13 +22,13 @@ class SQLiteConnectorStore:
         connection = self.database.connect() if write else self.database._connect_read_only()
         try:
             connection.execute("BEGIN IMMEDIATE" if write else "BEGIN DEFERRED")
-            yield _Transaction(connection)
+            yield SQLiteConnectorTransaction(connection)
             connection.commit()
         finally:
             connection.close()
 
 
-class _Transaction:
+class SQLiteConnectorTransaction:
     def __init__(self, connection: sqlite3.Connection) -> None:
         self.db = connection
 

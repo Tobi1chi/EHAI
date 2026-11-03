@@ -389,7 +389,7 @@ uv run ehai @Api get-inbox-item --kind human_check --request-id '<check-run-id>'
 HTTP 为 `GET /api/v1/inbox?project_id=...&run_id=...` 和
 `GET /api/v1/inbox/{kind}/{request_id}`。两种筛选均可省略，同时提供时必须符合归属，
 否则 422；不存在的项目、Run 或待办返回 404。首版返回该宿主范围内的完整当前待办列表，
-没有分页或新的待办存储。`kind` 包含 `intervention`、`human_check`、`note`、`workflow_confirmation`。
+没有分页或新的待办存储。`kind` 包含 `intervention`、`human_check`、`note`、`workflow_confirmation`、`workflow_reconciliation`（自定义 Workflow 的未知调用结果，见 [WORKFLOWS](WORKFLOWS.md#自定义-workflow)）。
 运行前便签可以只有项目/目标归属，因此 owner 的 Run、节点、Attempt 和 Run 状态允许 null。
 
 每项包含 `owner` 归属、问题、证据、源状态、`pending`、`actionable`、不可处理原因、

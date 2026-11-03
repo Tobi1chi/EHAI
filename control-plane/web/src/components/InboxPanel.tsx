@@ -16,6 +16,7 @@ import {
   dispositionRows,
   INBOX_KIND,
   inboxQuestion,
+  isLifeCapture,
   RUN_STATUS,
 } from "../lib/labels";
 import { actorName, usePrefs } from "../lib/prefs";
@@ -101,7 +102,7 @@ function InboxBody({ workspaceId, item, onDone }: { workspaceId: string; item: I
             </dd>
           </>
         )}
-        {owner.workflow_run_id && (
+        {owner.workflow_run_id && isLifeCapture(item) && (
           <>
             <dt>记录</dt>
             <dd>
@@ -111,7 +112,7 @@ function InboxBody({ workspaceId, item, onDone }: { workspaceId: string; item: I
         )}
       </dl>
       {/* A capture's evidence is its source text, which the decision form shows as 原文. */}
-      {item.evidence_summary && item.kind !== "workflow_confirmation" && (
+      {item.evidence_summary && !isLifeCapture(item) && (
         <div className="section">
           <div className="h2">依据</div>
           <div className="body pre">{item.evidence_summary}</div>

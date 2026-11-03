@@ -84,7 +84,8 @@ export const INBOX_KIND: Record<InboxKind, string> = {
   intervention: "求助",
   human_check: "人工检查",
   note: "便签",
-  workflow_confirmation: "录入确认",
+  workflow_confirmation: "流程确认",
+  workflow_reconciliation: "核对外部调用",
 };
 
 export const WORKSPACE_STATUS: Record<WorkspaceDescriptor["status"], string> = {
@@ -121,6 +122,10 @@ export function actionLabel(action: InboxAction): string {
       }
     case "decide-workflow":
       return "批准或拒绝";
+    case "decide-workflow-step":
+      return "批准或拒绝";
+    case "reconcile-connector-call":
+      return "核对调用";
   }
 }
 
@@ -155,6 +160,10 @@ export function actionHint(action: InboxAction): string {
       }
     case "decide-workflow":
       return "保存这些待办，或者不保存。";
+    case "decide-workflow-step":
+      return "流程按你的决定走批准或拒绝的那条路。";
+    case "reconcile-connector-call":
+      return "让连接器核对这次调用是否已生效，不会再执行一次。";
   }
 }
 
@@ -184,11 +193,27 @@ export const RECIPE_TARGET: Record<string, string> = {
   "inbox.list": "查看待处理",
 };
 
-// Workflow confirmations carry a fixed English question written for API callers; the page shows
-// the candidates itself. Other questions come from the user's own criteria or the Worker.
-// The caller-facing next_step is not shown: each action button carries its own hint.
-export function inboxQuestion(item: { kind: InboxKind; question: string }): string {
-  return item.kind === "workflow_confirmation" ? "确认后保存这些待办" : item.question;
+// A life.capture confirmation is requested on the workflow run itself; a custom workflow's human
+// step is requested on its wait record, so its request_id differs from the run's ID.
+export function isLifeCapture(item: {
+  kind: InboxKind;
+  request_id: string;
+  owner: { workflow_run_id: string | null };
+}): boolean {
+  return item.kind === "workflow_confirmation" && item.request_id === item.owner.workflow_run_id;
+}
+
+// Life capture confirmations carry a fixed English question written for API callers; the page
+// shows the candidates itself. Other questions come from the user's own criteria, a workflow
+// definition or the Worker. The caller-facing next_step is not shown: each action button carries
+// its own hint.
+export function inboxQuestion(item: {
+  kind: InboxKind;
+  request_id: string;
+  question: string;
+  owner: { workflow_run_id: string | null };
+}): string {
+  return isLifeCapture(item) ? "确认后保存这些待办" : item.question;
 }
 
 const DISPOSITION_LABEL: Record<string, string> = {

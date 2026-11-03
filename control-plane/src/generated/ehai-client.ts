@@ -15,7 +15,7 @@ export type ErrorResponse = {
 };
 };
 
-export type EventType = "ProjectCreated" | "GoalCreated" | "CompletionContractConfirmed" | "PlanRevisionProposed" | "PlanRevisionApproved" | "PlanningTurnStarted" | "PlanningTurnCompleted" | "PlanningTurnFailed" | "ProcessDraftStarted" | "ProcessDraftCompleted" | "ProcessDraftFailed" | "ProcessReviewStarted" | "ProcessReviewCompleted" | "ProcessReviewFailed" | "ProcessRevisionApplied" | "ProcessAdjustmentStarted" | "ProcessAdjustmentFinished" | "ProcessAdjustmentSkipped" | "PlanNodeReadied" | "PlanNodeStalled" | "PlanNodeSuspended" | "PlanNodeRecovered" | "PlanNodeStarted" | "PlanNodeCandidateSubmitted" | "PlanNodeCompleted" | "PlanNodeFailed" | "PlanNodeReopened" | "PlanNodePruned" | "BranchSelected" | "BranchPruned" | "BranchSelectionInvalidated" | "RunConfigurationCaptured" | "RunStarted" | "RunSuccessorCreated" | "RunPaused" | "RunResumed" | "RunCompleted" | "RunFailed" | "RunCancelled" | "IntegrationCreated" | "IntegrationBranchCreated" | "AttemptStarted" | "AttemptQueued" | "AttemptDispatched" | "AttemptBound" | "AttemptHeartbeatObserved" | "AttemptWaiting" | "AttemptDeadlineExtended" | "AttemptRetryScheduled" | "AttemptSucceeded" | "AttemptFailed" | "AttemptTimedOut" | "AttemptCancelled" | "AttemptInterrupted" | "DispatchWorkClaimed" | "EndpointHealthChanged" | "ProviderUsageRecorded" | "ArtifactCreated" | "CheckStarted" | "CheckPassed" | "CheckFailed" | "CheckInterrupted" | "GatePassed" | "GateFailed" | "CheckpointCreated" | "CheckpointRestored" | "WorkspacePreserved" | "PhaseSessionOpened" | "PhaseSessionJoined" | "PhaseContextPublished" | "AttemptHandoffConfirmed" | "NoteCreated" | "WorkflowRunChanged" | "LifeTaskChanged" | "RoutineChanged" | "ConnectorCallChanged" | "ConnectorEventReceived" | "RoutingRequestChanged" | "RoutingCatalogChanged" | "RoutingCandidateCreated" | "NoteMessageAdded" | "NoteDecisionStarted" | "NoteDecisionCompleted" | "NoteDecisionFailed" | "InterventionOpened" | "InterventionReplied";
+export type EventType = "ProjectCreated" | "GoalCreated" | "CompletionContractConfirmed" | "PlanRevisionProposed" | "PlanRevisionApproved" | "PlanningTurnStarted" | "PlanningTurnCompleted" | "PlanningTurnFailed" | "ProcessDraftStarted" | "ProcessDraftCompleted" | "ProcessDraftFailed" | "ProcessReviewStarted" | "ProcessReviewCompleted" | "ProcessReviewFailed" | "ProcessRevisionApplied" | "ProcessAdjustmentStarted" | "ProcessAdjustmentFinished" | "ProcessAdjustmentSkipped" | "PlanNodeReadied" | "PlanNodeStalled" | "PlanNodeSuspended" | "PlanNodeRecovered" | "PlanNodeStarted" | "PlanNodeCandidateSubmitted" | "PlanNodeCompleted" | "PlanNodeFailed" | "PlanNodeReopened" | "PlanNodePruned" | "BranchSelected" | "BranchPruned" | "BranchSelectionInvalidated" | "RunConfigurationCaptured" | "RunStarted" | "RunSuccessorCreated" | "RunPaused" | "RunResumed" | "RunCompleted" | "RunFailed" | "RunCancelled" | "IntegrationCreated" | "IntegrationBranchCreated" | "AttemptStarted" | "AttemptQueued" | "AttemptDispatched" | "AttemptBound" | "AttemptHeartbeatObserved" | "AttemptWaiting" | "AttemptDeadlineExtended" | "AttemptRetryScheduled" | "AttemptSucceeded" | "AttemptFailed" | "AttemptTimedOut" | "AttemptCancelled" | "AttemptInterrupted" | "DispatchWorkClaimed" | "EndpointHealthChanged" | "ProviderUsageRecorded" | "ArtifactCreated" | "CheckStarted" | "CheckPassed" | "CheckFailed" | "CheckInterrupted" | "GatePassed" | "GateFailed" | "CheckpointCreated" | "CheckpointRestored" | "WorkspacePreserved" | "PhaseSessionOpened" | "PhaseSessionJoined" | "PhaseContextPublished" | "AttemptHandoffConfirmed" | "NoteCreated" | "WorkflowRunChanged" | "WorkflowExecutionChanged" | "LifeTaskChanged" | "RoutineChanged" | "ConnectorCallChanged" | "ConnectorEventReceived" | "RoutingRequestChanged" | "RoutingCatalogChanged" | "RoutingCandidateCreated" | "NoteMessageAdded" | "NoteDecisionStarted" | "NoteDecisionCompleted" | "NoteDecisionFailed" | "InterventionOpened" | "InterventionReplied";
 
 export type EventEnvelope = {
   readonly id: Id;
@@ -791,7 +791,7 @@ export type RuntimeContextResponse = {
   readonly data: RuntimeContextView;
 };
 
-export type InboxKind = "intervention" | "human_check" | "note" | "workflow_confirmation";
+export type InboxKind = "intervention" | "human_check" | "note" | "workflow_confirmation" | "workflow_reconciliation";
 
 export type InboxOwner = {
   readonly project_id: string;
@@ -812,7 +812,7 @@ export type InboxEvidence = {
 };
 
 export type InboxAction = {
-  readonly operation: "reply-intervention" | "decide-human-check" | "add-note-message" | "decide-note" | "decide-workflow";
+  readonly operation: "reply-intervention" | "decide-human-check" | "add-note-message" | "decide-note" | "decide-workflow" | "decide-workflow-step" | "reconcile-connector-call";
   readonly label: string;
   readonly effect: string;
   readonly input_fields: ReadonlyArray<string>;
@@ -1493,12 +1493,95 @@ export type RunConfigurationResponse = {
 };
 };
 
+export type ActionStep_Input = {
+  readonly type: "action";
+  readonly id: string;
+  readonly connector_id: string;
+  readonly action: string;
+  readonly action_version: string;
+  readonly inputs?: Readonly<Record<string, RefValue | LiteralValue_Input | TemplateValue>>;
+  readonly approval_step?: string | null;
+  readonly standing_write?: boolean;
+  readonly next: string;
+};
+
+export type ActionStep_Output = {
+  readonly type: "action";
+  readonly id: string;
+  readonly connector_id: string;
+  readonly action: string;
+  readonly action_version: string;
+  readonly inputs?: Readonly<Record<string, RefValue | LiteralValue_Output | TemplateValue>>;
+  readonly approval_step?: string | null;
+  readonly standing_write?: boolean;
+  readonly next: string;
+};
+
+export type AllCondition_Input = {
+  readonly op: "all";
+  readonly conditions: ReadonlyArray<CompareCondition_Input | ExistsCondition | AllCondition_Input | AnyCondition_Input | NotCondition_Input>;
+};
+
+export type AllCondition_Output = {
+  readonly op: "all";
+  readonly conditions: ReadonlyArray<CompareCondition_Output | ExistsCondition | AllCondition_Output | AnyCondition_Output | NotCondition_Output>;
+};
+
+export type AnyCondition_Input = {
+  readonly op: "any";
+  readonly conditions: ReadonlyArray<CompareCondition_Input | ExistsCondition | AllCondition_Input | AnyCondition_Input | NotCondition_Input>;
+};
+
+export type AnyCondition_Output = {
+  readonly op: "any";
+  readonly conditions: ReadonlyArray<CompareCondition_Output | ExistsCondition | AllCondition_Output | AnyCondition_Output | NotCondition_Output>;
+};
+
+export type CompareCondition_Input = {
+  readonly op: "eq" | "ne" | "lt" | "le" | "gt" | "ge";
+  readonly left: RefValue | LiteralValue_Input | TemplateValue;
+  readonly right: RefValue | LiteralValue_Input | TemplateValue;
+};
+
+export type CompareCondition_Output = {
+  readonly op: "eq" | "ne" | "lt" | "le" | "gt" | "ge";
+  readonly left: RefValue | LiteralValue_Output | TemplateValue;
+  readonly right: RefValue | LiteralValue_Output | TemplateValue;
+};
+
+export type ConditionCase_Input = {
+  readonly when: CompareCondition_Input | ExistsCondition | AllCondition_Input | AnyCondition_Input | NotCondition_Input;
+  readonly next: string;
+};
+
+export type ConditionCase_Output = {
+  readonly when: CompareCondition_Output | ExistsCondition | AllCondition_Output | AnyCondition_Output | NotCondition_Output;
+  readonly next: string;
+};
+
+export type ConditionStep_Input = {
+  readonly type: "condition";
+  readonly id: string;
+  readonly cases: ReadonlyArray<ConditionCase_Input>;
+  readonly default: string;
+};
+
+export type ConditionStep_Output = {
+  readonly type: "condition";
+  readonly id: string;
+  readonly cases: ReadonlyArray<ConditionCase_Output>;
+  readonly default: string;
+};
+
 export type CreateRoutineRequest = {
   readonly idempotency_key: string;
   readonly name: string;
   readonly interval_seconds: number;
   readonly next_due_at: string;
   readonly enabled?: boolean;
+  readonly workflow_definition_id?: string | null;
+  readonly inputs?: Readonly<Record<string, JsonValue>> | null;
+  readonly missed_run_policy?: "run_once" | "skip" | null;
 };
 
 export type DecideWorkflowRequest = {
@@ -1507,6 +1590,47 @@ export type DecideWorkflowRequest = {
   readonly decision: "approve" | "reject";
   readonly actor: string;
   readonly reason: string;
+};
+
+export type EndStep_Input = {
+  readonly type: "end";
+  readonly id: string;
+  readonly outcome: string;
+  readonly result?: Readonly<Record<string, RefValue | LiteralValue_Input | TemplateValue>>;
+};
+
+export type EndStep_Output = {
+  readonly type: "end";
+  readonly id: string;
+  readonly outcome: string;
+  readonly result?: Readonly<Record<string, RefValue | LiteralValue_Output | TemplateValue>>;
+};
+
+export type ExistsCondition = {
+  readonly op: "exists";
+  readonly ref: string;
+};
+
+export type HumanStep_Input = {
+  readonly type: "human";
+  readonly id: string;
+  readonly question: string;
+  readonly subject?: Readonly<Record<string, RefValue | LiteralValue_Input | TemplateValue>>;
+  readonly on_approve: string;
+  readonly on_reject: string;
+  readonly timeout_seconds?: number | null;
+  readonly on_timeout?: string | null;
+};
+
+export type HumanStep_Output = {
+  readonly type: "human";
+  readonly id: string;
+  readonly question: string;
+  readonly subject?: Readonly<Record<string, RefValue | LiteralValue_Output | TemplateValue>>;
+  readonly on_approve: string;
+  readonly on_reject: string;
+  readonly timeout_seconds?: number | null;
+  readonly on_timeout?: string | null;
 };
 
 export type LifeReview = {
@@ -1521,8 +1645,12 @@ export type LifeRoutine = {
   readonly routine_id: string;
   readonly project_id: string;
   readonly name: string;
-  readonly workflow?: "life.review";
-  readonly workflow_version?: 1;
+  readonly workflow?: "life.review" | "custom";
+  readonly workflow_version?: number;
+  readonly workflow_definition_id?: string | null;
+  readonly inputs?: Readonly<Record<string, JsonValue>> | null;
+  readonly missed_run_policy?: "run_once" | "skip" | null;
+  readonly skipped_occurrences?: number;
   readonly interval_seconds: number;
   readonly next_due_at: string;
   readonly enabled: boolean;
@@ -1549,10 +1677,47 @@ export type LifeTaskInput = {
   readonly due_at?: string | null;
 };
 
+export type LiteralValue_Input = {
+  readonly value: JsonValue;
+};
+
+export type LiteralValue_Output = {
+  readonly value: JsonValue;
+};
+
+export type NotCondition_Input = {
+  readonly op: "not";
+  readonly condition: CompareCondition_Input | ExistsCondition | AllCondition_Input | AnyCondition_Input | NotCondition_Input;
+};
+
+export type NotCondition_Output = {
+  readonly op: "not";
+  readonly condition: CompareCondition_Output | ExistsCondition | AllCondition_Output | AnyCondition_Output | NotCondition_Output;
+};
+
+export type RefValue = {
+  readonly ref: string;
+};
+
 export type RoutineSchedulerStatus = {
   readonly active: boolean;
   readonly last_tick_at: string | null;
   readonly last_error: string | null;
+};
+
+export type SaveWorkflowDefinitionRequest = {
+  readonly name: string;
+  readonly description: string;
+  readonly inputs_schema: Readonly<Record<string, JsonValue>>;
+  readonly start: string;
+  readonly steps: ReadonlyArray<ActionStep_Input | ConditionStep_Input | HumanStep_Input | WaitStep_Input | EndStep_Input>;
+  readonly idempotency_key: string;
+  readonly expected_revision: number | null;
+};
+
+export type StartCustomWorkflowRequest = {
+  readonly idempotency_key: string;
+  readonly inputs: Readonly<Record<string, JsonValue>>;
 };
 
 export type StartWorkflowRequest = {
@@ -1561,6 +1726,10 @@ export type StartWorkflowRequest = {
   readonly source_text?: string | null;
   readonly tasks?: ReadonlyArray<LifeTaskInput>;
   readonly require_confirmation?: boolean;
+};
+
+export type TemplateValue = {
+  readonly template: string;
 };
 
 export type UpdateLifeTaskRequest = {
@@ -1577,7 +1746,26 @@ export type UpdateRoutineRequest = {
   readonly interval_seconds: number;
   readonly next_due_at: string;
   readonly enabled?: boolean;
+  readonly workflow_definition_id?: string | null;
+  readonly inputs?: Readonly<Record<string, JsonValue>> | null;
+  readonly missed_run_policy?: "run_once" | "skip" | null;
   readonly expected_version: number;
+};
+
+export type WaitStep_Input = {
+  readonly type: "wait";
+  readonly id: string;
+  readonly until: RefValue | LiteralValue_Input | TemplateValue;
+  readonly offset_seconds?: number;
+  readonly next: string;
+};
+
+export type WaitStep_Output = {
+  readonly type: "wait";
+  readonly id: string;
+  readonly until: RefValue | LiteralValue_Output | TemplateValue;
+  readonly offset_seconds?: number;
+  readonly next: string;
 };
 
 export type WorkflowCompatibilityStatus = {
@@ -1604,6 +1792,24 @@ export type WorkflowDefinition = {
   readonly version?: 1;
   readonly description: string;
   readonly steps: ReadonlyArray<string>;
+};
+
+export type WorkflowDefinitionBody = {
+  readonly name: string;
+  readonly description: string;
+  readonly inputs_schema: Readonly<Record<string, JsonValue>>;
+  readonly start: string;
+  readonly steps: ReadonlyArray<ActionStep_Output | ConditionStep_Output | HumanStep_Output | WaitStep_Output | EndStep_Output>;
+};
+
+export type WorkflowDefinitionRevision = {
+  readonly definition_id: string;
+  readonly project_id: string;
+  readonly name: string;
+  readonly revision: number;
+  readonly digest: string;
+  readonly definition: WorkflowDefinitionBody;
+  readonly created_at: string;
 };
 
 export type WorkflowExecutionRecord = {
@@ -1643,6 +1849,7 @@ export type WorkflowInvocationRecord = {
   readonly error: string | null;
   readonly recorded_at: string;
   readonly completed_at: string | null;
+  readonly connector_call_id?: string | null;
 };
 
 export type WorkflowResponse_LifeRoutine_ = {
@@ -1655,6 +1862,10 @@ export type WorkflowResponse_LifeTask_ = {
 
 export type WorkflowResponse_RoutineSchedulerStatus_ = {
   readonly data: RoutineSchedulerStatus;
+};
+
+export type WorkflowResponse_WorkflowDefinitionRevision_ = {
+  readonly data: WorkflowDefinitionRevision;
 };
 
 export type WorkflowResponse_WorkflowExecutionView_ = {
@@ -1673,8 +1884,16 @@ export type WorkflowResponse_list_LifeTask__ = {
   readonly data: ReadonlyArray<LifeTask>;
 };
 
+export type WorkflowResponse_list_WorkflowDefinitionRevision__ = {
+  readonly data: ReadonlyArray<WorkflowDefinitionRevision>;
+};
+
 export type WorkflowResponse_list_WorkflowDefinition__ = {
   readonly data: ReadonlyArray<WorkflowDefinition>;
+};
+
+export type WorkflowResponse_list_WorkflowExecutionRecord__ = {
+  readonly data: ReadonlyArray<WorkflowExecutionRecord>;
 };
 
 export type WorkflowResponse_list_WorkflowRun__ = {
@@ -1706,7 +1925,7 @@ export type WorkflowStepExecution = {
   readonly node_id: string;
   readonly execution_index: number;
   readonly contract: WorkflowContractRef;
-  readonly status: "completed" | "waiting" | "skipped";
+  readonly status: "completed" | "waiting" | "skipped" | "failed";
   readonly inputs: Readonly<Record<string, JsonValue>>;
   readonly output: Readonly<Record<string, JsonValue>> | null;
   readonly recorded_at: string;
@@ -1742,6 +1961,18 @@ export type ConnectorAction_Input = {
 export type ConnectorAction_Output = {
   readonly name: string;
   readonly version: string;
+  readonly description: string;
+  readonly read_only: boolean;
+  readonly input_schema: Readonly<Record<string, JsonValue>>;
+  readonly output_schema: Readonly<Record<string, JsonValue>>;
+};
+
+export type ConnectorActionEntry = {
+  readonly connector_id: string;
+  readonly connector_name: string;
+  readonly connector_type: string;
+  readonly action: string;
+  readonly action_version: string;
   readonly description: string;
   readonly read_only: boolean;
   readonly input_schema: Readonly<Record<string, JsonValue>>;
@@ -1830,6 +2061,10 @@ export type ConnectorResponse_ConnectorEventReceipt_ = {
 
 export type ConnectorResponse_Union_ConnectorClaim__NoneType__ = {
   readonly data: ConnectorClaim | null;
+};
+
+export type ConnectorResponse_list_ConnectorActionEntry__ = {
+  readonly data: ReadonlyArray<ConnectorActionEntry>;
 };
 
 export type ConnectorResponse_list_ConnectorCall__ = {
@@ -2482,6 +2717,10 @@ export class EhaiApiClient {
     return this.request("/connector-calls/" + encodeURIComponent(callId) + "/reconcile", "POST", request);
   }
 
+  listConnectorActions(projectId: string): Promise<{ data: ConnectorActionEntry[] }> {
+    return this.request("/projects/" + encodeURIComponent(projectId) + "/connector-actions", "GET");
+  }
+
   startWorkflow(projectId: string, request: StartWorkflowRequest): Promise<{ data: WorkflowRun }> {
     return this.request("/projects/" + encodeURIComponent(projectId) + "/workflow-runs", "POST", request);
   }
@@ -2500,6 +2739,30 @@ export class EhaiApiClient {
 
   decideWorkflow(workflowRunId: string, request: DecideWorkflowRequest): Promise<{ data: WorkflowRun }> {
     return this.request("/workflow-runs/" + encodeURIComponent(workflowRunId) + "/decisions", "POST", request);
+  }
+
+  listWorkflowExecutions(projectId: string): Promise<{ data: WorkflowExecutionRecord[] }> {
+    return this.request("/projects/" + encodeURIComponent(projectId) + "/workflow-executions", "GET");
+  }
+
+  saveWorkflowDefinition(projectId: string, request: SaveWorkflowDefinitionRequest): Promise<{ data: WorkflowDefinitionRevision }> {
+    return this.request("/projects/" + encodeURIComponent(projectId) + "/workflow-definitions", "POST", request);
+  }
+
+  listWorkflowDefinitions(projectId: string): Promise<{ data: WorkflowDefinitionRevision[] }> {
+    return this.request("/projects/" + encodeURIComponent(projectId) + "/workflow-definitions", "GET");
+  }
+
+  getWorkflowDefinition(definitionId: string): Promise<{ data: WorkflowDefinitionRevision }> {
+    return this.request("/workflow-definitions/" + encodeURIComponent(definitionId), "GET");
+  }
+
+  startCustomWorkflow(definitionId: string, request: StartCustomWorkflowRequest): Promise<{ data: WorkflowExecutionView }> {
+    return this.request("/workflow-definitions/" + encodeURIComponent(definitionId) + "/runs", "POST", request);
+  }
+
+  decideWorkflowStep(workflowRunId: string, request: DecideWorkflowRequest): Promise<{ data: WorkflowExecutionView }> {
+    return this.request("/workflow-runs/" + encodeURIComponent(workflowRunId) + "/step-decisions", "POST", request);
   }
 
   listLifeTasks(projectId: string): Promise<{ data: LifeTask[] }> {

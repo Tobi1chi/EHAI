@@ -18,8 +18,16 @@ from ehai.domain.execution import Run, RunStatus
 from ehai.domain.goal import Goal, Project
 from ehai.domain.planning import PlanNodeStatus
 
-InboxKind = Literal["intervention", "human_check", "note", "workflow_confirmation"]
-INBOX_KINDS = ("intervention", "human_check", "note", "workflow_confirmation")
+InboxKind = Literal[
+    "intervention", "human_check", "note", "workflow_confirmation", "workflow_reconciliation"
+]
+INBOX_KINDS = (
+    "intervention",
+    "human_check",
+    "note",
+    "workflow_confirmation",
+    "workflow_reconciliation",
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -66,6 +74,8 @@ class InboxAction:
         "add-note-message",
         "decide-note",
         "decide-workflow",
+        "decide-workflow-step",
+        "reconcile-connector-call",
     ]
     label: str
     effect: str

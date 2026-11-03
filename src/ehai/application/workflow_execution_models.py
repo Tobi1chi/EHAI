@@ -37,7 +37,7 @@ class WorkflowStepExecution(WorkflowModel):
     node_id: str
     execution_index: int = Field(ge=1)
     contract: WorkflowContractRef
-    status: Literal["completed", "waiting", "skipped"]
+    status: Literal["completed", "waiting", "skipped", "failed"]
     inputs: dict[str, JsonValue]
     output: dict[str, JsonValue] | None
     recorded_at: datetime
@@ -58,6 +58,8 @@ class WorkflowInvocationRecord(WorkflowModel):
     error: str | None
     recorded_at: datetime
     completed_at: datetime | None
+    # The connector call that carries a connector invocation; its own record is the receipt.
+    connector_call_id: str | None = None
 
 
 class WorkflowWaitRecord(WorkflowModel):

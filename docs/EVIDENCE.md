@@ -88,6 +88,7 @@
 | 09-25 | 慢环转交 EHAI 克隆 | 真实 Go（65 次） | 运行源码绑定 409、克隆允许；目标 Goal 创建，但目标 Planner 两轮未收敛 | 整仓规划收敛、修改闭环 | [P4](history/RECORD_P4.md#2026-09-25慢环向独立-project-转交代码修改) |
 | 09-25 | 慢环转交最小项目 | 真实 Go（37 次） | 生成目标草稿，未授权命令被拒待修订；长流多次中断 | 修改闭环、传输稳定性 | [P4](history/RECORD_P4.md#后续复测独立最小项目) |
 | 09-27 | 最小项目修改链路 | 真实 Go（23 个响应） | 修订→批准→Pi 修改单文件→Reviewer→外部行为验证→人工验收，Run completed | 整仓目标、重复 human Check 生成、传输停顿 | [P4](history/RECORD_P4.md#2026-09-27最小目标项目修改链路完成) |
+| 11-03 | 自定义 Workflow 第一版（Connector 替身） | 0 | 真实 ehai-api + CLI：保存时校验、查票→条件→人工→预订→写日程→等待→通知 booked；重启后等待续走；unknown 进 Inbox，reconcile 不重放；无票/拒绝/503 分别结束或失败；Routine 绑定版本、跳过重叠；schema 23→24 迁移 | 真实服务、事件触发、多宿主并发、Web 页面 | [P4 设计](P4_WORKFLOW_DESIGN.md#2026-11-03-自定义-workflow-第一版11-03-计划第-6-步) |
 
 ## 已知未决问题
 

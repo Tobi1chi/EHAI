@@ -3207,7 +3207,8 @@
         "intervention",
         "human_check",
         "note",
-        "workflow_confirmation"
+        "workflow_confirmation",
+        "workflow_reconciliation"
       ]
     },
     "InboxOwner": {
@@ -3303,7 +3304,9 @@
             "decide-human-check",
             "add-note-message",
             "decide-note",
-            "decide-workflow"
+            "decide-workflow",
+            "decide-workflow-step",
+            "reconcile-connector-call"
           ]
         },
         "label": {

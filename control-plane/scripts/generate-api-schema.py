@@ -7,9 +7,11 @@ No lifespan, model call, existing database or user configuration is accessed.
 import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from typing import get_args, get_type_hints
 
 from pydantic import TypeAdapter
 
+from ehai.application.inbox import INBOX_KINDS, InboxAction
 from ehai.application.plan_imports import plan_import_error_schema, plan_import_schema
 from ehai.application.thread_queries import ThreadListView, ThreadSummary, ThreadTimelineView
 from ehai.domain.events import EventType
@@ -150,19 +152,10 @@ queries["$defs"]["PlannerCapacityResponse"] = {
     "required": ["data"],
     "properties": {"data": {"$ref": "#/$defs/PlannerCapacity"}},
 }
-queries["$defs"]["InboxKind"]["enum"] = [
-    "intervention",
-    "human_check",
-    "note",
-    "workflow_confirmation",
-]
-queries["$defs"]["InboxAction"]["properties"]["operation"]["enum"] = [
-    "reply-intervention",
-    "decide-human-check",
-    "add-note-message",
-    "decide-note",
-    "decide-workflow",
-]
+queries["$defs"]["InboxKind"]["enum"] = list(INBOX_KINDS)
+queries["$defs"]["InboxAction"]["properties"]["operation"]["enum"] = list(
+    get_args(get_type_hints(InboxAction)["operation"])
+)
 for name in ("run_id", "plan_node_id", "attempt_id", "goal_id", "workflow_run_id"):
     queries["$defs"]["InboxOwner"]["properties"][name] = {"$ref": "#/$defs/NullableId"}
 queries["$defs"]["InboxOwner"]["properties"]["run_status"] = {
@@ -343,11 +336,29 @@ workflow_names = {
     "WorkflowDefinition",
     "WorkflowRun",
     "WorkflowDecision",
+    "WorkflowDefinitionRevision",
+    "WorkflowDefinitionBody",
+    "SaveWorkflowDefinitionRequest",
+    "StartCustomWorkflowRequest",
+    "ActionStep",
+    "ConditionStep",
+    "ConditionCase",
+    "HumanStep",
+    "WaitStep",
+    "EndStep",
+    "RefValue",
+    "LiteralValue",
+    "TemplateValue",
+    "CompareCondition",
+    "ExistsCondition",
+    "AllCondition",
+    "AnyCondition",
+    "NotCondition",
 }
 workflow_definitions = {
-    name: manager_reference(definition)
+    name.replace("-", "_"): manager_reference(definition)
     for name, definition in document["components"]["schemas"].items()
-    if name in workflow_names or name.startswith("WorkflowResponse_")
+    if name.split("-")[0] in workflow_names or name.startswith("WorkflowResponse_")
 }
 (schema_root / "workflows.schema.json").write_text(
     json.dumps(

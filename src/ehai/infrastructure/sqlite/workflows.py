@@ -1,4 +1,4 @@
-"""Transactional persistence for fixed workflows and their life task records."""
+"""Transactional persistence for workflows, their definitions and life task records."""
 
 from __future__ import annotations
 
@@ -6,12 +6,16 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 
 from ehai import JsonValue, json_loads, normalize_id
+from ehai.application.custom_workflow_models import WorkflowDefinitionRevision
+from ehai.application.custom_workflows import LIFE_WORKFLOWS, is_custom
+from ehai.application.ports import StateConflictError
 from ehai.application.queries import QueryNotFoundError
 from ehai.application.workflow_execution_models import WorkflowExecutionRecord
 from ehai.application.workflow_models import WorkflowModel
 from ehai.application.workflow_recording import project_workflow_run
 from ehai.application.workflows import WorkflowEntity, WorkflowTransaction
 from ehai.domain.events import Event
+from ehai.infrastructure.sqlite.connectors import SQLiteConnectorTransaction
 from ehai.infrastructure.sqlite.database import SQLiteDatabase
 from ehai.infrastructure.sqlite.repository import SQLiteCommandReceiptStore, SQLiteEventLog
 from ehai.infrastructure.sqlite.workflow_execution import SQLiteWorkflowExecutionRecords
@@ -33,6 +37,61 @@ class SQLiteWorkflowStore:
 
 
 class _Transaction(SQLiteWorkflowExecutionRecords):
+    def execution_records(self, project_id: str) -> list[WorkflowExecutionRecord]:
+        return [
+            WorkflowExecutionRecord.model_validate_json(row[0])
+            for row in self.connection.execute(
+                "SELECT snapshot_json FROM workflow_execution_runs WHERE project_id=? "
+                "ORDER BY rowid",
+                (project_id,),
+            )
+        ]
+
+    def waiting_custom_runs(self) -> list[str]:
+        return [
+            str(row[0])
+            for row in self.connection.execute(
+                "SELECT workflow_run_id FROM workflow_execution_runs "
+                "WHERE json_extract(snapshot_json,'$.status')='waiting' ORDER BY rowid"
+            )
+        ]
+
+    def definition(self, definition_id: str) -> WorkflowDefinitionRevision:
+        row = self.connection.execute(
+            "SELECT snapshot_json FROM workflow_definitions WHERE definition_id=?",
+            (definition_id,),
+        ).fetchone()
+        if row is None:
+            raise QueryNotFoundError("Workflow definition", normalize_id(definition_id))
+        return WorkflowDefinitionRevision.model_validate_json(row[0])
+
+    def definitions(self, project_id: str) -> list[WorkflowDefinitionRevision]:
+        return [
+            WorkflowDefinitionRevision.model_validate_json(row[0])
+            for row in self.connection.execute(
+                "SELECT snapshot_json FROM workflow_definitions WHERE project_id=? "
+                "ORDER BY name, revision",
+                (project_id,),
+            )
+        ]
+
+    def save_definition(self, revision: WorkflowDefinitionRevision) -> None:
+        self.connection.execute(
+            "INSERT INTO workflow_definitions VALUES (?,?,?,?,?)",
+            (
+                revision.definition_id,
+                revision.project_id,
+                revision.name,
+                revision.revision,
+                revision.model_dump_json(),
+            ),
+        )
+
+    @property
+    def connectors(self) -> SQLiteConnectorTransaction:
+        """Connector records in this same SQLite transaction."""
+        return SQLiteConnectorTransaction(self.connection)
+
     def require_project(self, project_id: str) -> None:
         if (
             self.connection.execute(
@@ -48,6 +107,8 @@ class _Transaction(SQLiteWorkflowExecutionRecords):
             record = self.execution_record(entity_id)
             if record is None:
                 raise QueryNotFoundError("Workflow run", normalize_id(entity_id))
+            if is_custom(record):
+                raise StateConflictError("A custom workflow Run is read through its execution")
             return project_workflow_run(record).model_dump(mode="json")
         row = self.connection.execute(
             "SELECT snapshot_json FROM workflow_documents WHERE kind=? AND entity_id=?",
@@ -64,11 +125,11 @@ class _Transaction(SQLiteWorkflowExecutionRecords):
                 "WHERE (? IS NULL OR project_id=?) ORDER BY rowid",
                 (project_id, project_id),
             )
+            records = [WorkflowExecutionRecord.model_validate_json(row[0]) for row in rows]
             return [
-                project_workflow_run(
-                    WorkflowExecutionRecord.model_validate_json(row[0]),
-                ).model_dump(mode="json")
-                for row in rows
+                project_workflow_run(record).model_dump(mode="json")
+                for record in records
+                if record.definition.name in LIFE_WORKFLOWS
             ]
         rows = self.connection.execute(
             "SELECT snapshot_json FROM workflow_documents "

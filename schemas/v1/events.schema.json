@@ -79,6 +79,7 @@
         "AttemptHandoffConfirmed",
         "NoteCreated",
         "WorkflowRunChanged",
+        "WorkflowExecutionChanged",
         "LifeTaskChanged",
         "RoutineChanged",
         "ConnectorCallChanged",
