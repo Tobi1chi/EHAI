@@ -222,7 +222,10 @@ API 模式也可用 discuss-plan/propose-plan。每一步先确认退出码和�
 只给其中一个会在发送请求前报错。
 同一幂等键用于不同内容时，所有写命令（核心、便签、Workflow、Connector、路由实验）都返回 409 `conflict`；
 同键同内容的重放返回首次的响应。
-可复制 [执行配置示例](../examples/execution-api.json)，修改 model、workspace 和 pi 路径/Provider。
+可复制 [执行配置示例](../examples/execution-api.json)，修改 model、workspace 和 `harness.settings`
+中的 Pi 路径/Provider。harness 写成 `harness: {kind, version, settings}`，`version` 须与 Hub 安装的
+Pi 版本一致；设置由 Hub 校验。11-03 之前的形状（`worker_kind: "pi"` 加 `pi` 块）仍被接受，
+已授权文档原样保存、指纹不变；两种形状描述同一设置时视为一致。
 该示例与 README 的宿主启动参数配套；调整命令、并发、推理档位或超时也须同步修改两端。
 旧配置中的 endpoint_capabilities 与 codex_server 块仍被接受，只为保持已授权配置的指纹，没有执行效果；
 新配置可以省略，省略时按一直以来的默认值计入指纹。
@@ -312,8 +315,8 @@ uv run ehai @Local execute-plan --idempotency-key execute-001 --plan-revision-id
 uv run ehai @Local resume-session --run-id '<run-id>'
 ~~~
 
-执行文件指定 worker_kind=pi、model、reasoning_effort、workspace、capacity、allowed_commands、
-available_shells、git_permissions、command_timeout_seconds、pi 后端配置。
+执行文件指定 harness（或旧形状的 worker_kind=pi 加 pi 后端配置）、model、reasoning_effort、
+workspace、capacity、allowed_commands、available_shells、git_permissions、command_timeout_seconds。
 权限不因工作区可读而自动扩为写入、Shell 或 Git 写。前台文件允许解析器提供缺省值。
 
 execute-plan 是前台宿主；Ctrl+C 尝试收敛后保存恢复事实，不保证强杀或未知副作用可自动重放。

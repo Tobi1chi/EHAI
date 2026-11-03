@@ -84,9 +84,3 @@ source_modules = [
 ]
 forbidden_modules = ["ehai.hub.server", "ehai.hub.adapters"]
 allow_indirect_imports = true
-# Transitional until execution configuration uses the harness shape (ADR 0007, step 6).
-ignore_imports = [
-    "ehai.** -> ehai.hub.adapters.pi.config",
-    "ehai.interfaces.cli -> ehai.hub.adapters.pi.probe",
-    "ehai.interfaces.cli -> ehai.hub.adapters.pi.rpc",
-]

@@ -32,7 +32,6 @@ from ehai.application.agent_roles import (
 from ehai.application.agent_trace import AgentTrace, AgentTraceStore
 from ehai.application.agent_trace import AgentTraceEventType as TraceType
 from ehai.application.sanitization import redact_sensitive_text
-from ehai.hub.adapters.pi.config import PiBackendConfig
 from ehai.hub.client import HubClient, HubConnection, HubUnavailableError, default_hub
 from ehai.hub.protocol import (
     HEARTBEAT_SECONDS,
@@ -49,8 +48,10 @@ from ehai.hub.protocol import (
     ToolResult,
     ToolSpec,
 )
+from ehai.infrastructure.harnesses import HarnessConfig
 
-HARNESS = "pi"
+# Every role offers only EHAI tools, so the harness must be able to switch its own off.
+_REQUIRED_CAPABILITIES = ("tools.native.restrictable",)
 _EVENT_WAIT_SECONDS = 20.0
 
 
@@ -67,13 +68,14 @@ class HubRoleRunner:
         self,
         session_store: AgentTraceStore,
         *,
-        backend: PiBackendConfig,
-        state_root: Path,
+        harness: HarnessConfig,
+        state_root: Path | None = None,
         hub: HubClient | None = None,
     ) -> None:
         self.session_store = session_store
-        self.backend = backend
-        self.state_root = state_root.resolve()
+        self.harness = harness
+        # Without a root the compatibility layer keeps native sessions in its own place.
+        self.state_root = None if state_root is None else state_root.resolve()
         self.hub = hub or default_hub()
 
     def create_session(self, agent_session_ref_id: ID | None = None) -> AgentTrace:
@@ -111,15 +113,22 @@ class HubRoleRunner:
             raise HarnessExecutionUnknownError(
                 "An earlier harness invocation is incomplete; do not continue its native history"
             )
+        kind = self.harness.kind
         if session.events and (
-            not starts or any(event.payload.get("backend") != HARNESS for event in starts)
+            not starts or any(event.payload.get("backend") != kind for event in starts)
         ):
-            raise ValueError("Legacy model history cannot be resumed as a Pi session")
+            raise ValueError(f"Legacy model history cannot be resumed as a {kind} session")
         if any(
-            event.payload.get("configuration_hash") != self.backend.configuration_hash
-            for event in starts
+            event.payload.get("configuration_hash") != self.harness.fingerprint for event in starts
         ):
-            raise ValueError("Pi Session configuration differs from the authorized backend")
+            raise ValueError(f"{kind} Session configuration differs from the authorized backend")
+        missing = [
+            capability
+            for capability in (*_REQUIRED_CAPABILITIES, *(("session.resume",) if starts else ()))
+            if not self.harness.supports(capability)
+        ]
+        if missing:
+            raise ValueError(f"Harness {kind} does not declare {', '.join(missing)}")
         token = cancellation or CancellationToken()
         token.raise_if_cancelled()
         tool_set, executor = registry.freeze(config)
@@ -128,8 +137,13 @@ class HubRoleRunner:
             state_key=str(session.agent_session_ref_id),
             native_session_id=native_session_id or str(session.agent_session_ref_id),
             harness=HarnessSelection(
-                kind=HARNESS,
-                settings={**self.backend.to_document(), "state_root": str(self.state_root)},
+                kind=kind,
+                version=self.harness.version,
+                settings=(
+                    self.harness.settings
+                    if self.state_root is None
+                    else {**self.harness.settings, "state_root": str(self.state_root)}
+                ),
             ),
             fresh=not starts,
             system_prompt=config.system_prompt,
@@ -143,6 +157,7 @@ class HubRoleRunner:
         )
 
         invocation = _Invocation(
+            backend=kind,
             store=self.session_store,
             session=session,
             attempt_id=attempt_id,
@@ -162,9 +177,9 @@ class HubRoleRunner:
                     invocation.record(
                         TraceType.TURN_STARTED,
                         {
-                            "backend": HARNESS,
+                            "backend": kind,
                             "role": config.role.value,
-                            "configuration_hash": self.backend.configuration_hash,
+                            "configuration_hash": self.harness.fingerprint,
                             "native_session": started.native_session,
                         },
                     )
@@ -197,14 +212,12 @@ class HubRoleRunner:
         except (asyncio.CancelledError, AgentCancelledError):
             if session.has_turn(attempt_id):
                 invocation.record(
-                    TraceType.BACKEND_ERROR, {"backend": HARNESS, "outcome": "cancelled_unknown"}
+                    TraceType.BACKEND_ERROR, {"backend": kind, "outcome": "cancelled_unknown"}
                 )
             raise
         except (HubUnavailableError, HarnessProtocolError, OSError, TimeoutError) as failure:
             if session.has_turn(attempt_id):
-                invocation.record(
-                    TraceType.BACKEND_ERROR, {"backend": HARNESS, "outcome": "unknown"}
-                )
+                invocation.record(TraceType.BACKEND_ERROR, {"backend": kind, "outcome": "unknown"})
             raise HarnessExecutionUnknownError(
                 "Harness invocation did not yield a confirmed result; "
                 f"no prompt replay was attempted: {failure}"
@@ -233,6 +246,7 @@ class _Invocation:
     def __init__(
         self,
         *,
+        backend: str,
         store: AgentTraceStore,
         session: AgentTrace,
         attempt_id: ID,
@@ -242,6 +256,7 @@ class _Invocation:
         token: CancellationToken,
         before_step_messages: BeforeStepMessages | None,
     ) -> None:
+        self.backend = backend
         self.store = store
         self.session = session
         self.attempt_id = attempt_id
@@ -303,7 +318,7 @@ class _Invocation:
                             "Harness settled without a host-validated role result"
                         )
                     self.record(TraceType.FINAL, {"text": self.final_text})
-                    self.record(TraceType.TURN_ENDED, {"backend": HARNESS})
+                    self.record(TraceType.TURN_ENDED, {"backend": self.backend})
                     return self.final_text
                 await self._handle(event)
         finally:
@@ -355,15 +370,17 @@ class _Invocation:
             if event.usage is not None:
                 self.record(
                     TraceType.BACKEND_EVENT,
-                    {"backend": HARNESS, "type": "usage", "usage": event.usage},
+                    {"backend": self.backend, "type": "usage", "usage": event.usage},
                 )
         elif isinstance(event, ToolCallEvent):
             await self._call_tool(event)
         elif isinstance(event, Lifecycle):
             if event.name == "turn_end" and self.step_pending:
-                self.record(TraceType.BACKEND_EVENT, {"backend": HARNESS, "type": "execution_step"})
+                self.record(
+                    TraceType.BACKEND_EVENT, {"backend": self.backend, "type": "execution_step"}
+                )
                 self.step_pending = False
-            self.record(TraceType.BACKEND_EVENT, {"backend": HARNESS, "type": event.name})
+            self.record(TraceType.BACKEND_EVENT, {"backend": self.backend, "type": event.name})
         elif isinstance(event, Failed):
             raise HarnessProtocolError(event.reason)
 

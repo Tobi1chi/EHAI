@@ -445,6 +445,30 @@ Reviewer/Gate → 人工验收 → `integrate-run`，并在执行中强杀一次
 - 未覆盖：Workflow/Connector/路由实验的 409 只做了代码核对，未在正常入口实跑；decide-note 的 continue / propose_process /
   revise_plan 重放。
 
+### 2026-11-03 harness 执行配置与能力清单（ADR 0007 第 6 步）
+
+- Hub 协议：`/v1/health` 带各兼容层的能力清单；新增 `POST /v1/harnesses/resolve`（校验设置，返回规范设置、版本、
+  指纹、凭证变量名、受保护路径、能力；可选 `pin_directory` 先复制原生配置）和 `POST /v1/harnesses/inspect`
+  （无凭证探查）；`HarnessSelection` 可带 `version`，与 Hub 安装的版本不一致时启动前拒绝。
+- Pi 兼容层：实现上述三项；不传 `state_root` 时原生会话放在 `agent_dir/ehai-sessions`，与原先核心传入的路径相同，
+  已有会话照常续用。能力：`session.resume`、`tools.native.restrictable`、`usage.reported` 为真，
+  `session.fork`、`requests.interactive`、`tools.mcp`、`cancel.confirmed`、`schema.unique_items` 为假。
+- 核心：新增 `infrastructure/harnesses.py`（`HarnessConfig` 与经 Hub 的 resolve / inspect）；`HubRoleRunner`、
+  Planner/Worker、路由回退、`ExecutionConfig`、工作区管理器、本地应用与 CLI 不再导入 Pi 配置，
+  `pyproject.toml` 中三条过渡例外已删除。角色启动前检查所需能力（`tools.native.restrictable`，续用时加
+  `session.resume`），缺少时拒绝启动。
+- 执行配置：新形状 `harness: {kind, version, settings}`（不再写 `worker_kind`）；旧形状读入后原样输出，
+  指纹不变。主机组装的配置用新形状。比较（主机校验、`authorize_run`、项目配置绑定）用 `canonical_document()`：
+  Pi harness 写成旧形状，因此升级前保存的项目绑定指纹与角色引用不变。HTTP `ExecutionConfigRequest` 的
+  `worker_kind` 改为可选，新增 `harness`；示例 `examples/execution-api.json` 改为新形状。
+- 小决定：WorkerProfile 能力集合未改（其 ID 由能力哈希得出，改动会使已有数据库里的 Profile 对不上）；
+  工作区登记文件名 `pi-backend.json`、`pi-agent/` 和字段 `pi_config_path` 保留；`ehai init`/`doctor`
+  改用 Hub 探查 Node 与 Pi（会实际启动一次无凭证的 Pi），doctor 的 Node 行同时覆盖 Pi 安装；
+  `inspect-agent` 经 Hub。Pi RPC 到 `application.sanitization` 的例外不是过渡项，保留。
+- 验证：静态检查、两平台 mypy、lint-imports（无过渡例外）、Schema/Client 重新生成、TS 类型检查、产品 E2E；
+  仓库外诊断见 [EVIDENCE](EVIDENCE.md#核心执行) 11-03 行。
+- 未覆盖：升级前未完成 Run 的跨版本恢复只核对了文档与指纹，未实跑；远端 Hub 下的 resolve；Windows。
+
 ## 待决事项
 
 2026-11-03 已决定（[路线图](ROADMAP.md#11-03-已定的架构决定)），已在 11-03 计划第 2 步落地（见上方执行记录）：

@@ -15,7 +15,7 @@ from typing import BinaryIO
 import httpx
 
 from ehai import JsonValue, json_loads
-from ehai.hub.adapters.pi.config import PiBackendConfig
+from ehai.infrastructure.harnesses import resolve_harness_async
 from ehai.interfaces.workspace_models import (
     PublicRuntimeSettings,
     WorkspaceDescriptor,
@@ -91,6 +91,13 @@ class _Entry:
     log: BinaryIO | None = None
     shutdown_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     start_owner: int | None = None
+
+
+def _json_object(path: Path) -> dict[str, JsonValue]:
+    value = json_loads(path.read_text(encoding="utf-8"))
+    if not isinstance(value, dict):
+        raise ValueError(f"{path.name} must contain an object")
+    return value
 
 
 def _atomic_json(path: Path, document: object) -> None:
@@ -206,23 +213,18 @@ class WorkspaceSupervisor:
                 other = Path(entry.registration.path)
                 if path == other or path.is_relative_to(other) or other.is_relative_to(path):
                     raise WorkspaceConflict("Workspace directories must not be equal or nested")
-            backend = (
-                None
-                if runtime.pi_config_path is None
-                else PiBackendConfig.from_path(Path(runtime.pi_config_path))
-            )
             directory = self.root / "workspaces" / request.workspace_id
             directory.mkdir(parents=True, exist_ok=True)
             pinned_path = None
-            if backend is not None:
-                native_directory = directory / "pi-agent"
-                native_directory.mkdir(exist_ok=True)
-                for name, document in backend.native_documents().items():
-                    _atomic_json(native_directory / name, document)
-                document = backend.to_document()
-                document["agent_dir"] = str(native_directory)
+            if runtime.pi_config_path is not None:
+                # The Hub validates the settings and pins a private copy of the native files.
+                harness = await resolve_harness_async(
+                    "pi",
+                    _json_object(Path(runtime.pi_config_path)),
+                    pin_directory=directory.resolve() / "pi-agent",
+                )
                 pinned = directory / "pi-backend.json"
-                _atomic_json(pinned, document)
+                _atomic_json(pinned, harness.settings)
                 pinned_path = str(pinned)
             entry = _Entry(request, pinned_path)
             self._entries[request.workspace_id] = entry
@@ -351,8 +353,10 @@ class WorkspaceSupervisor:
                 "LC_ALL",
             }
             if entry.pi_backend_path is not None:
-                backend = PiBackendConfig.from_path(Path(entry.pi_backend_path))
-                allowed_environment.update(backend.environment_names)
+                harness = await resolve_harness_async(
+                    "pi", _json_object(Path(entry.pi_backend_path))
+                )
+                allowed_environment.update(harness.environment_names)
             environment = {
                 key: value
                 for key, value in os.environ.items()

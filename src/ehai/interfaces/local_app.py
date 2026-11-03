@@ -21,14 +21,10 @@ from uuid import uuid4
 import httpx
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
-from ehai.hub.adapters.pi.config import (
-    PI_VERSION,
-    PiBackendConfig,
-    check_node_version,
-    validate_pi_cli,
-)
+from ehai import JsonValue
 from ehai.hub.client import HubClient, HubRequestError, HubUnavailableError
 from ehai.hub.protocol import HarnessSelection, StartSession, ToolSpec
+from ehai.infrastructure.harnesses import inspect_harness, resolve_harness
 from ehai.infrastructure.workspace_supervisor import ProcessFileLock
 from ehai.interfaces.workspace_models import (
     GitPermission,
@@ -111,8 +107,9 @@ def _prompt(label: str, default: str | None, supplied: str | None, yes: bool) ->
     return answer or str(default)
 
 
-def _node_version(node: Path) -> str:
-    return asyncio.run(check_node_version(node, dict(os.environ)))
+def _inspect_pi(node: Path, cli: Path) -> dict[str, JsonValue]:
+    # The Hub starts Pi without credentials or model requests and checks Node and Pi.
+    return inspect_harness("pi", {"node": str(node), "cli": str(cli)})
 
 
 def _init(home: Path, args: argparse.Namespace) -> int:
@@ -121,16 +118,15 @@ def _init(home: Path, args: argparse.Namespace) -> int:
     if node is None:
         raise ValueError("Node not found on PATH; install Node >=22.19.0")
     node_path = Path(node).absolute()
-    version = _node_version(node_path)
     cli = (
         _REPOSITORY
         / "agent-backends/pi/node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js"
     )
     try:
-        validate_pi_cli(cli)
-    except ValueError as error:
+        installation = _inspect_pi(node_path, cli)
+    except (ValueError, HubUnavailableError) as error:
         raise ValueError(
-            "Install pinned Pi: npm ci --prefix agent-backends/pi "
+            f"{error}; install Node >=22.19.0 and pinned Pi: npm ci --prefix agent-backends/pi "
             "--ignore-scripts --no-audit --no-fund"
         ) from error
     provider = _prompt("Provider", old.provider if old else "openai", args.provider, args.yes)
@@ -215,7 +211,7 @@ def _init(home: Path, args: argparse.Namespace) -> int:
             shutil.copyfile(source, candidate / name)
         backend = config.backend_document()
         backend["agent_dir"] = str(candidate)
-        PiBackendConfig.from_document(backend)
+        harness = resolve_harness("pi", backend)
         config.agent_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
         for name in ("settings.json", "models.json"):
             if not (config.agent_dir / name).exists():
@@ -225,7 +221,10 @@ def _init(home: Path, args: argparse.Namespace) -> int:
                 )
     write_private_json(home / "config.json", document)
     write_private_json(home / "pi-backend.json", config.backend_document())
-    print(f"Saved {home / 'config.json'}; Node {version}; Pi {PI_VERSION}.")
+    print(
+        f"Saved {home / 'config.json'}; Node {installation.get('node_version')}; "
+        f"Pi {harness.version}."
+    )
     print(
         f"Private Pi settings: {config.agent_dir} (existing settings preserved). "
         "No credential values saved."
@@ -448,7 +447,7 @@ def folder_registration(
         available_shells=available_shells,
     )
     registration = WorkspaceRegistration(workspace_id=workspace_id, path=str(path), runtime=runtime)
-    PiBackendConfig.from_document(config.backend_document())
+    resolve_harness("pi", config.backend_document())
     write_private_json(home / "pi-backend.json", config.backend_document())
     return registration
 
@@ -553,13 +552,14 @@ def _doctor(home: Path, client: httpx.Client, *, probe: bool = False) -> int:
         report("configuration", False, f"{error}; run ehai init")
     if config is not None:
         try:
-            report("Node", True, _node_version(config.node))
-        except (OSError, ValueError, TimeoutError) as error:
-            report("Node", False, f"{error}; install Node >=22.19.0 and rerun init")
+            installation = _inspect_pi(config.node, config.pi_cli)
+            report("Node", True, str(installation.get("node_version")))
+        except (OSError, ValueError, HubUnavailableError) as error:
+            report("Node", False, f"{error}; install Node >=22.19.0 and pinned Pi, rerun init")
         try:
-            PiBackendConfig.from_document(config.backend_document())
-            report("Pi", True, f"{PI_VERSION}; private settings valid")
-        except (OSError, ValueError) as error:
+            harness = resolve_harness("pi", config.backend_document())
+            report("Pi", True, f"{harness.version}; private settings valid")
+        except (OSError, ValueError, HubUnavailableError) as error:
             report("Pi", False, f"{error}; install pinned Pi and check private settings")
         if probe:
             try:

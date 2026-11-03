@@ -175,6 +175,14 @@ class PiBackendConfigRequest(_StrictRequest):
     configuration_hash: ExecutionText | None = None
 
 
+class HarnessConfigRequest(_StrictRequest):
+    """The harness that runs every role, validated by the Hub on its own machine."""
+
+    kind: ExecutionText
+    version: ExecutionText
+    settings: dict[str, JsonValue]
+
+
 class ExecutionCodexServerRequest(_StrictRequest):
     """Legacy block kept in every canonical execution document; it has no execution effect.
 
@@ -191,7 +199,9 @@ class ExecutionConfigRequest(_StrictRequest):
     """Explicit confirmation of the host's credential-free execution settings."""
 
     config_version: Annotated[int, Field(strict=True, ge=1, le=1)]
-    worker_kind: Literal["pi"]
+    # Either ``harness`` alone, or the pre-11-03 shape ``worker_kind: pi`` with ``pi``.
+    harness: HarnessConfigRequest | None = None
+    worker_kind: Literal["pi"] | None = None
     model: ExecutionText
     reasoning_effort: ExecutionText | None
     capacity: Annotated[int, Field(strict=True, ge=1)]

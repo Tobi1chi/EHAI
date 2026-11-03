@@ -47,7 +47,7 @@ from ehai.domain.workers import (
     WorkerKind,
     WorkerProfile,
 )
-from ehai.hub.adapters.pi.config import PiBackendConfig
+from ehai.infrastructure.harnesses import HarnessConfig
 from ehai.infrastructure.host_tools import HostToolRuntime
 from ehai.infrastructure.hub_runtime import HarnessExecutionUnknownError, HubRoleRunner
 from ehai.infrastructure.mcp_tools import MCPToolProvider
@@ -140,7 +140,7 @@ class PiAgentConnector:
         session_store: AgentTraceStore,
         artifact_store: ArtifactStore,
         profile: WorkerProfile,
-        backend: PiBackendConfig,
+        harness: HarnessConfig,
         default_workspace: Path,
         allowed_commands: tuple[tuple[str, ...], ...] = (),
         available_shells: tuple[str, ...] = (),
@@ -185,8 +185,7 @@ class PiAgentConnector:
         self._cancellations: dict[ID, CancellationToken] = {}
         self._runtime = HubRoleRunner(
             session_store,
-            backend=backend,
-            state_root=backend.agent_dir / "ehai-sessions",
+            harness=harness,
         )
         self._phase_sessions = PhaseSessions(uow_factory)
         self._trajectory_reviewer = (
