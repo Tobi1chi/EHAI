@@ -493,6 +493,30 @@ Reviewer/Gate → 人工验收 → `integrate-run`，并在执行中强杀一次
 - 验证：静态检查、两平台 mypy、lint-imports、产品 E2E（Pi 路径不变）；仓库外诊断见 [EVIDENCE](EVIDENCE.md#核心执行) 11-03 行。
 - 未覆盖：真实模型（列入 11-03 计划第 8 步）、Windows、独立 Hub、权限核对的拒绝路径实跑。
 
+### 2026-11-03 P2 加固：写入中断、长链接续与重复人工 Check（11-03 计划第 7 步）
+
+- 重复人工 Check：人工问题按 NFKC、大小写折叠、合并空白并去掉首尾标点后比较（`normalize_human_question`）。
+  计划校验拒绝节点 Gate 之间、节点 Gate 与完成判据或最终 Gate、以及完成判据之间的重复，Planner 工具返回
+  `HUMAN_CHECK_DUPLICATE`（位置 `node_gates.<key>.human_question`），导入接口同样 422；最终 Gate 与某条人工判据
+  规范化后相同时视为同一个 Check 合并，不再生成第二个。过程模式（批准内过程调整）只检查新设的节点 Gate，
+  已批准计划中沿用的 Check 不重新校验，已授权 Run 的恢复不受影响。只识别同一问题的重复写法，措辞不同的
+  语义重复不识别（09-27 未决问题因此只部分处理）。以前保存的判据若规范化后重复，从它出发的新规划讨论会被拒绝。
+- 写入中断与长链接续：仓库外诊断（未提交）用产品 E2E 的宿主与脚本化 Pi，六个依次相连的写代码节点加只读
+  Reviewer 与命令 Gate，脚本服务在指定请求处挂起，宿主随即被强杀并重启：
+  Step 2 写入前（模型将调用 `workspace_write`）、Step 4 写入后（文件已写、尚未提交候选）、Reviewer 第一次请求
+  （Step 6 候选已记录）。三次都是：重启后 Run 仍为 running，约 297 秒（旧派发租约过期）后被中断的
+  Attempt 记为 `interrupted`，新 Attempt 从头完成该节点，其余节点各一次 succeeded；Step 4 写入后被打断，重做的
+  Attempt 未产生重复内容。整条链完成，Reviewer 与命令 Gate 通过；整合 diff 中六个节点文件各出现一次，整合 commit
+  与结果 commit 一致；共 17 个模型请求（14 个正常 + 3 个被打断后重做）。导入接口对重复的节点 Gate 问题、
+  节点 Gate 与最终 Gate 重复都返回 422 `HUMAN_CHECK_DUPLICATE`。
+- 第一版诊断的第三个强杀点设在 `submit_candidate` 之后的模型请求，但结束工具被接受后 Worker 本轮直接结束、
+  不再请求模型，该点不会出现，诊断等待超时；Run 本身已完成。改为 Reviewer 第一次请求后重跑。
+- 发现（按设计，不改）：重启后，被强杀宿主正在执行的 Attempt 要等旧派发租约（5 分钟）过期才由新宿主恢复，
+  每次强杀使整条链停顿约 5 分钟；缩短租约或提前回收会影响多宿主下已授权 Run 的恢复判断，未改动。
+- 验证：静态检查、两平台 mypy、lint-imports、产品 E2E；诊断见 [EVIDENCE](EVIDENCE.md#核心执行) 11-03 行。
+- 未覆盖：真实模型下的强杀；`workspace_write` 执行过程中（工具调用已发出、结果未返回）的强杀；并行分支同时
+  被中断；Windows；独立 Hub。
+
 ## 待决事项
 
 2026-11-03 已决定（[路线图](ROADMAP.md#11-03-已定的架构决定)），已在 11-03 计划第 2 步落地（见上方执行记录）：
