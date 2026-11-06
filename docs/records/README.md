@@ -7,6 +7,7 @@
 | 文件 | 内容 |
 | --- | --- |
 | [refactor](refactor.md) | 2026-10 的重构、Hub 与 Pi 兼容层、产品 E2E、ADR 0007 各步、P2 加固 |
+| [codex-harness](codex-harness.md) | Codex 兼容层实现、无模型诊断、录制回放与验证限制 |
 | [planner-constraints](planner-constraints.md) | Planner 授权与验收约束的规划实验与验收 |
 | [process-outputs](process-outputs.md) | 过程调整读取已完成成果的验收 |
 | [app-shell](app-shell.md) | 应用外壳第 3 步补齐、doctor 探测与终端交互会话 |

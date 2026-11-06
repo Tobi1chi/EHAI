@@ -1,8 +1,8 @@
 # Codex harness 设计
 
-> 设计 · 状态：目标，未实现（阶段 ③ 进行中）。
+> 设计 · 状态：已实现（11-07），用法以 [HUB](HUB.md#codex-兼容层) 为准。
 
-更新：2026-11-06。状态：**目标设计，未实现**；第 5 节事项已做仓库外诊断（[EVIDENCE](EVIDENCE.md#核心执行) 11-06 行）。对应 [ROADMAP](ROADMAP.md#阶段) 阶段 ③。
+更新：2026-11-07。状态：**已实现**，11-07 经正常入口真实跑完一条线程（[EVIDENCE](EVIDENCE.md#核心执行) 11-07 行）；本文保留设计依据，实现与本文不同处以 HUB 与 [ADR 0007](adr/0007-agent-harness-port.md) 第 11 条为准。对应 [ROADMAP](ROADMAP.md#阶段) 阶段 ③。
 现有 Hub 契约见 [HUB](HUB.md) 与 [ADR 0007](adr/0007-agent-harness-port.md)；旧 Codex 后端按
 [ADR 0003](adr/0003-codex-cli-process-channel.md) 之后的决定已删除，本设计不恢复它。
 
@@ -84,8 +84,8 @@ EHAI 不同步 Codex 的消息历史或上下文，只记录步骤；续用靠 `
 | --- | --- | --- |
 | 1 | 私有 `CODEX_HOME` 内登录 ChatGPT 后 app-server 能开线程 | 通过（`codex login`）；经 app-server `account/login/start` 登录未试 |
 | 2 | 注入的 HTTP MCP 被加载，EHAI 工具可调用 | 通过：`-c` 与 `thread/start.config` 都可；需处理 MCP 工具审批（见第 4 节） |
-| 3 | MCP 调用与原生 item、同一模型消息完整调用批次的对应 | 单个调用已对应（`_meta.callId` = item id）；并行调用批次未出现，未确认 |
-| 4 | `workspace-write` 内每条命令、每次文件改动都发审批 | 命令：`untrusted` 下全部先审批；文件改动：模型用 shell 写文件，`fileChange` 审批未触发，未确认 |
+| 3 | MCP 调用与原生 item、同一模型消息完整调用批次的对应 | 单个调用已对应（`_meta.callId` = item id）；schema 没有完整回复边界，兼容层只报单个调用（11-07，限制见 HUB） |
+| 4 | `workspace-write` 内每条命令、每次文件改动都发审批 | 命令：`untrusted` 下全部先审批；文件改动：11-07 试用中 `apply_patch` 触发 `fileChange` 审批，核心批准后执行 |
 | 5 | 输入送达确认；中断后进程与在途命令停止 | `userMessage` 回显 `clientId`，送达语义未确认；只 interrupt 不停命令，interrupt + clean 停止 |
 | 6 | 录制原生 JSONL，不调用模型回放 | 通过：回放事件与运行时一致 |
 
@@ -102,8 +102,8 @@ EHAI 不同步 Codex 的消息历史或上下文，只记录步骤；续用靠 `
 ## 7. 实施顺序
 
 1. 仓库外诊断：确认第 5 节第 1–2、6 项，产出录制文件（11-06 完成）。
-2. 补 ADR 0007 与本设计中仍未确认的结论，再实现 Hub 的 Codex 兼容层与核心的原生操作审批。
-3. 正常入口：在工作区执行配置里选 Codex，跑一条线程的规划、执行与审查，并在 STATUS 与 EVIDENCE 记录。
+2. 补 ADR 0007 与本设计中仍未确认的结论，再实现 Hub 的 Codex 兼容层与核心的原生操作审批（11-07 完成）。
+3. 正常入口：在工作区执行配置里选 Codex，跑一条线程的规划、执行与审查，并在 STATUS 与 EVIDENCE 记录（11-07 经 `ehai-api --harness-config` 完成；管理器 `ehai init/add` 仍只配置 Pi）。
 
 ## 8. 不做
 

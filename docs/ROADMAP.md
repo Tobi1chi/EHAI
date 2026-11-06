@@ -8,7 +8,7 @@
 
 | 项 | 状态 |
 | --- | --- |
-| 当前阶段 | ③ Codex/GPT。设计与仓库外诊断已完成（11-06，[CODEX_HARNESS_DESIGN](CODEX_HARNESS_DESIGN.md)）；下一步是补 ADR 0007，再实现 Hub 的 Codex 兼容层与核心对原生操作的审批 |
+| 当前阶段 | ③ Codex/GPT 已做到可验收（11-07：Hub 的 Codex 兼容层与核心审批已实现，真实 ChatGPT 账号经正常入口跑完一条线程，见 [EVIDENCE](EVIDENCE.md)）；等用户验收。下一阶段 ①：RSS Connector，计划先交用户批准 |
 | 进行中 | 文档整理（11-07，分支 `claude/docs-restructure`），完成后开始 ③ 的代码 |
 | 起点 | 从 `origin/main` 重新开始。11-04 至 11-05 未提交的实现（卡片工作台、内置助手、访问级别、一键初始化、快环改用 Decisions、连接器随引擎运行）已于 11-07 放弃，代码只在本地分支 `backup/2026-11-07-uncommitted` |
 
