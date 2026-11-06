@@ -1,5 +1,7 @@
 # Agent harness Hub
 
+> 用法 · 只写已实现的接口与限制。
+
 更新：2026-11-03。Hub 是 EHAI 核心运行 Agent harness 的唯一入口，作为独立进程 `ehai-hub` 运行。
 设计依据见 [ADR 0007](adr/0007-agent-harness-port.md)；兼容层有 Pi 与 Claude Code 两个。
 
@@ -142,7 +144,7 @@ Pi 不支持 MCP，继续使用扩展桥。Claude Code 兼容层使用该端点�
 
 ## 验证
 
-见 [EVIDENCE](EVIDENCE.md#核心执行) 2026-10-02 一行与 [重构计划执行记录](REFACTOR_PLAN.md#执行记录)。
+见 [EVIDENCE](EVIDENCE.md#核心执行) 2026-10-02 一行与 [重构计划执行记录](records/refactor.md)。
 产品 E2E 的每个 Worker 节点都经本机 Hub 与真实 Pi 运行（模型为脚本化服务），由 CI 在 Linux 与 Windows 上执行；
 独立 Hub 模式不在 E2E 中。Claude Code 兼容层只有仓库外诊断（真实 Claude Code + 脚本化 Anthropic 服务），
 见 [EVIDENCE](EVIDENCE.md#核心执行) 2026-11-03 一行。

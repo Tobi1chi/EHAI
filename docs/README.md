@@ -1,40 +1,35 @@
 # 文档索引
 
-更新：2026-11-03。每个结论只写在一个地方，其余文档链接过去。
+更新：2026-11-07。一类结论只写在一个地方，其余文档链接过去。
+
+## 阅读规则
+
+文档分四层。**判断“现在是什么、要做什么”只读第 1 层**；第 2 层回答“怎么用、怎么设计”；
+第 3、4 层是证据和存档，只在查证时翻，里面的“当前”“下一步”都属于当时的上下文，不是指南。
+
+| 层 | 文档 | 只回答什么 |
+| --- | --- | --- |
+| 1 当前事实 | [PRODUCT_SCOPE](PRODUCT_SCOPE.md) | 产品的目标形态：是什么、各模块拥有什么、不拥有什么（不写实现与顺序） |
+| | [EXECUTION_MODEL](EXECUTION_MODEL.md) | Worker、阶段、Gate、状态、隔离与恢复的约定语义 |
+| | [ROADMAP](ROADMAP.md) | 当前计划：现在做到哪、阶段顺序、完成条件、推进规则 |
+| | [DECISIONS](DECISIONS.md) | 每条决定的日期、落点和现状（有效 / 已完成 / 已被取代 / 实现已放弃），以及待决事项 |
+| | [STATUS](STATUS.md) | 已提交代码里每项能力是否实现、验证到什么程度 |
+| 2 用法与设计 | 用法：[USAGE](USAGE.md)、[WORKFLOWS](WORKFLOWS.md)、[WORKSPACE_MANAGER](WORKSPACE_MANAGER.md)、[HUB](HUB.md)、[CONNECTOR_PROTOCOL](CONNECTOR_PROTOCOL.md)、[DUAL_FEEDBACK_EXPERIMENT](DUAL_FEEDBACK_EXPERIMENT.md) | 已实现的命令、接口与限制 |
+| | 设计：[CODEX_HARNESS_DESIGN](CODEX_HARNESS_DESIGN.md)、[APP_SHELL_DESIGN](APP_SHELL_DESIGN.md)、[P4_WORKFLOW_DESIGN](P4_WORKFLOW_DESIGN.md)、[P4_WORKFLOW_REVISION_DESIGN](P4_WORKFLOW_REVISION_DESIGN.md)、[PLANNER_CONSTRAINTS_DESIGN](PLANNER_CONSTRAINTS_DESIGN.md)、[PROCESS_OUTPUTS_DESIGN](PROCESS_OUTPUTS_DESIGN.md)；架构决定 [adr/](adr/) | 一个模块怎么设计；每份开头写明状态 |
+| | 规则：[DEVELOPMENT_GUIDELINES](DEVELOPMENT_GUIDELINES.md)；编号来源：[PRODUCT_POINTS](PRODUCT_POINTS.md) | 开发、检查、产品 E2E 与提交规则；PRODUCT_SCOPE 中 `[编号]` 的出处 |
+| 3 证据 | [EVIDENCE](EVIDENCE.md)、[records/](records/README.md) | 每次试用一行摘要；较长的执行叙述按主题存放，只追加 |
+| 4 存档 | [history/](history/README.md)、[spikes/](spikes/) | 完成或被取代的计划、旧快照、技术探查 |
+
+每份用法与设计文档开头有一行 `> 类型 · 状态`；状态写“目标，未实现”的，不能当作已有能力。
 
 ## 按角色阅读
 
 | 你是 | 先读 | 需要时再读 |
 | --- | --- | --- |
 | 使用者 | [README 快速开始](../README.md#快速开始) → [USAGE](USAGE.md) | [WORKFLOWS](WORKFLOWS.md)、[多工作区](WORKSPACE_MANAGER.md)、[Connector](CONNECTOR_PROTOCOL.md)、[STATUS](STATUS.md) |
-| 开发者 | [AGENTS](../AGENTS.md) → [开发规则](DEVELOPMENT_GUIDELINES.md) → [重构计划](REFACTOR_PLAN.md) | [EXECUTION_MODEL](EXECUTION_MODEL.md)、各模块 README（`src/ehai/*/README.md`） |
+| 开发者（含 Agent） | [AGENTS](../AGENTS.md) → [ROADMAP](ROADMAP.md) → [开发规则](DEVELOPMENT_GUIDELINES.md) | [DECISIONS](DECISIONS.md)、[EXECUTION_MODEL](EXECUTION_MODEL.md)、各模块 README（`src/ehai/*/README.md`） |
 | 外部顶层 Agent | [README 接入外部 Agent](../README.md#接入外部-agent) → [USAGE](USAGE.md#独立-mcp-服务端) | [STATUS](STATUS.md)，确认能力是否已验证 |
-| 做产品/架构决定 | [PRODUCT_SCOPE](PRODUCT_SCOPE.md) → [EXECUTION_MODEL](EXECUTION_MODEL.md) → [ROADMAP](ROADMAP.md) | [STATUS](STATUS.md)、[EVIDENCE](EVIDENCE.md)、设计文档 |
-
-## 文档分工
-
-| 类别 | 文档 | 回答什么 |
-| --- | --- | --- |
-| 边界 | [PRODUCT_SCOPE](PRODUCT_SCOPE.md) | 产品是什么、各模块拥有什么、不拥有什么 |
-| 边界 | [EXECUTION_MODEL](EXECUTION_MODEL.md) | Worker、阶段、Gate、状态、隔离与恢复的语义 |
-| 计划 | [ROADMAP](ROADMAP.md) | 优先顺序与各阶段完成条件 |
-| 计划 | [REFACTOR_PLAN](REFACTOR_PLAN.md) | 当前重构步骤、产品 E2E 覆盖范围、待决事项 |
-| 现状 | [STATUS](STATUS.md) | 每项能力是否实现、验证到什么程度 |
-| 现状 | [EVIDENCE](EVIDENCE.md) | 每次试用做了什么、结果、未覆盖范围 |
-| 用法 | [USAGE](USAGE.md) | 核心编码流程的命令与契约 |
-| 用法 | [WORKFLOWS](WORKFLOWS.md) | 生活 Workflow 与 Routine |
-| 用法 | [WORKSPACE_MANAGER](WORKSPACE_MANAGER.md) | 多工作区管理与 Planner 容量 |
-| 用法 | [HUB](HUB.md) | Agent harness Hub：本机/独立运行、协议 v1、失败处理 |
-| 用法 | [CONNECTOR_PROTOCOL](CONNECTOR_PROTOCOL.md) | 外部 Connector 协议与 Google Calendar |
-| 用法 | [DUAL_FEEDBACK_EXPERIMENT](DUAL_FEEDBACK_EXPERIMENT.md) | Jev 双反馈环实验与固定 Pi 回退 |
-| 设计 | [PLANNER_CONSTRAINTS_DESIGN](PLANNER_CONSTRAINTS_DESIGN.md) | Planner 的授权与验收约束、干预循环保护 |
-| 设计 | [PROCESS_OUTPUTS_DESIGN](PROCESS_OUTPUTS_DESIGN.md) | 过程调整读取已完成成果与 Check 状态 |
-| 设计 | [APP_SHELL_DESIGN](APP_SHELL_DESIGN.md) | 引擎守护进程、线程对象与桌面 App 的目标设计 |
-| 设计 | [P4_WORKFLOW_DESIGN](P4_WORKFLOW_DESIGN.md) | 自定义 Workflow 目标设计（11-03 计划第 6 步实施） |
-| 设计 | [P4_WORKFLOW_REVISION_DESIGN](P4_WORKFLOW_REVISION_DESIGN.md) | 慢环向独立 Project 转交修改的边界 |
-| 设计 | [adr/](adr/) | 已采纳的架构决定 |
-| 规则 | [DEVELOPMENT_GUIDELINES](DEVELOPMENT_GUIDELINES.md) | 开发、检查与提交规则 |
-| 归档 | [history/](history/README.md)、[spikes/](spikes/) | 旧快照、原始试用记录、技术探查；不是当前指南 |
+| 做产品/架构决定 | [PRODUCT_SCOPE](PRODUCT_SCOPE.md) → [DECISIONS](DECISIONS.md) → [ROADMAP](ROADMAP.md) | [EXECUTION_MODEL](EXECUTION_MODEL.md)、[STATUS](STATUS.md)、设计文档 |
 
 契约与客户端见 [schemas](../schemas/README.md) 与 [control-plane](../control-plane/README.md)。
 
@@ -51,6 +46,9 @@
 
 ## 维护规则
 
-- 用法只写已实现的命令和状态值；目标设计写在设计文档并标明未实现。
-- 能力变化改 STATUS 的对应行；试用结果在 EVIDENCE 追加一行，较长叙述写在对应计划的执行记录中。
+- 新决定先在 [DECISIONS](DECISIONS.md) 加一行，再改它的落点文档；推翻旧决定时把旧行的现状改为“已被取代”，不删除。
+- ROADMAP 只留当前计划；一个计划做完或被取代，整段移到 history/，在 DECISIONS 标“已完成”或“已被取代”。
+- 用法只写已实现的命令和状态值；目标设计写在设计文档并在开头标明状态。
+- 能力变化改 STATUS 的对应行；试用结果在 EVIDENCE 追加一行，较长叙述写进 [records/](records/README.md) 对应主题。
+- 设计与用法文档不再追加执行记录。
 - 代码与对应文档在同一变更中修改。

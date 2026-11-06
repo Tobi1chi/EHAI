@@ -1,94 +1,6 @@
-# 重构与推进计划
+# 重构与核心执行记录（2026-10-01 起）
 
-更新：2026-10-03。本文定义当前重构的顺序、边界和完成条件；
-能力现状见 [STATUS](STATUS.md)，产品顺序见 [路线图](ROADMAP.md)。
-
-## 为什么现在重构
-
-2026-10-01 用户确认：先建立安全网，再收窄范围，最后拆分大文件，文档同步修改。
-起因是以下已观察到的事实，不是对代码风格的泛泛不满：
-
-| 现象 | 依据（2026-10-01） |
-| --- | --- |
-| 缺少自动化保护 | 无 CI；旧测试已退役，唯一产品 E2E 尚未编写 |
-| 复杂度集中 | `orchestrator.py` 4133 行，`sqlite/repository.py` 2931 行，`service.py` 2242 行 |
-| 提交粒度大 | 最近两次提交分别 +20k / +13k 行，schema 18→22 一次完成 |
-| 范围先于收尾 | P2 总验收未完成时已推进 P4 多项实验 |
-| 后端切换未收尾 | Pi Planner 仍从 `codex_protocol` 取图 IR，宿主工具使用 `redact_codex_bytes` |
-| 单平台证据 | 主要运行证据来自 Windows，Linux 上 mypy 曾有 10 个平台相关错误 |
-
-## 边界
-
-- 重构保持行为：除下文记录的阻断修复外，不改变公开契约、状态值或授权语义。
-- 一次一个逻辑变更，每步重跑产品 E2E 与静态检查；拆分以"只移动"提交为主。
-- 不借重构扩展功能；旁支发现记入下文"待决事项"，不顺手修改。
-- 以下核心语义在重构中必须保持：Worker 只产生候选，完成须经宿主 Gate 与证据；
-  `stalled` 与 `suspended` 分开；结果未知不重放；讨论不等于批准；领域状态令牌与迁移白名单不被绕过。
-
-## 四步顺序
-
-| 步骤 | 用户结果 | 完成条件 | 状态 |
-| --- | --- | --- | --- |
-| 1. 安全网 | 每次修改都能自动确认主路径未被破坏 | 产品 E2E 入库；CI 在 Linux 跑静态检查、契约生成比对和 E2E，并在 Windows 跑 E2E | 完成：E2E 与 CI 已入库，首次 CI 全部通过（含 Windows E2E） |
-| 2. 低风险清理 | 代码只保留实际使用的后端和清晰命名 | Codex 去留已决定并执行；图 IR、脱敏工具移到中性模块；`legacy_config.py` 处置；Run/Routine 命名冲突有决定 | 完成：Codex 已删除（选项 A）；图 IR 与脱敏已移出；`legacy_config.py` 已删除；命名决定为不改名、统一术语 |
-| 3. 拆分大文件 | 新贡献者能按职责定位代码 | Orchestrator 拆为门面与若干职责模块；Repository/Service 按聚合拆分；幂等回执合并为一个机制；E2E 全程通过 | 完成：三个大文件已拆分，幂等回执已合并为一个机制（2026-10-02） |
-| 4. 收尾 P2 | 在真实项目上完成一次可核对的开发任务 | 真实 Pi 按[手动验收](#真实-pi-手动验收)完成并记录；随后在 P3.3 与 P4 通用 Workflow 中选一项 | 完成：导入路径按手动验收完成一次，含强杀恢复（2026-10-03，见[执行记录](#2026-10-03-第四步真实-pi-手动验收与强杀恢复)）；另以 Pi Planner 规划路径做了一次补充验收，未含强杀（见[Planner 路径](#2026-10-03-第四步补充pi-planner-规划路径)）；用户选择下一步做 P3.3 |
-
-### 步骤 3 的拆分方向
-
-Orchestrator 按代码中已存在的边界拆分，保留 `Orchestrator` 作为对外门面：
-
-| 模块 | 内容 |
-| --- | --- |
-| 图就绪判断 | `ready_nodes`、分支终态/失败判断等纯函数（因抛出应用层 `OrchestrationError`，留在 `application/orchestration/readiness.py`，未移入 `domain/`） |
-| Attempt 生命周期 | queue / start / retry / timeout / interrupt / fail |
-| 校验与 Gate | Check 执行、`finish_pending_gate`、人工判定 |
-| 分支评估 | Evaluator 候选校验、`_record_branch_selection` |
-| 采纳与接续 | adoption、`accept_adopted_result` |
-| 人工介入 | intervention、`waiting_for_*` |
-
-`sqlite/repository.py` 与 `application/service.py` 按聚合拆分（note / workflow / connector 本来就在独立模块中）。
-幂等回执原有四处实现（核心 `CommandReceipt`，以及 Workflow、Connector、路由实验各自的 `receipt/remember`），
-已合并为一个共用机制（[idempotency.py](../src/ehai/application/idempotency.py)，见
-[执行记录](#2026-10-02-第三步幂等回执合并)），供后续自定义 Workflow 复用。
-
-## 产品 E2E
-
-唯一产品 E2E 为 [tests/test_product_e2e.py](../tests/test_product_e2e.py)，运行：
-
-```powershell
-npm ci --prefix agent-backends/pi --ignore-scripts --no-audit --no-fund   # 首次，需要 Node >=22.19
-uv run pytest tests/test_product_e2e.py
-```
-
-它启动真实 `ehai-api` 宿主进程（Pi Worker、`single` Planner、`--p2-runtime`），
-只通过 `ehai` CLI 与 HTTP API 操作，不读写数据库。每个节点都经本机 Hub、Pi 兼容层和锁定版本的
-真实 Pi 运行，代码成果来自 EHAI 管理的 Git worktree；只有模型被替换为 E2E 内置的脚本化
-OpenAI 兼容服务（工作节点先用 workspace_write 写一个以节点命名的文件再提交成果，Reviewer 提交引用全部输入的
-通过 review.json），没有真实模型调用。
-
-| 覆盖 | 内容 |
-| --- | --- |
-| 外部计划导入 | 两个独立任务、一个汇合节点、Reviewer 阶段；A 带人工 Gate，最终 Gate 执行宿主命令 |
-| 批准与授权 | approve-plan 与 start-run 分开调用 |
-| 并发与挂起 | A 等待人工判定时 B 完成，汇合节点保持 pending |
-| 统一待办 | 人工请求出现在 Inbox，带可执行动作和 request token |
-| 崩溃恢复 | 强杀宿主后在同一数据库重启；Run、节点状态、请求 token 保持不变 |
-| 事件消费 | 未确认批次在重启后以相同 token 和事件重新返回，确认后前进 |
-| 人工决定 | CLI 判定通过后 Run completed；同一幂等键重复判定被接受且不产生新请求 |
-| 成果查询 | get-result 的 Check 均完成；成果是新的 worktree commit，包含 A、B 与汇合节点各自写入的文件，patch 非空；get-project 只列出该 Run 并带已验证成果 |
-| Hub 与 Pi | 每个节点经本机 Hub 与真实 Pi 调用脚本化模型；强杀重启后，汇合与 Reviewer 节点经重新启动的本机 Hub 完成 |
-| 代码整合 | 完成后 HTTP integrate 得到 integrated，重试返回同一 integration_id；list-run-integrations 只有这一条，get-integration-diff 与宿主补丁一致且未截断；线程时间线有一条 integration_created |
-
-不覆盖：真实模型调用与模型行为、Pi Planner/过程审查/轨迹审查/路由回退、独立 Hub、整合冲突路径、
-MCP、生活 Workflow、Connector 和 Jev 实验。这些不能由本 E2E 推断已验证。
-
-### 真实 Pi 手动验收
-
-需要模型凭证，不在 CI 中运行。按 [README 快速开始](../README.md#快速开始) 配置后，
-在一个隔离的小仓库中经正常入口完成：规划或导入 → 批准 → 两个写代码节点并发执行 →
-Reviewer/Gate → 人工验收 → `integrate-run`，并在执行中强杀一次宿主后恢复。
-结果在 [EVIDENCE](EVIDENCE.md) 追加一行，未覆盖部分明确列出。
+本页只追加执行与验证叙述，不是当前指南；结论以 [STATUS](../STATUS.md) 与对应设计、用法文档为准。
 
 ## 执行记录
 
@@ -112,16 +24,16 @@ Reviewer/Gate → 人工验收 → `integrate-run`，并在执行中强杀一次
 
 ### 2026-10-01 文档重组
 
-- 新增按角色的 [文档索引](README.md)；STATUS 改为每项能力一行（状态、边界、证据链接）。
-- 新增 [EVIDENCE](EVIDENCE.md)，把 R2/P3/P4 实施记录的每次试用压缩为一行；原文按原样移入
-  `history/RECORD_*.md`，P2 收尾计划并入 [路线图](ROADMAP.md#p2围绕真实项目收尾)。
-- P4 记录中的现行用法与契约移到 [WORKFLOWS](WORKFLOWS.md)；USAGE 按任务重排并加目录，内容不变。
+- 新增按角色的 [文档索引](../README.md)；STATUS 改为每项能力一行（状态、边界、证据链接）。
+- 新增 [EVIDENCE](../EVIDENCE.md)，把 R2/P3/P4 实施记录的每次试用压缩为一行；原文按原样移入
+  `history/RECORD_*.md`，P2 收尾计划并入 [路线图](../history/ROADMAP_BEFORE_1107.md#p2围绕真实项目收尾)。
+- P4 记录中的现行用法与契约移到 [WORKFLOWS](../WORKFLOWS.md)；USAGE 按任务重排并加目录，内容不变。
 - 顶层文档（含 README、AGENTS）由约 3500 行减到约 2400 行；链接检查除历史快照原有的 12 个失效链接外无错误。
 
 ### 2026-10-02 第二步：删除 Codex 后端
 
 - 用户选择 A：删除 Codex，同时删除只有 Codex app-server 实现的运行中 Worker 请求路径。
-  多 harness 的后续设计记为 [ADR 0007](adr/0007-agent-harness-port.md)，ADR 0003 标为已取代。
+  多 harness 的后续设计记为 [ADR 0007](../adr/0007-agent-harness-port.md)，ADR 0003 标为已取代。
 - 先抽出共用部分：规划图文档移到 `planners/plan_documents.py`，宿主工具改用
   `sanitization.redact_secret_bytes`（额外覆盖 authorization 头和 TypeSafe 密钥）。
 - 删除 6 个 Codex 模块、`--codex-*` 启动参数、`--worker codex|codex-server`、`--planner codex`，
@@ -162,7 +74,7 @@ Reviewer/Gate → 人工验收 → `integrate-run`，并在执行中强杀一次
   修复：心跳间隔与最小闲置时限（3 个间隔，180 秒）放入协议模块，`ehai-hub` 拒绝更短的设置。
   随后按用户要求把心跳改为明确的 `POST /v1/sessions/{id}/heartbeat`（原借用状态查询）。
   验证：独立 Hub 闲置时限 180 秒、工具执行 200 秒，调用正常完成；关闭心跳的对照组同一场景结果未知。
-  心跳失败不中断正在执行的工具（用户决定保持），见 [HUB](HUB.md#失败处理)。
+  心跳失败不中断正在执行的工具（用户决定保持），见 [HUB](../HUB.md#失败处理)。
 - 未覆盖：真实模型；Pi Planner、过程审查、轨迹审查、路由回退经 Hub 的实际运行（共用同一个运行器，未单独跑）；
   Windows 上的本机子进程与 Pi；跨机器部署。产品 E2E 不经过 Hub（后由 ADR 0007 第 4 步解决，见下一条记录）。
 
@@ -190,7 +102,7 @@ Reviewer/Gate → 人工验收 → `integrate-run`，并在执行中强杀一次
 - 验证（仓库外诊断）：经 HTTP 请求模型解析，省略该块与写出默认值得到相同的规范文档与指纹；
   非默认值仍得到不同文档。ruff、format、mypy（两个平台）、lint-imports、TS 类型检查、产品 E2E 通过。
 - Run / Workflow Run / Routine 命名：用户决定不改名（接口已用 `workflow-run` 前缀区分，改名牵动数据库与全部接口）。
-  [文档索引](README.md#术语)新增术语表；WORKFLOWS 与 P4 设计中单独写 "Run" 指 Workflow Run 的 5 处改为全称。
+  [文档索引](../README.md#术语)新增术语表；WORKFLOWS 与 P4 设计中单独写 "Run" 指 Workflow Run 的 5 处改为全称。
 
 ### 2026-10-02 第三步：拆分三个大文件
 
@@ -253,7 +165,7 @@ Reviewer/Gate → 人工验收 → `integrate-run`，并在执行中强杀一次
     每个入口的键仍只在原来的范围内唯一，同一个键可以分别用于核心命令和 Workflow。
   - `CommandReceipt` 增加 `scope`；`CommandReceiptStore.get` 增加 `scope` 参数（默认 `command`，核心调用点不变）。
     Workflow、Connector、路由实验的事务接口去掉 `receipt/remember`，改为提供同一个 `receipts` 存储。
-  - [idempotency.py](../src/ehai/application/idempotency.py) 的 `recorded_result` / `record_result` 负责查找、
+  - [idempotency.py](../../src/ehai/application/idempotency.py) 的 `recorded_result` / `record_result` 负责查找、
     比对命令名与指纹、记录结果；核心服务、便签和上述三个服务都经它使用回执。键被另一条命令或另一份内容占用时
     抛出什么错误由调用方传入，因此各入口的 HTTP 状态码、`error.code` 和错误文字都没有变。
 - Schema 22 → 23（只前进）：四张表的行复制到新表后删除旧表，在同一个迁移事务内完成。Workflow 回执原先保存整个请求
@@ -466,13 +378,13 @@ Reviewer/Gate → 人工验收 → `integrate-run`，并在执行中强杀一次
   改用 Hub 探查 Node 与 Pi（会实际启动一次无凭证的 Pi），doctor 的 Node 行同时覆盖 Pi 安装；
   `inspect-agent` 经 Hub。Pi RPC 到 `application.sanitization` 的例外不是过渡项，保留。
 - 验证：静态检查、两平台 mypy、lint-imports（无过渡例外）、Schema/Client 重新生成、TS 类型检查、产品 E2E；
-  仓库外诊断见 [EVIDENCE](EVIDENCE.md#核心执行) 11-03 行。
+  仓库外诊断见 [EVIDENCE](../EVIDENCE.md#核心执行) 11-03 行。
 - 未覆盖：升级前未完成 Run 的跨版本恢复只核对了文档与指纹，未实跑；远端 Hub 下的 resolve；Windows。
 
 ### 2026-11-03 Claude Code 兼容层（ADR 0007 第 8 步）
 
 - 新增 `hub/adapters/claude_code/`：以 `claude --bare -p` 的 stream-json 模式运行未修改的 Claude Code，
-  工具只经每会话 MCP 端点；Hub 默认装上 `pi` 与 `claude-code` 两个兼容层。做法与取舍见 [HUB](HUB.md#claude-code-兼容层)。
+  工具只经每会话 MCP 端点；Hub 默认装上 `pi` 与 `claude-code` 两个兼容层。做法与取舍见 [HUB](../HUB.md#claude-code-兼容层)。
 - 先用仓库外脚本化 Anthropic SSE 服务探查了 2.1.109 的行为，再定实现：`initialize`/`mcp_status` 控制请求在任何
   提示前即可应答（用于启动核对）；`system/init` 每轮一次；每个内容块单独一条 `assistant` 事件、共用消息 id；
   中途写入的用户消息在当前工具返回后加入本轮并回放；`--resume` 按工作目录查找会话，因此每个状态键用固定工作目录；
@@ -490,7 +402,7 @@ Reviewer/Gate → 人工验收 → `integrate-run`，并在执行中强杀一次
   `--planner pi`（意为经 Hub 运行的角色），WorkerProfile 不变；系统提示词末尾加一句工具前缀 `mcp__ehai__` 的说明；
   `--pi-config` 增加别名 `--harness-config` 并接受 harness 文档；`inspect-agent` 增加 `--claude-code`；
   管理器与 `ehai init` 仍只配置 Pi。
-- 验证：静态检查、两平台 mypy、lint-imports、产品 E2E（Pi 路径不变）；仓库外诊断见 [EVIDENCE](EVIDENCE.md#核心执行) 11-03 行。
+- 验证：静态检查、两平台 mypy、lint-imports、产品 E2E（Pi 路径不变）；仓库外诊断见 [EVIDENCE](../EVIDENCE.md#核心执行) 11-03 行。
 - 未覆盖：真实模型（列入 11-03 计划第 8 步）、Windows、独立 Hub、权限核对的拒绝路径实跑。
 
 ### 2026-11-03 P2 加固：写入中断、长链接续与重复人工 Check（11-03 计划第 7 步）
@@ -513,23 +425,7 @@ Reviewer/Gate → 人工验收 → `integrate-run`，并在执行中强杀一次
   不再请求模型，该点不会出现，诊断等待超时；Run 本身已完成。改为 Reviewer 第一次请求后重跑。
 - 发现（按设计，不改）：重启后，被强杀宿主正在执行的 Attempt 要等旧派发租约（5 分钟）过期才由新宿主恢复，
   每次强杀使整条链停顿约 5 分钟；缩短租约或提前回收会影响多宿主下已授权 Run 的恢复判断，未改动。
-- 验证：静态检查、两平台 mypy、lint-imports、产品 E2E；诊断见 [EVIDENCE](EVIDENCE.md#核心执行) 11-03 行。
+- 验证：静态检查、两平台 mypy、lint-imports、产品 E2E；诊断见 [EVIDENCE](../EVIDENCE.md#核心执行) 11-03 行。
 - 未覆盖：真实模型下的强杀；`workspace_write` 执行过程中（工具调用已发出、结果未返回）的强杀；并行分支同时
   被中断；Windows；独立 Hub。
 
-## 待决事项
-
-2026-11-03 已决定（[路线图](ROADMAP.md#11-03-已定的架构决定)），已在 11-03 计划第 2 步落地（见上方执行记录）：
-
-| 事项 | 说明 | 决定 |
-| --- | --- | --- |
-| `--worker-timeout-seconds` | 原只用于 Codex Worker，现无使用方 | 删除 CLI 参数；多工作区登记中的同名字段读时忽略 |
-| CLI 启动 scripted 宿主 Run | `ehai --api-url ... start-run` 要求 `--execution-config`，而执行配置只接受 pi | scripted 宿主下 `--execution-config` 可选 |
-| 幂等键冲突的错误码 | 核心命令 409 `conflict`，Workflow/Connector/路由 409 `state_conflict`，便签 422 `invalid_request` | 统一为 409 `conflict` |
-| 便签命令重放的响应 | create-note / add-note-message / decide-note 同键重放返回便签当前状态 | 改为返回原回执，与其它命令一致 |
-
-仍待决：
-
-| 事项 | 说明 |
-| --- | --- |
-| 幂等重放返回值 | 重复人工判定返回当前 Run 状态而非原回执；如需原回执语义需单独设计 |

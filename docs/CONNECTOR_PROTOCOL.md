@@ -1,5 +1,7 @@
 # Connector HTTP 接入与 Google Calendar 第一版
 
+> 用法 · 只写已实现的协议与限制。
+
 更新：2026-09-24。Connector 是独立进程；主进程通过版本化 JSON 协议接收数据，
 不加载 Google 适配器、不共享数据库连接，也不向 Connector 传递 Planner/Orchestrator 对象。
 任意语言可以按 [协议 Schema](../schemas/v1/connectors.schema.json) 实现同一接入。

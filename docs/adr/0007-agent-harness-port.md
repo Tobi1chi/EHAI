@@ -156,7 +156,7 @@ harness 不是沙箱。工作区隔离（EHAI 拥有的 Git worktree）、凭证
 
 ## 迁移顺序
 
-每步只改结构、保持行为，产品 E2E 全程通过；执行记录写在 [重构计划](../REFACTOR_PLAN.md)。
+每步只改结构、保持行为，产品 E2E 全程通过；执行记录写在 [records/refactor](../records/refactor.md)。
 
 1. 抽出共用部分：规划图结构离开 Codex 模块，脱敏函数改为中性名称（重构第二步，已完成）。
 2. 删除 Codex 后端与运行中 Worker 请求路径；保留历史记录可读与已授权配置指纹（重构第二步，已完成）。

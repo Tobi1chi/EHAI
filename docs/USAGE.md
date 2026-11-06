@@ -1,5 +1,7 @@
 # EHAI 当前用法
 
+> 用法 · 只写已实现的命令与契约；成熟度见 [STATUS](STATUS.md)。
+
 更新：2026-10-22。能力成熟度见 [STATUS](STATUS.md)，历史用法不作为当前参数说明。
 生活 Workflow 见 [WORKFLOWS](WORKFLOWS.md)；Connector、Jev 实验分别见各自文档，索引见 [docs/README](README.md)。
 首次用 0.1 开发项目，先按 [README 快速开始](../README.md#快速开始) 配置宿主并完成一个任务；

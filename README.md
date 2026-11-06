@@ -21,7 +21,7 @@ EHAI（Enhanced Human-Agent Interface）是一个可本地部署的 Agent 规划
 - **多个工作区**：本机 Workspace Manager 托管独立核心，统一查询和路由；各工作区可配置自己的 Planner 与并发容量。见[多工作区用法](docs/WORKSPACE_MANAGER.md)。
 - **生活事务**：项目内录入/确认待办、完成状态管理，手动或定时回顾；不需要 Git 或模型调用。见[生活 Workflow](docs/WORKFLOWS.md)。
 - **外部 Connector 与实验**：独立进程经标准 HTTP 协议接入（Google Calendar 首版，真实账号未授权验证），
-  以及 Jev 双反馈环只读路由、固定 Pi 回退和向独立 Project 转交修改。见[Connector](docs/CONNECTOR_PROTOCOL.md)、[实验说明](docs/DUAL_FEEDBACK_EXPERIMENT.md)。
+  以及 Jev 双反馈环只读路由、固定 Pi 回退和向独立 Project 转交修改（双反馈环 11-05 起降为隐藏实验）。见[Connector](docs/CONNECTOR_PROTOCOL.md)、[实验说明](docs/DUAL_FEEDBACK_EXPERIMENT.md)。
 
 各项能力的验证程度见 [当前状态](docs/STATUS.md)。
 
@@ -331,13 +331,13 @@ Web 工作台已实现，目前只有无模型验证。
 ## 文档与参与开发
 
 全部文档按角色索引在 [docs/README](docs/README.md)：使用者从 [使用指南](docs/USAGE.md) 开始，
-开发者从 [AGENTS](AGENTS.md) 与 [重构与推进计划](docs/REFACTOR_PLAN.md) 开始。
+开发者从 [AGENTS](AGENTS.md) 与 [开发与验收规则](docs/DEVELOPMENT_GUIDELINES.md) 开始。
 
 Python 核心位于 `src/ehai/`，TypeScript Client 位于 `control-plane/`。
 提交问题时，请提供脱敏的版本、入口命令、预期结果、实际结果和相关错误；
 不要附带 API Key、私有配置或未经清理的模型轨迹。
 
-常用检查（CI 会执行同样的命令，见 [重构与推进计划](docs/REFACTOR_PLAN.md)）：
+常用检查（CI 会执行同样的命令，见 [开发与验收规则](docs/DEVELOPMENT_GUIDELINES.md)）：
 
 ```powershell
 uv run ruff check .
