@@ -87,9 +87,9 @@ Hub 本身只提供令牌认证，不提供 TLS；跨机器使用时应放在受
 
 核心为保留原生工具的会话设置 `native_policy={sandbox, network:false}`：HostTools 授权角色
 可写工作区时 `sandbox="workspace-write"`，否则为 `"read-only"`。未声明保留时为 `null`。
-同时从工具清单中去掉 `workspace_list/search/read/write/patch/apply_patch/delete/move/mkdir`
-（均带 `workspace_` 前缀）、`command`、`shell_exec/write/terminate`（均带 `shell_` 前缀）与 `git`；
-成果读取、web/MCP 提供者、skills、会话、handoff、结束与规划/审查工具照旧。
+同时从工具清单中去掉原生工具替代的写工具 `workspace_write/patch/apply_patch/delete/move/mkdir`
+与 `shell_exec/write/terminate`；读取工具 `workspace_list/search/read`、精确 argv 的 `command`、`git`，
+以及成果读取、web/MCP 提供者、skills、会话、handoff、结束与规划/审查工具照旧。
 
 核心的审批规则使用 HostTools 同一份授权数据：文件改动必须获准写工作区，且全部路径解析后
 位于本次工作区内，并且不与 harness resolve 返回的受保护路径重叠；相对路径基于请求的 `cwd`
@@ -157,8 +157,9 @@ Pi 不支持 MCP，继续使用扩展桥。Claude Code 与 Codex 兼容层使用
 已登录 ChatGPT 的 Codex 默认还会加载 `codex_apps` 连接器服务（邮件、GitHub、云盘等）和插件服务。兼容层用 `-c features.<名称>=false`
 关闭该版本默认开启、会增加工具、MCP 服务、子 Agent 或钩子的功能：apps、plugins、remote_plugin、plugin_discovery_prefetch、
 browser_use、browser_use_external、browser_use_full_cdp_access、in_app_browser、computer_use、multi_agent、image_generation、
-hooks、goals、skill_mcp_dependency_install、skill_search、tool_suggest、code_mode_host、workspace_dependencies、in_app_local_automation；
-`web_search` 也关闭。启动时仍核对 MCP 清单只有 `ehai`。升级时用 `codex features list` 重新核对。
+hooks、goals、skill_mcp_dependency_install、skill_search、tool_suggest、workspace_dependencies、in_app_local_automation；
+`web_search` 也关闭。`code_mode_host` 保持开启：该版本只经 `exec` 工具（JavaScript 编排）向模型提供全部工具，包括 MCP，
+关闭后模型没有可用工具。启动时仍核对 MCP 清单只有 `ehai`。升级时用 `codex features list` 重新核对。
 
 先在指定目录登录（Codex 自带命令；路径换为实际值）：
 
@@ -186,6 +187,9 @@ CODEX_HOME=/absolute/private/ehai/codex /absolute/path/to/codex -c 'cli_auth_cre
   在关联 MCP 调用交给核心前记录；工具没有文本时记录空文本。用量使用通知中的 last，映射 input/output/cacheRead/cacheWrite，
   input 扣除缓存读写部分；若通知晚于文本，用单独的空文本 assistant_message 承载用量，不重复计入线程累计量。
   commandExecution/fileChange 完成归为 native_item；正常 turn/completed 发 turn_end 后 settled，失败或中断发 failed。
+  Codex 自带的只读 MCP 资源工具（server `codex` 的 list_mcp_resources、list_mcp_resource_templates、read_mcp_resource，
+  只作用于已加载的 `ehai`）不交给核心，完成后记为 kind=other 的 native_item；其他不属于本会话的 MCP 调用使会话失败。
+  未映射的其他 item 类型完成后同样记为 kind=other 的 native_item。
 - **批次限制。** `_meta.callId` 对应 mcpToolCall item id，并核对名称与参数。此版本的 item 与 raw response item schema
   只有 turn 关联，没有同一次模型回复的完整调用边界；所以返回 `batch=(key,)`，不按时间拼批次。
   核心因此无法凭这份批次识别 Codex 同一次回复中的其他调用，结束工具的同回复完整批次约束尚未验证。

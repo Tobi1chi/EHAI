@@ -167,9 +167,11 @@ harness 不是沙箱。工作区隔离（EHAI 拥有的 Git worktree）、凭证
 
 声明 `tools.native.kept` 的 harness 必须同时声明 `tools.native.approval` 与 `tools.native.restrictable`，否则核心拒绝启动。对这类 harness：
 
-- **工具清单。** 核心不提供自己的工作区与进程工具（`workspace_list/search/read`、`workspace_write` 等写工具、
-  `command`、`shell_*`、`git`），只提供控制工具（成果读取、网页与 MCP 提供者、skills、会话工具、`submit_handoff`、
-  结束工具及各角色的规划/审查工具），避免两套同类工具。完成仍只认结束工具。
+- **工具清单。** 核心不提供被原生工具替代的写工具（`workspace_write/patch/apply_patch/delete/move/mkdir`）与
+  `shell_*`，避免两套同类工具；读取工具（`workspace_list/search/read`）、精确 argv 的 `command`、`git` 与控制工具
+  （成果读取、网页与 MCP 提供者、skills、会话工具、`submit_handoff`、结束工具及各角色的规划/审查工具）照旧。
+  完成仍只认结束工具。（11-07 修订：最初也去掉读取、`command` 与 `git`，真实试用中被告知"不用 Shell"的 Worker
+  因此无法读取工作区而停下，见 [Codex 运行记录](../records/codex-harness.md)。）
 - **原生策略。** `StartSession` 带 `native_policy`：`sandbox` 为 `read-only`（角色不写工作区）或 `workspace-write`
   （可写范围只有该 Attempt 的工作区），`network` 恒为 `false`。兼容层不能落实时拒绝启动（第 7 条），
   不使用完全访问。

@@ -70,22 +70,20 @@ SubmitCandidateValidator = Callable[[Mapping[str, JsonValue]], None]
 SubmitHandoff = Callable[[Mapping[str, JsonValue]], dict[str, JsonValue]]
 
 # Replaced by the harness's native operations when tools.native.kept is declared.
+# Tools a harness keeping its native file edits and shell replaces. Reads, the exact-argv
+# `command` runner and `git` stay: they are what role prompts and plans describe, and
+# without them a role told not to use a shell has no way to read the workspace.
 NATIVE_REPLACED_TOOLS = frozenset(
     {
-        "workspace_list",
-        "workspace_search",
-        "workspace_read",
         "workspace_write",
         "workspace_patch",
         "workspace_apply_patch",
         "workspace_delete",
         "workspace_move",
         "workspace_mkdir",
-        "command",
         "shell_exec",
         "shell_write",
         "shell_terminate",
-        "git",
     }
 )
 
