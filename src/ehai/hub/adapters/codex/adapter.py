@@ -76,6 +76,8 @@ _BLOCKED_PREFIXES = (
 # MCP servers, agents or hooks beyond the native shell and file edits the core approves.
 # A ChatGPT login otherwise loads the `codex_apps` connector server (mail, GitHub,
 # Drive and more) and plugin servers; the launch check still requires `ehai` alone.
+# `code_mode_host` stays on: this version exposes every tool, MCP included, to the model
+# only through its `exec` tool, so disabling it leaves the model with no usable tools.
 _DISABLED_FEATURES = (
     "apps",
     "plugins",
@@ -93,7 +95,6 @@ _DISABLED_FEATURES = (
     "skill_mcp_dependency_install",
     "skill_search",
     "tool_suggest",
-    "code_mode_host",
     "workspace_dependencies",
     "in_app_local_automation",
 )

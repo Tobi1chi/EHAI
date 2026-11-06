@@ -13,6 +13,17 @@ from ehai.hub.adapters import HarnessFailure, ToolBatch
 from ehai.hub.adapters.codex.process import AppServer
 from ehai.hub.protocol import NativeDecision, ToolResult
 
+# Codex's own read-only tools over the loaded MCP servers' resources (only `ehai` is
+# loaded, see the launch check). They run inside Codex as server "codex" and are
+# recorded, not forwarded; any other non-session MCP tool fails the session.
+_CODEX_RESOURCE_TOOLS = frozenset(
+    {"list_mcp_resources", "list_mcp_resource_templates", "read_mcp_resource"}
+)
+# Item types mapped to Hub events; other completed items are recorded as native `other`.
+_MAPPED_ITEMS = frozenset(
+    {"userMessage", "agentMessage", "reasoning", "mcpToolCall", "commandExecution", "fileChange"}
+)
+
 
 def _object(value: JsonValue) -> dict[str, JsonValue]:
     return value if isinstance(value, dict) else {}
@@ -117,11 +128,24 @@ class CodexSession:
                 text = item.get("text")
                 if isinstance(text, str):
                     self._messages.append(text)
+            elif kind == "mcpToolCall" and item.get("server") == "codex":
+                if item.get("tool") not in _CODEX_RESOURCE_TOOLS:
+                    raise HarnessFailure(
+                        f"Codex requested built-in MCP tool {item.get('tool')!r}"
+                        " outside this session"
+                    )
+                if method == "item/completed":
+                    self._native_other(item_id, item, f"mcp:codex/{item.get('tool')}")
             elif kind == "mcpToolCall" and method == "item/started":
                 if item.get("server") != "ehai" or item.get("tool") not in self._tools:
-                    raise HarnessFailure("Codex requested an MCP tool outside this session")
+                    raise HarnessFailure(
+                        f"Codex requested MCP tool {item.get('server')!r}/{item.get('tool')!r}"
+                        " outside this session"
+                    )
                 self._announce(tool=True)
                 self._unpublished[item_id] = (str(item["tool"]), item.get("arguments"))
+            elif kind not in _MAPPED_ITEMS and method == "item/completed":
+                self._native_other(item_id, item, str(kind))
             elif kind in {"commandExecution", "fileChange"} and method == "item/completed":
                 self._announce()
                 self._out.append(
@@ -193,6 +217,22 @@ class CodexSession:
                 self._out.append({"type": "lifecycle", "name": "retry"})
             else:
                 self._out.append({"type": "failed", "reason": json_dumps(params.get("error"))})
+
+    def _native_other(self, item_id: str, item: dict[str, JsonValue], label: str) -> None:
+        self._announce()
+        status = item.get("status")
+        self._out.append(
+            {
+                "type": "native_item",
+                "item_id": item_id,
+                "kind": "other",
+                "command": label,
+                "cwd": None,
+                "paths": [],
+                "status": status if isinstance(status, str) else "completed",
+                "exit_code": None,
+            }
+        )
 
     def _approval(self, request_id: JsonValue, method: str, params: dict[str, JsonValue]) -> None:
         # {CommandExecution,FileChange,Permissions}RequestApprovalParams.json.
