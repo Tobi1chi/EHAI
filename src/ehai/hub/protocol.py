@@ -229,7 +229,7 @@ class ResolvedHarness(_Message):
 
 
 class InspectHarness(_Message):
-    """Check an installed harness without credentials, prompts or model requests."""
+    """Check without prompts or model requests; the harness may inspect its own login."""
 
     kind: Text
     settings: dict[str, JsonValue]

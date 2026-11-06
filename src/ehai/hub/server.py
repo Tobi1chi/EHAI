@@ -34,6 +34,7 @@ from ehai.hub.adapters import (
     McpEndpoint,
 )
 from ehai.hub.adapters.claude_code.adapter import ClaudeCodeAdapter
+from ehai.hub.adapters.codex.adapter import CodexAdapter
 from ehai.hub.adapters.pi.adapter import PiAdapter
 from ehai.hub.mcp_endpoint import SessionToolEndpoint, new_session_token
 from ehai.hub.protocol import (
@@ -293,7 +294,8 @@ def create_app(
             f"Session idle timeout must be at least {MIN_SESSION_IDLE_SECONDS:g} seconds"
         )
     hub = Hub(
-        adapters or {"pi": PiAdapter(), "claude-code": ClaudeCodeAdapter()},
+        adapters
+        or {"pi": PiAdapter(), "claude-code": ClaudeCodeAdapter(), "codex": CodexAdapter()},
         idle_seconds=idle_seconds,
     )
     tool_endpoint = SessionToolEndpoint(hub.session_for_mcp_token)

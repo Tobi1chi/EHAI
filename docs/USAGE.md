@@ -211,6 +211,7 @@ harness 文档。改用 Claude Code 运行全部角色时，复制 [Claude Code 
 （表示经 Hub 运行的角色），推理强度只接受 low/medium/high/max。先用
 `uv run ehai inspect-agent --claude-code <claude 路径>` 做无凭证检查。Claude Code 每个会话会额外发出
 一次不带工具的小请求（生成标题），会计入 Provider 用量。管理器（`ehai init`/`add`）目前只配置 Pi。
+Codex 使用 [Codex 示例](../examples/harness-codex.json) 作为 `--harness-config`，填写绝对路径并先在私有 CODEX_HOME 登录；版本、沙箱、审批与验证限制见 [Hub 的 Codex 兼容层](HUB.md#codex-兼容层)。
 
 宿主拥有运行和 Pi 子进程。另一个终端的客户端不读取本地数据库、不启动另一套 Scheduler：
 
