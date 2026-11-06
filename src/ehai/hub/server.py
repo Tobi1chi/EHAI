@@ -46,6 +46,7 @@ from ehai.hub.protocol import (
     Health,
     HubEvent,
     InspectHarness,
+    NativeDecision,
     PromptMessage,
     ResolvedHarness,
     ResolveHarness,
@@ -209,7 +210,9 @@ class Hub:
         self.by_mcp_token[token] = session.session_id
         return SessionStarted(session_id=session.session_id, native_session=native.native_session)
 
-    async def control(self, session: _Session, action: str, value: object = None) -> None:
+    async def control(
+        self, session: _Session, action: str, value: object = None, *, action_id: str = ""
+    ) -> None:
         if session.state != "running":
             raise HubError(502, "harness_failed", "Hub session is no longer running")
         try:
@@ -229,6 +232,9 @@ class Hub:
                         pending.set_result(value)
                 else:
                     await session.native.tool_result(value)
+            elif action == "native_decision":
+                assert isinstance(value, NativeDecision)
+                await session.native.native_decision(action_id, value)
             else:
                 await session.native.cancel()
         except HarnessFailure as error:
@@ -384,6 +390,10 @@ def create_app(
     @app.post("/v1/sessions/{session_id}/tool-results", status_code=204)
     async def tool_result(session_id: str, body: ToolResult) -> None:
         await hub.control(hub.require(session_id), "tool_result", body)
+
+    @app.post("/v1/sessions/{session_id}/native-actions/{action_id}", status_code=204)
+    async def native_decision(session_id: str, action_id: str, body: NativeDecision) -> None:
+        await hub.control(hub.require(session_id), "native_decision", body, action_id=action_id)
 
     @app.post("/v1/sessions/{session_id}/heartbeat", status_code=204)
     async def heartbeat(session_id: str) -> None:

@@ -9,11 +9,12 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import shlex
 from collections.abc import Mapping
 from contextlib import suppress
 from pathlib import Path
 
-from ehai import ID, JsonValue, json_dumps
+from ehai import ID, JsonValue, json_dumps, json_loads
 from ehai.application.agent_contracts import (
     AgentCancelledError,
     CancellationToken,
@@ -26,6 +27,7 @@ from ehai.application.agent_contracts import (
 from ehai.application.agent_roles import (
     AgentRoleConfig,
     BeforeStepMessages,
+    NativeAuthorization,
     RoleExecution,
     ToolRegistry,
 )
@@ -42,6 +44,10 @@ from ehai.hub.protocol import (
     HubEvent,
     InputPrepared,
     Lifecycle,
+    NativeAction,
+    NativeDecision,
+    NativeItem,
+    NativePolicy,
     Settled,
     StartSession,
     ToolCallEvent,
@@ -49,8 +55,9 @@ from ehai.hub.protocol import (
     ToolSpec,
 )
 from ehai.infrastructure.harnesses import HarnessConfig
+from ehai.infrastructure.host_tools import NATIVE_REPLACED_TOOLS
 
-# Every role offers only EHAI tools, so the harness must be able to switch its own off.
+# Native tools must be disabled or constrained by the harness (ADR 0007, section 11).
 _REQUIRED_CAPABILITIES = ("tools.native.restrictable",)
 _EVENT_WAIT_SECONDS = 20.0
 
@@ -122,9 +129,14 @@ class HubRoleRunner:
             event.payload.get("configuration_hash") != self.harness.fingerprint for event in starts
         ):
             raise ValueError(f"{kind} Session configuration differs from the authorized backend")
+        native_kept = self.harness.supports("tools.native.kept")
         missing = [
             capability
-            for capability in (*_REQUIRED_CAPABILITIES, *(("session.resume",) if starts else ()))
+            for capability in (
+                *_REQUIRED_CAPABILITIES,
+                *(("tools.native.approval",) if native_kept else ()),
+                *(("session.resume",) if starts else ()),
+            )
             if not self.harness.supports(capability)
         ]
         if missing:
@@ -132,6 +144,22 @@ class HubRoleRunner:
         token = cancellation or CancellationToken()
         token.raise_if_cancelled()
         tool_set, executor = registry.freeze(config)
+        native_policy = None
+        if native_kept:
+            tool_set = ToolSet(
+                tuple(
+                    tool for tool in tool_set.definitions if tool.name not in NATIVE_REPLACED_TOOLS
+                )
+            )
+            authorization = registry.native_authorization
+            native_policy = NativePolicy(
+                sandbox=(
+                    "workspace-write"
+                    if authorization is not None and authorization.allow_workspace_write
+                    else "read-only"
+                ),
+                network=False,
+            )
         request = StartSession(
             invocation_id=str(attempt_id),
             state_key=str(session.agent_session_ref_id),
@@ -154,6 +182,7 @@ class HubRoleRunner:
             model=model,
             reasoning_effort=reasoning_effort,
             workspace=str(workspace),
+            native_policy=native_policy,
         )
 
         invocation = _Invocation(
@@ -166,6 +195,10 @@ class HubRoleRunner:
             executor=executor,
             token=token,
             before_step_messages=before_step_messages,
+            workspace=workspace,
+            native_policy=native_policy,
+            native_authorization=registry.native_authorization,
+            protected_paths=self.harness.protected_paths,
         )
         try:
             async with self.hub.connect() as hub:
@@ -255,6 +288,10 @@ class _Invocation:
         executor: ToolExecutor,
         token: CancellationToken,
         before_step_messages: BeforeStepMessages | None,
+        workspace: Path,
+        native_policy: NativePolicy | None,
+        native_authorization: NativeAuthorization | None,
+        protected_paths: tuple[Path, ...],
     ) -> None:
         self.backend = backend
         self.store = store
@@ -265,6 +302,10 @@ class _Invocation:
         self.executor = executor
         self.token = token
         self.before_step_messages = before_step_messages
+        self.workspace = workspace.resolve()
+        self.native_policy = native_policy
+        self.native_authorization = native_authorization
+        self.protected_paths = protected_paths
         self.queued: dict[str, ModelMessage] = {}
         self.final_text: str | None = None
         self.step_pending = False
@@ -374,6 +415,25 @@ class _Invocation:
                 )
         elif isinstance(event, ToolCallEvent):
             await self._call_tool(event)
+        elif isinstance(event, NativeAction):
+            decision = (
+                NativeDecision(approved=False, reason="Role result already submitted")
+                if self.final_text is not None
+                else _native_decision(
+                    event,
+                    workspace=self.workspace,
+                    policy=self.native_policy,
+                    authorization=self.native_authorization,
+                    protected_paths=self.protected_paths,
+                )
+            )
+            self._record_native(event.model_dump(mode="json"))
+            self._record_native(
+                {"type": "native_decision", "action_id": event.action_id, **decision.model_dump()}
+            )
+            await self.hub.native_decision(self._session_id, event.action_id, decision)
+        elif isinstance(event, NativeItem):
+            self._record_native(event.model_dump(mode="json"))
         elif isinstance(event, Lifecycle):
             if event.name == "turn_end" and self.step_pending:
                 self.record(
@@ -383,6 +443,11 @@ class _Invocation:
             self.record(TraceType.BACKEND_EVENT, {"backend": self.backend, "type": event.name})
         elif isinstance(event, Failed):
             raise HarnessProtocolError(event.reason)
+
+    def _record_native(self, payload: Mapping[str, JsonValue]) -> None:
+        safe = json_loads(redact_sensitive_text(json_dumps({"backend": self.backend, **payload})))
+        assert isinstance(safe, dict)
+        self.record(TraceType.BACKEND_EVENT, safe)
 
     async def _call_tool(self, event: ToolCallEvent) -> None:
         if self.final_text is not None:
@@ -435,3 +500,68 @@ class _Invocation:
             self._session_id,
             ToolResult(call_id=event.call_id, result=result, is_error=error, finish=finish),
         )
+
+
+def _native_decision(
+    action: NativeAction,
+    *,
+    workspace: Path,
+    policy: NativePolicy | None,
+    authorization: NativeAuthorization | None,
+    protected_paths: tuple[Path, ...],
+) -> NativeDecision:
+    """Decide one native request from host authorization and the Attempt's sandbox."""
+    if policy is None:
+        return NativeDecision(approved=False, reason="Native tools are not enabled")
+    if action.kind not in {"command", "file_change"}:
+        return NativeDecision(approved=False, reason="Permission escalation or unknown operation")
+    workspace = workspace.resolve()
+    try:
+        cwd = (workspace / action.cwd).resolve() if action.cwd else workspace
+        if action.kind == "file_change":
+            if (
+                policy.sandbox != "workspace-write"
+                or authorization is None
+                or not authorization.allow_workspace_write
+            ):
+                return NativeDecision(approved=False, reason="Role cannot write the workspace")
+            if not action.paths or any(not path for path in action.paths):
+                return NativeDecision(
+                    approved=False, reason="File changes must identify their paths"
+                )
+            paths = tuple((cwd / path).resolve() for path in action.paths)
+            protected = tuple(path.resolve() for path in protected_paths)
+            approved = all(
+                path.is_relative_to(workspace)
+                and not any(
+                    path.is_relative_to(root) or root.is_relative_to(path) for root in protected
+                )
+                for path in paths
+            )
+            return NativeDecision(
+                approved=approved,
+                reason="Workspace file changes"
+                if approved
+                else "Outside workspace or protected path",
+            )
+    except (OSError, ValueError, RuntimeError):
+        return NativeDecision(approved=False, reason="Native paths could not be resolved")
+    if not action.cwd or not cwd.is_relative_to(workspace):
+        return NativeDecision(approved=False, reason="Command cwd must be inside the workspace")
+    if not action.command or not action.command.strip():
+        return NativeDecision(approved=False, reason="Command is missing")
+    if policy.sandbox == "read-only" or (authorization is not None and authorization.has_shell):
+        return NativeDecision(approved=True, reason="Read-only sandbox or authorized Shell")
+    try:
+        argv = tuple(shlex.split(action.command))
+    except ValueError:
+        return NativeDecision(approved=False, reason="Command could not be split into words")
+    # A command-list or expansion cannot inherit the permission of its first git command.
+    simple = not any(char in action.command for char in "\n\r;&|<>($`)")
+    approved = authorization is not None and (
+        authorization.allows_command(argv) or (simple and authorization.allows_git(argv))
+    )
+    return NativeDecision(
+        approved=approved,
+        reason="Authorized command or Git category" if approved else "Command is not authorized",
+    )

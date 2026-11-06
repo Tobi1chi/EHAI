@@ -18,7 +18,7 @@ from ehai.hub.adapters import HarnessFailure, HarnessRequestError, McpEndpoint, 
 from ehai.hub.adapters.pi.config import PI_VERSION, PiBackendConfig, check_node_version
 from ehai.hub.adapters.pi.probe import inspect_pi_backend
 from ehai.hub.adapters.pi.rpc import PiRpcError, PiRpcProcess
-from ehai.hub.protocol import ResolvedHarness, StartSession, ToolResult
+from ehai.hub.protocol import NativeDecision, ResolvedHarness, StartSession, ToolResult
 
 _LIFECYCLE = frozenset(
     {
@@ -188,6 +188,9 @@ class PiSession:
         ).decode("ascii")
         await self._request("prompt", {"message": f"/ehai-tool-result {envelope}"})
 
+    async def native_decision(self, action_id: str, decision: NativeDecision) -> None:
+        raise HarnessFailure("Pi does not request native action approvals")
+
     async def cancel(self) -> None:
         await self._request("clear_queue")
         await self._request("abort")
@@ -203,6 +206,8 @@ _CAPABILITIES: dict[str, JsonValue] = {
     "session.fork": False,
     "requests.interactive": False,
     "tools.native.restrictable": True,
+    "tools.native.kept": False,
+    "tools.native.approval": False,
     "tools.mcp": False,
     "usage.reported": True,
     "cancel.confirmed": False,

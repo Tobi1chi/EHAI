@@ -2,7 +2,7 @@
 
 > 用法 · 只写已实现的接口与限制。
 
-更新：2026-11-03。Hub 是 EHAI 核心运行 Agent harness 的唯一入口，作为独立进程 `ehai-hub` 运行。
+更新：2026-11-07。Hub 是 EHAI 核心运行 Agent harness 的唯一入口，作为独立进程 `ehai-hub` 运行。
 设计依据见 [ADR 0007](adr/0007-agent-harness-port.md)；兼容层有 Pi 与 Claude Code 两个。
 
 ## 分工
@@ -66,15 +66,39 @@ Hub 本身只提供令牌认证，不提供 TLS；跨机器使用时应放在受
 | GET `/v1/health` | → 协议版本、已安装的 harness、版本及能力清单（ADR 0007 第 5 条） |
 | POST `/v1/harnesses/resolve` | `kind`、`settings`、可选 `pin_directory` → 规范化 `settings`、`version`、指纹、所需凭证变量名、受保护路径、能力清单。给出 `pin_directory` 时先把原生配置文件复制进去，返回的设置指向副本。设置无效时返回 422 |
 | POST `/v1/harnesses/inspect` | `kind`、`settings`（Pi：`node`、`cli`）→ 无凭证、无模型请求的安装探查报告 |
-| POST `/v1/sessions` | 调用身份、状态键、原生会话 ID、harness `{kind, version, settings}`（`version` 可省略，给出时须与 Hub 安装的版本一致）、是否全新会话、系统提示词、工具清单、模型、推理强度、工作区 → `session_id`、原生会话引用。启动并核对会话，但不发送任务 |
+| POST `/v1/sessions` | 调用身份、状态键、原生会话 ID、harness `{kind, version, settings}`（`version` 可省略，给出时须与 Hub 安装的版本一致）、是否全新会话、系统提示词、工具清单、模型、推理强度、工作区、可选 `native_policy`（默认 `null`）→ `session_id`、原生会话引用。启动并核对会话，但不发送任务 |
 | POST `/v1/sessions/{id}/steer` | 要注入的用户消息 |
 | POST `/v1/sessions/{id}/prompt` | 任务消息（指令与上下文） |
 | GET `/v1/sessions/{id}/events?after=N&wait=S` | 长轮询，返回序号大于 N 的事件和会话状态，最多等待 30 秒 |
 | POST `/v1/sessions/{id}/tool-results` | `call_id`、结果、是否错误、是否结束本轮 |
+| POST `/v1/sessions/{id}/native-actions/{action_id}` | `NativeDecision{approved: bool, reason: str\|null}`（`reason` 默认 `null`）→ 204；Hub 转交该会话的 `native_decision`，由兼容层关联原生审批请求 |
 | POST `/v1/sessions/{id}/cancel` | 请求 harness 停止当前轮 |
 | GET `/v1/sessions/{id}` | 会话状态与最新事件序号 |
 | POST `/v1/sessions/{id}/heartbeat` | 续约：核心在调用期间每 60 秒发送一次，包括执行耗时工具时 |
 | DELETE `/v1/sessions/{id}?abort=true\|false` | 关闭会话；`abort=true` 先请求停止再结束进程 |
+
+### 原生工具策略与审批
+
+能力清单增加 `tools.native.kept`（保留原生文件/命令工具）与 `tools.native.approval`
+（原生审批请求经 Hub 交给核心）。声明 `kept=true` 时，核心在启动前要求 `approval=true`
+与 `tools.native.restrictable=true`，缺少任一项即报配置错误。Pi 与 Claude Code 显式声明
+`kept=false`、`approval=false`，继续关闭原生工具，调用审批回传方法会报错。
+
+核心为保留原生工具的会话设置 `native_policy={sandbox, network:false}`：HostTools 授权角色
+可写工作区时 `sandbox="workspace-write"`，否则为 `"read-only"`。未声明保留时为 `null`。
+同时从工具清单中去掉 `workspace_list/search/read/write/patch/apply_patch/delete/move/mkdir`
+（均带 `workspace_` 前缀）、`command`、`shell_exec/write/terminate`（均带 `shell_` 前缀）与 `git`；
+成果读取、web/MCP 提供者、skills、会话、handoff、结束与规划/审查工具照旧。
+
+核心的审批规则使用 HostTools 同一份授权数据：文件改动必须获准写工作区，且全部路径解析后
+位于本次工作区内，并且不与 harness resolve 返回的受保护路径重叠；相对路径基于请求的 `cwd`
+（省略时基于工作区）解析。命令必须显式提供工作区内的 `cwd`，并满足有可用 Shell、
+`shlex` 切分后精确匹配一条 `allowed_commands`、Git 类别在 `git_permissions` 中、或沙箱只读之一。
+Git 类别判断复用 HostTools；含命令串联、重定向或展开语法的字符串不能只凭首个 Git 子命令获批。
+权限提升与其他请求一律拒绝。审批请求、决定与已执行原生操作均脱敏写入现有 `backend/event` 轨迹；
+记录决定后才回传，记录本身只表示核心已作决定。完成仍只认结束工具与 `settled`。
+
+目前已实现上述协议与核心处理，尚无保留原生工具的兼容层；Codex 兼容层未实现。
 
 ### 每会话 MCP 端点
 
@@ -118,6 +142,8 @@ Pi 不支持 MCP，继续使用扩展桥。Claude Code 兼容层使用该端点�
 | `input_prepared` | harness 即将把这些用户输入（SHA-256）发给模型，核心据此确认注入消息已送达 |
 | `assistant_message` | 模型可见文本、停止原因、归一化用量 |
 | `tool_call` | 一次工具调用及同一批次的调用 ID；核心执行后经 `tool-results` 回传 |
+| `native_action` | 待审批原生操作：`seq`、`action_id`、`kind`（`command/file_change/permissions/other`）、`command`、`cwd`、`paths`、`reason`。`command/cwd/reason` 默认 `null`，`paths` 默认空列表；核心经 `native-actions/{action_id}` 回传决定 |
+| `native_item` | 已执行完的原生操作（含 harness 自行放行的）：`seq`、`item_id`、`kind`（`command/file_change/other`）、`command`、`cwd`、`paths`、`status`、`exit_code`。`command/cwd/exit_code` 默认 `null`，`paths` 默认空列表 |
 | `lifecycle` | harness 生命周期事件（开始、轮结束、压缩、重试等） |
 | `settled` | harness 报告本轮已结束；是否成功仍由核心按结束工具判断 |
 | `failed` | 控制通道失败；进行中的结果未知 |

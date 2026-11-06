@@ -26,6 +26,7 @@ from ehai.hub.protocol import (
     HarnessReport,
     Health,
     InspectHarness,
+    NativeDecision,
     PromptMessage,
     ResolvedHarness,
     ResolveHarness,
@@ -200,6 +201,13 @@ class HubConnection:
 
     async def tool_result(self, session_id: str, result: ToolResult) -> None:
         await self._call("POST", f"/v1/sessions/{session_id}/tool-results", body=result)
+
+    async def native_decision(
+        self, session_id: str, action_id: str, decision: NativeDecision
+    ) -> None:
+        await self._call(
+            "POST", f"/v1/sessions/{session_id}/native-actions/{action_id}", body=decision
+        )
 
     async def heartbeat(self, session_id: str) -> None:
         await self._call("POST", f"/v1/sessions/{session_id}/heartbeat")

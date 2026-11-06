@@ -11,6 +11,7 @@ import subprocess
 import sys
 from collections.abc import Callable, Mapping
 from contextlib import suppress
+from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
 
@@ -68,6 +69,26 @@ _SENSITIVE_ENVIRONMENT_NAME = re.compile(
 SubmitCandidateValidator = Callable[[Mapping[str, JsonValue]], None]
 SubmitHandoff = Callable[[Mapping[str, JsonValue]], dict[str, JsonValue]]
 
+# Replaced by the harness's native operations when tools.native.kept is declared.
+NATIVE_REPLACED_TOOLS = frozenset(
+    {
+        "workspace_list",
+        "workspace_search",
+        "workspace_read",
+        "workspace_write",
+        "workspace_patch",
+        "workspace_apply_patch",
+        "workspace_delete",
+        "workspace_move",
+        "workspace_mkdir",
+        "command",
+        "shell_exec",
+        "shell_write",
+        "shell_terminate",
+        "git",
+    }
+)
+
 
 class _CommandOutputBudget:
     def __init__(self, limit: int) -> None:
@@ -81,6 +102,29 @@ class _CommandOutputBudget:
         if self.consumed > self.limit:
             self.exceeded.set()
         return chunk[:remaining]
+
+
+@dataclass(frozen=True, slots=True)
+class _NativeAuthorization:
+    runtime: HostToolRuntime
+
+    @property
+    def allow_workspace_write(self) -> bool:
+        return self.runtime.allow_workspace_write
+
+    @property
+    def has_shell(self) -> bool:
+        return bool(self.runtime._shell_paths)
+
+    def allows_command(self, argv: tuple[str, ...]) -> bool:
+        return argv in self.runtime.allowed_commands
+
+    def allows_git(self, argv: tuple[str, ...]) -> bool:
+        return (
+            len(argv) > 1
+            and argv[0] == "git"
+            and _git_permission(argv[1:]) in self.runtime.git_permissions
+        )
 
 
 class HostToolRuntime:
@@ -249,7 +293,9 @@ class HostToolRuntime:
             )
         )
         handlers["report_blocked"] = self._report_blocked
-        self.registry = ToolRegistry(tuple(definitions), handlers)
+        self.registry = ToolRegistry(
+            tuple(definitions), handlers, native_authorization=_NativeAuthorization(self)
+        )
         self.tool_set = ToolSet(tuple(definitions))
         self.executor = ToolExecutor(self.tool_set, handlers)
 

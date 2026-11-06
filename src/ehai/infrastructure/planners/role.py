@@ -977,4 +977,13 @@ def _planner_registry(
                 )
 
             handlers[definition.name] = read_workspace
-    return ToolRegistry(tuple(definitions), handlers), tuple(item.name for item in definitions)
+    return (
+        ToolRegistry(
+            tuple(definitions),
+            handlers,
+            native_authorization=(
+                None if workspace_tools is None else workspace_tools.registry.native_authorization
+            ),
+        ),
+        tuple(item.name for item in definitions),
+    )

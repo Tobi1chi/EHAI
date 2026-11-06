@@ -43,6 +43,11 @@ class ToolSpec(_Message):
     parameters: dict[str, JsonValue]
 
 
+class NativePolicy(_Message):
+    sandbox: Literal["read-only", "workspace-write"]
+    network: Literal[False] = False
+
+
 class StartSession(_Message):
     """Launch a harness session and verify it; the prompt is sent separately."""
 
@@ -57,6 +62,7 @@ class StartSession(_Message):
     model: Text
     reasoning_effort: str | None = None
     workspace: Text
+    native_policy: NativePolicy | None = None
 
 
 class SessionStarted(_Message):
@@ -77,6 +83,38 @@ class ToolResult(_Message):
     result: JsonValue
     is_error: bool
     finish: bool
+
+
+class NativeDecision(_Message):
+    approved: bool
+    reason: str | None = None
+
+
+class NativeAction(_Message):
+    """A native operation awaiting the core's authorization decision."""
+
+    type: Literal["native_action"] = "native_action"
+    seq: int
+    action_id: Text
+    kind: Literal["command", "file_change", "permissions", "other"]
+    command: str | None = None
+    cwd: str | None = None
+    paths: list[str] = Field(default_factory=list)
+    reason: str | None = None
+
+
+class NativeItem(_Message):
+    """A completed native operation, including ones allowed by the harness sandbox."""
+
+    type: Literal["native_item"] = "native_item"
+    seq: int
+    item_id: Text
+    kind: Literal["command", "file_change", "other"]
+    command: str | None = None
+    cwd: str | None = None
+    paths: list[str] = Field(default_factory=list)
+    status: str
+    exit_code: int | None = None
 
 
 class InputPrepared(_Message):
@@ -126,7 +164,14 @@ class Failed(_Message):
 
 
 HubEvent = Annotated[
-    InputPrepared | AssistantMessage | ToolCallEvent | Lifecycle | Settled | Failed,
+    InputPrepared
+    | AssistantMessage
+    | ToolCallEvent
+    | NativeAction
+    | NativeItem
+    | Lifecycle
+    | Settled
+    | Failed,
     Field(discriminator="type"),
 ]
 

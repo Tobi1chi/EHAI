@@ -31,7 +31,7 @@ from typing import cast
 
 from ehai import JsonValue, json_dumps, json_loads
 from ehai.hub.adapters import HarnessFailure, HarnessRequestError, McpEndpoint, ToolBatch
-from ehai.hub.protocol import ResolvedHarness, StartSession, ToolResult
+from ehai.hub.protocol import NativeDecision, ResolvedHarness, StartSession, ToolResult
 
 KIND = "claude-code"
 # Major series of the stream-json control protocol this layer speaks; the exact CLI
@@ -50,6 +50,8 @@ _CAPABILITIES: dict[str, JsonValue] = {
     "session.fork": False,
     "requests.interactive": False,
     "tools.native.restrictable": True,
+    "tools.native.kept": False,
+    "tools.native.approval": False,
     "tools.mcp": True,
     "usage.reported": True,
     "cancel.confirmed": False,
@@ -511,6 +513,9 @@ class ClaudeCodeSession:
     async def tool_result(self, result: ToolResult) -> None:
         del result
         raise HarnessFailure("Claude Code receives EHAI tool results over MCP")
+
+    async def native_decision(self, action_id: str, decision: NativeDecision) -> None:
+        raise HarnessFailure("Claude Code does not request native action approvals")
 
     async def cancel(self) -> None:
         await self._process.control({"subtype": "interrupt"})

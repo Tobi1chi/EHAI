@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from typing import Protocol
 
 from ehai import JsonValue
-from ehai.hub.protocol import ResolvedHarness, StartSession, ToolResult
+from ehai.hub.protocol import NativeDecision, ResolvedHarness, StartSession, ToolResult
 
 
 @dataclass(frozen=True, slots=True)
@@ -65,6 +65,8 @@ class HarnessSession(Protocol):
     async def prompt(self, message: str) -> None: ...
 
     async def tool_result(self, result: ToolResult) -> None: ...
+
+    async def native_decision(self, action_id: str, decision: NativeDecision) -> None: ...
 
     async def cancel(self) -> None: ...
 

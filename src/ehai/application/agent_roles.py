@@ -71,6 +71,20 @@ class AgentRoleConfig:
         object.__setattr__(self, "permissions", frozenset(self.permissions))
 
 
+class NativeAuthorization(Protocol):
+    """Read-only access to the same authorization used by the host tool handlers."""
+
+    @property
+    def allow_workspace_write(self) -> bool: ...
+
+    @property
+    def has_shell(self) -> bool: ...
+
+    def allows_command(self, argv: tuple[str, ...]) -> bool: ...
+
+    def allows_git(self, argv: tuple[str, ...]) -> bool: ...
+
+
 class ToolRegistry:
     """Immutable Tool capability catalog selected by one Role profile."""
 
@@ -78,12 +92,19 @@ class ToolRegistry:
         self,
         definitions: tuple[ToolDefinition, ...],
         handlers: Mapping[str, ToolHandler],
+        *,
+        native_authorization: NativeAuthorization | None = None,
     ) -> None:
         catalog = ToolSet(definitions)
         if set(handlers) != {definition.name for definition in catalog.definitions}:
             raise ValueError("ToolRegistry handlers must exactly match its definitions")
         self._definitions = {definition.name: definition for definition in catalog.definitions}
         self._handlers = dict(handlers)
+        self._native_authorization = native_authorization
+
+    @property
+    def native_authorization(self) -> NativeAuthorization | None:
+        return self._native_authorization
 
     def freeze(self, config: AgentRoleConfig) -> tuple[ToolSet, ToolExecutor]:
         try:
