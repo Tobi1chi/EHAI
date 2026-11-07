@@ -154,6 +154,113 @@ Google 端 API 权限与连接允许的日历是两层约束，连接配置不�
 尚不监听用户在 Google 页面手动修改的日程。独立 Connector 可使用 events 入口提交其他已登记事件，
 不要求必须先执行某个 EHAI 动作。
 
+## RSS/Atom Connector 配置和调用
+
+RSS/Atom Connector 是独立的只读进程，复用本页的桥接接口、pending/回执语义和 `ehai-rss` 命令。
+它不写入远端；抓取用既有 httpx，解析用标准库 ElementTree，未新增依赖。
+从源码目录执行 `uv sync --frozen` 后，先启动 EHAI API 并创建生活 Project，然后登记连接：
+
+```powershell
+uv run ehai-rss init --api-url http://127.0.0.1:8787 --project-id <项目UUID> --state-dir C:/private/ehai-rss --feed-url https://example.com/feed.xml
+```
+
+命令生成随机桥接 token、登记 manifest 和配置，输出 connector_id 与 state-dir；不访问任何 feed。
+`--feed-url` 至少给一次、可重复，每个值是一条完整的 feed 地址，共同构成该连接的允许清单。
+清单随登记固定，不能默许扩大范围；只接受 http/https 且带主机名的地址，其他协议在 init 时直接拒绝。
+
+```powershell
+uv run ehai-rss run --state-dir C:/private/ehai-rss
+uv run ehai-rss run --state-dir C:/private/ehai-rss --once
+```
+
+`run` 循环领取调用，`--once` 只处理一轮。同一个 state-dir 有进程锁；凭证、pending 与回执都在该目录，
+应放在仓库外并按宿主私有文件管理。
+
+连接类型 `rss`、版本 `"1"`，只有一个只读动作 `feed.fetch`、版本 `"1"`：
+
+| 项 | 值 |
+| --- | --- |
+| 输入 | `feed_url`（必填，须在 init 固定的清单内）、`max_items`（整数 1..200，默认 50） |
+| 输出 | FeedDocument（Schema 可用 get-connector 查询） |
+| 读取方式 | 只读 GET；不要求 `authorize_write` |
+
+FeedDocument 字段：
+
+| 字段 | 含义 |
+| --- | --- |
+| feed_url | 调用输入的地址，不是重定向后的最终地址 |
+| title / link | 频道标题与链接，可为 null |
+| kind | `rss`（RSS 2.0）或 `atom`（Atom 1.0） |
+| fetched_at | 抓取时间，ISO-8601 UTC（`...Z`） |
+| items | FeedItem 列表，可为空 |
+
+FeedItem 字段：`item_id`、`title`、`link`、`published_at`、`updated_at`、`author`、`summary`，
+除 `item_id` 外均可为 null。`summary` 是去标签后的纯文本，最长 2000 字符。
+`item_id` 优先用条目自带 guid/id，其次用解析成绝对地址的 link；两者都没有时用
+sha256(title + published 原文) 的十六进制值，同一 feed 多次抓取保持一致。
+`published_at`、`updated_at` 统一转成 ISO-8601 UTC；RSS 2.0 只有 pubDate，Atom 另有 updated。
+
+条目顺序在回传前统一调整：按每条自己的 `published_at` 倒序，没有 `published_at` 的用该条 `updated_at`；
+两者都没有的条目排在最后并保持文档顺序，同一时间保持原顺序（稳定排序）。排序完成后再按 `max_items`
+截断，因此被截掉的是最旧或未标日期的条目。抓取时间 `fetched_at` 也由这次调用写入，不是 feed 声明的时间。
+
+抓取与解析边界：
+
+- 只接受 http/https；响应体流式读取，上限 5 MiB（5×1024×1024 字节），超过即失败，不落盘。
+- 最多跟随 5 次重定向；超过或缺少 Location 失败。允许清单只核对调用输入的 feed_url，
+  重定向由抓取过程跟随，不逐跳重新核对清单。
+- 单次请求 30 秒超时；超时不自动重试，失败原因回传给调用记录。
+- 只支持 RSS 2.0 与 Atom 1.0，含带前缀和默认命名空间的 Atom；其他格式拒绝。
+- 拒绝 DOCTYPE 与 ENTITY 声明（含 UTF-16/32 等编码后的字节），不做实体扩展。
+- 文本先按 XML 声明中的编码用 Python 编解码器解码（含 gb2312/gbk/big5 等名称）；
+  声明缺失按 UTF-8，并先去掉 BOM 与前导空白。解码失败是带类型的解析错误。
+- 条目的相对链接按 feed_url 解析成绝对地址。RSS 2.0 仅在无 author 时用 dc:creator，
+  仅在无 description 时用 content:encoded。
+
+抓取失败是 `failed` 调用，不是 `unknown`，原因由适配器控制，不含 feed 地址、响应体或回显的输入值；
+失败不会产生部分 FeedDocument：
+
+| 情况 | 结果中的 error |
+| --- | --- |
+| 连接的 manifest/动作/配置与本进程不一致 | `RSS contract does not match this connection` |
+| feed_url 不在 init 固定的清单内 | `Feed URL is not allowed by this connection` |
+| 输入不合法（多余输入、类型不符、max_items 越界） | `Invalid feed.fetch inputs: ...` |
+| 重定向超过 5 次或缺少 Location | `Feed redirect limit exceeded or missing location` |
+| HTTP 状态 >= 400 | `Feed returned HTTP <code>` |
+| 其他非 2xx 状态 | `Unexpected feed HTTP <code>` |
+| 请求超时 | `Feed request timed out` |
+| 响应体超过 5 MiB | `Feed exceeds maximum byte size` |
+| 返回的是 HTML 页面 | `response is HTML, not a feed` |
+| 声明的编码无法解码 | `Invalid or unsupported feed XML encoding` |
+| 含 DOCTYPE/ENTITY 声明 | `DOCTYPE and ENTITY declarations are not permitted` |
+| 不是 RSS 2.0/Atom 1.0，或 XML 残缺 | `Response is not an RSS 2.0 or Atom 1.0 feed`、`Malformed feed XML` |
+| 其他未预期异常 | `RSS fetch or input validation failed` |
+
+输入校验与结果构造共用同一段处理，因此 feed 内容导致的字段校验失败同样以
+`Invalid feed.fetch inputs: ...` 回传；该分支只列前三个问题，不回显输入值。
+
+自定义 Workflow 可以把该动作直接当作步骤。[示例](../examples/rss-workflow.json) 是最小的
+动作 → 人工复核 → end 流程，动作步骤形如：
+
+```json
+{
+  "id": "fetch",
+  "type": "action",
+  "connector_id": "REPLACE_WITH_REGISTERED_RSS_CONNECTOR_ID",
+  "action": "feed.fetch",
+  "action_version": "1",
+  "inputs": {"feed_url": {"ref": "input.feed_url"}, "max_items": {"value": 50}},
+  "next": "review"
+}
+```
+
+保存前把占位 connector_id 换成本项目已登记的 RSS 连接 ID；人工步骤以 `steps.fetch.items` 作为 subject，
+批准与拒绝都走到 end。启动时用 `input.feed_url` 提供地址，且仍须在 init 固定的清单内，否则该调用
+以 `Feed URL is not allowed by this connection` 失败，Run 按 [WORKFLOWS](WORKFLOWS.md#自定义-workflow) 的规则失败，
+不走业务分支。
+
+本节只写代码已实现的契约；隔离宿主的真实 feed Workflow 试用仍待团队负责人重跑，状态见 [STATUS](STATUS.md)。
+
 ## 验证与实际边界
 
 用户本机尚无 Google OAuth 配置，本轮只做代码与本地协议试用，不访问真实 Google 账号。

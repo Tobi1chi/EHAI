@@ -64,6 +64,7 @@
 | Workflow 事件触发 / 并行 / 子流程 | 未实现 | 只有目标设计 | [P4_WORKFLOW_DESIGN](P4_WORKFLOW_DESIGN.md) |
 | Connector HTTP 协议 | 无模型验证 | 本地分进程试用；结果未知需显式核对 | [CONNECTOR_PROTOCOL](CONNECTOR_PROTOCOL.md) |
 | Google Calendar Connector | 无模型验证 | 只有本地替身；真实 OAuth/日历未授权验证 | [P4](EVIDENCE.md#p4-生活事务与外部连接) |
+| RSS/Atom Connector | 无模型验证 | 只读 `feed.fetch`（RSS 2.0 / Atom 1.0、5 MiB 上限、最多 5 次重定向、失败按类别回传原因）；隔离宿主的真实 feed Workflow 试用尚未端到端通过，不计入产品 E2E | [CONNECTOR_PROTOCOL](CONNECTOR_PROTOCOL.md#rssatom-connector-配置和调用) |
 | Jev 双反馈环实验 | 真实验证 | 只读、显式推进；不是自动学习或通用 Workflow。11-05 决定降为隐藏实验，阶段 ④ 移出页面主路径（C4） | [DUAL_FEEDBACK_EXPERIMENT](DUAL_FEEDBACK_EXPERIMENT.md) |
 | 固定 Pi 回退 | 真实验证 | 显式启用；故障保留不重试；发布仍需明确决定 | [P4](EVIDENCE.md#p4-生活事务与外部连接) |
 | 独立 Project 代码修改转交 | 部分 | 最小项目修改闭环通过；整仓规划收敛与传输稳定性未解决 | [P4_WORKFLOW_REVISION_DESIGN](P4_WORKFLOW_REVISION_DESIGN.md) · [P4](EVIDENCE.md#p4-生活事务与外部连接) |

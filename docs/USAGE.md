@@ -4,6 +4,7 @@
 
 更新：2026-10-22。能力成熟度见 [STATUS](STATUS.md)，历史用法不作为当前参数说明。
 生活 Workflow 见 [WORKFLOWS](WORKFLOWS.md)；Connector、Jev 实验分别见各自文档，索引见 [docs/README](README.md)。
+RSS/Atom Connector 的登记、动作和失败原因见 [RSS/Atom 配置和调用](CONNECTOR_PROTOCOL.md#rssatom-connector-配置和调用)。
 首次用 0.1 开发项目，先按 [README 快速开始](../README.md#快速开始) 配置宿主并完成一个任务；
 本页补充控制、恢复、计划变更和成果接续的详细契约。
 
