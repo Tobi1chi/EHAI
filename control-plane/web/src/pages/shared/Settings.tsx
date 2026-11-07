@@ -31,7 +31,7 @@ function WorkspaceRow({ entry }: { entry: WorkspaceOverviewEntry }) {
         <span className="title mono">{w.workspace_id}</span>
         <span className="meta">
           {WORKSPACE_STATUS[w.status]}
-          {w.failure_category ? ` · ${w.failure_category}` : ""} · {w.runtime.worker_kind} Worker
+          {w.failure_category ? ` · ${w.failure_category}` : ""} · {w.runtime.harness_kind ?? "pi"} Worker
           {w.runtime.worker_model ? ` · ${w.runtime.worker_model}` : ""}
         </span>
         <span className="meta mono" style={{ overflowWrap: "anywhere" }}>

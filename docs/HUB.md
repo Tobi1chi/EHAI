@@ -51,7 +51,7 @@ Hub 本身只提供令牌认证，不提供 TLS；跨机器使用时应放在受
 - Pi 配置由 Hub 校验并计算授权指纹（`/v1/harnesses/resolve`），但其中的路径（`node`、`cli`、
   `agent_dir`）、Pi 会话状态目录和工作区路径仍必须在 Hub 所在机器上存在。真正跨机器执行还需要
   决定工作区如何到达 Hub 一侧。
-- 读取 Pi 配置的本地命令（`ehai init`、`doctor`、`add`、带 `--pi-config` 的主机）也经 Hub 校验；
+- 读取 harness 配置的本地命令（`ehai init`、`doctor`、`add`、带 `--pi-config` 的主机）也经 Hub 校验，Codex 配置还经 Hub 探查登录状态；
   未配置远端 Hub 时会先启动本机 Hub 子进程。
 - [多工作区管理器](WORKSPACE_MANAGER.md)按白名单传递环境变量，工作区宿主不继承 `EHAI_HUB_URL`，
   各自使用本机 Hub 子进程。

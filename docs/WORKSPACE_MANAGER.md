@@ -15,12 +15,13 @@ uv run ehai init
 # 在本终端设置 init 中声明的凭证环境变量，然后：
 uv run ehai up
 uv run ehai add /absolute/path/to/repository
+# 已用 init --harness codex 配置 Codex 时，可按工作区覆盖：ehai add <路径> --harness pi
 uv run ehai status
 uv run ehai doctor
 uv run ehai down
 ```
 
-配置和非交互参数见 [安装与私有 Pi 配置](USAGE.md#安装与私有-pi-配置)。
+配置和非交互参数见 [安装与私有 Pi 配置](USAGE.md#安装与私有-harness-配置)。
 `EHAI_HOME` 默认 `~/.ehai`；管理数据在其 `manager/`，PID/本地控制令牌在 `manager.pid`，
 日志在 `manager.log`，子宿主日志在 `manager/workspaces/<id>/child.log`。
 PID 文件保留为上次启动记录，是否运行以令牌保护的管理器健康探测为准，不凭 PID 猜测或杀进程。
@@ -68,7 +69,7 @@ MCP 为 `get_local_engine`、`add_workspace_folder`，写入仍传 `request_json
 `status` 显示守护进程和各工作区的真实生命周期状态；离线时只列出登记信息并说明健康未知，返回 1。
 `doctor` 逐项检查配置、Node/Pi 版本与私有设置、终端/守护进程凭证变量存在性、
 管理器和工作区运行时健康；`--probe` 另经本机 Hub 启动一次 Pi 会话核对模型与思考级别（不调用模型，见
-[USAGE](USAGE.md#安装与私有-pi-配置)）；全部通过返回 0，检查失败返回 1，命令本身出错返回 2。
+[USAGE](USAGE.md#安装与私有-harness-配置)）；全部通过返回 0，检查失败返回 1，命令本身出错返回 2。
 
 `down` 通过私有本地控制接口逐个调用正常停止，再退出管理器；
 有活动执行、规划或写请求时返回冲突，须先完成或暂停相应任务；子进程停止超时仍沿用

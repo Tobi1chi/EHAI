@@ -15,7 +15,7 @@ from typing import BinaryIO
 import httpx
 
 from ehai import JsonValue, json_loads
-from ehai.infrastructure.harnesses import resolve_harness_async
+from ehai.infrastructure.harnesses import HarnessConfig, resolve_harness_async
 from ehai.interfaces.workspace_models import (
     PublicRuntimeSettings,
     WorkspaceDescriptor,
@@ -82,6 +82,7 @@ class ProcessFileLock:
 @dataclass
 class _Entry:
     registration: WorkspaceRegistration
+    # Legacy manifest/child field: pinned Pi settings or a full harness document.
     pi_backend_path: str | None
     status: str = "registered"
     failure_category: str | None = None
@@ -98,6 +99,28 @@ def _json_object(path: Path) -> dict[str, JsonValue]:
     if not isinstance(value, dict):
         raise ValueError(f"{path.name} must contain an object")
     return value
+
+
+async def _resolve_workspace_harness(
+    path: Path, kind: str, *, pin_directory: Path | None = None
+) -> HarnessConfig:
+    document = _json_object(path)
+    settings = document
+    version: str | None = None
+    if kind == "codex":
+        candidate, document_version = document.get("settings"), document.get("version")
+        if (
+            document.get("kind") != kind
+            or set(document) - {"kind", "version", "settings"}
+            or not isinstance(candidate, dict)
+            or (document_version is not None and not isinstance(document_version, str))
+        ):
+            raise ValueError(
+                "Codex requires a harness document with kind, settings and optional version"
+            )
+        settings = candidate
+        version = document_version
+    return await resolve_harness_async(kind, settings, version=version, pin_directory=pin_directory)
 
 
 def _atomic_json(path: Path, document: object) -> None:
@@ -182,7 +205,7 @@ class WorkspaceSupervisor:
             raise
         except (OSError, ValueError) as error:
             raise WorkspaceSupervisorError(
-                "Workspace directory or private Pi configuration is invalid"
+                "Workspace directory or private harness configuration is invalid"
             ) from error
 
     async def _register(self, request: WorkspaceRegistration) -> WorkspaceDescriptor:
@@ -217,14 +240,15 @@ class WorkspaceSupervisor:
             directory.mkdir(parents=True, exist_ok=True)
             pinned_path = None
             if runtime.pi_config_path is not None:
-                # The Hub validates the settings and pins a private copy of the native files.
-                harness = await resolve_harness_async(
-                    "pi",
-                    _json_object(Path(runtime.pi_config_path)),
-                    pin_directory=directory.resolve() / "pi-agent",
+                kind = runtime.harness_kind or "pi"
+                # Pi pins native settings; Codex retains its private home without copying it.
+                harness = await _resolve_workspace_harness(
+                    Path(runtime.pi_config_path),
+                    kind,
+                    pin_directory=directory.resolve() / "pi-agent" if kind == "pi" else None,
                 )
-                pinned = directory / "pi-backend.json"
-                _atomic_json(pinned, harness.settings)
+                pinned = directory / ("harness.json" if kind == "codex" else "pi-backend.json")
+                _atomic_json(pinned, harness.to_document() if kind == "codex" else harness.settings)
                 pinned_path = str(pinned)
             entry = _Entry(request, pinned_path)
             self._entries[request.workspace_id] = entry
@@ -334,7 +358,7 @@ class WorkspaceSupervisor:
             entry.url = f"http://127.0.0.1:{port}"
             entry.token = secrets.token_urlsafe(32)
             # One workspace must not inherit credentials declared only by another.
-            # Native Pi further narrows this environment for each model process.
+            # The harness further narrows this environment for each model process.
             allowed_environment = {
                 "SYSTEMROOT",
                 "WINDIR",
@@ -353,8 +377,8 @@ class WorkspaceSupervisor:
                 "LC_ALL",
             }
             if entry.pi_backend_path is not None:
-                harness = await resolve_harness_async(
-                    "pi", _json_object(Path(entry.pi_backend_path))
+                harness = await _resolve_workspace_harness(
+                    Path(entry.pi_backend_path), settings.harness_kind or "pi"
                 )
                 allowed_environment.update(harness.environment_names)
             environment = {

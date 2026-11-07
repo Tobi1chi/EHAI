@@ -542,6 +542,21 @@
       },
       "PublicRuntimeSettings": {
         "properties": {
+          "harness_kind": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "pi",
+                  "codex"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Harness Kind"
+          },
           "worker_kind": {
             "type": "string",
             "enum": [
@@ -705,6 +720,21 @@
       },
       "RuntimeSettings": {
         "properties": {
+          "harness_kind": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "pi",
+                  "codex"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Harness Kind"
+          },
           "worker_kind": {
             "type": "string",
             "enum": [
@@ -814,7 +844,8 @@
                 "type": "null"
               }
             ],
-            "title": "Pi Config Path"
+            "title": "Pi Config Path",
+            "description": "Private harness file for the selected kind; legacy field name."
           },
           "allowed_commands": {
             "items": {

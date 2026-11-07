@@ -12,7 +12,7 @@
 
 ## 目录
 
-- **准备与入口**：[安装与私有 Pi 配置](#安装与私有-pi-配置) · [API 宿主与 CLI 客户端](#api-宿主与-cli-客户端) · [独立 MCP 服务端](#独立-mcp-服务端)
+- **准备与入口**：[安装与私有 Pi 配置](#安装与私有-harness-配置) · [API 宿主与 CLI 客户端](#api-宿主与-cli-客户端) · [独立 MCP 服务端](#独立-mcp-服务端)
 - **规划与执行**：[本地规划或导入](#本地规划或导入) · [草稿 Gate 工具](#草稿-gate-工具) · [审查、批准和前台执行](#审查批准和前台执行)
 - **运行中控制与人工处理**：[控制、人工回路与过程调整](#控制人工回路与过程调整) · [周期轨迹审查和定向挂起](#周期轨迹审查和定向挂起) · [统一人工待办（P3.2）](#统一人工待办p32) · [便签讨论与明确决定（P3.2 后端）](#便签讨论与明确决定p32-后端)
 - **成果与接续**：[Block 变更清单](#block-变更清单) · [Git 自动整合](#git-自动整合) · [跨批准后继 Run](#跨批准后继-run)
@@ -75,7 +75,7 @@ discussion_message 的 summary 带 User/Planner 前缀和消息正文，refs 带
 CLI 将 `--api-url` 设为对应作用域；管理器 MCP 的详情/时间线工具显式传 workspace_id。
 管理器只聚合，不承诺跨工作区同一快照。
 
-## 安装与私有 Pi 配置
+## 安装与私有 Harness 配置
 
 需要 Python 3.12、uv、Node >=22.19.0。运行 uv sync --frozen，
 npm.cmd ci --prefix agent-backends/pi --ignore-scripts --no-audit --no-fund。
@@ -101,6 +101,28 @@ Pi 会把不支持的级别换成其他级别，而 EHAI 要求实际级别与�
 （例如 DeepSeek `deepseek-flash` 只接受 off、low、high、max；Pi 的模型表里没有 high 档的模型需另选级别或用 `default`）。`--credential-env` 可重复；交互时用逗号分隔多个名字。只保存变量名，不保存密钥。
 已有 `config.json` 时显示差异并要求确认，`--yes` 跳过确认；已有私有 settings/models 保留。
 Node 来自 PATH，Pi CLI 来自本源码仓库的锁定安装；版本分别要求 >=22.19.0 和 1.3.0。
+
+`init --harness pi|codex` 选择默认 harness；交互时询问 Default harness，默认保留旧值，首次为 Pi。
+Pi 配置流程仍须完成。选择 Codex 或已有 Codex 配置时，还会询问 `--codex-executable`、
+`--codex-home`、`--codex-model`、`--codex-reasoning-effort`，重跑时保留旧值作为默认。
+Codex 可执行文件默认优先使用
+`/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex`，
+否则从 PATH 查找 `codex`，均不存在时须指定。私有目录默认为 `<EHAI_HOME>/codex`，创建权限为 0700；
+模型没有默认值，首次须填写；思考级别默认 low，`default` 保存为 null。
+
+~~~sh
+uv run ehai init --harness codex --codex-model '<codex-model-id>'
+# 若尚未登录，先执行 init 输出的私有 CODEX_HOME 登录命令
+uv run ehai up
+uv run ehai add /absolute/path/to/repo
+uv run ehai add /absolute/path/to/another-repo --harness pi
+~~~
+
+`init` 通过 Hub 检查 Codex 安装和登录状态，将完整 harness 文档保存到
+`<EHAI_HOME>/codex-harness.json`；尚未登录也会保存，并打印须在 `add` 前手动运行的登录命令。
+`add` 和管理器的添加文件夹入口使用默认 harness；`add --harness pi|codex` 可覆盖本次选择，
+所选 harness 须已配置。已注册工作区的固定配置保持不变。`doctor` 在存在 Codex 配置时报告版本和
+登录状态，未登录时显示 FAIL 和登录命令；Pi 凭证检查仍保留，`--probe` 只探测 Pi，不启动 Codex 会话。
 
 `doctor --probe` 额外经一个新的本机 Hub 用用户配置真实启动一次 Pi 会话，核对 Pi 选中了配置中的 Provider、
 模型与思考级别，然后在发送任何任务前关闭（不调用模型，凭证与模型行为仍未核对）。失败时显示 Hub 的原因，
@@ -210,7 +232,8 @@ harness 文档。改用 Claude Code 运行全部角色时，复制 [Claude Code 
 在启动宿主的终端里设置），以及可选的 Anthropic 兼容地址 `base_url`；`--worker`/`--planner` 仍写 `pi`
 （表示经 Hub 运行的角色），推理强度只接受 low/medium/high/max。先用
 `uv run ehai inspect-agent --claude-code <claude 路径>` 做无凭证检查。Claude Code 每个会话会额外发出
-一次不带工具的小请求（生成标题），会计入 Provider 用量。管理器（`ehai init`/`add`）目前只配置 Pi。
+一次不带工具的小请求（生成标题），会计入 Provider 用量。管理器（`ehai init`/`add`）支持 Pi 和 Codex，
+默认选择及按工作区覆盖见上文；Claude Code 仍使用这里的独立宿主入口。
 Codex 使用 [Codex 示例](../examples/harness-codex.json) 作为 `--harness-config`，填写绝对路径并先在私有 CODEX_HOME 登录；版本、沙箱、审批与验证限制见 [Hub 的 Codex 兼容层](HUB.md#codex-兼容层)。
 
 宿主拥有运行和 Pi 子进程。另一个终端的客户端不读取本地数据库、不启动另一套 Scheduler：

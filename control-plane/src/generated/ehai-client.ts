@@ -2414,6 +2414,7 @@ export type LocalEngineResponse = {
 };
 
 export type PublicRuntimeSettings = {
+  readonly harness_kind?: "pi" | "codex" | null;
   readonly worker_kind: "pi" | "fake";
   readonly planner_kind: "pi" | "single";
   readonly worker_model: string | null;
@@ -2433,6 +2434,7 @@ export type PublicRuntimeSettings = {
 };
 
 export type RuntimeSettings = {
+  readonly harness_kind?: "pi" | "codex" | null;
   readonly worker_kind?: "pi" | "fake";
   readonly planner_kind?: "pi" | "single";
   readonly worker_model?: string | null;

@@ -39,6 +39,23 @@ Nonempty = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)
 Capacity = Annotated[int, Field(ge=1, le=64)]
 
 
+class CodexLocalConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    executable: Path
+    codex_home: Path
+    model: Nonempty
+    reasoning_effort: Literal["off", "minimal", "low", "medium", "high", "xhigh", "max"] | None = (
+        "low"
+    )
+
+    def backend_settings(self) -> dict[str, JsonValue]:
+        return {
+            "executable": str(self.executable),
+            "codex_home": str(self.codex_home),
+            "environment_names": [],
+        }
+
+
 class LocalConfig(BaseModel):
     """Editable defaults; registered workspace profiles remain immutable."""
 
@@ -61,6 +78,8 @@ class LocalConfig(BaseModel):
     max_planner_capacity: int = Field(default=8, ge=1)
     port: int = Field(default=8765, ge=1, le=65535)
     ui_dir: Path
+    default_harness: Literal["pi", "codex"] = "pi"
+    codex: CodexLocalConfig | None = None
 
     def backend_document(self) -> dict[str, Any]:
         return {
@@ -90,12 +109,14 @@ def load_local_config(home: Path) -> LocalConfig:
         raise ValueError("No config.json; run ehai init first (check EHAI_HOME)") from error
 
 
-def _prompt(label: str, default: str | None, supplied: str | None, yes: bool) -> str:
+def _prompt(
+    label: str, default: str | None, supplied: str | None, yes: bool, *, option: str = "--model"
+) -> str:
     if supplied is not None:
         return supplied
     if yes:
         if default is None:
-            raise ValueError(f"{label} is required; supply --model for non-interactive init")
+            raise ValueError(f"{label} is required; supply {option} for non-interactive init")
         return default
     if not sys.stdin.isatty():
         raise ValueError(
@@ -161,8 +182,60 @@ def _init(home: Path, args: argparse.Namespace) -> int:
                 label, str(default_value), None if supplied is None else str(supplied), args.yes
             )
         )
+    default_harness = _prompt(
+        "Default harness", old.default_harness if old else "pi", args.harness, args.yes
+    )
+    codex = old.codex if old else None
+    if default_harness == "codex" or codex is not None:
+        bundled = Path(
+            "/Applications/ChatGPT.app/Contents/Resources/codex-cli/"
+            "CodexCLI.app/Contents/MacOS/codex"
+        )
+        default_executable = (
+            str(codex.executable)
+            if codex is not None
+            else str(bundled)
+            if bundled.is_file()
+            else shutil.which("codex")
+        )
+        executable = _prompt(
+            "Codex executable",
+            default_executable,
+            args.codex_executable,
+            args.yes,
+            option="--codex-executable",
+        )
+        codex_home = _prompt(
+            "Codex home",
+            str(codex.codex_home if codex else home / "codex"),
+            args.codex_home,
+            args.yes,
+        )
+        codex_model = _prompt(
+            "Codex model ID",
+            codex.model if codex else None,
+            args.codex_model,
+            args.yes,
+            option="--codex-model",
+        )
+        codex_effort = _prompt(
+            "Codex reasoning effort (default leaves it to the model)",
+            (codex.reasoning_effort or "default") if codex else "low",
+            args.codex_reasoning_effort,
+            args.yes,
+        )
+        codex = CodexLocalConfig.model_validate(
+            {
+                "executable": Path(executable).expanduser().resolve(),
+                "codex_home": Path(codex_home).expanduser().resolve(),
+                "model": codex_model,
+                "reasoning_effort": None if codex_effort == "default" else codex_effort,
+            }
+        )
     config = LocalConfig.model_validate(
         {
+            "default_harness": default_harness,
+            "codex": codex,
             "provider": provider,
             "model": model,
             "reasoning_effort": None if effort == "default" else effort,
@@ -201,6 +274,12 @@ def _init(home: Path, args: argparse.Namespace) -> int:
             if input("Save configuration? [y/N]: ").strip().lower() not in {"y", "yes"}:
                 print("Configuration unchanged.")
                 return 0
+    codex_harness = None
+    codex_installation: dict[str, JsonValue] = {}
+    if config.codex is not None:
+        config.codex.codex_home.mkdir(parents=True, exist_ok=True, mode=0o700)
+        codex_installation = inspect_harness("codex", config.codex.backend_settings())
+        codex_harness = resolve_harness("codex", config.codex.backend_settings())
     # Validate before changing existing files; preserve custom native settings.
     with TemporaryDirectory(prefix="ehai-init-") as temporary:
         candidate = Path(temporary)
@@ -221,6 +300,14 @@ def _init(home: Path, args: argparse.Namespace) -> int:
                 )
     write_private_json(home / "config.json", document)
     write_private_json(home / "pi-backend.json", config.backend_document())
+    if codex_harness is not None:
+        write_private_json(home / "codex-harness.json", codex_harness.to_document())
+        print(f"Codex {codex_installation.get('version')}; private harness settings saved.")
+        if codex_installation.get("logged_in") is not True:
+            print(
+                "Codex is not logged in. Run this before ehai add: "
+                f"{codex_installation.get('login_command')}"
+            )
     print(
         f"Saved {home / 'config.json'}; Node {installation.get('node_version')}; "
         f"Pi {harness.version}."
@@ -229,7 +316,14 @@ def _init(home: Path, args: argparse.Namespace) -> int:
         f"Private Pi settings: {config.agent_dir} (existing settings preserved). "
         "No credential values saved."
     )
-    print("Set credential variables before ehai up; then run ehai up and ehai add <path>.")
+    if config.default_harness == "codex":
+        print(
+            "Codex uses its own login in its private home; Pi credential variables are needed "
+            "only for workspaces added with --harness pi."
+        )
+        print("Run ehai up and ehai add <path>.")
+    else:
+        print("Set credential variables before ehai up; then run ehai up and ehai add <path>.")
     return 0
 
 
@@ -390,12 +484,17 @@ def folder_registration(
     path: Path,
     *,
     workspace_id: str | None = None,
+    harness: Literal["pi", "codex"] | None = None,
     occupied_ids: set[str],
     allowed_commands: list[list[str]],
     git_permissions: list[GitPermission],
     available_shells: list[str],
 ) -> WorkspaceRegistration:
     """Build the same fixed local runtime for CLI and manager folder registration."""
+    harness_kind = harness or config.default_harness
+    codex = config.codex if harness_kind == "codex" else None
+    if harness_kind == "codex" and codex is None:
+        raise ValueError("Codex is not configured; run ehai init --harness codex first")
     path = path.expanduser().resolve()
     if not path.is_dir():
         raise ValueError(f"Workspace path must be an existing directory: {path}")
@@ -433,22 +532,24 @@ def folder_registration(
             workspace_id = stem[: 64 - len(ending)] + ending
             suffix += 1
     runtime = RuntimeSettings(
+        harness_kind="codex" if codex is not None else None,
         worker_kind="pi",
         planner_kind="pi",
-        worker_model=config.model,
-        planner_model=config.model,
-        worker_reasoning_effort=config.reasoning_effort,
-        planner_reasoning_effort=config.reasoning_effort,
+        worker_model=codex.model if codex else config.model,
+        planner_model=codex.model if codex else config.model,
+        worker_reasoning_effort=codex.reasoning_effort if codex else config.reasoning_effort,
+        planner_reasoning_effort=codex.reasoning_effort if codex else config.reasoning_effort,
         worker_capacity=config.worker_capacity,
         planner_capacity=config.planner_capacity,
-        pi_config_path=str(home / "pi-backend.json"),
+        pi_config_path=str(home / ("codex-harness.json" if codex else "pi-backend.json")),
         allowed_commands=allowed_commands,
         git_permissions=git_permissions,
         available_shells=available_shells,
     )
     registration = WorkspaceRegistration(workspace_id=workspace_id, path=str(path), runtime=runtime)
-    resolve_harness("pi", config.backend_document())
-    write_private_json(home / "pi-backend.json", config.backend_document())
+    if codex is None:
+        resolve_harness("pi", config.backend_document())
+        write_private_json(home / "pi-backend.json", config.backend_document())
     return registration
 
 
@@ -470,6 +571,7 @@ def _add(
         config,
         path,
         workspace_id=workspace_id,
+        harness=args.harness,
         occupied_ids={w.workspace_id for w in workspaces},
         allowed_commands=[json.loads(value) for value in args.allow_command],
         git_permissions=args.git_permission,
@@ -561,6 +663,18 @@ def _doctor(home: Path, client: httpx.Client, *, probe: bool = False) -> int:
             report("Pi", True, f"{harness.version}; private settings valid")
         except (OSError, ValueError, HubUnavailableError) as error:
             report("Pi", False, f"{error}; install pinned Pi and check private settings")
+        if config.codex is not None:
+            try:
+                installation = inspect_harness("codex", config.codex.backend_settings())
+                logged_in = installation.get("logged_in") is True
+                detail = f"{installation.get('version')}; " + (
+                    "logged in"
+                    if logged_in
+                    else f"not logged in; run {installation.get('login_command')}"
+                )
+                report("Codex", logged_in, detail)
+            except (OSError, ValueError, HubUnavailableError) as error:
+                report("Codex", False, str(error))
         if probe:
             try:
                 report("Pi session", True, _probe_session(config))
