@@ -112,3 +112,32 @@ RawResponseItemCompletedNotification 的 ResponseItem：可关联 thread/turn/it
 
 本次未覆盖：thread/resume 的真实续用（每个会话都是全新会话）；运行中取消与命令清理；原生命令审批（Worker 没用原生命令）
 与拒绝路径的真实触发；同一回复的并行调用批次；Windows；独立 Hub。
+
+## 2026-11-07：管理器路径选 Codex
+
+上一节的试用经 `ehai-api --harness-config`，而用户平时用的 `ehai init/up/add` 只配置 Pi。本节把 Codex
+接入管理器路径并按该路径重跑。
+
+实现（Codex 编写，team leader 审查）：`LocalConfig` 增加 `default_harness` 与可选 `codex` 段
+（可执行文件、私有 codex_home、模型、思考级别），旧 `config.json` 不改即可读取；`init --harness codex`
+经 Hub 探查安装与登录并写 `<EHAI_HOME>/codex-harness.json`（未登录也保存，打印登录命令）；
+`RuntimeSettings.harness_kind` 只在 `codex` 时序列化，旧登记与指纹不变；`pi_config_path` 沿用旧名，
+指向所选 harness 的文件；管理器登记时为 Codex 固定完整 harness 文档，子进程环境仍只按其
+`environment_names` 放行（Codex 用自己的登录，不传 API Key）；`doctor` 报告 Codex 版本与登录状态，
+`--probe` 仍只探测 Pi；页面工作区行显示实际 harness。仓库外诊断确认旧 config、旧登记与旧 manifest
+序列化逐字节不变。
+
+试用：全新 EHAI_HOME、端口 8792，一次性仓库 textkit（这次带 `.gitignore`）。
+`init --harness codex --codex-home <已登录私有目录> --codex-model gpt-6.1-sol` → `doctor`（Codex 已登录）
+→ `up` → `add <仓库> --allow-command '["python3","-m","unittest"]' --git-permission git.read`。之后只经
+`ehai --api-url http://127.0.0.1:8792/workspaces/repo`：建项目与 Goal，`discuss-plan` 得到实现 + 审查两步，
+批准、开始。约 1 分 20 秒 Run completed，无干预：Worker 用 `workspace_read/list` 读取，原生 `apply_patch`
+改 `textkit.py` 与 `test_textkit.py`（1 次 file_change：审批请求、核心批准 `Workspace file changes`、完成项
+均在轨迹），`command` 跑测试，`phase_context_publish` 后提交；Reviewer 审查后完成。`integrate-run` 返回
+`integrated`，实现与 8 个测试正确，整合补丁只含两份源文件。`ehai down` 后管理器、工作区宿主与 Codex
+子进程均已退出。
+
+发现：默认选 Codex 时 `init` 结尾仍只提示设置 Pi 凭证变量，已改为说明 Codex 用自己的登录。
+
+本次未覆盖：页面“添加文件夹”选择 harness（页面用默认 harness，只显示不选择）；未登录时登记后的失败表现；
+续用、运行中取消、原生命令审批与拒绝路径；Windows。

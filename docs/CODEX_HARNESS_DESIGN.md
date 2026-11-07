@@ -103,7 +103,7 @@ EHAI 不同步 Codex 的消息历史或上下文，只记录步骤；续用靠 `
 
 1. 仓库外诊断：确认第 5 节第 1–2、6 项，产出录制文件（11-06 完成）。
 2. 补 ADR 0007 与本设计中仍未确认的结论，再实现 Hub 的 Codex 兼容层与核心的原生操作审批（11-07 完成）。
-3. 正常入口：在工作区执行配置里选 Codex，跑一条线程的规划、执行与审查，并在 STATUS 与 EVIDENCE 记录（11-07 经 `ehai-api --harness-config` 完成；管理器 `ehai init/add` 仍只配置 Pi）。
+3. 正常入口：在工作区执行配置里选 Codex，跑一条线程的规划、执行与审查，并在 STATUS 与 EVIDENCE 记录（11-07 先经 `ehai-api --harness-config` 完成，随后经管理器 `ehai init --harness codex` → `up` → `add` 再完成一次）。
 
 ## 8. 不做
 
