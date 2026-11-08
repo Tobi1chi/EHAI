@@ -1223,6 +1223,36 @@ a.graph-node:focus-visible {
   border-color: var(--bad);
 }
 
+.graph-node.judgment-rejected {
+  box-shadow: inset 3px 0 var(--bad);
+}
+
+.graph-judgments {
+  font: 11px/15px var(--font-sans);
+  color: var(--text-2);
+}
+
+.judgment-rejected .graph-judgments {
+  color: var(--bad);
+}
+
+.graph-carried {
+  position: relative;
+  z-index: 1;
+  font: 11px/15px var(--font-sans);
+}
+
+.graph-attempt-link {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+}
+
+.graph-attempt-link:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
 .graph-node.attn {
   border-color: var(--attn);
 }

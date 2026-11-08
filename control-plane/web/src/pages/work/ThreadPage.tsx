@@ -149,6 +149,15 @@ function PlanCard({
   );
 }
 
+function firstLine(text: string | null): string {
+  return text?.split(/\r?\n/, 1)[0]?.slice(0, 200) ?? "";
+}
+
+function withDetail(label: string, detail: string | null): string {
+  const line = firstLine(detail);
+  return line ? `${label}：${line}` : label;
+}
+
 /** Wording for a timeline entry from its kind and refs; the core's summary is English for the CLI. */
 function eventText(item: ThreadTimelineItem): string {
   const refs = item.refs as Refs;
@@ -164,15 +173,55 @@ function eventText(item: ThreadTimelineItem): string {
     case "run_started":
       return "开始执行";
     case "run_status_changed": {
+      const cause = ref(refs, "pause_cause");
+      if (cause !== null) return cause === "human_hold" ? "Run 已暂停（人工要求暂缓）" : `Run 已暂停（${cause}）`;
       const status = ref(refs, "status");
       return status !== null && status in RUN_STATUS ? `Run ${RUN_STATUS[status as keyof typeof RUN_STATUS]}` : "Run 状态变化";
     }
     case "node_completed":
-      return "一个任务通过了检查";
+      return ref(refs, "node_title") ? `「${ref(refs, "node_title")}」通过了检查` : "一个任务通过了检查";
     case "inbox_opened":
       return kind === "human_check" ? item.summary : `${inbox}：需要你处理`;
     case "inbox_resolved":
+      if (kind === "human_check") {
+        const outcome = ref(refs, "outcome");
+        const label = outcome === "passed" ? "人工检查通过" : outcome === "rejected" ? "人工检查不通过" : "人工检查已处理";
+        const actor = ref(refs, "actor");
+        return withDetail(actor ? `${label}（${actor}）` : label, ref(refs, "comment"));
+      }
       return `${inbox}已处理`;
+    case "process_adjustment":
+      switch (ref(refs, "step")) {
+        case "drafted": return "流程调整已起草";
+        case "draft_failed": return withDetail("流程调整起草失败", ref(refs, "error"));
+        case "reviewed": return refs["preserves_boundary"] === true ? "流程审查：在已批准边界内" : "流程审查：超出已批准边界";
+        case "review_failed": return withDetail("流程审查失败", ref(refs, "error"));
+        case "applied": return withDetail("流程调整已应用", ref(refs, "reason"));
+        default: return "流程调整";
+      }
+    case "review_submitted": {
+      const action = ref(refs, "recommended_action");
+      const label = action === "pass" ? "审查建议通过" : action === "revise" ? "审查建议修改" : "审查已提交";
+      const counts = refs["finding_counts"];
+      const severityLabels: Record<string, string> = { blocker: "阻塞", major: "重要", minor: "次要", note: "备注" };
+      const severityOrder = Object.keys(severityLabels);
+      const severityRank = (severity: string) => {
+        const index = severityOrder.indexOf(severity);
+        return index === -1 ? severityOrder.length : index;
+      };
+      const findings = counts !== null && typeof counts === "object" && !Array.isArray(counts)
+        ? Object.entries(counts)
+          .filter(([, count]) => typeof count === "number")
+          .sort(([a], [b]) => severityRank(a) - severityRank(b))
+          .map(([severity, count]) => `${severityLabels[severity] ?? severity} ${count}`)
+          .join("、")
+        : "";
+      return `${label}（发现：${findings || "0"}）`;
+    }
+    case "gate_decided":
+      return ref(refs, "outcome") === "passed" ? "关卡通过" : withDetail("关卡失败", ref(refs, "reason"));
+    case "node_reopened":
+      return withDetail(`返工：${ref(refs, "node_title") ?? "任务"}`, ref(refs, "reason"));
     case "succession_started":
       return "开始了后继 Run";
     case "integration_created":
@@ -185,13 +234,21 @@ function eventText(item: ThreadTimelineItem): string {
 }
 
 function EventLine({ item, children }: { item: ThreadTimelineItem; children?: ReactNode }) {
+  const refs = item.refs as Refs;
+  const detail = ref(refs, "comment") ?? ref(refs, "reason") ?? ref(refs, "error");
   return (
     <div className="thread-event">
       <span className="dot" />
-      <span className="grow">
+      <div className="grow">
         {children ?? eventText(item)}
         <span className="meta"> · {ago(item.at)}</span>
-      </span>
+        {detail && (detail.includes("\n") || detail.length > 200) && (
+          <details className="meta">
+            <summary>查看完整说明</summary>
+            <div className="pre">{detail}</div>
+          </details>
+        )}
+      </div>
     </div>
   );
 }
@@ -438,7 +495,7 @@ export function ThreadPage({ workspaceId, goalId }: { workspaceId: string; goalI
                 case "node_completed": {
                   const attemptId = ref(refs, "attempt_id");
                   const nodeId = ref(refs, "plan_node_id");
-                  const title = nodeId === null ? undefined : nodeTitles.get(nodeId);
+                  const title = ref(refs, "node_title") ?? (nodeId === null ? undefined : nodeTitles.get(nodeId));
                   const text = title === undefined ? eventText(item) : `「${title}」通过了检查`;
                   return (
                     <EventLine key={key} item={item}>
