@@ -60,9 +60,18 @@ handle_inbox 指向最早的 pending 项；其余项通过统一待办查询读�
 时间线 data 为 `{observed_at, event_offset, goal_id, items, next_after}`。
 items 中每项为 `{at, kind, refs, summary}`，按时间升序，同一时间按持久事件偏移排序。
 kind 为 goal_created、discussion_message、plan_revision_created、plan_approved、run_started、
-run_status_changed、node_completed、inbox_opened、inbox_resolved、succession_started。
+run_status_changed、node_completed、inbox_opened、inbox_resolved、succession_started、
+integration_created、integration_branch_created、process_adjustment、review_submitted、gate_decided、node_reopened。
 summary 是面向 CLI 阅读的简短英文描述；前端按 kind 和 refs 显示，不解析英文文案推导状态。
 run_status_changed 的 refs.status 是变更后的 RunStatus：paused、running（恢复）、completed、failed 或 cancelled。
+暂停时可带 pause_cause/check_run_id；human_hold 表示人工决定后暂缓继续。
+人工 Check 的 inbox_resolved 带 outcome（passed/rejected）、actor、完整 comment、plan_node_id/node_title。
+process_adjustment 的 step 为 drafted、draft_failed、reviewed、review_failed 或 applied，
+并带 draft_id 和可用的 review_id、preserves_boundary、process_revision_id、reason、error。
+review_submitted 带 plan_node_id/node_title、attempt_id、artifact_id、recommended_action（pass/revise）
+和 finding_counts；报告不可读时 recommendation 为 null、计数为空。gate_decided 带 gate_id、
+outcome（passed/failed），失败时带 reason。node_reopened 带 plan_node_id/node_title、gate_id、phase_id、
+reason、reviewer_node_id、review_attempt_id；node_completed 也带 node_title。
 discussion_message 的 summary 带 User/Planner 前缀和消息正文，refs 带 conversation_id/turn_id，
 回复产生方案时带 plan_revision_id；节点成果引用已有 Gate/Checkpoint/Artifact，不补造历史。
 `limit` 默认为 100，范围 1..1000；`after` 默认为 0，是时间线条目的零基偏移，

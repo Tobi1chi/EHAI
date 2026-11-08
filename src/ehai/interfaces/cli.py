@@ -1008,6 +1008,7 @@ def _dispatch_query(args: argparse.Namespace) -> JsonValue:
     queries = QueryService(
         read_session_factory=database.read_session,
         builtin_session_reader=SQLiteAgentTraceStore(database),
+        artifact_store=FilesystemArtifactStore(Path(args.artifacts)),
     )
     if args.command == "list-inbox":
         return public_json_value(

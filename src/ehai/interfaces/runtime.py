@@ -233,6 +233,7 @@ def create_local_app(
     query_service = QueryService(
         read_session_factory=query_database.read_session,
         builtin_session_reader=builtin_sessions,
+        artifact_store=FilesystemArtifactStore(artifact_root),
     )
 
     def routing_read_query(project_id: str, target: RoutingTarget) -> dict[str, JsonValue]:

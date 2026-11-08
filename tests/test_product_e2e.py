@@ -606,6 +606,21 @@ def test_product_e2e(tmp_path: Path) -> None:
         assert thread["phase"] == "completed" and thread["attention_count"] == 0
         assert thread["next_action"] == {"kind": "review_result", "refs": {"run_id": run_id}}
         timeline = host.cli("get-thread-timeline", "--goal-id", goal["goal_id"])
+        assert any(
+            item["kind"] == "inbox_resolved"
+            and item["refs"].get("request_id")
+            == recovered[0]["actions"][0]["arguments"]["check_run_id"]
+            and item["refs"].get("outcome") == "passed"
+            and item["refs"].get("actor") == "e2e"
+            and item["refs"].get("comment") == "Task A accepted"
+            for item in timeline["items"]
+        )
+        assert any(
+            item["kind"] == "review_submitted"
+            and item["refs"].get("node_title") == "Review delivery"
+            and item["refs"].get("recommended_action") == "pass"
+            for item in timeline["items"]
+        )
         assert {"inbox_resolved", "run_status_changed"} <= {
             item["kind"] for item in timeline["items"]
         }

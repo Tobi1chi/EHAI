@@ -6,14 +6,15 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Literal
 
-from ehai import ID, JsonValue, normalize_id, utc_now
+from ehai import ID, JsonValue, json_loads, normalize_id, utc_now
 from ehai.application.inbox import InboxItem, InboxQuery
-from ehai.application.ports import ReadSession, StoredEvent
+from ehai.application.ports import ArtifactStore, ReadSession, StoredEvent
 from ehai.application.queries import QueryNotFoundError
+from ehai.domain.artifacts import ArtifactKind
 from ehai.domain.events import EventType
 from ehai.domain.execution import RunStatus
 from ehai.domain.goal import Goal, GoalStatus, Project
-from ehai.domain.planning import PlanRevisionStatus
+from ehai.domain.planning import PlanNodeKind, PlanRevisionStatus
 
 ThreadPhase = Literal[
     "needs_attention",
@@ -43,6 +44,10 @@ ThreadTimelineKind = Literal[
     "run_started",
     "run_status_changed",
     "node_completed",
+    "process_adjustment",
+    "review_submitted",
+    "gate_decided",
+    "node_reopened",
     "inbox_opened",
     "inbox_resolved",
     "succession_started",
@@ -112,8 +117,9 @@ class ThreadTimelineView:
 class ThreadQuery:
     """All facts for a response belong to the caller's single read snapshot."""
 
-    def __init__(self, session: ReadSession) -> None:
+    def __init__(self, session: ReadSession, artifact_store: ArtifactStore | None = None) -> None:
         self.session = session
+        self.artifact_store = artifact_store
         self.offset = session.events.latest_offset()
         self.observed_at = utc_now()
         self._projects = session.states.list_projects()
@@ -127,6 +133,7 @@ class ThreadQuery:
         self._runs_by_goal = {goal_id: session.states.list_runs(goal_id) for goal_id in self._goals}
         self._events_by_goal: dict[ID, tuple[StoredEvent, ...]] = {}
         self._conversations_by_goal: dict[ID, tuple[ID, ...]] = {}
+        self._successes_by_run: dict[ID, list[StoredEvent]] = {}
         self._index_events(session.events.list_events())
 
     def _index_events(self, events: tuple[StoredEvent, ...]) -> None:
@@ -145,6 +152,8 @@ class ThreadQuery:
         for stored in events:
             event = stored.event
             payload = event.payload
+            if event.type is EventType.ATTEMPT_SUCCEEDED and event.run_id is not None:
+                self._successes_by_run.setdefault(event.run_id, []).append(stored)
             value = payload.get("goal_id")
             payload_goal = ID(value) if isinstance(value, str) and value in self._goals else None
             if event.type is EventType.PLANNING_TURN_STARTED and payload_goal is not None:
@@ -160,6 +169,9 @@ class ThreadQuery:
             for goal_id in {run_goal, payload_goal}:
                 if goal_id is not None:
                     by_goal[goal_id][stored.offset] = stored
+
+        for successes in self._successes_by_run.values():
+            successes.sort(key=lambda stored: stored.offset)
 
         # Resolve correlation ownership after discovery, retaining earlier facts too.
         for owner_id, facts in by_correlation.items():
@@ -277,7 +289,16 @@ class ThreadQuery:
             raise ValueError("limit must be 1..1000 and after must be nonnegative")
         _, goal = self._owner(goal_id)
         events = sorted(self._events(goal), key=lambda s: (s.event.occurred_at, s.offset))
-        items = [item for stored in events for item in self._timeline_items(stored)]
+        items: list[ThreadTimelineItem] = []
+        reviewed: set[str] = set()
+        for stored in events:
+            for item in self._timeline_items(stored):
+                if item.kind == "review_submitted":
+                    attempt_id = str(item.refs["attempt_id"])
+                    if attempt_id in reviewed:
+                        continue
+                    reviewed.add(attempt_id)
+                items.append(item)
         end = after + limit
         return ThreadTimelineView(
             self.observed_at,
@@ -343,6 +364,70 @@ class ThreadQuery:
                 "run_status_changed",
                 "Run " + event.type.value.removeprefix("Run").lower(),
             )
+            if event.type is EventType.RUN_PAUSED and payload.get("pause_cause") is not None:
+                cause = payload["pause_cause"]
+                refs["pause_cause"] = cause
+                if "check_run_id" in payload:
+                    refs["check_run_id"] = payload["check_run_id"]
+                summary = (
+                    "Run paused (human hold)" if cause == "human_hold" else f"Run paused ({cause})"
+                )
+        elif event.type in {
+            EventType.PROCESS_DRAFT_COMPLETED,
+            EventType.PROCESS_DRAFT_FAILED,
+            EventType.PROCESS_REVIEW_COMPLETED,
+            EventType.PROCESS_REVIEW_FAILED,
+            EventType.PROCESS_REVISION_APPLIED,
+        }:
+            kind = "process_adjustment"
+            step, summary = {
+                EventType.PROCESS_DRAFT_COMPLETED: ("drafted", "Process adjustment drafted"),
+                EventType.PROCESS_DRAFT_FAILED: ("draft_failed", "Process adjustment draft failed"),
+                EventType.PROCESS_REVIEW_COMPLETED: (
+                    "reviewed",
+                    "Process review: within the approved boundary"
+                    if payload.get("preserves_boundary")
+                    else "Process review: outside the approved boundary",
+                ),
+                EventType.PROCESS_REVIEW_FAILED: ("review_failed", "Process review failed"),
+                EventType.PROCESS_REVISION_APPLIED: (
+                    "applied",
+                    "Process adjustment applied: " + _first_line(payload.get("reason")),
+                ),
+            }[event.type]
+            refs["step"] = step
+            for key in (
+                "draft_id",
+                "review_id",
+                "preserves_boundary",
+                "process_revision_id",
+                "reason",
+                "error",
+            ):
+                if key in payload:
+                    refs[key] = payload[key]
+        elif event.type is EventType.PLAN_NODE_CANDIDATE_SUBMITTED:
+            return self._review_items(stored, refs)
+        elif event.type in {EventType.GATE_PASSED, EventType.GATE_FAILED}:
+            kind = "gate_decided"
+            passed = event.type is EventType.GATE_PASSED
+            refs.update(
+                {"gate_id": payload["gate_id"], "outcome": "passed" if passed else "failed"}
+            )
+            summary = "Gate passed" if passed else f"Gate failed: {payload.get('reason', '')}"
+            if not passed:
+                refs["reason"] = payload.get("reason")
+        elif event.type is EventType.PLAN_NODE_REOPENED:
+            kind = "node_reopened"
+            refs.update(
+                {
+                    "plan_node_id": event.correlation_id,
+                    "node_title": self._node_title(event.run_id, event.correlation_id),
+                }
+            )
+            for key in ("gate_id", "phase_id", "reason", "reviewer_node_id", "review_attempt_id"):
+                refs[key] = payload.get(key)
+            summary = f"Rework: {refs['node_title']}"
         elif event.type is EventType.RUN_SUCCESSOR_CREATED:
             kind, summary = "succession_started", "Successor Run created"
             refs["predecessor_run_id"] = payload["predecessor_run_id"]
@@ -361,6 +446,7 @@ class ThreadQuery:
         elif event.type is EventType.PLAN_NODE_COMPLETED:
             kind, summary = "node_completed", "Node completed"
             refs["plan_node_id"] = event.correlation_id
+            refs["node_title"] = self._node_title(event.run_id, event.correlation_id)
             if event.run_id is not None:
                 if isinstance(attempt_id := payload.get("attempt_id"), str):
                     refs["attempt_id"] = attempt_id
@@ -412,6 +498,27 @@ class ThreadQuery:
                 else ("inbox_resolved", "Human Check closed")
             )
             refs.update({"kind": "human_check", "request_id": check.check_run_id})
+            if event.type is not EventType.CHECK_STARTED:
+                passed = event.type is EventType.CHECK_PASSED
+                comment = (
+                    (check.result.output if passed else check.result.failure_reason)
+                    if check.result is not None
+                    else check.failure_reason
+                )
+                refs.update(
+                    {
+                        "outcome": "passed" if passed else "rejected",
+                        "actor": None
+                        if check.human_decision is None
+                        else check.human_decision.actor,
+                        "comment": comment,
+                        "plan_node_id": check.plan_node_id,
+                        "node_title": self._node_title(check.run_id, check.plan_node_id),
+                    }
+                )
+                summary = "Human Check passed" if passed else "Human Check rejected"
+                if comment:
+                    summary += ": " + _first_line(comment)
         elif event.type in {EventType.NOTE_CREATED, EventType.NOTE_DECISION_COMPLETED}:
             kind, summary = (
                 ("inbox_opened", "Note opened")
@@ -422,3 +529,131 @@ class ThreadQuery:
         else:
             return ()
         return (ThreadTimelineItem(event.occurred_at, kind, refs, summary),)
+
+    def _node_title(self, run_id: ID | None, node_id: ID) -> str | None:
+        if run_id is None:
+            return None
+        run = self.session.states.get_run(run_id)
+        if run is None:
+            return None
+        plans = (
+            self.session.states.get_execution_plan(run_id),
+            self.session.states.get_plan_revision(run.plan_revision_id),
+        )
+        return next(
+            (
+                node.title
+                for plan in plans
+                if plan is not None
+                for node in plan.nodes
+                if node.plan_node_id == node_id
+            ),
+            None,
+        )
+
+    def _review_items(
+        self, stored: StoredEvent, refs: dict[str, JsonValue]
+    ) -> tuple[ThreadTimelineItem, ...]:
+        event = stored.event
+        if event.run_id is None:
+            return ()
+        run = self.session.states.get_run(event.run_id)
+        if run is None or event.payload.get("adoption_id") is not None:
+            return ()
+        # The submission event has no Attempt ID. Resolve it from the preceding
+        # durable success fact, not the node's latest (possibly reworked) Attempt.
+        successes = self._successes_by_run.get(event.run_id, [])
+        attempt = next(
+            (
+                a
+                for s in reversed(successes)
+                if s.offset < stored.offset
+                and (a := self.session.states.get_attempt(s.event.correlation_id)) is not None
+                and a.plan_node_id == event.correlation_id
+            ),
+            None,
+        )
+        if attempt is None:
+            return ()
+        process = (
+            self.session.states.get_process_revision(attempt.process_revision_id)
+            if attempt.process_revision_id is not None
+            else None
+        )
+        plans = (
+            None if process is None else process.graph,
+            self.session.states.get_execution_plan(event.run_id),
+            self.session.states.get_plan_revision(run.plan_revision_id),
+        )
+        node = next(
+            (
+                node
+                for plan in plans
+                if plan is not None
+                for node in plan.nodes
+                if node.plan_node_id == event.correlation_id
+            ),
+            None,
+        )
+        if node is None or node.kind is not PlanNodeKind.REVIEWER:
+            return ()
+        artifact = next(
+            (
+                a
+                for a in self.session.states.list_artifacts_for_run(event.run_id)
+                if a.attempt_id == attempt.attempt_id
+                and a.kind is ArtifactKind.CANDIDATE
+                and a.name == "review.json"
+            ),
+            None,
+        )
+        if artifact is None:
+            return ()
+        refs.update(
+            {
+                "plan_node_id": event.correlation_id,
+                "node_title": node.title,
+                "attempt_id": attempt.attempt_id,
+                "artifact_id": artifact.artifact_id,
+                "recommended_action": None,
+                "finding_counts": {},
+            }
+        )
+        summary = "Reviewer submitted"
+        try:
+            if self.artifact_store is not None:
+                document = json_loads(
+                    self.artifact_store.read(artifact.artifact_id).decode("utf-8")
+                )
+                if not isinstance(document, dict):
+                    raise ValueError("Review must be an object")
+                action, text, findings = (
+                    document.get("recommended_action"),
+                    document.get("summary"),
+                    document.get("findings"),
+                )
+                if (
+                    action not in ("pass", "revise")
+                    or not isinstance(text, str)
+                    or not isinstance(findings, list)
+                ):
+                    raise ValueError("Invalid review")
+                counts: dict[str, JsonValue] = {}
+                for finding in findings:
+                    if not isinstance(finding, dict) or not isinstance(
+                        finding.get("severity"), str
+                    ):
+                        raise ValueError("Invalid finding")
+                    severity = str(finding["severity"])
+                    count = counts.get(severity, 0)
+                    assert isinstance(count, int)
+                    counts[severity] = count + 1
+                refs.update({"recommended_action": action, "finding_counts": counts})
+                summary = f"Reviewer: {action} - {_first_line(text)}"
+        except (OSError, ValueError, UnicodeError, RuntimeError):
+            pass
+        return (ThreadTimelineItem(event.occurred_at, "review_submitted", refs, summary),)
+
+
+def _first_line(value: JsonValue) -> str:
+    return value.splitlines()[0][:200] if isinstance(value, str) and value else ""

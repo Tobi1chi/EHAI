@@ -944,7 +944,7 @@ export type ThreadResponse = {
 
 export type ThreadTimelineItem = {
   readonly at: string;
-  readonly kind: "goal_created" | "discussion_message" | "plan_revision_created" | "plan_approved" | "run_started" | "run_status_changed" | "node_completed" | "inbox_opened" | "inbox_resolved" | "succession_started" | "integration_created" | "integration_branch_created";
+  readonly kind: "goal_created" | "discussion_message" | "plan_revision_created" | "plan_approved" | "run_started" | "run_status_changed" | "node_completed" | "process_adjustment" | "review_submitted" | "gate_decided" | "node_reopened" | "inbox_opened" | "inbox_resolved" | "succession_started" | "integration_created" | "integration_branch_created";
   readonly refs: Readonly<Record<string, JsonValue>>;
   readonly summary: string;
 };

@@ -17,7 +17,7 @@ from ehai.application.agent_trace import (
 from ehai.application.goal_budgets import goal_worker_attempts_used, goal_worker_budget
 from ehai.application.interventions import list_interventions
 from ehai.application.planning_dialogue import PlanningConversationView, planning_conversation
-from ehai.application.ports import ReadSession, StoredEvent
+from ehai.application.ports import ArtifactStore, ReadSession, StoredEvent
 from ehai.application.process_reviews import ProcessReviewView, process_review_history
 from ehai.application.run_results import RunResultView, project_run_result
 from ehai.application.sanitization import redact_sensitive_text, sanitize_json_object
@@ -508,9 +508,11 @@ class QueryService:
         *,
         read_session_factory: ReadSessionFactory,
         builtin_session_reader: AgentTraceReader | None = None,
+        artifact_store: ArtifactStore | None = None,
     ) -> None:
         self._read_session_factory = read_session_factory
         self._builtin_session_reader = builtin_session_reader
+        self._artifact_store = artifact_store
 
     def get_run(self, run_id: ID) -> RunView:
         """Return current Run state and fail closed when it is absent."""
@@ -564,7 +566,9 @@ class QueryService:
         from ehai.application.thread_queries import ThreadQuery
 
         with self._read_session_factory() as session:
-            return ThreadQuery(session).timeline(goal_id, limit=limit, after=after)
+            return ThreadQuery(session, self._artifact_store).timeline(
+                goal_id, limit=limit, after=after
+            )
 
     def list_inbox(
         self,
