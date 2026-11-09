@@ -180,7 +180,52 @@ uv run ehai --api-url http://127.0.0.1:8765 get-workspace-overview
   在 `unavailable` 中保留工作区 ID、既有错误代码和说明，不影响其他工作区。聚合只读、不重试，
   也不是跨核心一致快照。页面与其他管理器内调用者可复用同一队列计算。
 
-所有命令、模型请求和结果只发送到明确选中的 workspace，不按对象 ID 猜测来源，不自动换宿主重试。
+### 管理器只读助手
+
+助手只在带 `--local-home` 的管理器（`ehai up`）中可用，不进入任何工作区核心：
+
+- `GET /api/v1/assistant`（`getAssistant`）：返回 `{data: AssistantView}`，包含 `available`、
+  `unavailable_reason`、`harness`（pi/codex/null）、`model`、`busy`、`messages`。没有 local-home
+  时仍可读取，但 available=false 并说明原因；不会读取默认用户目录或启动模型。
+- `POST /api/v1/assistant/messages`（`sendAssistantMessage`）：请求 `{text}`，长度 1–4000，
+  不接受额外字段；先保存用户消息，再后台运行一轮，202 返回 busy=true 的同一视图。
+  一次只运行一轮；忙时或不可用时返回 409，不排队、不自动重发。
+- `POST /api/v1/assistant/reset`（`resetAssistant`）：清空已保存的对话并返回视图；忙时或不可用时
+  返回 409。清空对话不会删除审计轨迹。
+
+每条消息含 `message_id`、`role`、`text`、`refs`、`outcome`、`error`、`created_at`。
+用户消息的 outcome/error 为 null；助手结果为 reply、text_only 或 failed。失败附简短原因，
+不会自动重试。引用含 `kind`（thread/run/inbox/diff/life_task）、`workspace_id`、`object_id`、
+`inbox_kind`；后者由服务端填入，非 inbox 引用为 null。新 inbox 引用只接受回复时仍在核心
+`GET /api/v1/inbox` 中的未决项；已处理的项会提示模型修正。保存 kind 后，后续页面可用既有的
+`GET /api/v1/inbox/{kind}/{request_id}` 读取同一项，即使后来已处理。
+
+助手的五个工具为 read_attention、read_thread、read_run、read_life_tasks、reply：
+复用管理器注意力计算；读取线程及最新十五条时间线；读取 Run 状态、节点标题/状态和小型成果摘要；
+读取绑定生活项目的未完成待办及最近五条已完成待办；最后校验文字及最多八个实时引用并结束。
+没有生活绑定时明确返回无绑定。Run 摘要只含 commit、检查结论、has_diff 和可用的统计，不传大段成果文本。
+diff 引用要求核心成果的 diff_path 或 diff_artifact_ids 非空；管理器不读取核心本地路径。
+统计只通过最新一次 integration 的既有 HTTP diff 内容计算文件数、增加/删除行数，不把 diff 文本发给模型；
+尚未整合、最新整合无完整 diff 或 diff 被截断时明确报告统计不可用，不把部分统计当作完整结果。
+
+每轮重新读取本地 config.json：Codex 使用 codex-harness.json 及 config.codex 的模型/思考级别；
+Pi 经异步 Hub 解析 backend_document 并使用 config.model/reasoning_effort。
+经 HubRoleRunner 的 assistance 角色运行，超时 300 秒；每轮新轨迹会话，不恢复原生历史。
+最近十条对话的文字/引用及本地时间仅作为上下文。工作目录为空目录，工具均只读；
+Codex 原生沙箱只读，原生命令及改文件请求均拒绝，Pi 不开放内置工具。
+模型必须先读再回答，把状态译成人话，不能声称执行动作，只说明用户可点什么。
+reply 的文字限制为 1–2000 字符，不允许代码围栏、JSON、内部状态/动作代码名和标识符；
+校验失败作为可恢复工具错误交回模型在本轮修正，不由服务端改写。
+模型正常结束但未调用 reply 时，只采用本轮轨迹最后一条助手文字；通过相同文字规则才以
+text_only 保存且不带引用，否则记 failed 并说明回复格式不符。
+
+存储位于 `<local_home>/assistant/`：conversation.json 用私有 JSON 原子写入，trace.sqlite
+保存 Agent 轨迹，workspace/ 为空工作目录，state/ 保存 Hub runner 状态。
+重启发现最后一条用户消息尚无回答时，追加 failed（interrupted by restart），绝不重跑。
+每轮记录 outcome 日志。以上为接口实现，Codex/Pi 的真实模型回答与页面卡片验收仍由团队负责人执行；
+静态检查不证明模型工具调用成功。
+
+所有业务读取和结果只发送到明确选中的 workspace，不按对象 ID 猜测来源，不自动换宿主重试。
 各 workspace 的事件 consumer、offset、对象 ID 与业务幂等键都属于自己的核心。
 
 ## Planner 并发

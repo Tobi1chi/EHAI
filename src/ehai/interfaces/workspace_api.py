@@ -27,6 +27,12 @@ from ehai.infrastructure.workspace_supervisor import (
     WorkspaceSupervisor,
     WorkspaceSupervisorError,
 )
+from ehai.interfaces.assistant_host import (
+    AssistantHost,
+    AssistantResponse,
+    ManagerAssistantReader,
+    SendAssistantMessage,
+)
 from ehai.interfaces.attention import (
     AttentionResponse,
     LifeBindingData,
@@ -188,6 +194,7 @@ def create_workspace_app(
         for method in item
         if method in {"get", "post", "put", "patch", "delete"}
     ]
+    assistant = AssistantHost(local_home)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -197,8 +204,10 @@ def create_workspace_app(
         ) as client:
             app.state.workspace_http = client
             try:
+                assistant.open()
                 yield
             finally:
+                await assistant.close()
                 await supervisor.close()
 
     app = FastAPI(title="EHAI Workspace Manager", version="1", lifespan=lifespan)
@@ -221,6 +230,34 @@ def create_workspace_app(
             return LifeBindingData(binding=None)
         except (OSError, ValueError) as error:
             raise WorkspaceSupervisorError("Life binding could not be read") from error
+
+    @app.get("/api/v1/assistant", operation_id="getAssistant", response_model=AssistantResponse)
+    async def get_assistant() -> AssistantResponse:
+        return AssistantResponse(data=assistant.view())
+
+    @app.post(
+        "/api/v1/assistant/messages",
+        operation_id="sendAssistantMessage",
+        response_model=AssistantResponse,
+        status_code=202,
+        responses={409: {"model": ErrorResponse, "description": "Assistant unavailable or busy"}},
+    )
+    async def send_assistant_message(
+        body: SendAssistantMessage, request: Request
+    ) -> AssistantResponse:
+        reader = ManagerAssistantReader(
+            supervisor, request.app.state.workspace_http, life_binding_data
+        )
+        return AssistantResponse(data=await assistant.send(body.text, reader))
+
+    @app.post(
+        "/api/v1/assistant/reset",
+        operation_id="resetAssistant",
+        response_model=AssistantResponse,
+        responses={409: {"model": ErrorResponse, "description": "Assistant unavailable or busy"}},
+    )
+    async def reset_assistant() -> AssistantResponse:
+        return AssistantResponse(data=await assistant.reset())
 
     @app.get(
         "/api/v1/life-binding", operation_id="getLifeBinding", response_model=LifeBindingResponse

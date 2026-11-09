@@ -2393,6 +2393,36 @@ export type AddWorkspaceFolderRequest = {
   readonly available_shells?: ReadonlyArray<string>;
 };
 
+export type AssistantMessage = {
+  readonly message_id: string;
+  readonly role: "user" | "assistant";
+  readonly text: string;
+  readonly refs: ReadonlyArray<AssistantRef>;
+  readonly outcome: "reply" | "text_only" | "failed" | null;
+  readonly error: string | null;
+  readonly created_at: string;
+};
+
+export type AssistantRef = {
+  readonly kind: "thread" | "run" | "inbox" | "diff" | "life_task";
+  readonly workspace_id: string;
+  readonly object_id: string;
+  readonly inbox_kind: "intervention" | "human_check" | "note" | "workflow_confirmation" | "workflow_reconciliation" | null;
+};
+
+export type AssistantResponse = {
+  readonly data: AssistantView;
+};
+
+export type AssistantView = {
+  readonly available: boolean;
+  readonly unavailable_reason: string | null;
+  readonly harness: "pi" | "codex" | null;
+  readonly model: string | null;
+  readonly busy: boolean;
+  readonly messages: ReadonlyArray<AssistantMessage>;
+};
+
 export type AttentionData = {
   readonly observed_at: string;
   readonly life_binding: LifeBinding | null;
@@ -2500,6 +2530,10 @@ export type RuntimeSettings = {
   readonly command_check_argv?: ReadonlyArray<string> | null;
   readonly semantic_required_terms?: ReadonlyArray<string>;
   readonly attempt_deadline_seconds?: number | null;
+};
+
+export type SendAssistantMessage = {
+  readonly text: string;
 };
 
 export type ValidationError = {
@@ -3191,6 +3225,18 @@ export class EhaiWorkspaceManagerClient {
 
   getAttention(): Promise<AttentionResponse> {
     return this.request("/attention", "GET");
+  }
+
+  getAssistant(): Promise<AssistantResponse> {
+    return this.request("/assistant", "GET");
+  }
+
+  sendAssistantMessage(request: SendAssistantMessage): Promise<AssistantResponse> {
+    return this.request("/assistant/messages", "POST", request);
+  }
+
+  resetAssistant(): Promise<AssistantResponse> {
+    return this.request("/assistant/reset", "POST");
   }
 
   listThreads(): Promise<WorkspaceThreadsResponse> {

@@ -39,6 +39,7 @@ for (const operationId of [
   "getWorkspaceOverview", "getWorkspaceExecutionConfig", "listWorkspaceThreads",
   "getLocalEngine", "addWorkspaceFolder",
   "getLifeBinding", "setLifeBinding", "getAttention",
+  "getAssistant", "sendAssistantMessage", "resetAssistant",
 ]) {
   if (!managerOperations.has(operationId)) {
     throw new Error(`Manager OpenAPI operation is missing: ${operationId}`);
@@ -809,6 +810,18 @@ export class EhaiWorkspaceManagerClient {
 
   getAttention(): Promise<AttentionResponse> {
     return this.request("/attention", "GET");
+  }
+
+  getAssistant(): Promise<AssistantResponse> {
+    return this.request("/assistant", "GET");
+  }
+
+  sendAssistantMessage(request: SendAssistantMessage): Promise<AssistantResponse> {
+    return this.request("/assistant/messages", "POST", request);
+  }
+
+  resetAssistant(): Promise<AssistantResponse> {
+    return this.request("/assistant/reset", "POST");
   }
 
   listThreads(): Promise<WorkspaceThreadsResponse> {

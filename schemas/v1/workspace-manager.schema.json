@@ -60,6 +60,206 @@
       ],
       "title": "AddWorkspaceFolderRequest"
     },
+    "AssistantMessage": {
+      "properties": {
+        "message_id": {
+          "type": "string",
+          "title": "Message Id"
+        },
+        "role": {
+          "type": "string",
+          "enum": [
+            "user",
+            "assistant"
+          ],
+          "title": "Role"
+        },
+        "text": {
+          "type": "string",
+          "title": "Text"
+        },
+        "refs": {
+          "items": {
+            "$ref": "#/$defs/AssistantRef"
+          },
+          "type": "array",
+          "title": "Refs"
+        },
+        "outcome": {
+          "anyOf": [
+            {
+              "type": "string",
+              "enum": [
+                "reply",
+                "text_only",
+                "failed"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Outcome"
+        },
+        "error": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Error"
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time",
+          "title": "Created At"
+        }
+      },
+      "type": "object",
+      "required": [
+        "message_id",
+        "role",
+        "text",
+        "refs",
+        "outcome",
+        "error",
+        "created_at"
+      ],
+      "title": "AssistantMessage"
+    },
+    "AssistantRef": {
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": [
+            "thread",
+            "run",
+            "inbox",
+            "diff",
+            "life_task"
+          ],
+          "title": "Kind"
+        },
+        "workspace_id": {
+          "type": "string",
+          "minLength": 1,
+          "title": "Workspace Id"
+        },
+        "object_id": {
+          "type": "string",
+          "minLength": 1,
+          "title": "Object Id"
+        },
+        "inbox_kind": {
+          "anyOf": [
+            {
+              "type": "string",
+              "enum": [
+                "intervention",
+                "human_check",
+                "note",
+                "workflow_confirmation",
+                "workflow_reconciliation"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Inbox Kind"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "kind",
+        "workspace_id",
+        "object_id",
+        "inbox_kind"
+      ],
+      "title": "AssistantRef"
+    },
+    "AssistantResponse": {
+      "properties": {
+        "data": {
+          "$ref": "#/$defs/AssistantView"
+        }
+      },
+      "type": "object",
+      "required": [
+        "data"
+      ],
+      "title": "AssistantResponse"
+    },
+    "AssistantView": {
+      "properties": {
+        "available": {
+          "type": "boolean",
+          "title": "Available"
+        },
+        "unavailable_reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Unavailable Reason"
+        },
+        "harness": {
+          "anyOf": [
+            {
+              "type": "string",
+              "enum": [
+                "pi",
+                "codex"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Harness"
+        },
+        "model": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Model"
+        },
+        "busy": {
+          "type": "boolean",
+          "title": "Busy"
+        },
+        "messages": {
+          "items": {
+            "$ref": "#/$defs/AssistantMessage"
+          },
+          "type": "array",
+          "title": "Messages"
+        }
+      },
+      "type": "object",
+      "required": [
+        "available",
+        "unavailable_reason",
+        "harness",
+        "model",
+        "busy",
+        "messages"
+      ],
+      "title": "AssistantView"
+    },
     "AttentionData": {
       "properties": {
         "observed_at": {
@@ -802,6 +1002,22 @@
       "type": "object",
       "title": "RuntimeSettings",
       "description": "Fixed executable assembly; this profile never grants a Run execution authorization."
+    },
+    "SendAssistantMessage": {
+      "properties": {
+        "text": {
+          "type": "string",
+          "maxLength": 4000,
+          "minLength": 1,
+          "title": "Text"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "text"
+      ],
+      "title": "SendAssistantMessage"
     },
     "ValidationError": {
       "properties": {
