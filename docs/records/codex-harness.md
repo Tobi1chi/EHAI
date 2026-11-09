@@ -141,3 +141,33 @@ RawResponseItemCompletedNotification 的 ResponseItem：可关联 thread/turn/it
 
 本次未覆盖：页面“添加文件夹”选择 harness（页面用默认 harness，只显示不选择）；未登录时登记后的失败表现；
 续用、运行中取消、原生命令审批与拒绝路径；Windows。
+
+## 2026-11-09：不再按确切 CLI 版本设门限
+
+ChatGPT.app 把内置 Codex 自动更新到 0.167.0-alpha.3.2 后，兼容层的确切版本检查（0.166.0-alpha.6）拒绝启动，
+管理器里选 Codex 的工作区无法使用。用户要求不要按确切版本号设门限：Codex 更新频率很高。
+
+协议核对（仓库外）：用 0.167 重新生成 app-server 协议，与 0.166 逐项对比兼容层用到的 10 个请求、4 个服务端请求、
+5 个通知。12 个不变；其余只有输入内容新增变体（音频输入可用 URL 或文件 ID）、`initialize` 能力多一个可选字段、
+命令审批 `kind` 新增 `humanCommand`。兼容层不读取前两者；`humanCommand` 走现有“不支持的审批”分支，按原规则不批准。
+协议处理无需修改。
+
+改动（Codex `codex exec` 实现，团队负责人审查）：harness `version` 改为协议标签 `app-server`；resolve 仍实测
+CLI 版本并写入设置的 `cli_version` 以便追溯，但不再与任何常量或旧授权比较，指纹也不再包含它，所以自动更新不改变
+授权与会话指纹。协议若出现不兼容变化，表现为会话启动或调用失败，届时按 [HUB](../HUB.md#codex-兼容层) 的步骤重新核对。
+示例文件与文档同步修改。
+
+试用：全新 EHAI_HOME、端口 8797，一次性仓库 textkit。`init --harness codex` 报 `Codex 0.167.0-alpha.3.2`，
+`doctor` 报已登录，保存的 harness 文档为 `version: app-server`、`cli_version: 0.167.0-alpha.3.2`。`up`、
+`add <仓库> --allow-command '["python3","-m","unittest"]' --git-permission git.read` 后只经 `ehai` CLI：
+导入实现 + 审查两步方案（一个 Phase，最终 Gate 为 `python3 -m unittest`，不调用 Planner），批准、开始。
+约 1 分钟 Run completed，无干预：Worker 经 MCP `workspace_list/read` 读取，原生改动两份文件（1 次 file_change
+审批，核心批准 `Workspace file changes`），`command` 跑 7 个测试通过并提交；Reviewer 只读审查后建议通过。
+`integrate-run` 返回 `integrated`，整合提交只含两份源文件，`slugify` 符合设计，测试通过。`ehai down` 后无残留
+Codex 子进程。按量费用 0（Codex 用 ChatGPT 订阅）。静态检查与产品 E2E 通过。
+
+已知：此前登记的 Codex 工作区固定的 harness 文档仍写 `version: 0.166.0-alpha.6`，启动时报版本不符，没有提供迁移；
+用户自己的 EHAI_HOME 没有 Codex 工作区，受影响的只有之前的试用目录。
+
+本次未覆盖：同一会话跨 CLI 版本续用（指纹不含版本是按构造保证，没有实际更新 Codex 后续用）；运行中取消、
+原生命令审批与拒绝路径；Windows。
