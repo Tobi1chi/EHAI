@@ -11,7 +11,7 @@ from typing import get_args, get_type_hints
 
 from pydantic import TypeAdapter
 
-from ehai.application.inbox import INBOX_KINDS, InboxAction
+from ehai.application.inbox import INBOX_KINDS, InboxAction, InboxAuthorization
 from ehai.application.plan_imports import plan_import_error_schema, plan_import_schema
 from ehai.application.thread_queries import ThreadListView, ThreadSummary, ThreadTimelineView
 from ehai.domain.events import EventType
@@ -136,6 +136,18 @@ for view_type, response_name in (
         "properties": {"data": {"$ref": "#/$defs/" + view_type.__name__}},
     }
 queries["$defs"].update(event_consumer_schema_definitions())
+authorization_schema = TypeAdapter(InboxAuthorization).json_schema()
+authorization_definitions = authorization_schema.pop("$defs", {})
+authorization_definitions.pop("JsonValue", None)
+authorization_definitions.pop("JsonScalar", None)
+queries["$defs"].pop("JsonScalar", None)
+queries["$defs"].update(thread_reference(authorization_definitions))
+queries["$defs"]["InboxAuthorization"] = thread_reference(authorization_schema)
+queries["$defs"]["InboxItem"]["properties"]["authorization"] = {
+    "$ref": "#/$defs/InboxAuthorization"
+}
+if "authorization" not in queries["$defs"]["InboxItem"]["required"]:
+    queries["$defs"]["InboxItem"]["required"].append("authorization")
 queries["$defs"]["PlannerCapacity"] = {
     "type": "object",
     "additionalProperties": False,

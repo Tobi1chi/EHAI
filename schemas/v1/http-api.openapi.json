@@ -2983,7 +2983,8 @@
                 "human_check",
                 "note",
                 "workflow_confirmation",
-                "workflow_reconciliation"
+                "workflow_reconciliation",
+                "plan_approval"
               ],
               "type": "string",
               "title": "Kind"

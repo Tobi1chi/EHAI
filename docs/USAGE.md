@@ -425,12 +425,26 @@ uv run ehai @Api get-inbox-item --kind human_check --request-id '<check-run-id>'
 HTTP 为 `GET /api/v1/inbox?project_id=...&run_id=...` 和
 `GET /api/v1/inbox/{kind}/{request_id}`。两种筛选均可省略，同时提供时必须符合归属，
 否则 422；不存在的项目、Run 或待办返回 404。首版返回该宿主范围内的完整当前待办列表，
-没有分页或新的待办存储。`kind` 包含 `intervention`、`human_check`、`note`、`workflow_confirmation`、`workflow_reconciliation`（自定义 Workflow 的未知调用结果，见 [WORKFLOWS](WORKFLOWS.md#自定义-workflow)）。
+没有分页或新的待办存储。`kind` 包含 `plan_approval`、`intervention`、`human_check`、`note`、`workflow_confirmation`、`workflow_reconciliation`（自定义 Workflow 的未知调用结果，见 [WORKFLOWS](WORKFLOWS.md#自定义-workflow)）。
 运行前便签可以只有项目/目标归属，因此 owner 的 Run、节点、Attempt 和 Run 状态允许 null。
+`plan_approval` 对应每个目标最新、尚无 Run 使用的草稿方案，request_id 为方案版本 ID，
+只归属项目和目标；按 run_id 筛选时不包含它。批准或被新版取代后不再待处理，但仍能查询详情。
+其 `approve-plan` 动作绑定方案与验收契约，只批准方案，不启动 Run；启动仍需单独授权。
+交互终端的 `todo` 显示方案问题，使用既有 `plan`、`approve` 路径查看并明确确认执行配置。
 
 每项包含 `owner` 归属、问题、证据、源状态、`pending`、`actionable`、不可处理原因、
 `actions` 和 `next_step`。`request_token` 保留人工干预/验收原请求版本。
 列表按创建时间排序。
+每项的 `authorization` 包含 JSON 对象 `subject`、其规范 JSON（键排序、紧凑 UTF-8）
+的十六进制 SHA-256 `subject_sha256`、可空的 `limit` 和 `expires_at`。
+`limit` 非空时为 `{kind: amount|count, value: number, unit: string|null}`。
+方案的绑定对象含版本、节点标题、阶段标题及验收契约 ID；人工 Check 含节点、问题与证据 ID；
+干预和便签含问题；Workflow 确认含冻结对象或拟建生活待办，调用核对含调用 ID 和动作。
+Workflow 人工步骤的上限读取已冻结的 grant。待批准时，expires_at 仅取步骤的超时 deadline，
+没有超时则为 null；grant 的有效秒数从批准时才开始计算，不会缩短等待决定的窗口。
+批准后，expires_at 读取已记录授权的到期时间，不再受步骤 deadline 约束。
+无上限或有效期时对应字段为 null。
+仍待处理但已到期的项保持 pending，actionable 为 false，原因是授权窗口已过期。
 历史详情可查询已处理或被后续批准明确处置的请求，`disposition` 保留操作者、原因和批准来源；
 这些旧请求不会重新进入当前列表，也不会被改写为旧 Gate 通过。
 
@@ -439,6 +453,7 @@ HTTP 为 `GET /api/v1/inbox?project_id=...&run_id=...` 和
 
 | operation | 现有接口 |
 | --- | --- |
+| approve-plan | POST /api/v1/plans/approve |
 | reply-intervention | POST /api/v1/interventions/{intervention_id}/reply |
 | decide-human-check | POST /api/v1/check-runs/{check_run_id}/decision |
 | add-note-message | POST /api/v1/notes/{note_id}/messages |

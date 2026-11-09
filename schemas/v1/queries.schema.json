@@ -3204,6 +3204,7 @@
     "InboxKind": {
       "type": "string",
       "enum": [
+        "plan_approval",
         "intervention",
         "human_check",
         "note",
@@ -3300,6 +3301,7 @@
       "properties": {
         "operation": {
           "enum": [
+            "approve-plan",
             "reply-intervention",
             "decide-human-check",
             "add-note-message",
@@ -3346,7 +3348,8 @@
         "request_token",
         "actions",
         "next_step",
-        "disposition"
+        "disposition",
+        "authorization"
       ],
       "properties": {
         "kind": {
@@ -3411,6 +3414,9 @@
               "type": "null"
             }
           ]
+        },
+        "authorization": {
+          "$ref": "#/$defs/InboxAuthorization"
         }
       }
     },
@@ -4065,6 +4071,85 @@
           "$ref": "#/$defs/IntegrationBranch"
         }
       }
+    },
+    "AuthorizationLimit": {
+      "properties": {
+        "kind": {
+          "enum": [
+            "amount",
+            "count"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "value": {
+          "title": "Value",
+          "type": "number"
+        },
+        "unit": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Unit"
+        }
+      },
+      "required": [
+        "kind",
+        "value",
+        "unit"
+      ],
+      "title": "AuthorizationLimit",
+      "type": "object"
+    },
+    "InboxAuthorization": {
+      "properties": {
+        "subject": {
+          "additionalProperties": {
+            "$ref": "commands.schema.json#/$defs/JsonValue"
+          },
+          "title": "Subject",
+          "type": "object"
+        },
+        "subject_sha256": {
+          "title": "Subject Sha256",
+          "type": "string"
+        },
+        "limit": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AuthorizationLimit"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "expires_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Expires At"
+        }
+      },
+      "required": [
+        "subject",
+        "subject_sha256",
+        "limit",
+        "expires_at"
+      ],
+      "title": "InboxAuthorization",
+      "type": "object"
     }
   }
 }

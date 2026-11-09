@@ -11,6 +11,7 @@ import httpx
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
 
 from ehai import parse_utc_datetime, utc_now
+from ehai.application.inbox import InboxKind
 from ehai.infrastructure.workspace_supervisor import SupervisorError, WorkspaceSupervisor
 from ehai.interfaces.workspace_models import WorkspaceId
 
@@ -30,6 +31,11 @@ class LifeBindingResponse(BaseModel):
     data: LifeBindingData
 
 
+class AttentionDecision(BaseModel):
+    kind: InboxKind
+    request_id: str
+
+
 class AttentionItem(BaseModel):
     kind: Literal["thread", "inbox", "life_task"]
     workspace_id: str
@@ -41,6 +47,7 @@ class AttentionItem(BaseModel):
     next_action: str | None
     run_id: str | None
     at: AwareDatetime | None
+    decisions: list[AttentionDecision] = Field(default_factory=list)
 
 
 class AttentionUnavailable(BaseModel):
@@ -117,6 +124,18 @@ def group_workspace_attention(
                 next_action=thread["next_action"]["kind"],
                 run_id=thread["run_id"],
                 at=thread["last_activity_at"],
+                decisions=[
+                    AttentionDecision(kind=item["kind"], request_id=item["request_id"])
+                    for item in sorted(
+                        inbox,
+                        key=lambda item: (
+                            item["created_at"] or item["first_observed_at"] or "",
+                            item["kind"],
+                            item["request_id"],
+                        ),
+                    )
+                    if item["pending"] and item["owner"]["goal_id"] == thread["goal_id"]
+                ],
             ),
             group,
         )

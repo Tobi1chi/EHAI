@@ -162,7 +162,8 @@
                 "human_check",
                 "note",
                 "workflow_confirmation",
-                "workflow_reconciliation"
+                "workflow_reconciliation",
+                "plan_approval"
               ]
             },
             {
@@ -336,6 +337,32 @@
       ],
       "title": "AttentionData"
     },
+    "AttentionDecision": {
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": [
+            "intervention",
+            "human_check",
+            "note",
+            "workflow_confirmation",
+            "workflow_reconciliation",
+            "plan_approval"
+          ],
+          "title": "Kind"
+        },
+        "request_id": {
+          "type": "string",
+          "title": "Request Id"
+        }
+      },
+      "type": "object",
+      "required": [
+        "kind",
+        "request_id"
+      ],
+      "title": "AttentionDecision"
+    },
     "AttentionItem": {
       "properties": {
         "kind": {
@@ -408,6 +435,13 @@
             }
           ],
           "title": "At"
+        },
+        "decisions": {
+          "items": {
+            "$ref": "#/$defs/AttentionDecision"
+          },
+          "type": "array",
+          "title": "Decisions"
         }
       },
       "type": "object",

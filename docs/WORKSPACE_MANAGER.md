@@ -171,7 +171,10 @@ uv run ehai --api-url http://127.0.0.1:8765 get-workspace-overview
   `observed_at`、`life_binding`、`needs_you`、`in_progress`、`done`、`done_truncated`、
   `unavailable`、`notes` 与固定为 false 的 `consistent_across_workspaces`。
   每项带源类型、工作区、项目、对象 ID、标题、核心状态、下一步、Run ID 和时间；与绑定的工作区和
-  项目均相符时标签为 life，否则为 work。线程需要注意、等待批准、暂停或失败时归入“需要你处理”，
+  项目均相符时标签为 life，否则为 work。每项还带 `decisions`：线程条目按创建时间从旧到新
+  列出该工作区核心 Inbox 中 owner.goal_id 属于此线程的所有 pending 请求，元素为
+  `{kind, request_id}`，包括 `plan_approval`；未归属线程的 Inbox 条目及生活待办为一个空列表。
+  线程需要注意、等待批准、暂停或失败时归入“需要你处理”，
   规划、运行或尚未开始时归入“进行中”；未归属现有线程的未决待办单独归入“需要你处理”，不重复列出
   已由线程承载的待办。仅绑定生活项目的待办参与聚合：过期未完成项需要处理，其余未完成项进行中，
   已取消项不显示。完成的线程和生活待办只保留最近七天，合计最多二十项，超过时标记

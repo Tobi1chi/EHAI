@@ -791,7 +791,7 @@ export type RuntimeContextResponse = {
   readonly data: RuntimeContextView;
 };
 
-export type InboxKind = "intervention" | "human_check" | "note" | "workflow_confirmation" | "workflow_reconciliation";
+export type InboxKind = "plan_approval" | "intervention" | "human_check" | "note" | "workflow_confirmation" | "workflow_reconciliation";
 
 export type InboxOwner = {
   readonly project_id: string;
@@ -812,7 +812,7 @@ export type InboxEvidence = {
 };
 
 export type InboxAction = {
-  readonly operation: "reply-intervention" | "decide-human-check" | "add-note-message" | "decide-note" | "decide-workflow" | "decide-workflow-step" | "reconcile-connector-call";
+  readonly operation: "approve-plan" | "reply-intervention" | "decide-human-check" | "add-note-message" | "decide-note" | "decide-workflow" | "decide-workflow-step" | "reconcile-connector-call";
   readonly label: string;
   readonly effect: string;
   readonly input_fields: ReadonlyArray<string>;
@@ -836,6 +836,7 @@ export type InboxItem = {
   readonly actions: ReadonlyArray<InboxAction>;
   readonly next_step: string;
   readonly disposition: Readonly<Record<string, unknown>> | null;
+  readonly authorization: InboxAuthorization;
 };
 
 export type InboxListView = {
@@ -986,6 +987,19 @@ export type IntegrationBranch = {
 
 export type IntegrationBranchResponse = {
   readonly data: IntegrationBranch;
+};
+
+export type AuthorizationLimit = {
+  readonly kind: "amount" | "count";
+  readonly value: number;
+  readonly unit: string | null;
+};
+
+export type InboxAuthorization = {
+  readonly subject: Readonly<Record<string, JsonValue>>;
+  readonly subject_sha256: string;
+  readonly limit: AuthorizationLimit | null;
+  readonly expires_at: string | null;
 };
 
 export type JsonScalar = boolean | number | number | string | null;
@@ -2407,7 +2421,7 @@ export type AssistantRef = {
   readonly kind: "thread" | "run" | "inbox" | "diff" | "life_task";
   readonly workspace_id: string;
   readonly object_id: string;
-  readonly inbox_kind: "intervention" | "human_check" | "note" | "workflow_confirmation" | "workflow_reconciliation" | null;
+  readonly inbox_kind: "intervention" | "human_check" | "note" | "workflow_confirmation" | "workflow_reconciliation" | "plan_approval" | null;
 };
 
 export type AssistantResponse = {
@@ -2435,6 +2449,11 @@ export type AttentionData = {
   readonly consistent_across_workspaces?: false;
 };
 
+export type AttentionDecision = {
+  readonly kind: "intervention" | "human_check" | "note" | "workflow_confirmation" | "workflow_reconciliation" | "plan_approval";
+  readonly request_id: string;
+};
+
 export type AttentionItem = {
   readonly kind: "thread" | "inbox" | "life_task";
   readonly workspace_id: string;
@@ -2446,6 +2465,7 @@ export type AttentionItem = {
   readonly next_action: string | null;
   readonly run_id: string | null;
   readonly at: string | null;
+  readonly decisions?: ReadonlyArray<AttentionDecision>;
 };
 
 export type AttentionResponse = {

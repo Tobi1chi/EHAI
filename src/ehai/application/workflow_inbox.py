@@ -1,7 +1,14 @@
 """Project-only workflow requests projected from the same durable event snapshot."""
 
-from ehai import ID, JsonValue, json_dumps, normalize_id
-from ehai.application.inbox import InboxAction, InboxItem, InboxOwner
+from ehai import ID, JsonValue, json_dumps, normalize_id, parse_utc_datetime
+from ehai.application.inbox import (
+    AuthorizationLimit,
+    InboxAction,
+    InboxAuthorization,
+    InboxItem,
+    InboxOwner,
+    inbox_authorization,
+)
 from ehai.application.ports import ReadSession
 from ehai.application.workflow_execution_models import (
     WorkflowExecutionRecord,
@@ -65,6 +72,13 @@ def workflow_inbox_items(session: ReadSession, project_id: ID | None) -> list[In
                 if pending
                 else "Read the workflow result and its task_ids",
                 disposition=None if run.decision is None else run.decision.model_dump(mode="json"),
+                authorization=inbox_authorization(
+                    {
+                        "proposed_tasks": [
+                            task.model_dump(mode="json") for task in run.proposed_tasks
+                        ],
+                    }
+                ),
             )
         )
     for payload in executions.values():
@@ -138,6 +152,7 @@ def _custom_items(
                 if pending
                 else "Read the workflow execution",
                 disposition=wait.resolution,
+                authorization=_wait_authorization(wait),
             )
         )
     for raw in invocations if isinstance(invocations, list) else []:
@@ -173,6 +188,43 @@ def _custom_items(
                 else (),
                 next_step="Reconcile the connector call; the workflow continues on its result",
                 disposition=None,
+                authorization=inbox_authorization(
+                    {
+                        "call_id": invocation.connector_call_id,
+                        "action": invocation.action.name,
+                    }
+                ),
             )
         )
     return items
+
+
+def _wait_authorization(wait: WorkflowWaitRecord) -> InboxAuthorization:
+    subject = wait.condition.get("subject")
+    grant = wait.condition.get("grant")
+    limit = None
+    expires_at = None
+    if isinstance(grant, dict):
+        raw_limit = grant.get("limit")
+        if isinstance(raw_limit, dict):
+            kind, value, unit = (raw_limit.get(k) for k in ("kind", "value", "unit"))
+            if kind in {"amount", "count"} and isinstance(value, (int, float)):
+                limit = AuthorizationLimit(
+                    "amount" if kind == "amount" else "count",
+                    value,
+                    unit if isinstance(unit, str) else None,
+                )
+    deadline = wait.condition.get("deadline")
+    authorization = None if wait.resolution is None else wait.resolution.get("authorization")
+    if isinstance(authorization, dict):
+        approved_expiry = authorization.get("expires_at")
+        expires_at = (
+            parse_utc_datetime(approved_expiry) if isinstance(approved_expiry, str) else None
+        )
+    elif wait.status == "waiting" and isinstance(deadline, str):
+        expires_at = parse_utc_datetime(deadline)
+    return inbox_authorization(
+        subject if isinstance(subject, dict) else {},
+        limit,
+        expires_at,
+    )

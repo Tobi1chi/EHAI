@@ -221,7 +221,7 @@ class ThreadQuery:
         run = runs[-1] if runs else None
         conversations = self._conversations_by_goal.get(goal.goal_id, ())
         run_ids = {r.run_id for r in runs}
-        pending = tuple(i for i in inbox if i.owner.run_id in run_ids)
+        pending = tuple(i for i in inbox if i.kind != "plan_approval" and i.owner.run_id in run_ids)
         phase: ThreadPhase = "idle"
         action = ThreadNextAction("none", {})
         if pending:

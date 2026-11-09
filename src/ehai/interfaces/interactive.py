@@ -427,6 +427,7 @@ class Session:
                 self.print(f"     not actionable: {item['unavailable_reason']}")
                 continue
             hints = {
+                "plan_approval": "plan, then approve (starting a Run requires confirmation)",
                 "human_check": "pass / fail <number> [comment]",
                 "intervention": "reply <number> <message>",
             }

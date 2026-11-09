@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
+from hashlib import sha256
 from typing import Literal
 
-from ehai import ID, JsonValue, normalize_id, parse_utc_datetime, utc_now
+from ehai import ID, JsonValue, json_dumps, normalize_id, parse_utc_datetime, utc_now
 from ehai.application.interventions import list_interventions, validate_intervention_reply_context
 from ehai.application.ports import ReadSession
 from ehai.application.queries import QueryNotFoundError
@@ -16,12 +17,18 @@ from ehai.domain.checking import CheckRun, CheckRunStatus
 from ehai.domain.events import EventType
 from ehai.domain.execution import Run, RunStatus
 from ehai.domain.goal import Goal, Project
-from ehai.domain.planning import PlanNodeStatus
+from ehai.domain.planning import PlanNodeStatus, PlanRevisionStatus
 
 InboxKind = Literal[
-    "intervention", "human_check", "note", "workflow_confirmation", "workflow_reconciliation"
+    "intervention",
+    "human_check",
+    "note",
+    "workflow_confirmation",
+    "workflow_reconciliation",
+    "plan_approval",
 ]
 INBOX_KINDS = (
+    "plan_approval",
     "intervention",
     "human_check",
     "note",
@@ -69,6 +76,7 @@ _NOTE_DECISIONS: dict[tuple[str, bool | None], tuple[str, str]] = {
 @dataclass(frozen=True, slots=True)
 class InboxAction:
     operation: Literal[
+        "approve-plan",
         "reply-intervention",
         "decide-human-check",
         "add-note-message",
@@ -81,6 +89,31 @@ class InboxAction:
     effect: str
     input_fields: tuple[str, ...]
     arguments: dict[str, JsonValue]
+
+
+@dataclass(frozen=True, slots=True)
+class AuthorizationLimit:
+    kind: Literal["amount", "count"]
+    value: float
+    unit: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class InboxAuthorization:
+    subject: dict[str, JsonValue]
+    subject_sha256: str
+    limit: AuthorizationLimit | None
+    expires_at: datetime | None
+
+
+def inbox_authorization(
+    subject: dict[str, JsonValue],
+    limit: AuthorizationLimit | None = None,
+    expires_at: datetime | None = None,
+) -> InboxAuthorization:
+    return InboxAuthorization(
+        subject, sha256(json_dumps(subject).encode("utf-8")).hexdigest(), limit, expires_at
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -101,6 +134,7 @@ class InboxItem:
     actions: tuple[InboxAction, ...]
     next_step: str
     disposition: dict[str, JsonValue] | None
+    authorization: InboxAuthorization
 
 
 @dataclass(frozen=True, slots=True)
@@ -221,6 +255,86 @@ class InboxQuery:
             from ehai.application.workflow_inbox import workflow_inbox_items
 
             items.extend(workflow_inbox_items(self.session, project_id))
+            items.extend(self._plan_approvals(project_id))
+        return [
+            replace(item, actionable=False, unavailable_reason="Authorization window has expired")
+            if item.pending
+            and item.authorization.expires_at is not None
+            and item.authorization.expires_at <= self.observed_at
+            else item
+            for item in items
+        ]
+
+    def _plan_approvals(self, project_id: ID | None) -> list[InboxItem]:
+        items: list[InboxItem] = []
+        for project in self.session.states.list_projects():
+            if project_id is not None and project.project_id != project_id:
+                continue
+            for goal in self.session.states.list_goals(project.project_id):
+                plans = self.session.states.list_plan_revisions(goal.goal_id)
+                runs = self.session.states.list_runs(goal.goal_id)
+                for plan in plans:
+                    reason = (
+                        "Plan is already approved"
+                        if plan.status is not PlanRevisionStatus.DRAFT
+                        or any(r.plan_revision_id == plan.plan_revision_id for r in runs)
+                        else "A newer plan version exists"
+                        if plan != plans[-1]
+                        else None
+                    )
+                    items.append(
+                        InboxItem(
+                            kind="plan_approval",
+                            request_id=plan.plan_revision_id,
+                            owner=InboxOwner(
+                                project.project_id,
+                                project.name,
+                                goal.goal_id,
+                                goal.objective,
+                                None,
+                                None,
+                                None,
+                                None,
+                                None,
+                            ),
+                            source_status=plan.status.value,
+                            pending=reason is None,
+                            actionable=reason is None,
+                            unavailable_reason=reason,
+                            created_at=plan.created_at,
+                            first_observed_at=None,
+                            question=f"Approve plan version {plan.version}",
+                            evidence_summary=f"{len(plan.nodes)} nodes, {len(plan.phases)} phases",
+                            evidence=(),
+                            request_token=None,
+                            actions=(
+                                InboxAction(
+                                    "approve-plan",
+                                    "Approve this plan",
+                                    "Approves the plan and its completion contract; "
+                                    "starting a Run is a separate authorized step",
+                                    ("idempotency_key",),
+                                    {
+                                        "plan_revision_id": plan.plan_revision_id,
+                                        "completion_contract_id": plan.completion_contract_id,
+                                    },
+                                ),
+                            )
+                            if reason is None
+                            else (),
+                            next_step="Approve the plan; authorize starting a Run separately",
+                            disposition=None,
+                            authorization=inbox_authorization(
+                                {
+                                    "plan_revision_id": plan.plan_revision_id,
+                                    "version": plan.version,
+                                    "node_titles": [n.title for n in plan.nodes],
+                                    "phase_titles": [p.title for p in plan.phases],
+                                    "completion_contract_id": plan.completion_contract_id,
+                                }
+                            ),
+                        )
+                    )
         return items
 
     def _notes(self, project_id: ID | None, run_id: ID | None) -> list[InboxItem]:
@@ -304,6 +418,7 @@ class InboxQuery:
                     actions,
                     "Read and decide explicitly; discussion never unblocks execution",
                     cast(dict[str, JsonValue] | None, note["decision"]),
+                    inbox_authorization({"question": str(note["question"])}),
                 )
             )
         return items
@@ -412,6 +527,7 @@ class InboxQuery:
             actions,
             _next_step(run),
             disposition,
+            inbox_authorization({"question": str(notice["needed"])}),
         )
 
     def _human_check(self, project: Project, goal: Goal, run: Run, check: CheckRun) -> InboxItem:
@@ -521,6 +637,14 @@ class InboxQuery:
             actions,
             _next_step(run),
             disposition,
+            inbox_authorization(
+                {
+                    "check_run_id": check.check_run_id,
+                    "node_title": None if node is None else node.title,
+                    "question": request.question,
+                    "evidence_artifact_ids": [e.artifact_id for e in request.evidence],
+                }
+            ),
         )
 
 
