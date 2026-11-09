@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { manager, type AttentionItem } from "../lib/api";
+import { manager, type AttentionItem, type InboxKind } from "../lib/api";
 import { useApp, useQuery } from "../lib/app";
 import { useLifeBinding } from "../lib/life-binding";
 import { ago, when } from "../lib/format";
@@ -8,13 +8,24 @@ import { Link } from "../lib/router";
 import { useSubmission } from "../lib/submit";
 import { ErrorBlock, QueryView } from "../components/Status";
 import { RefCard } from "../components/RefCard";
+import { DecisionCard } from "../components/DecisionCard";
+import { INBOX_KIND } from "../lib/labels";
+import { queueLink } from "../lib/notifications";
 
-function queueLink(item: AttentionItem): string {
-  const ws = encodeURIComponent(item.workspace_id);
-  if (item.kind === "thread") return `/work/w/${ws}/threads/${encodeURIComponent(item.object_id)}`;
-  if (item.kind === "life_task") return "/life/tasks";
-  if (item.run_id) return `/work/w/${ws}/runs/${encodeURIComponent(item.run_id)}`;
-  return item.label === "life" ? "/life" : "/work";
+function QueueRow({ item, title, expandable }: { item: AttentionItem; title: string; expandable: boolean }) {
+  const decisions = item.kind === "inbox" && item.state in INBOX_KIND
+    ? [{ kind: item.state as InboxKind, request_id: item.object_id }] : item.decisions ?? [];
+  const row = <>
+    <span className={`chip ${item.label}`}>{item.label === "life" ? "生活" : "工作"}</span>
+    <span className="grow"><span className="title">{title}</span><span className="meta">{attentionState(item.kind, item.state)}</span></span>
+    <span className="meta">{item.at ? item.kind === "life_task" && item.state !== "done" ? when(item.at) : ago(item.at) : "未定时间"}</span>
+  </>;
+  if (!expandable || !decisions.length) return <Link className="row attention-row" to={queueLink(item)}>{row}</Link>;
+  return <details className="queue-decisions"><summary className="row attention-row">{row}</summary>
+    <div className="section">{decisions.map(decision => <DecisionCard key={decision.kind + decision.request_id}
+      target={{ workspaceId: item.workspace_id, kind: decision.kind, requestId: decision.request_id }} />)}</div>
+    <Link to={queueLink(item)}>查看所属页面</Link>
+  </details>;
 }
 
 function Assistant() {
@@ -129,11 +140,7 @@ export function Home() {
           {data.notes.map((note, i) => <p className="meta" key={i}>{attentionNote(note)}</p>)}
           {(["needs_you", "in_progress", "done"] as const).map((group, i) => <section className="card section" key={group}>
             <h2 className="h2">{["需要你处理", "进行中", "已完成"][i]} <span className="meta">{data[group].length}</span></h2>
-            {data[group].length === 0 ? <p className="empty">暂无</p> : <div className="list">{data[group].map(item => <Link className="row attention-row" key={`${item.workspace_id}:${item.kind}:${item.object_id}`} to={queueLink(item)}>
-              <span className={`chip ${item.label}`}>{item.label === "life" ? "生活" : "工作"}</span>
-              <span className="grow"><span className="title">{queueTitle(item)}</span><span className="meta">{attentionState(item.kind, item.state)}</span></span>
-              <span className="meta">{item.at ? item.kind === "life_task" && item.state !== "done" ? when(item.at) : ago(item.at) : "未定时间"}</span>
-            </Link>)}</div>}
+            {data[group].length === 0 ? <p className="empty">暂无</p> : <div className="list">{data[group].map(item => <QueueRow key={`${item.workspace_id}:${item.kind}:${item.object_id}`} item={item} title={queueTitle(item)} expandable={group === "needs_you"} />)}</div>}
             {group === "done" && data.done_truncated && <p className="meta">仅显示最近七天的前 20 项。</p>}
           </section>)}
           <p className="meta">更新于 {ago(data.observed_at)} · 各工作区分别读取</p>

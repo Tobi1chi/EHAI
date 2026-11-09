@@ -3,7 +3,7 @@ import { useApp } from "../lib/app";
 import { THREAD_PHASE, WORKSPACE_STATUS } from "../lib/labels";
 import { useLifeBinding } from "../lib/life-binding";
 import { Link } from "../lib/router";
-import { useThreadNotifications } from "../lib/notifications";
+import { useQueueNotifications } from "../lib/notifications";
 import { threadPath, useThreads, workThreadRows } from "../lib/threads";
 import { Icon } from "./Icon";
 
@@ -24,7 +24,6 @@ function lifeItems(count: number): NavItem[] {
     { to: "/life/tasks", label: "待办", icon: "tasks", match: prefix("/life/tasks") },
     { to: "/life/routines", label: "定时", icon: "clock", match: prefix("/life/routines") },
     { to: "/life/records", label: "记录", icon: "record", match: prefix("/life/records") },
-    { to: "/life/ask", label: "问", icon: "ask", match: prefix("/life/ask") },
   ];
 }
 
@@ -51,7 +50,6 @@ const PHASE_DOT: Record<keyof typeof THREAD_PHASE, string> = {
 
 const SHARED: NavItem[] = [
   { to: "/connections", label: "连接", icon: "plug", match: prefix("/connections") },
-  { to: "/answers", label: "自动回答", icon: "learn", match: (path) => prefix("/answers")(path) || prefix("/learn")(path) },
 ];
 
 function NavLink({ item, path }: { item: NavItem; path: string }) {
@@ -96,7 +94,7 @@ function LiveFooter() {
 export function Shell({ path, children }: { path: string; children: ReactNode }) {
   const { binding } = useLifeBinding();
   const threads = useThreads();
-  useThreadNotifications(threads.data);
+  useQueueNotifications();
   const threadRows = workThreadRows(threads.data, binding).slice(0, SIDEBAR_THREADS);
   const items: NavItem[] = [
     { to: "/", label: "首页", icon: "home", match: exact("/") },

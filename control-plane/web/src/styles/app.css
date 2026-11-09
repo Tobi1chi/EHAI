@@ -1667,3 +1667,15 @@ a.graph-node:focus-visible {
     padding: var(--space-4);
   }
 }
+.decision-card { min-width: 0; overflow-wrap: anywhere; }
+.decision-article { gap: 4px; }
+@media (max-width: 639px) {
+  .decision-card .kv { grid-template-columns: minmax(0, 1fr); gap: 4px; }
+  .decision-card .kv dd { margin-bottom: 10px; }
+}
+.decision-entry { border-bottom: 1px solid var(--border); padding: 8px 0; }
+.decision-actions { border: 0; padding: 0; margin: 0; min-width: 0; }
+.decision-actions:disabled { opacity: .65; }
+.queue-decisions > .section { padding: 16px; }
+.queue-decisions > summary { cursor: pointer; }
+.queue-decisions .decision-card + .decision-card { border-top: 1px solid var(--border); padding-top: 16px; }

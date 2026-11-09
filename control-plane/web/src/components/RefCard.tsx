@@ -1,13 +1,12 @@
-import { useState, type ReactNode } from "react";
+import type { ReactNode } from "react";
 import { core, errorStatus, type AssistantRef, type LifeTask } from "../lib/api";
 import { useApp, useQuery, type QueryState } from "../lib/app";
 import { when } from "../lib/format";
-import { dispositionRows, inboxQuestion, INBOX_KIND, LIFE_TASK_STATE, NEXT_ACTION, RUN_STATUS, THREAD_PHASE } from "../lib/labels";
+import { LIFE_TASK_STATE, NEXT_ACTION, RUN_STATUS, THREAD_PHASE } from "../lib/labels";
 import { useSubmission } from "../lib/submit";
 import { href, Link } from "../lib/router";
 import { ErrorBlock } from "./Status";
-import { InboxList } from "./InboxList";
-import { InboxPanel, type InboxTarget } from "./InboxPanel";
+import { DecisionCard } from "./DecisionCard";
 
 function LiveValue<T>({ query, children }: { query: QueryState<T>; children: (data: T) => ReactNode }) {
   // Never leave a stale object's action buttons active after a failed refresh.
@@ -74,21 +73,12 @@ function DiffCard({ reference: ref }: Props) {
 }
 
 function InboxCard({ reference: ref }: Props) {
-  const [target, setTarget] = useState<InboxTarget | null>(null);
-  const q = useQuery(`ref-inbox:${ref.workspace_id}:${ref.inbox_kind ?? ""}:${ref.object_id}`, async () => {
-    if (ref.inbox_kind !== null) return core(ref.workspace_id).getInboxItem(ref.inbox_kind, ref.object_id).then(r => r.data.item);
+  const q = useQuery(ref.inbox_kind ? null : `ref-inbox-kind:${ref.workspace_id}:${ref.object_id}`, async () => {
     const { data } = await core(ref.workspace_id).listInbox();
-    return data.items.find(item => item.request_id === ref.object_id && (ref.inbox_kind === null || item.kind === ref.inbox_kind)) ?? null;
+    return data.items.find(item => item.request_id === ref.object_id)?.kind ?? null;
   }, { workspaces: [ref.workspace_id] });
-  return <><LiveValue query={q}>{item => item === null ? <p className="meta">已不存在</p> : <>
-    <span className="meta">{INBOX_KIND[item.kind]} · {item.pending ? "待处理" : "已处理"}</span>
-    {item.pending ? <InboxList rows={[{ workspaceId: ref.workspace_id, item }]} onOpen={setTarget} showWorkspace={false} /> : <>
-      <strong>{inboxQuestion(item)}</strong>
-      <dl className="kv">{dispositionRows(item.disposition ?? {}).map(([label, value]) => <div key={label} style={{ display: "contents" }}>
-        <dt>{label}</dt><dd>{label === "时间" ? when(value) : value}</dd>
-      </div>)}</dl>
-    </>}
-  </>}</LiveValue>{target && <InboxPanel target={target} onClose={() => { setTarget(null); q.reload(); }} />}</>;
+  if (ref.inbox_kind) return <DecisionCard target={{ workspaceId: ref.workspace_id, kind: ref.inbox_kind, requestId: ref.object_id }} />;
+  return <LiveValue query={q}>{kind => kind ? <DecisionCard target={{ workspaceId: ref.workspace_id, kind, requestId: ref.object_id }} /> : <p className="meta">已不存在</p>}</LiveValue>;
 }
 
 function TaskActions({ workspaceId, task, reload }: { workspaceId: string; task: LifeTask; reload: () => void }) {

@@ -81,6 +81,7 @@ export const ATTEMPT_STATUS: Record<AttemptStatus, string> = {
 };
 
 export const INBOX_KIND: Record<InboxKind, string> = {
+  plan_approval: "方案批准",
   intervention: "求助",
   human_check: "人工检查",
   note: "便签",
@@ -100,6 +101,8 @@ export const WORKSPACE_STATUS: Record<WorkspaceDescriptor["status"], string> = {
 export function actionLabel(action: InboxAction): string {
   const args = action.arguments;
   switch (action.operation) {
+    case "approve-plan":
+      return "批准并开始";
     case "decide-human-check":
       if (args["hold"] === true) return "通过并暂停";
       return args["passed"] === true ? "通过" : "不通过";
@@ -132,6 +135,8 @@ export function actionLabel(action: InboxAction): string {
 export function actionHint(action: InboxAction): string {
   const args = action.arguments;
   switch (action.operation) {
+    case "approve-plan":
+      return "批准方案及验收条件，开始执行前还需确认配置。";
     case "decide-human-check":
       if (args["hold"] === true) {
         return "先算通过，但让 Run 停下来，你点恢复后才继续往下做。";
@@ -213,7 +218,19 @@ export function inboxQuestion(item: {
   question: string;
   owner: { workflow_run_id: string | null };
 }): string {
+  if (item.kind === "plan_approval") return item.question.replace(/^Approve plan version (\d+)$/, "批准第 $1 版方案");
+  if (item.kind === "workflow_reconciliation") return "请核对这次外部调用是否已经生效";
+  if (item.question === "Decide this workflow step") return "请确认这一步的内容";
   return isLifeCapture(item) ? "确认后保存这些待办" : item.question;
+}
+
+export function inboxUnavailable(reason: string | null): string {
+  if (reason === "Authorization window has expired") return "授权已过期。";
+  if (reason === "Plan is already approved") return "方案已批准。";
+  if (reason === "A newer plan version exists") return "已有新版方案，请处理最新版本。";
+  if (reason?.includes("already complete")) return "这项决定已处理。";
+  if (reason?.includes("no longer waiting")) return "流程已不再等待这项决定。";
+  return "当前状态暂时不能处理，请刷新或查看所属线程。";
 }
 
 const DISPOSITION_LABEL: Record<string, string> = {
@@ -235,7 +252,10 @@ export function dispositionRows(disposition: Record<string, unknown>): Array<[st
   return Object.entries(DISPOSITION_LABEL).flatMap(([key, label]): Array<[string, string]> => {
     const value = disposition[key];
     if (typeof value !== "string" || value === "") return [];
-    return [[label, DISPOSITION_VALUE[value] ?? value]];
+    const display = DISPOSITION_VALUE[value] ?? (
+      key === "reason" && !/[\u3400-\u9fff]/.test(value) ? "已记录处理说明。" : value
+    );
+    return [[label, display]];
   });
 }
 
@@ -249,7 +269,7 @@ export function attentionState(kind: string, state: string): string {
 export function attentionNote(note: string): string {
   if (note === "life binding not set") return "还没选择生活项目，可在设置中选择。";
   if (note.startsWith("life project not found in workspace ")) return "找不到生活项目，请在设置中重新选择。";
-  return "队列提示：" + note;
+  return "部分队列信息暂时不可用，请稍后刷新。";
 }
 
 /** Never expose runtime exception classes or internal error codes in the conversation. */

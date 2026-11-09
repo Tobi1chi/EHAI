@@ -1,5 +1,5 @@
 import { ago } from "../lib/format";
-import { INBOX_KIND, inboxQuestion } from "../lib/labels";
+import { INBOX_KIND, inboxQuestion, inboxUnavailable } from "../lib/labels";
 import type { InboxRow } from "../lib/overview";
 import { Icon } from "./Icon";
 import type { InboxTarget } from "./InboxPanel";
@@ -35,7 +35,7 @@ export function InboxList({
               {item.created_at ? ` · ${ago(item.created_at)}` : ""}
             </span>
             {!item.actionable && item.unavailable_reason && (
-              <span className="meta attn">{item.unavailable_reason}</span>
+              <span className="meta attn">{inboxUnavailable(item.unavailable_reason)}</span>
             )}
           </span>
           <span className="meta">
