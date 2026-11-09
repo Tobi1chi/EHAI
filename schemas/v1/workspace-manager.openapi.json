@@ -5,6 +5,78 @@
     "version": "1"
   },
   "paths": {
+    "/api/v1/life-binding": {
+      "get": {
+        "summary": "Get Life Binding",
+        "operationId": "getLifeBinding",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LifeBindingResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "summary": "Set Life Binding",
+        "operationId": "setLifeBinding",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LifeBindingData"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LifeBindingResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/attention": {
+      "get": {
+        "summary": "Attention",
+        "operationId": "getAttention",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AttentionResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/local": {
       "get": {
         "summary": "Local Engine",
@@ -398,6 +470,206 @@
         ],
         "title": "AddWorkspaceFolderRequest"
       },
+      "AttentionData": {
+        "properties": {
+          "observed_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Observed At"
+          },
+          "life_binding": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LifeBinding"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "needs_you": {
+            "items": {
+              "$ref": "#/components/schemas/AttentionItem"
+            },
+            "type": "array",
+            "title": "Needs You"
+          },
+          "in_progress": {
+            "items": {
+              "$ref": "#/components/schemas/AttentionItem"
+            },
+            "type": "array",
+            "title": "In Progress"
+          },
+          "done": {
+            "items": {
+              "$ref": "#/components/schemas/AttentionItem"
+            },
+            "type": "array",
+            "title": "Done"
+          },
+          "done_truncated": {
+            "type": "boolean",
+            "title": "Done Truncated"
+          },
+          "unavailable": {
+            "items": {
+              "$ref": "#/components/schemas/AttentionUnavailable"
+            },
+            "type": "array",
+            "title": "Unavailable"
+          },
+          "notes": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Notes"
+          },
+          "consistent_across_workspaces": {
+            "type": "boolean",
+            "const": false,
+            "title": "Consistent Across Workspaces",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "observed_at",
+          "life_binding",
+          "needs_you",
+          "in_progress",
+          "done",
+          "done_truncated",
+          "unavailable",
+          "notes"
+        ],
+        "title": "AttentionData"
+      },
+      "AttentionItem": {
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "thread",
+              "inbox",
+              "life_task"
+            ],
+            "title": "Kind"
+          },
+          "workspace_id": {
+            "type": "string",
+            "title": "Workspace Id"
+          },
+          "project_id": {
+            "type": "string",
+            "title": "Project Id"
+          },
+          "object_id": {
+            "type": "string",
+            "title": "Object Id"
+          },
+          "label": {
+            "type": "string",
+            "enum": [
+              "life",
+              "work"
+            ],
+            "title": "Label"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "state": {
+            "type": "string",
+            "title": "State"
+          },
+          "next_action": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Action"
+          },
+          "run_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Run Id"
+          },
+          "at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "kind",
+          "workspace_id",
+          "project_id",
+          "object_id",
+          "label",
+          "title",
+          "state",
+          "next_action",
+          "run_id",
+          "at"
+        ],
+        "title": "AttentionItem"
+      },
+      "AttentionResponse": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/AttentionData"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "AttentionResponse"
+      },
+      "AttentionUnavailable": {
+        "properties": {
+          "workspace_id": {
+            "type": "string",
+            "title": "Workspace Id"
+          },
+          "code": {
+            "type": "string",
+            "title": "Code"
+          },
+          "message": {
+            "type": "string",
+            "title": "Message"
+          }
+        },
+        "type": "object",
+        "required": [
+          "workspace_id",
+          "code",
+          "message"
+        ],
+        "title": "AttentionUnavailable"
+      },
       "ErrorDetail": {
         "properties": {
           "code": {
@@ -478,6 +750,59 @@
             "type": "object"
           }
         ]
+      },
+      "LifeBinding": {
+        "properties": {
+          "workspace_id": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9_-]{0,63}$",
+            "title": "Workspace Id"
+          },
+          "project_id": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Project Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "workspace_id",
+          "project_id"
+        ],
+        "title": "LifeBinding"
+      },
+      "LifeBindingData": {
+        "properties": {
+          "binding": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LifeBinding"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "binding"
+        ],
+        "title": "LifeBindingData"
+      },
+      "LifeBindingResponse": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/LifeBindingData"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "LifeBindingResponse"
       },
       "LocalEngineData": {
         "properties": {

@@ -159,6 +159,27 @@ uv run ehai --api-url http://127.0.0.1:8765 get-workspace-overview
 
 总览按 workspace 分组返回项目详情、有效成果和人工待办。不可用的工作区带明确错误，
 不展示成空项目或零待办；不同核心之间不是同一个数据库快照。
+
+管理器还提供跨工作区线程读取 `GET /api/v1/threads`，以及以下生活绑定与注意力队列接口：
+
+- `GET /api/v1/life-binding`（`getLifeBinding`）返回 `{data: {binding}}`；binding 为
+  `{workspace_id, project_id}` 或 null。`PUT /api/v1/life-binding`（`setLifeBinding`）接收
+  `{binding}` 并返回同样结构；字段必须完整，不接受额外字段，null 清除绑定。只检查工作区已登记，
+  不读取核心验证项目，因此核心停止时也能设置。绑定用私有 JSON 文件保存于管理器数据目录的
+  `life-binding.json`，不保存在业务核心中。
+- `GET /api/v1/attention`（`getAttention`）返回 `{data: AttentionData}`，包含读取时间
+  `observed_at`、`life_binding`、`needs_you`、`in_progress`、`done`、`done_truncated`、
+  `unavailable`、`notes` 与固定为 false 的 `consistent_across_workspaces`。
+  每项带源类型、工作区、项目、对象 ID、标题、核心状态、下一步、Run ID 和时间；与绑定的工作区和
+  项目均相符时标签为 life，否则为 work。线程需要注意、等待批准、暂停或失败时归入“需要你处理”，
+  规划、运行或尚未开始时归入“进行中”；未归属现有线程的未决待办单独归入“需要你处理”，不重复列出
+  已由线程承载的待办。仅绑定生活项目的待办参与聚合：过期未完成项需要处理，其余未完成项进行中，
+  已取消项不显示。完成的线程和生活待办只保留最近七天，合计最多二十项，超过时标记
+  `done_truncated`。需要处理按时间从旧到新，另两组从新到旧，空时间排最后。
+  未绑定或生活项目不存在时以简短英文 `notes` 说明；工作区读取失败则该工作区不返回条目，
+  在 `unavailable` 中保留工作区 ID、既有错误代码和说明，不影响其他工作区。聚合只读、不重试，
+  也不是跨核心一致快照。页面与其他管理器内调用者可复用同一队列计算。
+
 所有命令、模型请求和结果只发送到明确选中的 workspace，不按对象 ID 猜测来源，不自动换宿主重试。
 各 workspace 的事件 consumer、offset、对象 ID 与业务幂等键都属于自己的核心。
 

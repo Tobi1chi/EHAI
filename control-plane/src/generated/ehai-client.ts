@@ -2393,6 +2393,41 @@ export type AddWorkspaceFolderRequest = {
   readonly available_shells?: ReadonlyArray<string>;
 };
 
+export type AttentionData = {
+  readonly observed_at: string;
+  readonly life_binding: LifeBinding | null;
+  readonly needs_you: ReadonlyArray<AttentionItem>;
+  readonly in_progress: ReadonlyArray<AttentionItem>;
+  readonly done: ReadonlyArray<AttentionItem>;
+  readonly done_truncated: boolean;
+  readonly unavailable: ReadonlyArray<AttentionUnavailable>;
+  readonly notes: ReadonlyArray<string>;
+  readonly consistent_across_workspaces?: false;
+};
+
+export type AttentionItem = {
+  readonly kind: "thread" | "inbox" | "life_task";
+  readonly workspace_id: string;
+  readonly project_id: string;
+  readonly object_id: string;
+  readonly label: "life" | "work";
+  readonly title: string;
+  readonly state: string;
+  readonly next_action: string | null;
+  readonly run_id: string | null;
+  readonly at: string | null;
+};
+
+export type AttentionResponse = {
+  readonly data: AttentionData;
+};
+
+export type AttentionUnavailable = {
+  readonly workspace_id: string;
+  readonly code: string;
+  readonly message: string;
+};
+
 export type ErrorDetail = {
   readonly code: string;
   readonly message: string;
@@ -2400,6 +2435,19 @@ export type ErrorDetail = {
 
 export type HTTPValidationError = {
   readonly detail?: ReadonlyArray<ValidationError>;
+};
+
+export type LifeBinding = {
+  readonly workspace_id: string;
+  readonly project_id: string;
+};
+
+export type LifeBindingData = {
+  readonly binding: LifeBinding | null;
+};
+
+export type LifeBindingResponse = {
+  readonly data: LifeBindingData;
 };
 
 export type LocalEngineData = {
@@ -3131,6 +3179,18 @@ export class EhaiWorkspaceManagerClient {
 
   getWorkspaceOverview(): Promise<WorkspaceOverviewResponse> {
     return this.request("/workspace-overview", "GET");
+  }
+
+  getLifeBinding(): Promise<LifeBindingResponse> {
+    return this.request("/life-binding", "GET");
+  }
+
+  setLifeBinding(request: LifeBindingData): Promise<LifeBindingResponse> {
+    return this.request("/life-binding", "PUT", request);
+  }
+
+  getAttention(): Promise<AttentionResponse> {
+    return this.request("/attention", "GET");
   }
 
   listThreads(): Promise<WorkspaceThreadsResponse> {
