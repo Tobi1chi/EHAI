@@ -49,6 +49,7 @@ class AgentRoleConfig:
     permissions: frozenset[str] = frozenset()
     context_builder: ContextBuilder = _identity_context
     final_tool_requires_only: bool = True
+    allow_native_commands: bool = True
 
     def __post_init__(self) -> None:
         if not isinstance(self.role, AgentRole):
@@ -67,6 +68,8 @@ class AgentRoleConfig:
             raise ValueError("finish_tool must belong to the Role Tool Profile")
         if not isinstance(self.final_tool_requires_only, bool):
             raise ValueError("final_tool_requires_only must be a boolean")
+        if not isinstance(self.allow_native_commands, bool):
+            raise ValueError("allow_native_commands must be a boolean")
         object.__setattr__(self, "tool_names", names)
         object.__setattr__(self, "permissions", frozenset(self.permissions))
 

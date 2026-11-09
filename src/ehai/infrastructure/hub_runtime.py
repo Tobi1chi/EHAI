@@ -70,6 +70,10 @@ class HarnessProtocolError(RuntimeError):
     """The harness reported something that cannot belong to this invocation."""
 
 
+class HarnessTextOnlyError(HarnessProtocolError):
+    """The harness settled normally without calling the role's finish tool."""
+
+
 class HubRoleRunner:
     def __init__(
         self,
@@ -107,6 +111,8 @@ class HubRoleRunner:
         cancellation: CancellationToken | None = None,
         before_step_messages: BeforeStepMessages | None = None,
         native_session_id: str | None = None,
+        allow_text_only: bool = False,
+        finish_reminder: str | None = None,
     ) -> str:
         attempt_id: ID = execution.attempt_id
         if session.is_turn_complete(attempt_id):
@@ -199,6 +205,7 @@ class HubRoleRunner:
             native_policy=native_policy,
             native_authorization=registry.native_authorization,
             protected_paths=self.harness.protected_paths,
+            finish_reminder=finish_reminder,
         )
         try:
             async with self.hub.connect() as hub:
@@ -249,6 +256,8 @@ class HubRoleRunner:
                 )
             raise
         except (HubUnavailableError, HarnessProtocolError, OSError, TimeoutError) as failure:
+            if allow_text_only and isinstance(failure, HarnessTextOnlyError):
+                raise
             if session.has_turn(attempt_id):
                 invocation.record(TraceType.BACKEND_ERROR, {"backend": kind, "outcome": "unknown"})
             raise HarnessExecutionUnknownError(
@@ -292,6 +301,7 @@ class _Invocation:
         native_policy: NativePolicy | None,
         native_authorization: NativeAuthorization | None,
         protected_paths: tuple[Path, ...],
+        finish_reminder: str | None,
     ) -> None:
         self.backend = backend
         self.store = store
@@ -306,6 +316,8 @@ class _Invocation:
         self.native_policy = native_policy
         self.native_authorization = native_authorization
         self.protected_paths = protected_paths
+        self.finish_reminder = finish_reminder
+        self.finish_reminder_used = False
         self.queued: dict[str, ModelMessage] = {}
         self.final_text: str | None = None
         self.step_pending = False
@@ -355,7 +367,19 @@ class _Invocation:
                 cursor = event.seq
                 if isinstance(event, Settled):
                     if self.final_text is None:
-                        raise HarnessProtocolError(
+                        if self.finish_reminder is not None and not self.finish_reminder_used:
+                            self.finish_reminder_used = True
+                            self.record(
+                                TraceType.MESSAGE_RECEIVED,
+                                {
+                                    "content": self.finish_reminder,
+                                    "role": "user",
+                                    "delivery_boundary": "finish_reminder",
+                                },
+                            )
+                            await self.hub.prompt(self._session_id, self.finish_reminder)
+                            continue
+                        raise HarnessTextOnlyError(
                             "Harness settled without a host-validated role result"
                         )
                     self.record(TraceType.FINAL, {"text": self.final_text})
@@ -425,6 +449,7 @@ class _Invocation:
                     policy=self.native_policy,
                     authorization=self.native_authorization,
                     protected_paths=self.protected_paths,
+                    allow_native_commands=self.config.allow_native_commands,
                 )
             )
             self._record_native(event.model_dump(mode="json"))
@@ -509,12 +534,15 @@ def _native_decision(
     policy: NativePolicy | None,
     authorization: NativeAuthorization | None,
     protected_paths: tuple[Path, ...],
+    allow_native_commands: bool = True,
 ) -> NativeDecision:
     """Decide one native request from host authorization and the Attempt's sandbox."""
     if policy is None:
         return NativeDecision(approved=False, reason="Native tools are not enabled")
     if action.kind not in {"command", "file_change"}:
         return NativeDecision(approved=False, reason="Permission escalation or unknown operation")
+    if action.kind == "command" and not allow_native_commands:
+        return NativeDecision(approved=False, reason="Role cannot run native commands")
     workspace = workspace.resolve()
     try:
         cwd = (workspace / action.cwd).resolve() if action.cwd else workspace
