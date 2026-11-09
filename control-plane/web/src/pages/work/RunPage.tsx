@@ -352,7 +352,7 @@ export function RunPage({ workspaceId, runId }: { workspaceId: string; runId: st
       </section>
 
       <div className="split">
-        <section className="section">
+        <section className="section" id="result">
           <h2 className="h2">成果</h2>
           <QueryView query={result}>{(data) => <ResultView doc={data} />}</QueryView>
         </section>

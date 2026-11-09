@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { describeError, type RunStatus } from "../lib/api";
+import { describeError, plainError, type RunStatus } from "../lib/api";
 import type { QueryState } from "../lib/app";
 import { RUN_STATUS } from "../lib/labels";
 import { Icon } from "./Icon";
@@ -53,13 +53,15 @@ export function QueryView<T>({
   query,
   children,
   empty,
+  plain = false,
 }: {
   query: QueryState<T>;
   children: (data: T) => ReactNode;
   empty?: ReactNode;
+  plain?: boolean;
 }) {
   if (query.data === undefined) {
-    if (query.error !== undefined) return <ErrorBlock error={query.error} onRetry={query.reload} />;
+    if (query.error !== undefined) return <ErrorBlock error={query.error} onRetry={query.reload} plain={plain} />;
     return (
       <div className="empty" role="status">
         <Spinner /> 加载中…
@@ -69,7 +71,7 @@ export function QueryView<T>({
   return (
     <>
       {query.error !== undefined && (
-        <ErrorBlock error={query.error} onRetry={query.reload} stale />
+        <ErrorBlock error={query.error} onRetry={query.reload} stale plain={plain} />
       )}
       <div className={query.error !== undefined ? "query stale" : "query"}>{children(query.data) ?? empty}</div>
     </>
@@ -80,10 +82,12 @@ export function ErrorBlock({
   error,
   onRetry,
   stale = false,
+  plain = false,
 }: {
   error: unknown;
   onRetry?: () => void;
   stale?: boolean;
+  plain?: boolean;
 }) {
   return (
     <div className="banner bad" role="alert">
@@ -94,7 +98,7 @@ export function ErrorBlock({
         {/* Reads offer a retry; a failed write is retried from its own control. */}
         {stale ? "没能刷新，下面可能不是最新的" : onRetry ? "没加载出来" : "没成功"}
       </div>
-      <div className="meta pre">{describeError(error)}</div>
+      <div className="meta pre">{plain ? plainError(error) : describeError(error)}</div>
       {onRetry && (
         <div>
           <button className="btn small" type="button" onClick={onRetry}>

@@ -1,10 +1,10 @@
+import { useLifeBinding } from "../../lib/life-binding";
 import { useState } from "react";
 import { AddFolderPanel } from "../../components/AddFolderPanel";
 import { ErrorBlock, Spinner } from "../../components/Status";
 import { core } from "../../lib/api";
 import { useApp } from "../../lib/app";
 import { isLife } from "../../lib/overview";
-import { usePrefs } from "../../lib/prefs";
 import { navigate } from "../../lib/router";
 import { useSubmission } from "../../lib/submit";
 import { sendDiscussion } from "./discussion";
@@ -19,13 +19,13 @@ const ADD_FOLDER = "\u0000add-folder";
  */
 export function NewThread() {
   const { overview, touch } = useApp();
-  const prefs = usePrefs();
+  const { binding } = useLifeBinding();
   const workspaces = (overview.data?.workspaces ?? []).filter((e) => e.available);
   const [workspaceId, setWorkspaceId] = useState<string>(() => workspaces[0]?.workspace.workspace_id ?? "");
   const entry = workspaces.find((e) => e.workspace.workspace_id === workspaceId) ?? workspaces[0];
   const chosenWorkspace = entry?.workspace.workspace_id ?? "";
   const projects = (entry?.projects ?? []).filter(
-    (p) => !isLife(prefs.life, chosenWorkspace, p.project.project_id),
+    (p) => !isLife(binding, chosenWorkspace, p.project.project_id),
   );
   const [projectChoice, setProjectChoice] = useState<string | null>(null);
   const projectId = projectChoice ?? projects[0]?.project.project_id ?? NEW_PROJECT;

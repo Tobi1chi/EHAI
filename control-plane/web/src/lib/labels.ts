@@ -238,3 +238,29 @@ export function dispositionRows(disposition: Record<string, unknown>): Array<[st
     return [[label, DISPOSITION_VALUE[value] ?? value]];
   });
 }
+
+export const LIFE_TASK_STATE: Record<string, string> = {
+  overdue: "已过期", open: "未完成", done: "已完成", cancelled: "已取消",
+};
+export function attentionState(kind: string, state: string): string {
+  const labels: Readonly<Record<string, string>> = kind === "thread" ? THREAD_PHASE : kind === "inbox" ? INBOX_KIND : LIFE_TASK_STATE;
+  return labels[state] ?? "状态未知";
+}
+export function attentionNote(note: string): string {
+  if (note === "life binding not set") return "还没选择生活项目，可在设置中选择。";
+  if (note.startsWith("life project not found in workspace ")) return "找不到生活项目，请在设置中重新选择。";
+  return "队列提示：" + note;
+}
+
+/** Never expose runtime exception classes or internal error codes in the conversation. */
+export function assistantIssue(reason: string | null, unavailable = false): string {
+  const value = (reason ?? "").toLowerCase();
+  if (value.includes("interrupted by restart")) return "服务重启中断了这次回答，请重新提问。";
+  if (value.includes("reply format")) return "这次回答没有按要求整理好，请重新提问。";
+  if (value.includes("local-home")) return "当前服务未启用本地助手，请通过本地启动入口打开。";
+  if (value.includes("configuration") || value.includes("config")) return "助手配置暂时读不到，请检查本地初始化设置。";
+  if (value.includes("timeout") || value.includes("timed out")) return "这次等待回答超时了，请稍后重新提问。";
+  if (value.includes("connect") || value.includes("network")) return "暂时连不上助手服务，请检查连接后重新提问。";
+  if (value.includes("auth") || value.includes("api key")) return "助手服务暂时无法验证连接，请检查模型连接设置。";
+  return unavailable ? "助手暂不可用，请检查本地服务和模型设置。" : "这次未能取得回答，请检查助手服务后重新提问。";
+}

@@ -1,3 +1,4 @@
+import { setLifeBinding, useLifeBinding } from "../../lib/life-binding";
 import { useEffect, useState } from "react";
 import { AddFolderPanel } from "../../components/AddFolderPanel";
 import { ErrorBlock, Spinner } from "../../components/Status";
@@ -107,12 +108,15 @@ export function SettingsPage() {
   const rows = projectRows(overview.data);
   const toast = useToast();
   const [adding, setAdding] = useState(false);
-  const lifeValue = prefs.life ? `${prefs.life.workspaceId}|${prefs.life.projectId}` : "";
+  const life = useLifeBinding();
+  const binding = life.binding;
+  const saving = useSubmission("life-binding");
+  const lifeValue = binding ? `${binding.workspaceId}|${binding.projectId}` : "";
 
   return (
     <div className="content">
       <h1 className="page-title">设置</h1>
-      <p className="meta">这些设置只保存在这个浏览器里。</p>
+      <p className="meta">生活项目保存在管理器中；名字、外观和通知偏好保存在这个浏览器里。</p>
 
       <label className="field">
         <span>你的名字</span>
@@ -130,9 +134,10 @@ export function SettingsPage() {
         <select
           className="select"
           value={lifeValue}
+          disabled={life.loading || saving.pending}
           onChange={(e) => {
             const [workspaceId, projectId] = e.target.value.split("|");
-            setPrefs({ life: workspaceId && projectId ? { workspaceId, projectId } : null });
+            void saving.run(() => setLifeBinding(workspaceId && projectId ? { workspaceId, projectId } : null).then(() => true));
           }}
         >
           <option value="">还没选</option>
@@ -142,9 +147,11 @@ export function SettingsPage() {
             </option>
           ))}
         </select>
-        <span className="meta">这个项目显示在「生活」，其余项目都在「工作」。</span>
+        <span className="meta">同一队列里，这个项目标为「生活」，其余标为「工作」。</span>
       </label>
 
+      {life.error !== undefined && <ErrorBlock error={life.error} />}
+      {saving.error !== undefined && <ErrorBlock error={saving.error} />}
       <div className="field">
         <span>外观</span>
         <div className="segmented" role="tablist" aria-label="外观">

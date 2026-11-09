@@ -4,19 +4,20 @@ import { canStart, WorkspaceBanner } from "../../components/WorkspaceBanner";
 import { core } from "../../lib/api";
 import { useApp } from "../../lib/app";
 import { entries, projectRows } from "../../lib/overview";
-import { setPrefs, usePrefs } from "../../lib/prefs";
+import { setLifeBinding, useLifeBinding } from "../../lib/life-binding";
 import { useSubmission } from "../../lib/submit";
 
 export type Life = { readonly workspaceId: string; readonly projectId: string; readonly projectName: string };
 
 /**
- * The life zone works on one Project. The core has no zone tag yet, so the choice is a
- * per-browser preference; until one is chosen, offer to pick or create the Project.
+ * Life pages use the manager-owned project binding; offer setup until one is chosen.
  */
 export function LifeGate({ children }: { children: (life: Life) => ReactNode }) {
   const { overview } = useApp();
-  const prefs = usePrefs();
-  const binding = prefs.life;
+  const { binding, loading, error } = useLifeBinding();
+  const change = useSubmission("life-binding");
+  if (loading) return <p className="empty"><Spinner /> 加载生活项目…</p>;
+  if (error !== undefined) return <ErrorBlock error={error} />;
   if (binding === null) return <LifeSetup />;
   const entry = entries(overview.data).find((e) => e.workspace.workspace_id === binding.workspaceId);
   const project = entry?.projects?.find((p) => p.project.project_id === binding.projectId);
@@ -28,8 +29,9 @@ export function LifeGate({ children }: { children: (life: Life) => ReactNode }) 
           <div className="meta">
             在 <span className="mono">{binding.workspaceId}</span> 里没找到它，可能换过数据目录。
           </div>
+          {change.error !== undefined && <ErrorBlock error={change.error} />}
           <div>
-            <button type="button" className="btn small" onClick={() => setPrefs({ life: null })}>
+            <button type="button" className="btn small" onClick={() => void change.run(() => setLifeBinding(null).then(() => true))}>
               重新选择
             </button>
           </div>
@@ -72,6 +74,7 @@ function LifeSetup() {
   const [workspaceId, setWorkspaceId] = useState("");
   const [name, setName] = useState("生活");
   const submission = useSubmission("create-life-project");
+  const bindingWrite = useSubmission("life-binding");
   const chosenWorkspace = workspaceId || available[0]?.workspace.workspace_id || "";
 
   async function create() {
@@ -80,7 +83,7 @@ function LifeSetup() {
     );
     if (result) {
       touch(chosenWorkspace);
-      setPrefs({ life: { workspaceId: chosenWorkspace, projectId: result.data.project_id } });
+      await bindingWrite.run(() => setLifeBinding({ workspaceId: chosenWorkspace, projectId: result.data.project_id }).then(() => true));
     }
   }
 
@@ -96,6 +99,7 @@ function LifeSetup() {
           <Spinner /> 加载中…
         </p>
       )}
+      {bindingWrite.error !== undefined && <ErrorBlock error={bindingWrite.error} />}
       {rows.length > 0 && (
         <section className="section">
           <h2 className="h2">用已有的项目</h2>
@@ -105,7 +109,8 @@ function LifeSetup() {
                 key={ws + detail.project.project_id}
                 type="button"
                 className="row"
-                onClick={() => setPrefs({ life: { workspaceId: ws, projectId: detail.project.project_id } })}
+                disabled={bindingWrite.pending}
+                onClick={() => void bindingWrite.run(() => setLifeBinding({ workspaceId: ws, projectId: detail.project.project_id }).then(() => true))}
               >
                 <span className="grow">
                   <span className="title">{detail.project.name}</span>
