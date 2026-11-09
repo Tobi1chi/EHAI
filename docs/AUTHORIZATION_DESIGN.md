@@ -1,6 +1,6 @@
 # 阶段 ④：统一授权与生活接入（设计）
 
-更新：2026-11-10。状态：**用户 11-10 批准**；M1–M4 同日实现，等用户验收（[阶段 ④ 记录](records/stage4-authorization.md)）。本页是阶段 ④ 的目标设计，实现状态以 [STATUS](STATUS.md) 为准。
+更新：2026-11-10。状态：**用户 11-10 批准**；M1–M4 同日实现，用户验收通过（[阶段 ④ 记录](records/stage4-authorization.md)）。本页是阶段 ④ 的目标设计，实现状态以 [STATUS](STATUS.md) 为准。
 依据：[ROADMAP 阶段 ④](ROADMAP.md#阶段)、[PRODUCT_SCOPE 第 6 节](PRODUCT_SCOPE.md#6-生活待办流程与外部服务)
 （E63、E66、E68–E70、N13，C4、C6、S1、S5）。阶段 ② 的队列与助手见 [ASSISTANT_DESIGN](ASSISTANT_DESIGN.md)。
 
