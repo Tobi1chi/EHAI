@@ -8,6 +8,7 @@ A Run executes from the definition snapshot it pinned when it started.
 
 from __future__ import annotations
 
+import math
 import re
 from collections.abc import Mapping
 from datetime import datetime, timedelta
@@ -19,7 +20,7 @@ from jsonschema.exceptions import ValidationError
 from referencing.exceptions import Unresolvable
 
 from ehai import JsonValue, json_dumps, new_id, parse_utc_datetime
-from ehai.application.connector_models import ConnectorConnection
+from ehai.application.connector_models import ConnectorAuthorization, ConnectorConnection
 from ehai.application.connectors import (
     ConnectorTransaction,
     queue_connector_call,
@@ -117,6 +118,8 @@ def _step_refs(step: Step) -> list[str]:
         values = list(step.inputs.values())
     elif isinstance(step, HumanStep):
         values = list(step.subject.values())
+        if step.grant is not None and step.grant.limit is not None:
+            values.append(step.grant.limit.value)
     elif isinstance(step, WaitStep):
         values = [step.until]
     elif isinstance(step, EndStep):
@@ -253,6 +256,19 @@ def _check_action(
         return
     if step.approval_step is None:
         return
+    for name, value in step.inputs.items():
+        allowed = (
+            f"steps.{step.approval_step}.subject",
+            f"steps.{step.approval_step}.authorization",
+        )
+        if not isinstance(value, LiteralValue) and not all(
+            any(ref == prefix or ref.startswith(prefix + ".") for prefix in allowed)
+            for ref in _value_refs(value)
+        ):
+            problems.append(
+                f"step {step.id} input {name} must bind to {step.approval_step} "
+                "subject or authorization, or be a literal value"
+            )
     approval = steps.get(step.approval_step)
     if not isinstance(approval, HumanStep):
         problems.append(f"step {step.id} names {step.approval_step}, which is not a human step")
@@ -506,6 +522,27 @@ class _Execution:
         connection, _ = self.tx.connectors.connection(step.connector_id)
         if connection.project_id != self.record.project_id:
             raise _StepError("The connector belongs to another project")
+        authorization = None
+        if step.approval_step is not None:
+            raw = self._lookup(f"steps.{step.approval_step}.authorization")
+            if isinstance(raw, dict):
+                authorization = ConnectorAuthorization.model_validate(
+                    {key: value for key, value in raw.items() if key != "approved_at"}
+                )
+                if authorization.expires_at is not None and authorization.expires_at <= self.now:
+                    raise _StepError(
+                        f"Authorization for {step.approval_step} expired at "
+                        f"{authorization.expires_at.isoformat()}"
+                    )
+                limit, count = authorization.limit, inputs.get("count")
+                if (
+                    limit is not None
+                    and limit.kind == "count"
+                    and isinstance(count, int | float)
+                    and not isinstance(count, bool)
+                    and count > limit.value
+                ):
+                    raise _StepError(f"Authorization for {step.approval_step} count limit exceeded")
         execution = self._new_step(step, "waiting", inputs, None)
         invocation = WorkflowInvocationRecord(
             invocation_id=str(new_id()),
@@ -536,6 +573,7 @@ class _Execution:
                 step.action_version,
                 inputs,
                 authorize_write=step.approval_step is not None or step.standing_write,
+                authorization=authorization,
             )
         except (ValueError, StateConflictError) as error:
             # The connector changed since the definition was saved; this Run cannot go on.
@@ -560,6 +598,23 @@ class _Execution:
 
     def _start_human(self, step: HumanStep) -> None:
         subject = self._values(step.subject)
+        grant: dict[str, JsonValue] | None = None
+        if step.grant is not None:
+            limit: dict[str, JsonValue] | None = None
+            if step.grant.limit is not None:
+                value = self._value(step.grant.limit.value)
+                if (
+                    not isinstance(value, int | float)
+                    or isinstance(value, bool)
+                    or (isinstance(value, float) and not math.isfinite(value))
+                ):
+                    raise _StepError(f"Grant limit value for {step.id} must be a number")
+                limit = {
+                    "kind": step.grant.limit.kind,
+                    "value": value,
+                    "unit": step.grant.limit.unit,
+                }
+            grant = {"limit": limit, "valid_seconds": step.grant.valid_seconds}
         execution = self._new_step(step, "waiting", subject, None)
         deadline = (
             None
@@ -577,6 +632,7 @@ class _Execution:
                 "subject": subject,
                 "subject_sha256": sha256(json_dumps(subject).encode()).hexdigest(),
                 "deadline": None if deadline is None else deadline.isoformat(),
+                **({} if grant is None else {"grant": grant}),
             },
             resolution=None,
             recorded_at=self.now,
@@ -711,7 +767,20 @@ class _Execution:
             "reason": request.reason,
             "decided_at": self.now.isoformat(),
         }
-        self._resolve_wait(self._wait(execution), decision)
+        wait = self._wait(execution)
+        if request.decision == "approve":
+            grant = wait.condition.get("grant")
+            validity = grant.get("valid_seconds") if isinstance(grant, dict) else None
+            expires = self.now + timedelta(seconds=validity) if isinstance(validity, int) else None
+            decision["authorization"] = {
+                "authorization_id": str(new_id()),
+                "subject_sha256": wait.condition.get("subject_sha256")
+                or sha256(json_dumps(execution.inputs).encode()).hexdigest(),
+                "limit": grant.get("limit") if isinstance(grant, dict) else None,
+                "approved_at": self.now.isoformat(),
+                "expires_at": None if expires is None else expires.isoformat(),
+            }
+        self._resolve_wait(wait, decision)
         self._finish_step(execution, "completed", {**decision, "subject": execution.inputs})
         self.enter(step.on_approve if request.decision == "approve" else step.on_reject)
 

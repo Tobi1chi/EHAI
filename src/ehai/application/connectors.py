@@ -13,6 +13,7 @@ from ehai import JsonValue, json_dumps, new_id, normalize_id, utc_now
 from ehai.application.connector_models import (
     ClaimConnectorCallRequest,
     ConnectorActionEntry,
+    ConnectorAuthorization,
     ConnectorCall,
     ConnectorClaim,
     ConnectorConnection,
@@ -132,6 +133,7 @@ def queue_connector_call(
     inputs: dict[str, JsonValue],
     *,
     authorize_write: bool,
+    authorization: ConnectorAuthorization | None = None,
 ) -> ConnectorCall:
     """Store the call intent; the connector's own process claims it and performs the I/O."""
     connection, _ = tx.connection(connector_id)
@@ -156,6 +158,7 @@ def queue_connector_call(
         action=action,
         inputs=inputs,
         write_authorized=authorize_write,
+        authorization=authorization,
         status="queued",
         output=None,
         error=None,

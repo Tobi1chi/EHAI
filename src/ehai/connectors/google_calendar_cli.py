@@ -89,7 +89,7 @@ def _run(directory: Path, *, once: bool, test_provider_url: str | None) -> None:
             base_url=provider_url, timeout=30, trust_env=test_provider_url is None
         ) as provider,
     ):
-        adapter = GoogleCalendarAdapter(provider, token)
+        adapter = GoogleCalendarAdapter(provider, token, directory)
         while True:
             _run_once(directory, core, adapter, config)
             if once:

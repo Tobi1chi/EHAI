@@ -47,6 +47,34 @@ HTTP 请求整体大小仍需由部署层控制；此上限不等于网络层上
 创建调用只表示 queued，实际结果须查询 call_id；HTTP 200 不能当作外部日程已创建。
 写动作要求请求明确 `authorize_write=true`，仍以用户实际授予调用者的权限为边界。
 
+### 绑定授权
+
+ConnectorCall 新增可选 `authorization`，缺失的旧快照读取为 null；协议版本仍为 1，无数据库迁移。
+自定义 Workflow 中受 approval_step 保护的写调用携带批准记录的以下字段：
+
+```json
+{
+  "authorization_id": "批准时生成的稳定 ID",
+  "subject_sha256": "冻结 subject 的规范 JSON 的 64 位十六进制 SHA-256",
+  "limit": {"kind": "count", "value": 1, "unit": "events"},
+  "expires_at": "2026-11-10T12:00:00Z"
+}
+```
+
+limit 可为 null，否则 kind 为 amount/count、value 为数字、unit 为字符串或 null；expires_at 可为 null。
+approved_at 只存在于 Workflow 的批准记录，不在调用授权对象中。
+standing_write 与直接 invoke-connector 的 authorization 为 null；原 write_authorized 布尔规则不变。
+Connector 应拒绝已过期或请求超出上限的写动作；尚未适配的第三方 Connector 可能忽略此字段，
+不能据此宣称其已执行上限检查。
+
+Google Calendar 的 calendar.events.create 有授权时，在请求 Provider 前检查 expires_at，
+过期返回 failed / `Write authorization expired`；count 上限按本 Connector state-dir 中同一
+authorization_id 已成功创建的不同 call_id 回执累计，达到上限返回 failed /
+`Write authorization limit reached`。同一调用的恢复不重复计数，已有 pending 结果也参与累计；
+保留原 state-dir、回执和进程锁是此检查的前提。amount 上限不适用于日程创建，未做金额核算。
+没有 authorization 时保持原行为。这些新增路径尚待团队负责人经隔离宿主与 loopback Provider 验收，
+静态检查不代表运行验证。
+
 Connector 进程使用单独的桥接接口，均要求 `X-EHAI-Connector-Token`：
 
 | 接口 | 请求与响应 |

@@ -151,7 +151,7 @@ uv run ehai --api-url $api get-routine-scheduler
 | --- | --- | --- |
 | `action` | connector_id、action、action_version、inputs、next；写动作另需 approval_step 或 standing_write | 先保存调用意图并排队 Connector 调用，由 Connector 进程执行；输出为调用结果 |
 | `condition` | cases（when、next）、default | 选第一个成立的 case，否则 default；所选出口与序号记入步骤输出，之后不重新判定 |
-| `human` | question、subject、on_approve、on_reject；可选 timeout_seconds 与 on_timeout（成对） | 进入时解析并冻结 subject，等待进入统一 Inbox；输出为决定、操作者、理由、时间与 subject |
+| `human` | question、subject、on_approve、on_reject；可选 grant、timeout_seconds 与 on_timeout（超时字段成对） | 进入时解析并冻结 subject 与 grant，等待进入统一 Inbox；输出为决定、操作者、理由、时间、subject 与批准时的 authorization |
 | `wait` | until、offset_seconds、next | 等到 until（带偏移的 ISO 时间）加偏移；已到期立即继续；输出 until 与 fired_at |
 | `end` | outcome、result | 以业务结果结束，例如 `booked`、`no_suitable_train`；业务无票不是技术失败 |
 
@@ -167,6 +167,37 @@ inputs_schema 声明 properties 时引用其中没有的输入，或引用不是
 只读动作带写授权，或写动作没有恰好一种授权。`approval_step` 必须是每条路径上都先经过的人工步骤，
 且从它的拒绝/超时出口到达不了该动作；`standing_write: true` 记录定义者给出的持续授权。
 
+### 绑定写授权与 grant
+
+受 `approval_step` 保护的写动作，**每个输入**必须是 `{"value": ...}` 常量，或只引用
+`steps.<approval_step>.subject` / `steps.<approval_step>.authorization` 及其子路径的 ref/template。
+不能直接引用 `input.*`、其他步骤或该人工步骤的决定/理由；保存时拒绝并指出步骤与输入名。
+`standing_write` 的规则不变，不附带本节的授权对象。
+
+人工步骤可加以下可选字段（value 使用与 subject 相同的值语法）：
+
+```json
+{
+  "grant": {
+    "limit": {"kind": "count", "value": {"value": 1}, "unit": "events"},
+    "valid_seconds": 3600
+  }
+}
+```
+
+`limit`、`valid_seconds` 均可省略或为 null；limit.kind 为 `amount` 或 `count`，unit 可省略或为 null。
+valid_seconds 为 60..31536000 的整数。进入人工步骤时解析 limit.value，与 subject 一起冻结在 wait.condition.grant；
+解析值不是有限数字（布尔值不算数字）时步骤与 Run 失败。
+批准时，步骤输出和 wait.resolution 同时记录 authorization：新 authorization_id、冻结对象的 subject_sha256、
+limit、approved_at、expires_at（批准时刻加 valid_seconds，无有效秒数则 null）。拒绝不产生授权。
+没有 grant 时仍记录无上限、无到期时间的批准；已有无 authorization 的历史批准记录仍可读取和接续。
+
+写动作排队前检查批准记录：已过期则步骤和 Run 失败，error 为
+`Authorization for <approval_step> expired at <time>`，不产生 Connector 调用。
+limit.kind=count 且动作输入包含数字 count 时，count 超过上限也在排队前失败。
+授权随调用快照传给 Connector；Google Calendar 还按自身成功回执累计检查 count 上限，见
+[Connector 协议](CONNECTOR_PROTOCOL.md#绑定授权)。不声明 grant 的定义不增加上限或有效期。
+
 ### 执行、失败与恢复
 
 - 启动时按 inputs_schema 校验输入（不符返回 400），保存运行记录与定义快照，然后在同一事务内推进，
@@ -180,7 +211,7 @@ inputs_schema 声明 properties 时引用其中没有的输入，或引用不是
   动作为 `reconcile-connector-call`：由原 worker 核对同一调用，不以新身份重放写入；核对得到结果后继续。
 - 人工步骤以 `workflow_confirmation` 出现在 Inbox，动作 `decide-workflow-step`，参数含
   workflow_run_id 与 `expected_version`（Run 版本；过期返回 409）。决定只针对进入步骤时冻结的 subject；
-  后续动作应引用 `steps.<人工步骤>.subject.*`，使执行内容与批准内容一致。超时按 on_timeout 继续。
+  后续受保护的写动作必须按上节绑定输入，使执行内容与批准内容一致。超时按 on_timeout 继续。
 - 时间等待与人工等待都是持久记录，不保持进程或模型会话；宿主重启后下一次 tick 判断到期并继续。
 - 每次推进提交一条 `WorkflowExecutionChanged` 事件，payload 为 run、steps、invocations、waits 快照。
 

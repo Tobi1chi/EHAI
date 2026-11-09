@@ -913,6 +913,154 @@
       "title": "ExistsCondition",
       "description": "True when the path resolves to a value other than null."
     },
+    "GrantLimit_Input": {
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": [
+            "amount",
+            "count"
+          ],
+          "title": "Kind"
+        },
+        "value": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RefValue"
+            },
+            {
+              "$ref": "#/$defs/LiteralValue_Input"
+            },
+            {
+              "$ref": "#/$defs/TemplateValue"
+            }
+          ],
+          "title": "Value"
+        },
+        "unit": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Unit"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "kind",
+        "value"
+      ],
+      "title": "GrantLimit"
+    },
+    "GrantLimit_Output": {
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": [
+            "amount",
+            "count"
+          ],
+          "title": "Kind"
+        },
+        "value": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RefValue"
+            },
+            {
+              "$ref": "#/$defs/LiteralValue_Output"
+            },
+            {
+              "$ref": "#/$defs/TemplateValue"
+            }
+          ],
+          "title": "Value"
+        },
+        "unit": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Unit"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "kind",
+        "value"
+      ],
+      "title": "GrantLimit"
+    },
+    "HumanGrant_Input": {
+      "properties": {
+        "limit": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/GrantLimit_Input"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "valid_seconds": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "maximum": 31536000.0,
+              "minimum": 60.0
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Valid Seconds"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "title": "HumanGrant"
+    },
+    "HumanGrant_Output": {
+      "properties": {
+        "limit": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/GrantLimit_Output"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "valid_seconds": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "maximum": 31536000.0,
+              "minimum": 60.0
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Valid Seconds"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "title": "HumanGrant"
+    },
     "HumanStep_Input": {
       "properties": {
         "type": {
@@ -948,6 +1096,16 @@
           "type": "object",
           "maxProperties": 50,
           "title": "Subject"
+        },
+        "grant": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/HumanGrant_Input"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "on_approve": {
           "type": "string",
@@ -1032,6 +1190,16 @@
           "type": "object",
           "maxProperties": 50,
           "title": "Subject"
+        },
+        "grant": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/HumanGrant_Output"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "on_approve": {
           "type": "string",

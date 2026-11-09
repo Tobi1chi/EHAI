@@ -1625,11 +1625,34 @@ export type ExistsCondition = {
   readonly ref: string;
 };
 
+export type GrantLimit_Input = {
+  readonly kind: "amount" | "count";
+  readonly value: RefValue | LiteralValue_Input | TemplateValue;
+  readonly unit?: string | null;
+};
+
+export type GrantLimit_Output = {
+  readonly kind: "amount" | "count";
+  readonly value: RefValue | LiteralValue_Output | TemplateValue;
+  readonly unit?: string | null;
+};
+
+export type HumanGrant_Input = {
+  readonly limit?: GrantLimit_Input | null;
+  readonly valid_seconds?: number | null;
+};
+
+export type HumanGrant_Output = {
+  readonly limit?: GrantLimit_Output | null;
+  readonly valid_seconds?: number | null;
+};
+
 export type HumanStep_Input = {
   readonly type: "human";
   readonly id: string;
   readonly question: string;
   readonly subject?: Readonly<Record<string, RefValue | LiteralValue_Input | TemplateValue>>;
+  readonly grant?: HumanGrant_Input | null;
   readonly on_approve: string;
   readonly on_reject: string;
   readonly timeout_seconds?: number | null;
@@ -1641,6 +1664,7 @@ export type HumanStep_Output = {
   readonly id: string;
   readonly question: string;
   readonly subject?: Readonly<Record<string, RefValue | LiteralValue_Output | TemplateValue>>;
+  readonly grant?: HumanGrant_Output | null;
   readonly on_approve: string;
   readonly on_reject: string;
   readonly timeout_seconds?: number | null;
@@ -1993,6 +2017,19 @@ export type ConnectorActionEntry = {
   readonly output_schema: Readonly<Record<string, JsonValue>>;
 };
 
+export type ConnectorAuthorization = {
+  readonly authorization_id: string;
+  readonly subject_sha256: string;
+  readonly limit: ConnectorAuthorizationLimit | null;
+  readonly expires_at: string | null;
+};
+
+export type ConnectorAuthorizationLimit = {
+  readonly kind: "amount" | "count";
+  readonly value: number | number;
+  readonly unit?: string | null;
+};
+
 export type ConnectorCall = {
   readonly call_id: string;
   readonly connector_id: string;
@@ -2000,6 +2037,7 @@ export type ConnectorCall = {
   readonly action: ConnectorAction_Output;
   readonly inputs: Readonly<Record<string, JsonValue>>;
   readonly write_authorized: boolean;
+  readonly authorization?: ConnectorAuthorization | null;
   readonly status: "queued" | "claimed" | "completed" | "failed" | "unknown";
   readonly output: Readonly<Record<string, JsonValue>> | null;
   readonly error: string | null;

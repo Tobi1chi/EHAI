@@ -111,6 +111,17 @@ class ConditionStep(WorkflowModel):
     default: StepId
 
 
+class GrantLimit(WorkflowModel):
+    kind: Literal["amount", "count"]
+    value: Value
+    unit: str | None = None
+
+
+class HumanGrant(WorkflowModel):
+    limit: GrantLimit | None = None
+    valid_seconds: int | None = Field(default=None, ge=60, le=31536000, strict=True)
+
+
 class HumanStep(WorkflowModel):
     """Wait for an approve/reject decision on the subject as resolved when the step starts.
 
@@ -122,6 +133,7 @@ class HumanStep(WorkflowModel):
     id: StepId
     question: Annotated[LifeText, Field(max_length=500)]
     subject: dict[str, Value] = Field(default_factory=dict, max_length=50)
+    grant: HumanGrant | None = None
     on_approve: StepId
     on_reject: StepId
     timeout_seconds: int | None = Field(default=None, ge=60, le=31536000, strict=True)

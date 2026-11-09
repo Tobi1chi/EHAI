@@ -356,6 +356,8 @@ workflow_names = {
     "ConditionStep",
     "ConditionCase",
     "HumanStep",
+    "HumanGrant",
+    "GrantLimit",
     "WaitStep",
     "EndStep",
     "RefValue",

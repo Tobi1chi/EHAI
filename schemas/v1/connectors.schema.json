@@ -184,6 +184,91 @@
       "title": "ConnectorActionEntry",
       "description": "One action a workflow step can name, as registered by a project connection."
     },
+    "ConnectorAuthorization": {
+      "properties": {
+        "authorization_id": {
+          "type": "string",
+          "title": "Authorization Id"
+        },
+        "subject_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Subject Sha256"
+        },
+        "limit": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ConnectorAuthorizationLimit"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "expires_at": {
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "date-time"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Expires At"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "authorization_id",
+        "subject_sha256",
+        "limit",
+        "expires_at"
+      ],
+      "title": "ConnectorAuthorization"
+    },
+    "ConnectorAuthorizationLimit": {
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": [
+            "amount",
+            "count"
+          ],
+          "title": "Kind"
+        },
+        "value": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "number"
+            }
+          ],
+          "title": "Value"
+        },
+        "unit": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Unit"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "kind",
+        "value"
+      ],
+      "title": "ConnectorAuthorizationLimit"
+    },
     "ConnectorCall": {
       "properties": {
         "call_id": {
@@ -211,6 +296,16 @@
         "write_authorized": {
           "type": "boolean",
           "title": "Write Authorized"
+        },
+        "authorization": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ConnectorAuthorization"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "status": {
           "type": "string",
