@@ -1,10 +1,9 @@
 {
   "kind": "codex",
-  "version": "0.166.0-alpha.6",
+  "version": "app-server",
   "settings": {
     "executable": "/replace-with/absolute/path/to/codex",
     "codex_home": "/replace-with/absolute/private/ehai/codex",
-    "environment_names": [],
-    "cli_version": "0.166.0-alpha.6"
+    "environment_names": []
   }
 }

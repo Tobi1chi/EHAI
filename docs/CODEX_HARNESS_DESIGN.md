@@ -17,7 +17,7 @@
 | 编号 | 决定 | 含义 |
 | --- | --- | --- |
 | X1 | 保留 Codex 原生工具，受 EHAI 授权约束 | Codex 用自己的 shell 与改文件工具；EHAI 把角色授权翻译成 Codex 的 sandbox 与审批策略，并逐项批准或拒绝原生操作；每个原生操作记入工作轨迹。这改变“每个角色只提供 EHAI 工具”的现有做法（见第 6 节） |
-| X2 | 控制接口用 `codex app-server`（stdio），仅限用户本机自用 | EHAI 不托管、不对外提供 Codex；app-server 标为 experimental，所以固定版本并保存该版本的协议 schema |
+| X2 | 控制接口用 `codex app-server`（stdio），仅限用户本机自用 | EHAI 不托管、不对外提供 Codex；app-server 标为 experimental。11-09 调整：harness `version` 为 `app-server`，不限定 CLI 版本；实测版本只记入设置、不进入指纹；协议不兼容时重新核对新版本 |
 
 X2 的依据与风险：OpenAI 文档建议自动化用 Codex SDK 或 API key，并写明 app-server 的认证从未允许用于商业或托管服务
 （[app-server](https://learn.chatgpt.com/codex/app-server)、[认证](https://learn.chatgpt.com/codex/auth)、
@@ -70,7 +70,7 @@ EHAI 自己的文件与 shell 工具不提供给 Codex 角色，避免两套同�
   或在注入配置中设 `default_tools_approval_mode = "approve"`；其他 MCP 服务的审批照常交给核心。
 
 **取消。** `turn/interrupt` 后再调 `thread/backgroundTerminals/clean`，等 `turn/completed` 与命令 item 结束才报告已停止；
-clean 是实验接口，固定版本时一并核对。
+clean 是实验接口，核对新版本协议时一并核对。
 
 **轨迹。** 原生命令、文件改动、MCP 调用和审批结果从 app-server 事件归一化为 Hub 事件，由核心记入工作轨迹 [N11]。
 EHAI 不同步 Codex 的消息历史或上下文，只记录步骤；续用靠 `thread/resume` 与 Codex 自己的原生历史。

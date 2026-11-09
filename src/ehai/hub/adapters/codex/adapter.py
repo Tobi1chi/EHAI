@@ -1,4 +1,4 @@
-"""Codex 0.166.0-alpha.6, one experimental app-server per Hub session.
+"""Any Codex CLI speaking experimental app-server; measured CLI versions are recorded only.
 
 Only Codex reads its private credential store. This layer uses account/read and keeps
 its own state-key/thread mapping separately from Codex's native history.
@@ -24,7 +24,7 @@ from ehai.hub.adapters.codex.session import CodexSession
 from ehai.hub.protocol import ResolvedHarness, StartSession
 
 KIND = "codex"
-VERSION = "0.166.0-alpha.6"
+VERSION = "app-server"
 _TOKEN_ENV = "EHAI_CODEX_MCP_TOKEN"
 _SETTINGS = {"executable", "codex_home", "environment_names", "cli_version"}
 _BLOCKED_ENV = {
@@ -72,7 +72,7 @@ _BLOCKED_PREFIXES = (
     "GOOGLE_",
     "GCLOUD_",
 )
-# `codex features list` of the pinned version, default-on features that add tools,
+# `codex features list` at implementation time, default-on features that add tools,
 # MCP servers, agents or hooks beyond the native shell and file edits the core approves.
 # A ChatGPT login otherwise loads the `codex_apps` connector server (mail, GitHub,
 # Drive and more) and plugin servers; the launch check still requires `ehai` alone.
@@ -157,10 +157,7 @@ def _version(executable: Path) -> str:
     match = re.fullmatch(rb"codex-cli ([^\s]+)", result.stdout.strip())
     if result.returncode != 0 or match is None:
         raise ValueError("Codex did not report its version")
-    version = match[1].decode("utf-8")
-    if version != VERSION:
-        raise ValueError(f"Codex experimental protocol requires exactly {VERSION}; found {version}")
-    return version
+    return match[1].decode("utf-8")
 
 
 def _settings(value: dict[str, JsonValue]) -> dict[str, JsonValue]:
@@ -194,8 +191,6 @@ def _settings(value: dict[str, JsonValue]) -> dict[str, JsonValue]:
             "Codex environment_names cannot replace process controls or credential sources"
         )
     version = _version(executable)
-    if value.get("cli_version") not in (None, version):
-        raise ValueError(f"Codex changed since authorization (now {version})")
     return {
         "executable": str(executable),
         "codex_home": str(home),
@@ -269,11 +264,17 @@ class CodexAdapter:
             raise HarnessRequestError(str(error)) from error
         executable = Path(str(canonical["executable"]))
         apps = [parent for parent in executable.parents if parent.suffix.lower() == ".app"]
+        # CLI auto-updates must not change workspace authorization or session fingerprints.
+        fingerprint_settings = {
+            key: value for key, value in canonical.items() if key != "cli_version"
+        }
         return ResolvedHarness(
             kind=self.kind,
             version=self.version,
             settings=canonical,
-            fingerprint=hashlib.sha256(json_dumps(canonical).encode("utf-8")).hexdigest(),
+            fingerprint=hashlib.sha256(
+                json_dumps(fingerprint_settings).encode("utf-8")
+            ).hexdigest(),
             environment_names=cast(list[str], canonical["environment_names"]),
             protected_paths=[str(apps[-1] if apps else executable), str(canonical["codex_home"])],
             capabilities=self.capabilities,

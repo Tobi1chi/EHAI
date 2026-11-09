@@ -138,8 +138,9 @@ Pi 不支持 MCP，继续使用扩展桥。Claude Code 与 Codex 兼容层使用
 
 ### Codex 兼容层
 
-`ehai.hub.adapters.codex` 使用未修改的 `codex app-server`（stdio）。实验协议只支持确切版本
-`0.166.0-alpha.6`，harness `version` 也为该值；resolve 实测 CLI 版本并写入设置与指纹，其他版本或升级后的旧授权均拒绝。
+`ehai.hub.adapters.codex` 使用未修改的 `codex app-server`（stdio），讲实验 app-server 协议，harness `version` 为 `app-server`。
+不限定 CLI 版本；resolve 实测 CLI 版本并写入设置以便追溯，但不进入指纹，Codex 自动更新后已授权的工作区与进行中的会话照常可用。
+协议若有不兼容变化，表现为会话启动或调用失败，需对新版本重新核对协议。
 本机自用，配置示例见 [harness-codex.json](../examples/harness-codex.json)，填写其中的绝对路径占位值。
 
 | 设置 | 含义 |
@@ -147,7 +148,7 @@ Pi 不支持 MCP，继续使用扩展桥。Claude Code 与 Codex 兼容层使用
 | `executable` | 原生 Codex 可执行文件的绝对路径，不接受 shell shim |
 | `codex_home` | 已创建的 EHAI 私有目录绝对路径；解析符号链接后不得等于或位于用户 `~/.codex` 中 |
 | `environment_names` | 显式透传给子进程的变量名，可为空，例如 `HTTP_PROXY`、`HTTPS_PROXY`、`NO_PROXY`；变量须在 Hub 环境中有值。拒绝 PATH、HOME、CODEX_*、OPENAI_* 等控制进程或凭据来源的名字 |
-| `cli_version` | 可省略，resolve 填写实测版本；给出时须一致 |
+| `cli_version` | 可省略；resolve 总以实测版本填写，仅作记录 |
 
 设置对象闭合，不接受其他字段。受保护路径包括可执行文件所在的最外层 `.app`（无 app 时为可执行文件）与
 `codex_home`。子进程只接收 PATH（Codex 所在目录加 Hub 的 PATH，原生命令据此找到 `uv`、`git` 等，每条命令仍需核心批准）、
@@ -201,7 +202,7 @@ CODEX_HOME=/absolute/private/ehai/codex /absolute/path/to/codex -c 'cli_auth_cre
 能力为真：session.resume、tools.native.restrictable、tools.native.kept、tools.native.approval、tools.mcp、usage.reported；
 为假：session.fork、requests.interactive、cancel.confirmed、schema.unique_items。
 
-升级前使用目标可执行文件重新生成协议到仓库外目录，逐项核对所用请求、返回与通知；不提交生成物：
+核对新版本协议时，使用目标可执行文件重新生成协议到仓库外目录，逐项核对所用请求、返回与通知；不提交生成物：
 
 ```sh
 CODEX_HOME=/absolute/private/ehai/codex /absolute/path/to/codex app-server generate-json-schema --out /tmp/ehai-codex-schema
