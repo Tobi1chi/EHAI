@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from collections.abc import Mapping
 
-from ehai import JsonValue, json_dumps, json_loads
+from ehai import JsonValue, json_dumps
 
 _BEARER_PATTERN = re.compile(r"(?i)\bBearer\s+[^\s\"',;]+")
 _QUOTED_SECRET_PATTERN = re.compile(
@@ -54,12 +54,40 @@ def sanitize_json_object(
     """Return a redacted JSON object whose encoded representation is explicitly bounded."""
     if type(max_bytes) is not int or max_bytes < 256:
         raise ValueError("max_bytes must be an integer of at least 256")
-    redacted = redact_sensitive_text(json_dumps(dict(value)))
-    if len(redacted.encode("utf-8")) <= max_bytes:
-        parsed = json_loads(redacted)
-        if isinstance(parsed, dict):
-            return parsed, False
-    preview = _bounded_utf8(redacted, max_bytes // 2)
+
+    def redact(item: JsonValue, key: str = "") -> JsonValue:
+        if (
+            isinstance(item, (str, int, float))
+            and not isinstance(item, bool)
+            and key.lower().endswith(
+                (
+                    "api_key",
+                    "api-key",
+                    "apikey",
+                    "access_token",
+                    "access-token",
+                    "accesstoken",
+                    "token",
+                    "password",
+                    "secret",
+                    "authorization",
+                )
+            )
+        ):
+            return "[REDACTED]"
+        if isinstance(item, str):
+            return redact_sensitive_text(item)
+        if isinstance(item, dict):
+            return {name: redact(member, name) for name, member in item.items()}
+        if isinstance(item, list):
+            return [redact(member) for member in item]
+        return item
+
+    redacted = {key: redact(member, key) for key, member in value.items()}
+    serialized = json_dumps(redacted)
+    if len(serialized.encode("utf-8")) <= max_bytes:
+        return redacted, False
+    preview = _bounded_utf8(serialized, max_bytes // 2)
     return {"preview": preview, "truncated": True}, True
 
 
