@@ -27,6 +27,7 @@ ehai-manager = "ehai.interfaces.workspace_api:main"
 ehai-google-calendar = "ehai.connectors.google_calendar_cli:main"
 ehai-jev = "ehai.connectors.jev:main"
 ehai-rss = "ehai.connectors.rss_cli:main"
+ehai-decisions = "ehai.connectors.decisions:main"
 
 [dependency-groups]
 dev = [

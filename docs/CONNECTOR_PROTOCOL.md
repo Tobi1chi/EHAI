@@ -204,7 +204,8 @@ uv run ehai-rss run --state-dir C:/private/ehai-rss --once
 `run` 循环领取调用，`--once` 只处理一轮。同一个 state-dir 有进程锁；凭证、pending 与回执都在该目录，
 应放在仓库外并按宿主私有文件管理。
 
-连接类型 `rss`、版本 `"1"`，只有一个只读动作 `feed.fetch`、版本 `"1"`：
+连接类型 `rss`、版本 `"1"`，支持只读动作 `feed.fetch` 与 `feed.fetch_many`，版本均为 `"1"`。
+既有 `feed.fetch` 契约保持不变：
 
 | 项 | 值 |
 | --- | --- |
@@ -288,6 +289,61 @@ sha256(title + published 原文) 的十六进制值，同一 feed 多次抓取�
 不走业务分支。
 
 本节只写代码已实现的契约；隔离宿主的真实 feed Workflow 试用仍待团队负责人重跑，状态见 [STATUS](STATUS.md)。
+
+### 多源读取
+
+`feed.fetch_many` 输入为 `{"urls": ["https://example.com/feed.xml"], "max_items_per_feed": 10}`。
+urls 为 1..20 个 HTTP(S) 地址，仍逐源核对 init 的允许清单；max_items_per_feed 为必填整数 1..100。
+最多 8 路并发抓取，沿用单源的超时、大小、重定向与解析规则，每源先按时间排序截断，再合并倒序排列。
+输出为 `items`、`failed: [{url, reason}]`、`fetched_at`；每条 item 增加 feed_url 与可为 null 的 feed_title。
+无日期条目排末尾，相同时间保持输入源顺序及源内顺序。不去重。
+单源失败使用上面的既有原因；只有所有源失败时整个调用 failed（`Every feed failed to fetch`）。
+成功读到空 feed 仍算成功。旧连接保留单源 manifest；要使用新动作需以新的私有 state-dir 重新登记连接。
+
+## OpenAI Decisions Connector
+
+独立进程 `ehai-decisions` 使用同一持久桥接协议，连接类型 openai_decisions、版本 `1`，
+仅提供只读动作 decisions.classify v1。先启动核心并创建 Project，再运行：
+
+```sh
+uv run ehai-decisions init --api-url http://127.0.0.1:8787 --project-id <项目UUID> --state-dir /private/ehai-decisions --model gpt-6-luna
+uv run ehai-decisions run --state-dir /private/ehai-decisions
+# 只处理一轮领取：
+uv run ehai-decisions run --state-dir /private/ehai-decisions --once
+```
+
+init 只登记 manifest、模型与桥接凭证，不访问 Provider；模型默认 gpt-6-luna，随登记固定。
+运行进程从环境读取 OPENAI_API_KEY，不保存、记录或返回该密钥；核心不读取它。
+state-dir 应在仓库外，保留原目录用于恢复和结果重投。恢复只读意图可能重新分类并再次计费，
+已保存的结果按桥接协议重投，不再调用 Provider。
+
+输入对象拒绝额外字段：items 为 1..200 个 JSON 对象；id_field 为字符串；text_fields 为 1..5 个字符串；
+question 为 1..1000 字符；choices 为 2..10 个 `{value, description}`，value 为 `[a-z0-9_]{1,40}`，
+description 为 1..300 字符；keep 为 1..10 个选项值。choices 值必须互异，keep 必须来自 choices。
+每个条目缺 id_field 或任意 text_fields 时只把该条目放入 failed；缺失 id 记为 null。
+最多 8 路逐条 POST `https://api.openai.com/v1/decisions`，请求体为：
+
+```json
+{
+  "model": "gpt-6-luna",
+  "input": [{"role": "user", "content": [{"type": "input_json", "data": {"title": "条目标题"}}]}],
+  "questions": [{"type": "choice", "name": "decision", "instructions": "是否值得阅读？",
+    "choices": [{"value": "read", "description": "值得阅读"}, {"value": "skip", "description": "略过"}]}]
+}
+```
+
+data 仅含 text_fields 所选字段，原条目不拼入 instructions。HTTP 429 或 5xx 每条最多重试一次；
+其他 HTTP、网络失败、refusal、无效回答逐条记短原因，不回显响应体或私密输入。
+输出 model、results（id、choice、confidence、probabilities: [{value, probability}]）、
+kept（输入顺序的原对象，加 decision_choice、decision_confidence）、failed（id、reason）、
+counts（total、kept、failed）和 usage（input_tokens、output_tokens）。概率和置信度必须为 0..1 有限数字，
+选项及概率条目必须匹配已声明选项。只有全部条目失败或输入无效时整个调用失败；kept 为空本身不是失败。
+
+隔离替身可运行 `run --state-dir <目录> --once --test-provider-url http://127.0.0.1:<端口>/v1/`。
+此 URL 只允许 HTTP loopback（127.0.0.1、::1 或 localhost），不跟随重定向、不读取真实密钥，
+使用固定 loopback-test token，并在基址下请求 decisions。本轮未运行替身或真实 OpenAI；
+实现依据为批准的请求/响应契约，真实供应商与用户订阅源验收由团队负责人进行。
+每日多源摘要的完整配置见 [WORKFLOWS](WORKFLOWS.md#每日订阅摘要)。
 
 ## 验证与实际边界
 

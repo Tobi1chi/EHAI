@@ -24,3 +24,19 @@ class FeedDocument(ConnectorModel):
     kind: Literal["rss", "atom"]
     fetched_at: str
     items: list[FeedItem]
+
+
+class MergedFeedItem(FeedItem):
+    feed_url: str
+    feed_title: str | None
+
+
+class FeedFailure(ConnectorModel):
+    url: str
+    reason: str
+
+
+class FeedManyDocument(ConnectorModel):
+    items: list[MergedFeedItem]
+    failed: list[FeedFailure]
+    fetched_at: str

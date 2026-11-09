@@ -5,11 +5,12 @@ from __future__ import annotations
 import argparse
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from pathlib import Path
 
 import httpx
-from pydantic import Field, ValidationError
+from pydantic import Field, ValidationError, field_validator
 
 from ehai.application.connector_models import (
     ConnectorAction,
@@ -19,12 +20,28 @@ from ehai.application.connector_models import (
 )
 from ehai.connectors.bridge import ConnectorOutcome, _api_base, _initialize, _lock, _read, _run_once
 from ehai.connectors.rss import FeedError, fetch_feed
-from ehai.connectors.rss_contract import FeedDocument
+from ehai.connectors.rss_contract import (
+    FeedDocument,
+    FeedFailure,
+    FeedManyDocument,
+    MergedFeedItem,
+)
 
 
 class FeedFetchInput(ConnectorModel):
     feed_url: str = Field(strict=True, min_length=1)
     max_items: int = Field(default=50, strict=True, ge=1, le=200)
+
+
+class FeedFetchManyInput(ConnectorModel):
+    urls: list[str] = Field(min_length=1, max_length=20)
+    max_items_per_feed: int = Field(strict=True, ge=1, le=100)
+
+    @field_validator("urls")
+    @classmethod
+    def valid_urls(cls, urls: list[str]) -> list[str]:
+        _feed_urls(urls)
+        return urls
 
 
 def rss_manifest() -> ConnectorManifest:
@@ -39,7 +56,15 @@ def rss_manifest() -> ConnectorManifest:
                 description="Fetch an allowed RSS/Atom feed, newest items first",
                 input_schema=FeedFetchInput.model_json_schema(),
                 output_schema=FeedDocument.model_json_schema(),
-            )
+            ),
+            ConnectorAction(
+                name="feed.fetch_many",
+                version="1",
+                read_only=True,
+                description="Fetch multiple allowed RSS/Atom feeds, newest items first",
+                input_schema=FeedFetchManyInput.model_json_schema(),
+                output_schema=FeedManyDocument.model_json_schema(),
+            ),
         ],
     )
 
@@ -64,14 +89,19 @@ class RssConnectorAdapter:
         self.allowed_feed_urls = allowed_feed_urls
 
     def execute(self, claim: ConnectorClaim) -> ConnectorOutcome:
+        manifest = rss_manifest()
+        # Connections registered before fetch_many keep their original immutable manifest.
+        legacy_manifest = manifest.model_copy(update={"actions": manifest.actions[:1]})
         if (
-            claim.connection.manifest != rss_manifest()
-            or claim.call.action != rss_manifest().actions[0]
+            claim.connection.manifest not in (manifest, legacy_manifest)
+            or claim.call.action not in claim.connection.manifest.actions
             or claim.connection.configuration.get("allowed_feed_urls")
             != list(self.allowed_feed_urls)
         ):
             return ConnectorOutcome("failed", error="RSS contract does not match this connection")
         try:
+            if claim.call.action.name == "feed.fetch_many":
+                return self._fetch_many(FeedFetchManyInput.model_validate(claim.call.inputs))
             request = FeedFetchInput.model_validate(claim.call.inputs)
             if request.feed_url not in self.allowed_feed_urls:
                 return ConnectorOutcome(
@@ -103,15 +133,62 @@ class RssConnectorAdapter:
             )[:3]:
                 # Extra input keys can contain private text; never echo them.
                 field = issue["loc"][0] if issue["loc"] else None
-                label = field if field in {"feed_url", "max_items"} else "inputs"
+                label = (
+                    field
+                    if field in {"feed_url", "max_items", "urls", "max_items_per_feed"}
+                    else "inputs"
+                )
                 details.append(f"{label}: {issue['msg']}")
             return ConnectorOutcome(
-                "failed", error="Invalid feed.fetch inputs: " + "; ".join(details)
+                "failed", error=f"Invalid {claim.call.action.name} inputs: " + "; ".join(details)
             )
         except Exception:
             # Read-only failures (including recovery/reconcile) are never unknown.
             # Do not expose feed credentials or response content in bridge errors.
             return ConnectorOutcome("failed", error="RSS fetch or input validation failed")
+
+    def _fetch_many(self, request: FeedFetchManyInput) -> ConnectorOutcome:
+        def fetch(url: str) -> FeedDocument | FeedFailure:
+            if url not in self.allowed_feed_urls:
+                return FeedFailure(url=url, reason="Feed URL is not allowed by this connection")
+            try:
+                return fetch_feed(self.client, url, timeout=30.0)
+            except FeedError as error:
+                return FeedFailure(url=url, reason=str(error))
+            except Exception:
+                return FeedFailure(url=url, reason="RSS fetch or input validation failed")
+
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            documents = list(pool.map(fetch, request.urls))
+        failed: list[FeedFailure] = []
+        items: list[MergedFeedItem] = []
+        oldest = datetime.min.replace(tzinfo=UTC)
+
+        def instant(item: MergedFeedItem) -> datetime:
+            value = item.published_at or item.updated_at
+            return datetime.fromisoformat(value) if value else oldest
+
+        for document in documents:
+            if isinstance(document, FeedFailure):
+                failed.append(document)
+                continue
+            feed_items = [
+                MergedFeedItem(
+                    **item.model_dump(), feed_url=document.feed_url, feed_title=document.title
+                )
+                for item in document.items
+            ]
+            items.extend(
+                sorted(feed_items, key=instant, reverse=True)[: request.max_items_per_feed]
+            )
+        if len(failed) == len(documents):
+            return ConnectorOutcome("failed", error="Every feed failed to fetch")
+        output = FeedManyDocument(
+            items=sorted(items, key=instant, reverse=True),
+            failed=failed,
+            fetched_at=datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+        )
+        return ConnectorOutcome("completed", output=output.model_dump(mode="json"))
 
 
 def _run(directory: Path, *, once: bool) -> None:
