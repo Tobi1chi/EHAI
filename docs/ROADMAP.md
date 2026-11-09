@@ -8,7 +8,7 @@
 
 | 项 | 状态 |
 | --- | --- |
-| 当前阶段 | ③ Codex/GPT 已做到可验收（11-07：Hub 的 Codex 兼容层与核心审批已实现，真实 ChatGPT 账号经正常入口跑完一条线程；随后接入管理器，`ehai init --harness codex` → `up` → `add` 再跑通一条）。① 11-08 已跑完：RSS Connector 经 Codex（阶段 1–2）与换 Pi 后的后继 Run（阶段 3）交付；11-09 补齐按 Goal 读判断与图显示判断（经 EHAI 由 Codex 实现，在阶段 ① 数据上核对），等用户验收，见 [EVIDENCE](EVIDENCE.md)。② 11-10 设计经用户批准（[ASSISTANT_DESIGN](ASSISTANT_DESIGN.md)），开始实现 |
+| 当前阶段 | ③ Codex/GPT 已做到可验收（11-07：Hub 的 Codex 兼容层与核心审批已实现，真实 ChatGPT 账号经正常入口跑完一条线程；随后接入管理器，`ehai init --harness codex` → `up` → `add` 再跑通一条）。① 11-08 已跑完：RSS Connector 经 Codex（阶段 1–2）与换 Pi 后的后继 Run（阶段 3）交付；11-09 补齐按 Goal 读判断与图显示判断（经 EHAI 由 Codex 实现，在阶段 ① 数据上核对），等用户验收，见 [EVIDENCE](EVIDENCE.md)。② 11-10 设计经用户批准（[ASSISTANT_DESIGN](ASSISTANT_DESIGN.md)），同日经 EHAI 由 Codex 实现，助手在 Codex 与 Pi 上经页面验收通过，等用户验收，见 [阶段 ② 记录](records/stage2-assistant.md) |
 | 进行中 | 文档整理（11-07，分支 `claude/docs-restructure`），完成后开始 ③ 的代码 |
 | 起点 | 从 `origin/main` 重新开始。11-04 至 11-05 未提交的实现（卡片工作台、内置助手、访问级别、一键初始化、快环改用 Decisions、连接器随引擎运行）已于 11-07 放弃，代码只在本地分支 `backup/2026-11-07-uncommitted` |
 

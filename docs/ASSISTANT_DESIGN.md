@@ -1,6 +1,6 @@
 # 阶段 ②：富元素助手与单一队列（设计）
 
-更新：2026-11-10。状态：**用户 11-10 批准**。本页是阶段 ② 的目标设计，不代表已实现（见 [STATUS](STATUS.md)）。
+更新：2026-11-10。状态：**用户 11-10 批准**；M1–M3 同日实现，等用户验收（[阶段 ② 记录](records/stage2-assistant.md)）。本页是阶段 ② 的目标设计，实现状态以 [STATUS](STATUS.md) 为准。
 依据：[ROADMAP 阶段 ②](ROADMAP.md#阶段)、[PRODUCT_SCOPE 第 2 节](PRODUCT_SCOPE.md#2-主线一个人一个入口很多件事)
 （N4、N5、N14、E6、E46、E47、E53、E59–E61，C1、C3、S3）。11-04 版的实现已放弃，其试用发现见
 [history/WORKBENCH_ASSISTANT_DESIGN_1104](history/WORKBENCH_ASSISTANT_DESIGN_1104.md)，本设计吸收其中三条：

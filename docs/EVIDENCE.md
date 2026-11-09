@@ -1,6 +1,6 @@
 # 运行证据
 
-更新：2026-11-07。本页把每次正常入口试用压缩为一行：做了什么、结果、哪些没有覆盖。
+更新：2026-11-10。本页把每次正常入口试用压缩为一行：做了什么、结果、哪些没有覆盖。
 能力结论见 [STATUS](STATUS.md)；原始叙述（Run ID、用量明细、临时证据目录）保留在下列归档：
 
 - [RECORD_R2](history/RECORD_R2.md)：核心执行、导入/MCP、Git 整合、后继 Run 与模型工具契约（2026-09-14 ~ 09-27）
@@ -78,6 +78,7 @@
 
 | 日期 | 场景 | 模型 | 结果 | 未覆盖 | 原文 |
 | --- | --- | --- | --- | --- | --- |
+| 11-10 | 阶段 ②：注意力队列、只读助手与首页，经 EHAI 由 Codex 实现 | Codex `gpt-6.1-sol`（订阅）实现与验收；Pi DeepSeek `deepseek-flash` 约 25 轮助手回答（估算不足 ¥1） | 导入 3 阶段计划（6 节点），Run completed（约 64 分钟），2 次干预（助手禁用原生命令；收件箱引用与 diff 统计只用现有读取），M2、M3 各返工 2 次（Codex 不接受 `state_root`、Pi 以纯文本结束无卡片、时间按 UTC 说；卡片空闲轮询、消息列表铺满页面、未来到期显示“刚刚”、英文原因外露）。验收管理器（阶段 ① 数据副本 + 种子工作区）上：队列与核心一致；Codex 与 Pi 回答一句话加 5–6 个有效引用；页面卡片的完成、确认录入、经线程页通过人工检查后新旧卡片与队列同步；空闲 0 请求；无头 Chrome 核对消息列表跟随与 375 px 布局；产品 E2E 与最终关卡通过，整合无冲突、29 个计划内或授权文件 | 校验拒绝后同轮改正、提醒后的纯文本回退；停止的工作区在页面上的提示；用户本人在桌面 App 内的验收；Windows | [阶段 ② 记录](records/stage2-assistant.md) |
 | 11-03 | 终端交互会话与 doctor --probe（应用外壳第二轮） | 真实 DeepSeek `deepseek-flash`（Planner、Worker、Reviewer 各一轮）；probe 0 | 会话中 new → 讨论（约 30 秒得到两节点草稿）→ approve → watch → todo → pass → integrate → diff → branch，分支上 verify.py 输出 ok，用户仓库 HEAD/工作树不变，重复 branch 幂等；probe 对 high 通过、medium 被拒并显示 Pi 原因，不存在的模型 ID 也通过 | reply/fail、多工作区、Ctrl-C、结果未知提示、Windows | [应用外壳](records/app-shell.md#2026-11-03-第二轮doctor-探测与终端交互会话11-03-计划第-3-步) |
 | 10-22 | 应用外壳第 3 步真实模型验收：页面添加文件夹 → 讨论 → 批准 → 执行 → 整合 → 新分支 | 真实 DeepSeek `deepseek-flash`（Planner 20 次、Worker/Reviewer 40 次工具调用） | 首次因 `ehai init` 默认 medium 被 Pi 换级、核心拒绝而在 0.8 秒失败，页面只见“结果未知”；改为默认不指定思考级别并在错误中附 Hub 原因后，全新环境重跑通过：四节点方案（并行两节点 → 汇合 verify → Reviewer），Run completed，整合 2 个文件，分支 `ehai/run-1387f806` 上 `python3 verify.py` 输出 ok，用户仓库 HEAD/工作树不变，约 2 分 40 秒 | 系统通知与桌面文件夹选择器实跑、人工 Gate/待办、整合冲突、Windows | [应用外壳](records/app-shell.md#2026-10-22-第-3-步补齐与真实模型验收) |
 | 10-22 | 整合结果持久化、整合列表与 diff 读取，线程页差异查看 | 0（真实 Pi + 脚本化模型） | 产品 E2E 1 passed：integrate 得到 integrated，重试同一 integration_id，列表一条，diff 与宿主补丁一致且未截断，时间线一条 integration_created（refs 另带 event_id）。本机管理器登记脚本化 Pi 工作区后，浏览器中批准并开始 → 人工 Gate 通过 → 整合成果 → 按文件显示差异，刷新后从时间线卡片重开同一结果，手机宽度为底部面板 | 冲突与冲突后重试、超过 1 MiB 截断、MCP、旧版本未持久化的整合、真实模型 | [Git 自动整合](USAGE.md#git-自动整合) |
