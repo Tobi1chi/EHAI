@@ -293,7 +293,9 @@ uv run ehai --api-url http://127.0.0.1:8787 create-routine --project-id <项目U
 ```
 
 这是固定间隔，不是“每天本地时间某点”的日历规则；未处理的 review 会使下一次触发跳过。
-示例尚待隔离正常入口及真实 Decisions 验收，静态检查不证明供应商可用性。
+11-10 在隔离管理器上以本示例走通一次（9 个真实订阅源、真实 Decisions，保留 26/38 条后进入人工 review，
+在页面批准后以 reviewed 结束），见 [阶段 ④ 记录](records/stage4-authorization.md#m3-decisions-订阅摘要)；
+Routine 的实际到点触发未验收。
 
 ## 执行记录
 

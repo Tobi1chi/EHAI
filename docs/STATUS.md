@@ -46,12 +46,13 @@
 | `ehai doctor --probe` | 无模型验证 | 经本机 Hub 启动一次 Pi 会话核对 Provider/模型/思考级别后关闭，不调用模型；不存在的模型 ID 也会通过（Pi 启动时不校验） | [应用外壳](records/app-shell.md#2026-11-03-第二轮doctor-探测与终端交互会话11-03-计划第-3-步) |
 | 终端交互会话（无参数 `ehai`） | 真实验证 | 经管理器与核心正式接口；真实 DeepSeek 下走通 新建 → 讨论 → 批准开始 → watch → 人工 Check → 整合 → diff → 新分支（macOS，标准输入驱动）；reply/fail、多工作区选择、Ctrl-C 中断、Windows 未验证；便签与生活确认不在会话内处理 | [应用外壳](records/app-shell.md#2026-11-03-第二轮doctor-探测与终端交互会话11-03-计划第-3-步) |
 | Tauri 桌面外壳 | 部分 | 启动页探测守护进程后跳转到工作台，可编辑并记住启动命令、经交互式登录 shell 执行；macOS 调试构建的窗口连上本机管理器并加载工作台（日志核对）；守护进程页面只获准选择文件夹和发系统通知（对话框与通知插件，已编译未实跑）；点击“启动 EHAI”、打包与 Windows 未验证 | [desktop](../desktop/README.md) |
-| P3.2 统一人工待办 | 无模型验证 | 人工 Gate 闭环通过；类型为干预、人工验收、便签与生活确认（运行中 Worker 请求已删除） | [P3](EVIDENCE.md#p3-平台后端) |
+| P3.2 统一人工待办 | 无模型验证 | 人工 Gate 闭环通过；类型为干预、人工验收、便签与生活确认（运行中 Worker 请求已删除）；11-10 加入方案批准（plan_approval，批准不启动 Run），每项带绑定对象、其 SHA-256、上限与到期时间，过期项不可处理（阶段 ④，在验收管理器上核对） | [P3](EVIDENCE.md#p3-平台后端) · [阶段 ④ 记录](records/stage4-authorization.md) |
 | P3.2 便签 | 真实验证 | 便签→修订→执行→人工验收通过；propose_process 路径未验证 | [P3](EVIDENCE.md#p3-平台后端) |
 | P3.3 薄 Web 工作台 | 无模型验证 | 生活/工作两区与共用页面均接入正式 API（fake Worker、Jev 协议替身）；Run 执行图与逐次尝试轨迹用一次真实 Run 数据库的只读副本核对，分支形态只用改写的响应看过；不含创建 Goal/规划、通用 Workflow；11-10 起去掉生活/工作分区开关，首页改为注意力队列 + 助手，生活绑定从浏览器偏好改存管理器（阶段 ②） | [P3](EVIDENCE.md#p3-平台后端) · [ADR 0008](adr/0008-web-workbench.md) |
 | 注意力队列与生活绑定（阶段 ②） | 无模型验证 | 管理器把各运行中工作区的线程、未决待办与绑定项目的生活待办合成一个队列（需要你处理/进行中/已完成），生活只作标签；绑定存管理器数据目录；在阶段 ① 数据副本与种子工作区上与核心逐项核对，停止的工作区列为不可用；不是跨核心一致快照，读取失败不重试 | [管理器](WORKSPACE_MANAGER.md#web-工作台) · [P3](EVIDENCE.md#p3-平台后端) |
 | 管理器只读助手（阶段 ②） | 真实验证 | 只在 `ehai up` 的管理器中；Codex `gpt-6.1-sol` 与 Pi DeepSeek `deepseek-flash` 上回答为一句话加引用（线程、Run、diff、生活待办、待办项），页面按实时数据画卡片；原生命令被拒、用户原文脱敏、一次一轮（忙时 409）；diff 统计只来自已有整合；校验拒绝后同轮改正与提醒后的纯文本回退未实跑；11-10 用户验收通过 | [管理器只读助手](WORKSPACE_MANAGER.md#管理器只读助手) · [阶段 ② 记录](records/stage2-assistant.md) |
 | 首页：队列 + 助手（阶段 ②） | 真实验证 | 1440 px 两栏、375 px 助手在前；卡片按钮走现有接口并随工作区事件刷新（空闲不轮询），完成待办、确认录入、经线程页通过人工检查后新旧卡片与队列同步；在验收管理器上核对，Windows 未验证；11-10 用户验收通过 | [阶段 ② 记录](records/stage2-assistant.md) |
+| 决定卡片与队列通知（阶段 ④） | 无模型验证 | 一个卡片渲染任一待办：问题、绑定对象（列表 5 项后折叠，订阅条目为链接标题）、上限、剩余有效期（过期禁用按钮）与该项动作；首页队列、引用卡片、待办页及单项页 `/decisions/…` 共用；通知跟随队列（首次读取只记基线，窗口聚焦时不通知），按最早到期的生活待办定时重读；在验收管理器上用无头 Chrome（1440/375 px）核对，实点了 Workflow 步骤的批准；桌面 App 原生通知点击不能打开对应项；“问”“自动回答”移出导航；等用户验收 | [阶段 ④ 记录](records/stage4-authorization.md#m4-决定卡片通知与导航) |
 | P3.4 事件消费 | 无模型验证 | 重启后补领与确认通过；不自动唤醒、不执行业务动作 | [P3](EVIDENCE.md#p3-平台后端) |
 | P3.5 项目配置与 Run 快照 | 真实验证 | 更新只影响新 Run；不是可编辑角色库 | [P3](EVIDENCE.md#p3-平台后端) |
 | 多工作区管理 / Planner 容量 | 真实验证 | 本机同模型；无跨工作区迁移、动态借用或多 Planner 共编 | [P3](EVIDENCE.md#p3-平台后端) |
@@ -63,11 +64,12 @@
 | 生活 capture / review 与 Routine | 无模型验证 | 两个固定流程、固定间隔；不是通用 Workflow 引擎 | [WORKFLOWS](WORKFLOWS.md) · [P4](EVIDENCE.md#p4-生活事务与外部连接) |
 | Workflow 执行记录 | 无模型验证 | schema 19→20 迁移与续办通过；历史轨迹不补造 | [P4](EVIDENCE.md#p4-生活事务与外部连接) |
 | Workflow 版本兼容 | 关闭 | 代码接口存在，生产无适配器、无启用开关 | [WORKFLOWS](records/workflows.md) |
-| 自定义 Workflow / 条件分支 | 无模型验证 | 有限无环单路径图、人工与时间等待、Routine 绑定版本；Connector 替身走通订票场景；无真实服务、无事件触发/取消 | [WORKFLOWS](WORKFLOWS.md#自定义-workflow) · [P4](EVIDENCE.md#p4-生活事务与外部连接) |
+| 自定义 Workflow / 条件分支 | 无模型验证 | 有限无环单路径图、人工与时间等待、Routine 绑定版本；Connector 替身走通订票场景；无真实服务、无事件触发/取消；11-10 人工步骤可带 grant（上限、有效秒数），受保护写动作的输入只能取自批准对象或授权，过期或超限在排队前失败（阶段 ④，经 Google Calendar 替身验收） | [WORKFLOWS](WORKFLOWS.md#自定义-workflow) · [P4](EVIDENCE.md#p4-生活事务与外部连接) |
 | Workflow 事件触发 / 并行 / 子流程 | 未实现 | 只有目标设计 | [P4_WORKFLOW_DESIGN](P4_WORKFLOW_DESIGN.md) |
 | Connector HTTP 协议 | 无模型验证 | 本地分进程试用；结果未知需显式核对 | [CONNECTOR_PROTOCOL](CONNECTOR_PROTOCOL.md) |
-| Google Calendar Connector | 无模型验证 | 只有本地替身；真实 OAuth/日历未授权验证 | [P4](EVIDENCE.md#p4-生活事务与外部连接) |
-| RSS/Atom Connector | 真实验证 | 只读 `feed.fetch`（RSS 2.0 / Atom 1.0、5 MiB 上限、最多 5 次重定向、失败按类别回传原因）；11-08 隔离宿主上用真实订阅源走通自定义 Workflow（抓取 → 人工步骤），HTML 页与 404 按原因失败；重定向不逐跳核对允许清单；不计入产品 E2E | [CONNECTOR_PROTOCOL](CONNECTOR_PROTOCOL.md#rssatom-connector-配置和调用) |
+| Google Calendar Connector | 无模型验证 | 只有本地替身；真实 OAuth/日历未授权验证；11-10 创建前检查调用授权的到期与 count 上限（按本地回执累计），替身上验收，恢复路径只读代码 | [P4](EVIDENCE.md#p4-生活事务与外部连接) |
+| RSS/Atom Connector | 真实验证 | 只读 `feed.fetch`（RSS 2.0 / Atom 1.0、5 MiB 上限、最多 5 次重定向、失败按类别回传原因）；11-08 隔离宿主上用真实订阅源走通自定义 Workflow（抓取 → 人工步骤），HTML 页与 404 按原因失败；重定向不逐跳核对允许清单；不计入产品 E2E；11-10 加 `feed.fetch_many`（最多 20 源并发、合并倒序、逐源失败），9 个真实源上走通 | [CONNECTOR_PROTOCOL](CONNECTOR_PROTOCOL.md#rssatom-connector-配置和调用) |
+| OpenAI Decisions Connector | 真实验证 | 独立进程 `ehai-decisions`，只读 `decisions.classify`：逐条以 JSON 数据发送、最多 8 路并行、429/5xx 重试一次、逐条失败不使整批失败；11-10 在真实 `gpt-6-luna` 上分类 38 条并经示例摘要 Workflow 进入人工 review；用户自己的订阅源与每日 Routine 到点触发未验收 | [CONNECTOR_PROTOCOL](CONNECTOR_PROTOCOL.md#openai-decisions-connector) · [阶段 ④ 记录](records/stage4-authorization.md#m3-decisions-订阅摘要) |
 | Jev 双反馈环实验 | 真实验证 | 只读、显式推进；不是自动学习或通用 Workflow。11-05 决定降为隐藏实验，阶段 ④ 移出页面主路径（C4） | [DUAL_FEEDBACK_EXPERIMENT](DUAL_FEEDBACK_EXPERIMENT.md) |
 | 固定 Pi 回退 | 真实验证 | 显式启用；故障保留不重试；发布仍需明确决定 | [P4](EVIDENCE.md#p4-生活事务与外部连接) |
 | 独立 Project 代码修改转交 | 部分 | 最小项目修改闭环通过；整仓规划收敛与传输稳定性未解决 | [P4_WORKFLOW_REVISION_DESIGN](P4_WORKFLOW_REVISION_DESIGN.md) · [P4](EVIDENCE.md#p4-生活事务与外部连接) |

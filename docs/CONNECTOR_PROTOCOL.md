@@ -70,10 +70,11 @@ Connector 应拒绝已过期或请求超出上限的写动作；尚未适配的�
 Google Calendar 的 calendar.events.create 有授权时，在请求 Provider 前检查 expires_at，
 过期返回 failed / `Write authorization expired`；count 上限按本 Connector state-dir 中同一
 authorization_id 已成功创建的不同 call_id 回执累计，达到上限返回 failed /
-`Write authorization limit reached`。同一调用的恢复不重复计数，已有 pending 结果也参与累计；
-保留原 state-dir、回执和进程锁是此检查的前提。amount 上限不适用于日程创建，未做金额核算。
-没有 authorization 时保持原行为。这些新增路径尚待团队负责人经隔离宿主与 loopback Provider 验收，
-静态检查不代表运行验证。
+`Write authorization limit reached`。同一调用不重复计数，已有 pending 结果也参与累计；恢复一次结果未知的
+创建时不做这两项拒绝，只按事件 ID 查询、不重放。保留原 state-dir、回执和进程锁是此检查的前提。
+amount 上限不适用于日程创建，未做金额核算。没有 authorization 时保持原行为。
+11-10 经隔离管理器与 loopback 替身验收了保存时绑定检查、正常创建、过期与 count 上限拒绝；恢复路径只读代码核对，
+见 [阶段 ④ 记录](records/stage4-authorization.md#m2-写授权绑定)。
 
 Connector 进程使用单独的桥接接口，均要求 `X-EHAI-Connector-Token`：
 
@@ -341,8 +342,9 @@ counts（total、kept、failed）和 usage（input_tokens、output_tokens）。�
 
 隔离替身可运行 `run --state-dir <目录> --once --test-provider-url http://127.0.0.1:<端口>/v1/`。
 此 URL 只允许 HTTP loopback（127.0.0.1、::1 或 localhost），不跟随重定向、不读取真实密钥，
-使用固定 loopback-test token，并在基址下请求 decisions。本轮未运行替身或真实 OpenAI；
-实现依据为批准的请求/响应契约，真实供应商与用户订阅源验收由团队负责人进行。
+使用固定 loopback-test token，并在基址下请求 decisions。Provider 的 usage 只读 input_tokens 与 output_tokens，
+其他字段忽略；全部条目失败时调用错误附最多的条目原因。11-10 在真实 OpenAI（`gpt-6-luna`）与 9 个真实订阅源上
+走通，见 [阶段 ④ 记录](records/stage4-authorization.md#m3-decisions-订阅摘要)；替身路径未运行。
 每日多源摘要的完整配置见 [WORKFLOWS](WORKFLOWS.md#每日订阅摘要)。
 
 ## 验证与实际边界
