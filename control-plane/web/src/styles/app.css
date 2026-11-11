@@ -1674,6 +1674,14 @@ a.graph-node:focus-visible {
   .decision-card .kv dd { margin-bottom: 10px; }
 }
 .decision-entry { border-bottom: 1px solid var(--border); padding: 8px 0; }
+.workflow-start { padding: var(--space-4); border: 1px solid var(--border); border-radius: var(--r-lg); }
+.workflow-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: var(--space-3); border: 0; padding: 0; margin: 0; min-width: 0; }
+.workflow-fields .field { min-width: 0; }
+.workflow-fields input[type="checkbox"] { align-self: flex-start; }
+.agent-query { flex-wrap: wrap; }
+.agent-query .meta { overflow-wrap: anywhere; }
+.itinerary { padding: var(--space-3); border: 1px solid var(--border); border-radius: var(--r-md); }
+.itinerary-leg { display: flex; flex-direction: column; gap: 4px; overflow-wrap: anywhere; }
 .decision-actions { border: 0; padding: 0; margin: 0; min-width: 0; }
 .decision-actions:disabled { opacity: .65; }
 .queue-decisions > .section { padding: 16px; }

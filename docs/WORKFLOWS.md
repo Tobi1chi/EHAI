@@ -217,10 +217,11 @@ Pi 状态放在 artifact root 下的 `agent-step-state`；Codex 等 harness 的�
 
 `get-workflow-execution` 的每个 agent invocation 各保存一次尝试：业务输出在 `output`；
 可选字段 `agent` 保存 `attempt`、`harness`、`model`、`started_at`、`completed_at`、`tool_calls`。
-每行查询含 tool、action、脱敏 inputs（每个值转文本并截到 200 字符）、connector_call_id、
-status（completed / failed / timeout / refused）与 duration_ms；拒绝或失败的行另有脱敏 error（最多 500 字符）。
+每行查询含 tool、action、脱敏 inputs（保留 JSON 类型，嵌套字符串也截到 200 字符）、connector_call_id、
+status（running / completed / failed / timeout / refused / interrupted）与 duration_ms；拒绝或失败的行另有脱敏 error（最多 500 字符）。
 查询意图及进度也持久化并发事件，
-失败保留已记录的查询；进行中尚未得到结果的行暂标 timeout，最终完成时更新。
+失败保留已记录的查询；尚在等待连接器的行记为 running，实际等待超过 60 秒才记为 timeout。
+尝试结束或重启时仍为 running 的行记为 interrupted。
 wait.condition 保存 attempt、started_at、timeout_seconds、max_tool_calls 与宿主内部 dispatched 标记。
 
 ### 绑定写授权与 grant
@@ -352,6 +353,63 @@ uv run ehai --api-url http://127.0.0.1:8787 create-routine --project-id <项目U
 11-10 在隔离管理器上以本示例走通一次（9 个真实订阅源、真实 Decisions，保留 26/38 条后进入人工 review，
 在页面批准后以 reviewed 结束），见 [阶段 ④ 记录](records/stage4-authorization.md#m3-decisions-订阅摘要)；
 Routine 的实际到点触发未验收。
+
+### 铁路出行方案（rail.trip）
+
+[rail-trip-workflow.json](../examples/rail-trip-workflow.json) 使用一个 agent 步骤查询与整理，
+然后以人工步骤“这几个出行方案可以吗？”确认或放弃**整组**方案，分别以 reviewed / dismissed 结束。
+不是在多个方案里选一个，不登录、不购票、不付款，也不写日历或生活待办；购票由本人在 12306 完成。
+
+先按 [ehai-rail 协议](CONNECTOR_PROTOCOL.md) 的 12306 Rail Connector 一节登记连接器。
+宿主须已配置 Agent 查询步骤所需的 Hub harness 与 agent_model，连接器进程须保持运行：
+
+```sh
+uv run ehai-rail init --api-url http://127.0.0.1:8787 --project-id <生活项目UUID> --state-dir /private/rail
+uv run ehai-rail run --state-dir /private/rail
+```
+
+复制示例到仓库外，将五处 REPLACE_WITH_REGISTERED_RAIL_CONNECTOR_ID 都替换为
+init 返回的同一个 connector_id（必须登记在该生活项目中），再保存：
+
+```sh
+uv run ehai --api-url http://127.0.0.1:8787 save-workflow-definition --project-id <生活项目UUID> --file /private/rail-trip-workflow.json --idempotency-key rail-definition-1
+```
+
+示例的 plan 步骤只声明五个 rail 只读动作，最多查询 30 次、执行 900 秒；指令请求 2–3 个方案，
+确实不足时允许一个并在 notes 说明，结果 Schema 允许 1–3 个方案、每个 1–4 段行程。
+每个方案包括标题、摘要、车次与车站、日期时间、席别、余票、可为空的票价与查询链接、
+总价、总时长、换乘次数和理由。review 冻结 request（完整启动输入，含 from/to/date 与窗口偏好）、
+plans 与 notes；后两者直接引用 steps.plan.plans / steps.plan.notes。
+
+页面中先在设置绑定这个生活项目，再打开“记录 → 开始流程”，选择 rail.trip。
+这里只列该项目已保存定义的每个名称的最新版本；启动固定所选版本，不修改已启动的流程。
+填写出发地、目的地、日期（YYYY-MM-DD），最早/最晚出发时间使用 HH:MM 或留空，
+偏好也可留空。示例所有输入键均须提供，空白窗口表示不限；页面会显式发送这些空字符串。
+点“开始”后打开本次记录，后续变化沿现有工作区事件刷新。
+需要确认时，首页队列与记录页均可处理；卡片展示行程和链接，不需要阅读 JSON。
+
+输入表单支持字符串（枚举为下拉框）、整数/数字、布尔值、逗号分隔的字符串数组；
+必填键标 *，格式错误给出中文提示，服务端仍按 inputs_schema 作最终校验，
+400 等拒绝显示中文短句。其他字段类型提示使用 CLI，不猜测或展开复杂对象。
+每次新启动使用新的幂等键；网络等结果未知时锁定输入，以相同请求与键重试，避免重复启动。
+
+也可把以下内容保存为 /private/rail-inputs.json 后从 CLI 启动（替换为实际、可查询的日期与条件）：
+
+```json
+{"inputs":{"from":"北京","to":"上海","date":"2026-11-20","earliest":"","latest":"","preferences":"优先直达，二等座；请说明余票和价格的不确定性"}}
+```
+
+```sh
+uv run ehai --api-url http://127.0.0.1:8787 start-custom-workflow --definition-id <保存返回的definition_id> --file /private/rail-inputs.json --idempotency-key rail-trip-1
+uv run ehai --api-url http://127.0.0.1:8787 get-workflow-execution --workflow-run-id <返回的workflow_run_id>
+```
+
+记录页显示每次 agent 尝试的状态、次数、用时、harness/模型，以及每次查询的动作、参数摘要、
+状态与毫秒用时。尚未调度显示等待；等待连接器的查询显示“查询中”，不显示用时，
+中断的查询显示“已中断”。参数摘要使用车站名称、日期、车型与站序，不展示车次内部编号或席别编码。
+示例要求结果使用旅客可读的中文（如“至少 21 张”），不展示工具字段名或车站电报码。
+方案是查询时刻的信息，不保证余票或票价在购票时不变；
+真实 12306 数据在 Codex/Pi 上的页面验收与产品 E2E 由团队负责人另行执行，静态构建不证明真实查询成功。
 
 ## 执行记录
 

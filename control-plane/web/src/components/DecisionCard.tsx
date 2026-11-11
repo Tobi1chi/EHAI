@@ -19,6 +19,7 @@ import {
   inboxUnavailable,
   isLifeCapture,
   RUN_STATUS,
+  orderedWorkflowFields,
 } from "../lib/labels";
 import { actorName, usePrefs } from "../lib/prefs";
 import { Link, navigate } from "../lib/router";
@@ -39,6 +40,8 @@ const FIELD_LABEL: Record<string, string> = {
   decision_choice: "筛选结论", decision_confidence: "置信度", proposed_tasks: "待办",
   due_at: "到期时间", call_id: "外部调用", action: "动作", count: "数量",
   start: "开始", end: "结束", location: "地点", description: "说明", tasks: "待办", events: "日程",
+  request: "出行条件", from: "出发地", to: "目的地", date: "日期", earliest: "最早出发",
+  latest: "最晚出发", preferences: "偏好", plans: "出行方案", notes: "说明",
 };
 function fieldLabel(key: string): string { return FIELD_LABEL[key] ?? key.replace(/_/g, " "); }
 const INTERNAL_IDS = new Set(["plan_revision_id", "completion_contract_id", "check_run_id", "call_id", "authorization_id", "item_id"]);
@@ -59,6 +62,25 @@ function Subject({ value, field }: { value: unknown; field?: string }) {
   </div>;
   if (typeof value === "object") {
     const entry = value as Record<string, unknown>;
+    if (typeof entry.title === "string" && Array.isArray(entry.legs)) {
+      const display = (v: unknown) => typeof v === "string" || typeof v === "number" ? String(v) : "待核实";
+      return <article className="itinerary section">
+        <h3 className="h2">{entry.title}</h3>
+        {typeof entry.summary === "string" && <p className="pre">{entry.summary}</p>}
+        {entry.legs.map((value: unknown, index: number) => {
+          if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+          const leg = value as Record<string, unknown>;
+          const line = `${display(leg.train)} ${display(leg.from)} ${display(leg.depart)} → ${display(leg.to)} ${display(leg.arrive)} · ${display(leg.seat_class)} ${typeof leg.price_cny === "number" ? `¥${leg.price_cny}` : "票价待核实"} · 余票 ${display(leg.remaining)}`;
+          return <div className="itinerary-leg" key={index}>
+            <span className="meta">{display(leg.date)}</span>
+            {typeof leg.url === "string" && /^https?:\/\//i.test(leg.url)
+              ? <a href={leg.url} target="_blank" rel="noreferrer">{line}</a> : <span>{line}</span>}
+          </div>;
+        })}
+        <p>总价 {typeof entry.total_price_cny === "number" ? `¥${entry.total_price_cny}` : "待核实"} · 总时长 {display(entry.total_duration)} · 换乘 {display(entry.transfers)} 次</p>
+        {typeof entry.why === "string" && <p className="pre">{entry.why}</p>}
+      </article>;
+    }
     if (typeof entry.title === "string" && typeof entry.link === "string" && /^https?:\/\//i.test(entry.link)) {
       const published = typeof entry.published_at === "string" ? entry.published_at : typeof entry.updated_at === "string" ? entry.updated_at : null;
       const meta = [typeof entry.feed_title === "string" ? entry.feed_title : null, published ? when(published) : null,
@@ -70,12 +92,13 @@ function Subject({ value, field }: { value: unknown; field?: string }) {
         {typeof entry.summary === "string" && <p className="pre">{entry.summary}</p>}
       </article>;
     }
-    return <dl className="kv">{Object.entries(value).filter(([key, entry]) => !internalField(key) && entry !== null && entry !== undefined).map(([key, entry]) =>
+    return <dl className="kv">{orderedWorkflowFields(entry).filter(([key, entry]) => !internalField(key) && entry !== null && entry !== undefined).map(([key, entry]) =>
       <div key={key} style={{ display: "contents" }}><dt>{fieldLabel(key)}</dt><dd><Subject value={entry} field={key} /></dd></div>)}</dl>;
   }
   if (typeof value === "boolean") return <span>{value ? "是" : "否"}</span>;
   if (field === "decision_confidence" && typeof value === "number") return <span>{percentage(value)}</span>;
   const text = String(value);
+  if (field === "notes") return <p className="pre">{text}</p>;
   if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(text) && Number.isFinite(Date.parse(text))) return <span>{when(text)}</span>;
   if (/^https?:\/\//i.test(text)) return <a href={text} target="_blank" rel="noreferrer">{text}</a>;
   return <span className="pre">{text}</span>;

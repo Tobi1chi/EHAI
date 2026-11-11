@@ -22,9 +22,26 @@ from ehai.application.custom_workflows import (
 )
 from ehai.application.sanitization import redact_sensitive_text, sanitize_json_object
 from ehai.application.workflow_execution_models import WorkflowInvocationRecord
+from ehai.domain.events import Event, EventType
 
 if TYPE_CHECKING:
     from ehai.application.workflows import WorkflowStore
+
+
+def _bounded_input(value: JsonValue) -> JsonValue:
+    if isinstance(value, str):
+        return value[:200]
+    if isinstance(value, list):
+        return [_bounded_input(item) for item in value]
+    if isinstance(value, dict):
+        return {key: _bounded_input(item) for key, item in value.items()}
+    return value
+
+
+def _interrupt_calls(calls: list[JsonValue]) -> None:
+    for call in calls:
+        if isinstance(call, dict) and call.get("status") == "running":
+            call["status"] = "interrupted"
 
 
 class WorkflowAgents:
@@ -52,6 +69,15 @@ class WorkflowAgents:
                 continue
             delegation = self.delegation
             with self.store.transaction(write=True) as tx:
+                pending = pending_agent(tx, run_id, utc_now())
+                if pending is not None and pending[2].condition.get("dispatched"):
+                    previous = pending[3]
+                    previous_calls = (previous.agent or {}).get("tool_calls", [])
+                    if isinstance(previous_calls, list):
+                        _interrupt_calls(previous_calls)
+                        record_agent_call(
+                            tx, run_id, previous.invocation_id, previous_calls, utc_now()
+                        )
                 claimed = claim_agent(
                     tx,
                     run_id,
@@ -95,6 +121,40 @@ class WorkflowAgents:
 
         def persist() -> None:
             with self.store.transaction(write=True) as tx:
+                pending = pending_agent(tx, run_id, utc_now())
+                if pending is None or pending[3].invocation_id != invocation.invocation_id:
+                    # A cancelled/failed run still retains this attempt's query receipts.
+                    for raw in tx.execution_children("invocation", run_id):
+                        if raw["invocation_id"] != invocation.invocation_id:
+                            continue
+                        saved = WorkflowInvocationRecord.model_validate(raw)
+                        tx.save_execution_record(
+                            "invocation",
+                            saved.invocation_id,
+                            saved.model_copy(
+                                update={"agent": {**(saved.agent or {}), "tool_calls": calls}}
+                            ),
+                        )
+                        record = tx.execution_record(run_id)
+                        assert record is not None
+                        record = record.model_copy(update={"version": record.version + 1})
+                        tx.save_execution_record("run", run_id, record)
+                        tx.emit(
+                            Event(
+                                type=EventType.WORKFLOW_EXECUTION_CHANGED,
+                                correlation_id=run_id,
+                                payload={
+                                    "run": record.model_dump(mode="json"),
+                                    "steps": list(tx.execution_children("step", run_id)),
+                                    "invocations": list(
+                                        tx.execution_children("invocation", run_id)
+                                    ),
+                                    "waits": list(tx.execution_children("wait", run_id)),
+                                },
+                            )
+                        )
+                        break
+                    return
                 record_agent_call(tx, run_id, invocation.invocation_id, calls, utc_now())
 
         async def query(
@@ -106,8 +166,7 @@ class WorkflowAgents:
             tool = next(t for t in step.tools if agent_tool_name(t.action) == name)
             safe, _ = sanitize_json_object(inputs, max_bytes=1_000_000)
             summary: dict[str, JsonValue] = {
-                key: (value if isinstance(value, str) else json_dumps(value))[:200]
-                for key, value in safe.items()
+                key: _bounded_input(value) for key, value in safe.items()
             }
             entry: dict[str, JsonValue] = {
                 "tool": name,
@@ -158,7 +217,7 @@ class WorkflowAgents:
                         idempotency_key=f"{invocation.invocation_id}.{attempt}.{index}",
                     )
                     entry["connector_call_id"] = call.call_id
-                    entry["status"] = "timeout"
+                    entry["status"] = "running"
                     record_agent_call(tx, run_id, invocation.invocation_id, calls, utc_now())
                 deadline = monotonic() + 60
                 while True:
@@ -194,6 +253,8 @@ class WorkflowAgents:
                     "invalid_query", redact_sensitive_text(str(error))[:500]
                 ) from error
             finally:
+                if entry["status"] == "running":
+                    entry["status"] = "interrupted"
                 entry["duration_ms"] = int((monotonic() - started) * 1000)
                 persist()
 
@@ -237,6 +298,9 @@ class WorkflowAgents:
             )
             if str(failure) == "Agent did not submit a result":
                 error = str(failure)
+        finally:
+            _interrupt_calls(calls)
+            persist()
         with self.store.transaction(write=True) as tx:
             finish_agent(
                 tx,

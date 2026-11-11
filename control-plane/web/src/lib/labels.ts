@@ -11,6 +11,28 @@ import type {
 
 // Display wording for status values the core returns; the page never derives these states.
 
+export const RAIL_ACTION: Record<string, string> = {
+  "rail.stations.search": "查车站", "rail.tickets.search": "查车次与余票",
+  "rail.tickets.price": "查票价", "rail.transfers.search": "查中转", "rail.route.get": "查经停",
+};
+export const AGENT_QUERY_STATE: Record<string, string> = {
+  running: "查询中", interrupted: "已中断",
+};
+
+/** Known traveller fields first; retain source order for all other fields. */
+export function orderedWorkflowFields<T>(value: Record<string, T>): [string, T][] {
+  const order = ["from", "to", "date", "earliest", "latest", "preferences", "plans", "notes", "request"];
+  return [
+    ...order.filter(key => Object.hasOwn(value, key)).map(key => [key, value[key]] as [string, T]),
+    ...Object.entries(value).filter(([key]) => !order.includes(key)),
+  ];
+}
+export const WORKFLOW_STATE: Record<string, string> = {
+  running: "执行中", waiting: "等待中", completed: "已完成", failed: "失败",
+  prepared: "执行中", unknown: "结果未知", timeout: "超时", refused: "已拒绝",
+  skipped: "已跳过", resolved: "已处理", awaiting_confirmation: "等待确认", rejected: "没有保存",
+};
+
 export const RUN_STATUS: Record<RunStatus, string> = {
   pending: "待开始",
   running: "运行中",
