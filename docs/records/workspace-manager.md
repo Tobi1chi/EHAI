@@ -40,7 +40,7 @@ Node v25.8.1、Pi 1.3.0。用户配置指定占位 openai/placeholder-model，�
 `repo` 指向本次源码目录；没有创建测试脚本或仓库内临时测试文件。
 
 ```sh
-repo=/Users/tobiichieigetsu/Workspace/AI/EHAI-app
+repo=<EHAI 源码目录>
 trial=/private/tmp/ehai-app-backend-7k2wqx15
 cd "$trial"
 export EHAI_HOME="$trial/home"
