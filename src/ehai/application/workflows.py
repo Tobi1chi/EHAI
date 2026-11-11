@@ -12,6 +12,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Literal, Protocol, TypeVar
 
 from ehai import JsonValue, new_id, normalize_id, utc_now
+from ehai.application.agent_delegation import AgentDelegation
 from ehai.application.custom_workflow_models import (
     SaveWorkflowDefinitionRequest,
     StartCustomWorkflowRequest,
@@ -35,6 +36,7 @@ from ehai.application.idempotency import (
 )
 from ehai.application.ports import CommandReceipt, CommandReceiptStore, StateConflictError
 from ehai.application.queries import QueryNotFoundError
+from ehai.application.workflow_agents import WorkflowAgents
 from ehai.application.workflow_compatibility import WorkflowCompatibility
 from ehai.application.workflow_execution_models import (
     WorkflowExecutionRecord,
@@ -86,8 +88,9 @@ class WorkflowStore(Protocol):
 
 
 class WorkflowService:
-    def __init__(self, store: WorkflowStore) -> None:
+    def __init__(self, store: WorkflowStore, delegation: AgentDelegation | None = None) -> None:
         self.store = store
+        self.agents = WorkflowAgents(store, delegation)
         # Deliberately not configurable through CLI, environment, API or Routine inputs.
         self._compatibility = WorkflowCompatibility(enabled=False)
         self.scheduler_active = False

@@ -240,7 +240,13 @@ async def run_process_boundary_review(
         ),
         final_tool_requires_only=True,
     )
-    registry = ToolRegistry(tuple(definitions), handlers)
+    registry = ToolRegistry(
+        tuple(definitions),
+        handlers,
+        native_authorization=(
+            None if workspace_tools is None else workspace_tools.registry.native_authorization
+        ),
+    )
     try:
         await runtime.run(
             config=config,

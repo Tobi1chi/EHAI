@@ -2,15 +2,16 @@
 
 from collections.abc import Callable
 from hashlib import sha256
+from pathlib import Path
 from typing import cast
 from urllib.parse import quote
 
 import httpx
 from pydantic import ValidationError
 
-from ehai import JsonValue, json_dumps, parse_utc_datetime
+from ehai import JsonValue, json_dumps, parse_utc_datetime, utc_now
 from ehai.application.connector_models import ConnectorClaim
-from ehai.connectors.bridge import ConnectorOutcome
+from ehai.connectors.bridge import ConnectorOutcome, _read
 from ehai.connectors.google_calendar_contract import (
     CalendarCreateInput,
     CalendarEvent,
@@ -33,9 +34,12 @@ class _ProviderFailure(Exception):
 
 
 class GoogleCalendarAdapter:
-    def __init__(self, client: httpx.Client, token: Callable[[], str]) -> None:
+    def __init__(
+        self, client: httpx.Client, token: Callable[[], str], state_dir: Path | None = None
+    ) -> None:
         self.client = client
         self.token = token
+        self.state_dir = state_dir
 
     def execute(self, claim: ConnectorClaim) -> ConnectorOutcome:
         call = claim.call
@@ -117,6 +121,20 @@ class GoogleCalendarAdapter:
                 self._allowed(create.calendar_id, allowed)
                 if not call.write_authorized:
                     raise _ProviderFailure("Calendar create requires write authorization")
+                authorization = call.authorization
+                if authorization is not None and claim.mode != "reconcile":
+                    if (
+                        authorization.expires_at is not None
+                        and authorization.expires_at <= utc_now()
+                    ):
+                        return ConnectorOutcome("failed", error="Write authorization expired")
+                    limit = authorization.limit
+                    if (
+                        limit is not None
+                        and limit.kind == "count"
+                        and self._created_count(claim) >= limit.value
+                    ):
+                        return ConnectorOutcome("failed", error="Write authorization limit reached")
                 return self._create(claim, create)
             raise _ProviderFailure("Unsupported Google Calendar action")
         except ValidationError:
@@ -138,6 +156,34 @@ class GoogleCalendarAdapter:
                 "unknown" if name == "calendar.events.create" else "failed",
                 error="Google Calendar adapter could not establish a valid result",
             )
+
+    def _created_count(self, claim: ConnectorClaim) -> int:
+        """Count durable successful calls, not deliveries; the bridge holds its process lock."""
+        if self.state_dir is None:
+            raise _ProviderFailure("Write authorization receipts are unavailable")
+        authorization = claim.call.authorization
+        assert authorization is not None
+        paths = list((self.state_dir / "receipts").glob("*.json"))
+        pending = self.state_dir / "pending.json"
+        if pending.exists():
+            paths.append(pending)
+        created: set[str] = set()
+        try:
+            for path in paths:
+                receipt = _read(path)
+                call = receipt["claim"]["call"]
+                grant = call.get("authorization")
+                if (
+                    call["call_id"] != claim.call.call_id
+                    and call["action"]["name"] == "calendar.events.create"
+                    and isinstance(grant, dict)
+                    and grant.get("authorization_id") == authorization.authorization_id
+                    and receipt.get("report", {}).get("status") == "completed"
+                ):
+                    created.add(call["call_id"])
+        except (OSError, ValueError, KeyError, TypeError) as error:
+            raise _ProviderFailure("Write authorization receipts are unreadable") from error
+        return len(created)
 
     @staticmethod
     def _allowed(calendar_id: str, allowed: list[str]) -> None:

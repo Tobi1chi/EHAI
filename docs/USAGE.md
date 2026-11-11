@@ -1,7 +1,10 @@
 # EHAI 当前用法
 
+> 用法 · 只写已实现的命令与契约；成熟度见 [STATUS](STATUS.md)。
+
 更新：2026-10-22。能力成熟度见 [STATUS](STATUS.md)，历史用法不作为当前参数说明。
 生活 Workflow 见 [WORKFLOWS](WORKFLOWS.md)；Connector、Jev 实验分别见各自文档，索引见 [docs/README](README.md)。
+RSS/Atom Connector 的登记、动作和失败原因见 [RSS/Atom 配置和调用](CONNECTOR_PROTOCOL.md#rssatom-connector-配置和调用)。
 首次用 0.1 开发项目，先按 [README 快速开始](../README.md#快速开始) 配置宿主并完成一个任务；
 本页补充控制、恢复、计划变更和成果接续的详细契约。
 
@@ -10,7 +13,7 @@
 
 ## 目录
 
-- **准备与入口**：[安装与私有 Pi 配置](#安装与私有-pi-配置) · [API 宿主与 CLI 客户端](#api-宿主与-cli-客户端) · [独立 MCP 服务端](#独立-mcp-服务端)
+- **准备与入口**：[安装与私有 Pi 配置](#安装与私有-harness-配置) · [API 宿主与 CLI 客户端](#api-宿主与-cli-客户端) · [独立 MCP 服务端](#独立-mcp-服务端)
 - **规划与执行**：[本地规划或导入](#本地规划或导入) · [草稿 Gate 工具](#草稿-gate-工具) · [审查、批准和前台执行](#审查批准和前台执行)
 - **运行中控制与人工处理**：[控制、人工回路与过程调整](#控制人工回路与过程调整) · [周期轨迹审查和定向挂起](#周期轨迹审查和定向挂起) · [统一人工待办（P3.2）](#统一人工待办p32) · [便签讨论与明确决定（P3.2 后端）](#便签讨论与明确决定p32-后端)
 - **成果与接续**：[Block 变更清单](#block-变更清单) · [Git 自动整合](#git-自动整合) · [跨批准后继 Run](#跨批准后继-run)
@@ -57,9 +60,18 @@ handle_inbox 指向最早的 pending 项；其余项通过统一待办查询读�
 时间线 data 为 `{observed_at, event_offset, goal_id, items, next_after}`。
 items 中每项为 `{at, kind, refs, summary}`，按时间升序，同一时间按持久事件偏移排序。
 kind 为 goal_created、discussion_message、plan_revision_created、plan_approved、run_started、
-run_status_changed、node_completed、inbox_opened、inbox_resolved、succession_started。
+run_status_changed、node_completed、inbox_opened、inbox_resolved、succession_started、
+integration_created、integration_branch_created、process_adjustment、review_submitted、gate_decided、node_reopened。
 summary 是面向 CLI 阅读的简短英文描述；前端按 kind 和 refs 显示，不解析英文文案推导状态。
 run_status_changed 的 refs.status 是变更后的 RunStatus：paused、running（恢复）、completed、failed 或 cancelled。
+暂停时可带 pause_cause/check_run_id；human_hold 表示人工决定后暂缓继续。
+人工 Check 的 inbox_resolved 带 outcome（passed/rejected）、actor、完整 comment、plan_node_id/node_title。
+process_adjustment 的 step 为 drafted、draft_failed、reviewed、review_failed 或 applied，
+并带 draft_id 和可用的 review_id、preserves_boundary、process_revision_id、reason、error。
+review_submitted 带 plan_node_id/node_title、attempt_id、artifact_id、recommended_action（pass/revise）
+和 finding_counts；报告不可读时 recommendation 为 null、计数为空。gate_decided 带 gate_id、
+outcome（passed/failed），失败时带 reason。node_reopened 带 plan_node_id/node_title、gate_id、phase_id、
+reason、reviewer_node_id、review_attempt_id；node_completed 也带 node_title。
 discussion_message 的 summary 带 User/Planner 前缀和消息正文，refs 带 conversation_id/turn_id，
 回复产生方案时带 plan_revision_id；节点成果引用已有 Gate/Checkpoint/Artifact，不补造历史。
 `limit` 默认为 100，范围 1..1000；`after` 默认为 0，是时间线条目的零基偏移，
@@ -73,7 +85,7 @@ discussion_message 的 summary 带 User/Planner 前缀和消息正文，refs 带
 CLI 将 `--api-url` 设为对应作用域；管理器 MCP 的详情/时间线工具显式传 workspace_id。
 管理器只聚合，不承诺跨工作区同一快照。
 
-## 安装与私有 Pi 配置
+## 安装与私有 Harness 配置
 
 需要 Python 3.12、uv、Node >=22.19.0。运行 uv sync --frozen，
 npm.cmd ci --prefix agent-backends/pi --ignore-scripts --no-audit --no-fund。
@@ -99,6 +111,28 @@ Pi 会把不支持的级别换成其他级别，而 EHAI 要求实际级别与�
 （例如 DeepSeek `deepseek-flash` 只接受 off、low、high、max；Pi 的模型表里没有 high 档的模型需另选级别或用 `default`）。`--credential-env` 可重复；交互时用逗号分隔多个名字。只保存变量名，不保存密钥。
 已有 `config.json` 时显示差异并要求确认，`--yes` 跳过确认；已有私有 settings/models 保留。
 Node 来自 PATH，Pi CLI 来自本源码仓库的锁定安装；版本分别要求 >=22.19.0 和 1.3.0。
+
+`init --harness pi|codex` 选择默认 harness；交互时询问 Default harness，默认保留旧值，首次为 Pi。
+Pi 配置流程仍须完成。选择 Codex 或已有 Codex 配置时，还会询问 `--codex-executable`、
+`--codex-home`、`--codex-model`、`--codex-reasoning-effort`，重跑时保留旧值作为默认。
+Codex 可执行文件默认优先使用
+`/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex`，
+否则从 PATH 查找 `codex`，均不存在时须指定。私有目录默认为 `<EHAI_HOME>/codex`，创建权限为 0700；
+模型没有默认值，首次须填写；思考级别默认 low，`default` 保存为 null。
+
+~~~sh
+uv run ehai init --harness codex --codex-model '<codex-model-id>'
+# 若尚未登录，先执行 init 输出的私有 CODEX_HOME 登录命令
+uv run ehai up
+uv run ehai add /absolute/path/to/repo
+uv run ehai add /absolute/path/to/another-repo --harness pi
+~~~
+
+`init` 通过 Hub 检查 Codex 安装和登录状态，将完整 harness 文档保存到
+`<EHAI_HOME>/codex-harness.json`；尚未登录也会保存，并打印须在 `add` 前手动运行的登录命令。
+`add` 和管理器的添加文件夹入口使用默认 harness；`add --harness pi|codex` 可覆盖本次选择，
+所选 harness 须已配置。已注册工作区的固定配置保持不变。`doctor` 在存在 Codex 配置时报告版本和
+登录状态，未登录时显示 FAIL 和登录命令；Pi 凭证检查仍保留，`--probe` 只探测 Pi，不启动 Codex 会话。
 
 `doctor --probe` 额外经一个新的本机 Hub 用用户配置真实启动一次 Pi 会话，核对 Pi 选中了配置中的 Provider、
 模型与思考级别，然后在发送任何任务前关闭（不调用模型，凭证与模型行为仍未核对）。失败时显示 Hub 的原因，
@@ -208,7 +242,9 @@ harness 文档。改用 Claude Code 运行全部角色时，复制 [Claude Code 
 在启动宿主的终端里设置），以及可选的 Anthropic 兼容地址 `base_url`；`--worker`/`--planner` 仍写 `pi`
 （表示经 Hub 运行的角色），推理强度只接受 low/medium/high/max。先用
 `uv run ehai inspect-agent --claude-code <claude 路径>` 做无凭证检查。Claude Code 每个会话会额外发出
-一次不带工具的小请求（生成标题），会计入 Provider 用量。管理器（`ehai init`/`add`）目前只配置 Pi。
+一次不带工具的小请求（生成标题），会计入 Provider 用量。管理器（`ehai init`/`add`）支持 Pi 和 Codex，
+默认选择及按工作区覆盖见上文；Claude Code 仍使用这里的独立宿主入口。
+Codex 使用 [Codex 示例](../examples/harness-codex.json) 作为 `--harness-config`，填写绝对路径并先在私有 CODEX_HOME 登录；版本、沙箱、审批与验证限制见 [Hub 的 Codex 兼容层](HUB.md#codex-兼容层)。
 
 宿主拥有运行和 Pi 子进程。另一个终端的客户端不读取本地数据库、不启动另一套 Scheduler：
 
@@ -389,12 +425,26 @@ uv run ehai @Api get-inbox-item --kind human_check --request-id '<check-run-id>'
 HTTP 为 `GET /api/v1/inbox?project_id=...&run_id=...` 和
 `GET /api/v1/inbox/{kind}/{request_id}`。两种筛选均可省略，同时提供时必须符合归属，
 否则 422；不存在的项目、Run 或待办返回 404。首版返回该宿主范围内的完整当前待办列表，
-没有分页或新的待办存储。`kind` 包含 `intervention`、`human_check`、`note`、`workflow_confirmation`、`workflow_reconciliation`（自定义 Workflow 的未知调用结果，见 [WORKFLOWS](WORKFLOWS.md#自定义-workflow)）。
+没有分页或新的待办存储。`kind` 包含 `plan_approval`、`intervention`、`human_check`、`note`、`workflow_confirmation`、`workflow_reconciliation`（自定义 Workflow 的未知调用结果，见 [WORKFLOWS](WORKFLOWS.md#自定义-workflow)）。
 运行前便签可以只有项目/目标归属，因此 owner 的 Run、节点、Attempt 和 Run 状态允许 null。
+`plan_approval` 对应每个目标最新、尚无 Run 使用的草稿方案，request_id 为方案版本 ID，
+只归属项目和目标；按 run_id 筛选时不包含它。批准或被新版取代后不再待处理，但仍能查询详情。
+其 `approve-plan` 动作绑定方案与验收契约，只批准方案，不启动 Run；启动仍需单独授权。
+交互终端的 `todo` 显示方案问题，使用既有 `plan`、`approve` 路径查看并明确确认执行配置。
 
 每项包含 `owner` 归属、问题、证据、源状态、`pending`、`actionable`、不可处理原因、
 `actions` 和 `next_step`。`request_token` 保留人工干预/验收原请求版本。
 列表按创建时间排序。
+每项的 `authorization` 包含 JSON 对象 `subject`、其规范 JSON（键排序、紧凑 UTF-8）
+的十六进制 SHA-256 `subject_sha256`、可空的 `limit` 和 `expires_at`。
+`limit` 非空时为 `{kind: amount|count, value: number, unit: string|null}`。
+方案的绑定对象含版本、节点标题、阶段标题及验收契约 ID；人工 Check 含节点、问题与证据 ID；
+干预和便签含问题；Workflow 确认含冻结对象或拟建生活待办，调用核对含调用 ID 和动作。
+Workflow 人工步骤的上限读取已冻结的 grant。待批准时，expires_at 仅取步骤的超时 deadline，
+没有超时则为 null；grant 的有效秒数从批准时才开始计算，不会缩短等待决定的窗口。
+批准后，expires_at 读取已记录授权的到期时间，不再受步骤 deadline 约束。
+无上限或有效期时对应字段为 null。
+仍待处理但已到期的项保持 pending，actionable 为 false，原因是授权窗口已过期。
 历史详情可查询已处理或被后续批准明确处置的请求，`disposition` 保留操作者、原因和批准来源；
 这些旧请求不会重新进入当前列表，也不会被改写为旧 Gate 通过。
 
@@ -403,6 +453,7 @@ HTTP 为 `GET /api/v1/inbox?project_id=...&run_id=...` 和
 
 | operation | 现有接口 |
 | --- | --- |
+| approve-plan | POST /api/v1/plans/approve |
 | reply-intervention | POST /api/v1/interventions/{intervention_id}/reply |
 | decide-human-check | POST /api/v1/check-runs/{check_run_id}/decision |
 | add-note-message | POST /api/v1/notes/{note_id}/messages |

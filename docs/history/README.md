@@ -22,4 +22,11 @@ PI_BACKEND_MIGRATION、MIGRATION_STATUS、SELF_HOSTING_GOAL、USAGE_PRE_PI 六�
 - [R2 实施记录](RECORD_R2.md) · [P3 实施记录](RECORD_P3.md) · [P4 实施记录](RECORD_P4.md)
 - [P2 收尾计划](P2_CLOSURE_PLAN.md)（已并入路线图）
 
+2026-11-07 文档整理移入（原文未改，开头注明归档原因）：
+
+- [整理前的路线图](ROADMAP_BEFORE_1107.md)：11-03 八步计划、11-04 试用反馈、P1–P5 各节
+- [重构与推进计划](REFACTOR_PLAN.md)：2026-10 的四步重构，已完成；执行记录在 [records/refactor](../records/refactor.md)
+- [PRODUCT_SCOPE 决定沿革](PRODUCT_SCOPE_DECISIONS_BEFORE_1105.md)：11-05 重写前的决定原文
+- [工作台与助手设计（11-04）](WORKBENCH_ASSISTANT_DESIGN_1104.md)：实现未提交、已放弃，需求仍在 PRODUCT_SCOPE
+
 指向退役源码的历史链接可能仅在对应 Git 版本存在。不要按历史段落直接执行旧命令。

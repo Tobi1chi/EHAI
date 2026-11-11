@@ -1,5 +1,7 @@
 # 执行模型
 
+> 边界 · 执行语义的约定目标；实现限制见 [STATUS](STATUS.md)，不在本文混写。
+
 更新：2026-09-22。用户/外部 Agent → Planner 或外部导入 → 校验草稿 → 明确批准 →
 执行配置授权 → Orchestrator/Scheduler → Worker → Reviewer/Check/Gate → 成果查询。
 

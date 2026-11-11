@@ -244,7 +244,36 @@ export function RunPage({ workspaceId, runId }: { workspaceId: string; runId: st
     opts,
   );
   const attempts = useRunAttempts(workspaceId, runId);
-  const trail: Trail = { workspaceId, runId, attempts: attempts.data ?? [] };
+  const judgments = useQuery(
+    `run-judgments:${workspaceId}:${runId}`,
+    async () => {
+      const { data: current } = await client.getRun(runId);
+      const { data: adoptions } = await client.listResultAdoptions(runId);
+      const nodes: NonNullable<Trail["judgments"]> = {};
+      let after: number | undefined;
+      do {
+        const { data } = await client.getThreadTimeline(current.goal_id, { limit: 200, ...(after === undefined ? {} : { after }) });
+        for (const item of data.items) {
+          const refs = item.refs;
+          if (refs.run_id !== runId || typeof refs.plan_node_id !== "string") continue;
+          const node = nodes[refs.plan_node_id] ??= { reworks: 0 };
+          if (item.kind === "inbox_resolved" && refs.kind === "human_check" &&
+              (refs.outcome === "passed" || refs.outcome === "rejected")) node.human = refs.outcome;
+          if (item.kind === "review_submitted" &&
+              (refs.recommended_action === "pass" || refs.recommended_action === "revise")) node.reviewer = refs.recommended_action;
+          if (item.kind === "node_reopened") node.reworks += 1;
+        }
+        after = data.next_after ?? undefined;
+      } while (after !== undefined);
+      for (const adoption of adoptions) {
+        const node = nodes[adoption.target_plan_node_id] ??= { reworks: 0 };
+        node.carried = { runId: adoption.source_run_id, attemptId: adoption.source_attempt_id };
+      }
+      return nodes;
+    },
+    opts,
+  );
+  const trail: Trail = { workspaceId, runId, attempts: attempts.data ?? [], judgments: judgments.data ?? {} };
   const context = findRun(overview.data, workspaceId, runId);
 
   return (
@@ -319,10 +348,11 @@ export function RunPage({ workspaceId, runId }: { workspaceId: string; runId: st
           <span className="meta">点节点看轨迹，拖动查看其余部分</span>
         </div>
         <QueryView query={plan}>{(data) => <PlanView plan={data} trail={trail} />}</QueryView>
+        {judgments.error !== undefined && <ErrorBlock error={judgments.error} />}
       </section>
 
       <div className="split">
-        <section className="section">
+        <section className="section" id="result">
           <h2 className="h2">成果</h2>
           <QueryView query={result}>{(data) => <ResultView doc={data} />}</QueryView>
         </section>

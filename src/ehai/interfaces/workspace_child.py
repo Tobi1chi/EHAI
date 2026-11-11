@@ -59,6 +59,7 @@ async def _serve(configuration: Path, port: int) -> None:
         raise ValueError("Invalid private child configuration")
     registration = WorkspaceRegistration.model_validate(value.get("registration"))
     settings = registration.runtime
+    # Legacy field name: either pinned Pi settings or a full harness document.
     private_backend = value.get("pi_backend_path")
     harness = load_harness_file(Path(private_backend)) if isinstance(private_backend, str) else None
     data_root = configuration.parent.resolve(strict=True)

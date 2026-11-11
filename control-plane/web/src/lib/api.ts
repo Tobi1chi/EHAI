@@ -38,6 +38,16 @@ export function errorStatus(error: unknown): number | null {
   return error instanceof EhaiApiError ? error.status : null;
 }
 
+/** Short user-facing errors for the home page, without provider text or internal codes. */
+export function plainError(error: unknown): string {
+  const status = errorStatus(error);
+  if (status === 404) return "找不到这项内容，可能已经移除。";
+  if (status === 409) return "当前状态已变化，请刷新后再试。";
+  if (status === 401 || status === 403) return "暂时无法访问，请检查服务的连接设置。";
+  if (status === 422 || status === 400) return "这次提交的内容未被接受，请检查后再试。";
+  return "暂时读不到服务，请稍后重试。";
+}
+
 export function describeError(error: unknown): string {
   if (error instanceof EhaiApiError) {
     const code = error.detail?.error.code;

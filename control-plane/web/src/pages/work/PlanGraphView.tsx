@@ -6,10 +6,16 @@ import { NODE_KIND, NODE_STATUS } from "../../lib/labels";
 import { Link } from "../../lib/router";
 import { attemptPath } from "./AttemptPage";
 
-export type Trail = { readonly workspaceId: string; readonly runId: string; readonly attempts: ReadonlyArray<Attempt> };
+type Judgment = {
+  human?: "passed" | "rejected";
+  reviewer?: "pass" | "revise";
+  reworks: number;
+  carried?: { runId: string; attemptId: string };
+};
+export type Trail = { readonly workspaceId: string; readonly runId: string; readonly attempts: ReadonlyArray<Attempt>; readonly judgments?: Record<string, Judgment> };
 
 const NODE_W = 232;
-const NODE_H = 64;
+const NODE_H = 96;
 const COL_GAP = 56;
 const ROW_GAP = 16;
 const PHASE_GAP = 24;
@@ -209,10 +215,17 @@ function GraphNode({
 }) {
   const tries = trail.attempts.filter((a) => a.plan_node_id === node.plan_node_id);
   const latest = tries[tries.length - 1];
+  const judgment = trail.judgments?.[node.plan_node_id];
+  const rejected = judgment?.human === "rejected" || judgment?.reviewer === "revise";
+  const marks = [
+    judgment?.human ? `人工${judgment.human === "passed" ? "通过" : "拒绝"}` : "",
+    judgment?.reviewer ? `审阅${judgment.reviewer === "pass" ? "通过" : "修改"}` : "",
+    judgment?.reworks ? `返工 ${judgment.reworks} 次` : "",
+  ].filter(Boolean).join(" · ");
   const spent = latest?.started_at ? duration(latest.started_at, latest.ended_at) : "";
   const meta = [NODE_KIND[node.kind], tries.length > 1 ? `试了 ${tries.length} 次` : "", spent].filter(Boolean).join(" · ");
   const props = {
-    className: `graph-node ${tone(node.status)}`,
+    className: `graph-node ${tone(node.status)}${rejected ? " judgment-rejected" : ""}`,
     style: { left: box.x, top: box.y, width: NODE_W, height: NODE_H },
     title: `${node.title}\n${NODE_STATUS[node.status]}`,
     onMouseEnter: () => onHover(node.plan_node_id),
@@ -226,16 +239,25 @@ function GraphNode({
       <span className="graph-text">
         <span className="graph-title">{node.title}</span>
         <span className="graph-meta">{meta}</span>
+        {marks && <span className="graph-judgments" title={marks}>{marks}</span>}
+        {judgment?.carried && (
+          <Link className="graph-carried" to={attemptPath(trail.workspaceId, judgment.carried.runId, judgment.carried.attemptId)}>
+            沿用前一个 Run 的成果 ↗
+          </Link>
+        )}
       </span>
     </>
   );
   // A node opens its latest Attempt's trace; earlier tries are linked from there.
-  return latest ? (
+  return latest && !judgment?.carried ? (
     <Link {...props} to={attemptPath(trail.workspaceId, trail.runId, latest.attempt_id)}>
       {body}
     </Link>
   ) : (
-    <div {...props}>{body}</div>
+    <div {...props}>
+      {body}
+      {latest && <Link className="graph-attempt-link" aria-label={`${node.title}：查看轨迹`} to={attemptPath(trail.workspaceId, trail.runId, latest.attempt_id)} />}
+    </div>
   );
 }
 

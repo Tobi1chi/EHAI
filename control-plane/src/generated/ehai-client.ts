@@ -791,7 +791,7 @@ export type RuntimeContextResponse = {
   readonly data: RuntimeContextView;
 };
 
-export type InboxKind = "intervention" | "human_check" | "note" | "workflow_confirmation" | "workflow_reconciliation";
+export type InboxKind = "plan_approval" | "intervention" | "human_check" | "note" | "workflow_confirmation" | "workflow_reconciliation";
 
 export type InboxOwner = {
   readonly project_id: string;
@@ -812,7 +812,7 @@ export type InboxEvidence = {
 };
 
 export type InboxAction = {
-  readonly operation: "reply-intervention" | "decide-human-check" | "add-note-message" | "decide-note" | "decide-workflow" | "decide-workflow-step" | "reconcile-connector-call";
+  readonly operation: "approve-plan" | "reply-intervention" | "decide-human-check" | "add-note-message" | "decide-note" | "decide-workflow" | "decide-workflow-step" | "reconcile-connector-call";
   readonly label: string;
   readonly effect: string;
   readonly input_fields: ReadonlyArray<string>;
@@ -836,6 +836,7 @@ export type InboxItem = {
   readonly actions: ReadonlyArray<InboxAction>;
   readonly next_step: string;
   readonly disposition: Readonly<Record<string, unknown>> | null;
+  readonly authorization: InboxAuthorization;
 };
 
 export type InboxListView = {
@@ -944,7 +945,7 @@ export type ThreadResponse = {
 
 export type ThreadTimelineItem = {
   readonly at: string;
-  readonly kind: "goal_created" | "discussion_message" | "plan_revision_created" | "plan_approved" | "run_started" | "run_status_changed" | "node_completed" | "inbox_opened" | "inbox_resolved" | "succession_started" | "integration_created" | "integration_branch_created";
+  readonly kind: "goal_created" | "discussion_message" | "plan_revision_created" | "plan_approved" | "run_started" | "run_status_changed" | "node_completed" | "process_adjustment" | "review_submitted" | "gate_decided" | "node_reopened" | "inbox_opened" | "inbox_resolved" | "succession_started" | "integration_created" | "integration_branch_created";
   readonly refs: Readonly<Record<string, JsonValue>>;
   readonly summary: string;
 };
@@ -986,6 +987,19 @@ export type IntegrationBranch = {
 
 export type IntegrationBranchResponse = {
   readonly data: IntegrationBranch;
+};
+
+export type AuthorizationLimit = {
+  readonly kind: "amount" | "count";
+  readonly value: number;
+  readonly unit: string | null;
+};
+
+export type InboxAuthorization = {
+  readonly subject: Readonly<Record<string, JsonValue>>;
+  readonly subject_sha256: string;
+  readonly limit: AuthorizationLimit | null;
+  readonly expires_at: string | null;
 };
 
 export type JsonScalar = boolean | number | number | string | null;
@@ -1517,6 +1531,34 @@ export type ActionStep_Output = {
   readonly next: string;
 };
 
+export type AgentStep_Input = {
+  readonly type: "agent";
+  readonly id: string;
+  readonly instruction: RefValue | LiteralValue_Input | TemplateValue;
+  readonly tools: ReadonlyArray<AgentTool>;
+  readonly output_schema: Readonly<Record<string, JsonValue>>;
+  readonly max_tool_calls?: number;
+  readonly timeout_seconds?: number;
+  readonly next: string;
+};
+
+export type AgentStep_Output = {
+  readonly type: "agent";
+  readonly id: string;
+  readonly instruction: RefValue | LiteralValue_Output | TemplateValue;
+  readonly tools: ReadonlyArray<AgentTool>;
+  readonly output_schema: Readonly<Record<string, JsonValue>>;
+  readonly max_tool_calls?: number;
+  readonly timeout_seconds?: number;
+  readonly next: string;
+};
+
+export type AgentTool = {
+  readonly connector_id: string;
+  readonly action: string;
+  readonly action_version: string;
+};
+
 export type AllCondition_Input = {
   readonly op: "all";
   readonly conditions: ReadonlyArray<CompareCondition_Input | ExistsCondition | AllCondition_Input | AnyCondition_Input | NotCondition_Input>;
@@ -1611,11 +1653,34 @@ export type ExistsCondition = {
   readonly ref: string;
 };
 
+export type GrantLimit_Input = {
+  readonly kind: "amount" | "count";
+  readonly value: RefValue | LiteralValue_Input | TemplateValue;
+  readonly unit?: string | null;
+};
+
+export type GrantLimit_Output = {
+  readonly kind: "amount" | "count";
+  readonly value: RefValue | LiteralValue_Output | TemplateValue;
+  readonly unit?: string | null;
+};
+
+export type HumanGrant_Input = {
+  readonly limit?: GrantLimit_Input | null;
+  readonly valid_seconds?: number | null;
+};
+
+export type HumanGrant_Output = {
+  readonly limit?: GrantLimit_Output | null;
+  readonly valid_seconds?: number | null;
+};
+
 export type HumanStep_Input = {
   readonly type: "human";
   readonly id: string;
   readonly question: string;
   readonly subject?: Readonly<Record<string, RefValue | LiteralValue_Input | TemplateValue>>;
+  readonly grant?: HumanGrant_Input | null;
   readonly on_approve: string;
   readonly on_reject: string;
   readonly timeout_seconds?: number | null;
@@ -1627,6 +1692,7 @@ export type HumanStep_Output = {
   readonly id: string;
   readonly question: string;
   readonly subject?: Readonly<Record<string, RefValue | LiteralValue_Output | TemplateValue>>;
+  readonly grant?: HumanGrant_Output | null;
   readonly on_approve: string;
   readonly on_reject: string;
   readonly timeout_seconds?: number | null;
@@ -1710,7 +1776,7 @@ export type SaveWorkflowDefinitionRequest = {
   readonly description: string;
   readonly inputs_schema: Readonly<Record<string, JsonValue>>;
   readonly start: string;
-  readonly steps: ReadonlyArray<ActionStep_Input | ConditionStep_Input | HumanStep_Input | WaitStep_Input | EndStep_Input>;
+  readonly steps: ReadonlyArray<ActionStep_Input | AgentStep_Input | ConditionStep_Input | HumanStep_Input | WaitStep_Input | EndStep_Input>;
   readonly idempotency_key: string;
   readonly expected_revision: number | null;
 };
@@ -1799,7 +1865,7 @@ export type WorkflowDefinitionBody = {
   readonly description: string;
   readonly inputs_schema: Readonly<Record<string, JsonValue>>;
   readonly start: string;
-  readonly steps: ReadonlyArray<ActionStep_Output | ConditionStep_Output | HumanStep_Output | WaitStep_Output | EndStep_Output>;
+  readonly steps: ReadonlyArray<ActionStep_Output | AgentStep_Output | ConditionStep_Output | HumanStep_Output | WaitStep_Output | EndStep_Output>;
 };
 
 export type WorkflowDefinitionRevision = {
@@ -1839,7 +1905,7 @@ export type WorkflowInvocationRecord = {
   readonly invocation_id: string;
   readonly workflow_run_id: string;
   readonly step_execution_id: string;
-  readonly kind: "local" | "connector";
+  readonly kind: "local" | "connector" | "agent";
   readonly action: WorkflowContractRef;
   readonly status: "prepared" | "completed" | "failed" | "unknown";
   readonly idempotency_key: string;
@@ -1850,6 +1916,7 @@ export type WorkflowInvocationRecord = {
   readonly recorded_at: string;
   readonly completed_at: string | null;
   readonly connector_call_id?: string | null;
+  readonly agent?: Readonly<Record<string, JsonValue>> | null;
 };
 
 export type WorkflowResponse_LifeRoutine_ = {
@@ -1936,7 +2003,7 @@ export type WorkflowWaitRecord = {
   readonly wait_id: string;
   readonly workflow_run_id: string;
   readonly step_execution_id: string;
-  readonly kind: "human" | "time" | "event";
+  readonly kind: "human" | "time" | "event" | "agent";
   readonly status: "waiting" | "resolved";
   readonly condition: Readonly<Record<string, JsonValue>>;
   readonly resolution: Readonly<Record<string, JsonValue>> | null;
@@ -1979,6 +2046,19 @@ export type ConnectorActionEntry = {
   readonly output_schema: Readonly<Record<string, JsonValue>>;
 };
 
+export type ConnectorAuthorization = {
+  readonly authorization_id: string;
+  readonly subject_sha256: string;
+  readonly limit: ConnectorAuthorizationLimit | null;
+  readonly expires_at: string | null;
+};
+
+export type ConnectorAuthorizationLimit = {
+  readonly kind: "amount" | "count";
+  readonly value: number | number;
+  readonly unit?: string | null;
+};
+
 export type ConnectorCall = {
   readonly call_id: string;
   readonly connector_id: string;
@@ -1986,6 +2066,7 @@ export type ConnectorCall = {
   readonly action: ConnectorAction_Output;
   readonly inputs: Readonly<Record<string, JsonValue>>;
   readonly write_authorized: boolean;
+  readonly authorization?: ConnectorAuthorization | null;
   readonly status: "queued" | "claimed" | "completed" | "failed" | "unknown";
   readonly output: Readonly<Record<string, JsonValue>> | null;
   readonly error: string | null;
@@ -2393,6 +2474,77 @@ export type AddWorkspaceFolderRequest = {
   readonly available_shells?: ReadonlyArray<string>;
 };
 
+export type AssistantMessage = {
+  readonly message_id: string;
+  readonly role: "user" | "assistant";
+  readonly text: string;
+  readonly refs: ReadonlyArray<AssistantRef>;
+  readonly outcome: "reply" | "text_only" | "failed" | null;
+  readonly error: string | null;
+  readonly created_at: string;
+};
+
+export type AssistantRef = {
+  readonly kind: "thread" | "run" | "inbox" | "diff" | "life_task";
+  readonly workspace_id: string;
+  readonly object_id: string;
+  readonly inbox_kind: "intervention" | "human_check" | "note" | "workflow_confirmation" | "workflow_reconciliation" | "plan_approval" | null;
+};
+
+export type AssistantResponse = {
+  readonly data: AssistantView;
+};
+
+export type AssistantView = {
+  readonly available: boolean;
+  readonly unavailable_reason: string | null;
+  readonly harness: "pi" | "codex" | null;
+  readonly model: string | null;
+  readonly busy: boolean;
+  readonly messages: ReadonlyArray<AssistantMessage>;
+};
+
+export type AttentionData = {
+  readonly observed_at: string;
+  readonly life_binding: LifeBinding | null;
+  readonly needs_you: ReadonlyArray<AttentionItem>;
+  readonly in_progress: ReadonlyArray<AttentionItem>;
+  readonly done: ReadonlyArray<AttentionItem>;
+  readonly done_truncated: boolean;
+  readonly unavailable: ReadonlyArray<AttentionUnavailable>;
+  readonly notes: ReadonlyArray<string>;
+  readonly consistent_across_workspaces?: false;
+};
+
+export type AttentionDecision = {
+  readonly kind: "intervention" | "human_check" | "note" | "workflow_confirmation" | "workflow_reconciliation" | "plan_approval";
+  readonly request_id: string;
+};
+
+export type AttentionItem = {
+  readonly kind: "thread" | "inbox" | "life_task";
+  readonly workspace_id: string;
+  readonly project_id: string;
+  readonly object_id: string;
+  readonly label: "life" | "work";
+  readonly title: string;
+  readonly state: string;
+  readonly next_action: string | null;
+  readonly run_id: string | null;
+  readonly at: string | null;
+  readonly decisions?: ReadonlyArray<AttentionDecision>;
+};
+
+export type AttentionResponse = {
+  readonly data: AttentionData;
+};
+
+export type AttentionUnavailable = {
+  readonly workspace_id: string;
+  readonly code: string;
+  readonly message: string;
+};
+
 export type ErrorDetail = {
   readonly code: string;
   readonly message: string;
@@ -2400,6 +2552,19 @@ export type ErrorDetail = {
 
 export type HTTPValidationError = {
   readonly detail?: ReadonlyArray<ValidationError>;
+};
+
+export type LifeBinding = {
+  readonly workspace_id: string;
+  readonly project_id: string;
+};
+
+export type LifeBindingData = {
+  readonly binding: LifeBinding | null;
+};
+
+export type LifeBindingResponse = {
+  readonly data: LifeBindingData;
 };
 
 export type LocalEngineData = {
@@ -2414,6 +2579,7 @@ export type LocalEngineResponse = {
 };
 
 export type PublicRuntimeSettings = {
+  readonly harness_kind?: "pi" | "codex" | null;
   readonly worker_kind: "pi" | "fake";
   readonly planner_kind: "pi" | "single";
   readonly worker_model: string | null;
@@ -2433,6 +2599,7 @@ export type PublicRuntimeSettings = {
 };
 
 export type RuntimeSettings = {
+  readonly harness_kind?: "pi" | "codex" | null;
   readonly worker_kind?: "pi" | "fake";
   readonly planner_kind?: "pi" | "single";
   readonly worker_model?: string | null;
@@ -2450,6 +2617,10 @@ export type RuntimeSettings = {
   readonly command_check_argv?: ReadonlyArray<string> | null;
   readonly semantic_required_terms?: ReadonlyArray<string>;
   readonly attempt_deadline_seconds?: number | null;
+};
+
+export type SendAssistantMessage = {
+  readonly text: string;
 };
 
 export type ValidationError = {
@@ -3129,6 +3300,30 @@ export class EhaiWorkspaceManagerClient {
 
   getWorkspaceOverview(): Promise<WorkspaceOverviewResponse> {
     return this.request("/workspace-overview", "GET");
+  }
+
+  getLifeBinding(): Promise<LifeBindingResponse> {
+    return this.request("/life-binding", "GET");
+  }
+
+  setLifeBinding(request: LifeBindingData): Promise<LifeBindingResponse> {
+    return this.request("/life-binding", "PUT", request);
+  }
+
+  getAttention(): Promise<AttentionResponse> {
+    return this.request("/attention", "GET");
+  }
+
+  getAssistant(): Promise<AssistantResponse> {
+    return this.request("/assistant", "GET");
+  }
+
+  sendAssistantMessage(request: SendAssistantMessage): Promise<AssistantResponse> {
+    return this.request("/assistant/messages", "POST", request);
+  }
+
+  resetAssistant(): Promise<AssistantResponse> {
+    return this.request("/assistant/reset", "POST");
   }
 
   listThreads(): Promise<WorkspaceThreadsResponse> {

@@ -23,6 +23,10 @@ class RuntimeSettings(BaseModel):
     """Fixed executable assembly; this profile never grants a Run execution authorization."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
+    # Omit Pi (including the legacy default) to preserve existing profiles and fingerprints.
+    harness_kind: Literal["pi", "codex"] | None = Field(
+        default=None, exclude_if=lambda value: value != "codex"
+    )
     worker_kind: Literal["pi", "fake"] = "fake"
     planner_kind: Literal["pi", "single"] = "single"
     worker_model: Text | None = None
@@ -33,7 +37,9 @@ class RuntimeSettings(BaseModel):
     planner_capacity: int = Field(default=1, ge=1, le=64, strict=True)
     planner_timeout_seconds: float = Field(default=120, gt=0, le=86400, allow_inf_nan=False)
     command_timeout_seconds: float = Field(default=30, gt=0, le=3600, allow_inf_nan=False)
-    pi_config_path: Text | None = None
+    pi_config_path: Text | None = Field(
+        default=None, description="Private harness file for the selected kind; legacy field name."
+    )
     allowed_commands: list[list[Text]] = Field(default_factory=list, max_length=100)
     available_shells: list[Text] = Field(default_factory=list, max_length=32)
     git_permissions: list[GitPermission] = Field(default_factory=list, max_length=4)
@@ -53,6 +59,10 @@ class RuntimeSettings(BaseModel):
 
     @model_validator(mode="after")
     def validate_roles(self) -> Self:
+        if self.harness_kind == "codex" and (
+            self.pi_config_path is None or "pi" not in (self.worker_kind, self.planner_kind)
+        ):
+            raise ValueError("Codex requires pi_config_path and harness roles (kind pi)")
         if self.worker_kind == "pi" and self.worker_model is None:
             raise ValueError("Pi Worker requires worker_model")
         if self.planner_kind == "pi" and self.planner_model is None:
@@ -97,6 +107,7 @@ class WorkspaceRegistration(BaseModel):
 
 class PublicRuntimeSettings(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
+    harness_kind: Literal["pi", "codex"] | None = None
     worker_kind: Literal["pi", "fake"]
     planner_kind: Literal["pi", "single"]
     worker_model: str | None

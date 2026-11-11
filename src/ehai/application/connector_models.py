@@ -88,6 +88,22 @@ class InvokeConnectorRequest(ConnectorModel):
     authorize_write: bool = Field(default=False, strict=True)
 
 
+class ConnectorAuthorizationLimit(ConnectorModel):
+    kind: Literal["amount", "count"]
+    value: (
+        Annotated[int, Field(strict=True)]
+        | Annotated[float, Field(strict=True, allow_inf_nan=False)]
+    )
+    unit: str | None = None
+
+
+class ConnectorAuthorization(ConnectorModel):
+    authorization_id: str
+    subject_sha256: Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{64}$")]
+    limit: ConnectorAuthorizationLimit | None
+    expires_at: AwareDatetime | None
+
+
 class ConnectorCall(ConnectorModel):
     call_id: str
     connector_id: str
@@ -95,6 +111,7 @@ class ConnectorCall(ConnectorModel):
     action: ConnectorAction
     inputs: dict[str, JsonValue]
     write_authorized: bool
+    authorization: ConnectorAuthorization | None = None
     status: Literal["queued", "claimed", "completed", "failed", "unknown"]
     output: dict[str, JsonValue] | None
     error: str | None

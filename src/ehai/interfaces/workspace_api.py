@@ -27,6 +27,18 @@ from ehai.infrastructure.workspace_supervisor import (
     WorkspaceSupervisor,
     WorkspaceSupervisorError,
 )
+from ehai.interfaces.assistant_host import (
+    AssistantHost,
+    AssistantResponse,
+    ManagerAssistantReader,
+    SendAssistantMessage,
+)
+from ehai.interfaces.attention import (
+    AttentionResponse,
+    LifeBindingData,
+    LifeBindingResponse,
+    read_attention,
+)
 from ehai.interfaces.http_models import DataResponse, ErrorResponse
 from ehai.interfaces.local_app import folder_registration, load_local_config, write_private_json
 from ehai.interfaces.runtime import create_local_app
@@ -182,6 +194,7 @@ def create_workspace_app(
         for method in item
         if method in {"get", "post", "put", "patch", "delete"}
     ]
+    assistant = AssistantHost(local_home)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -191,8 +204,10 @@ def create_workspace_app(
         ) as client:
             app.state.workspace_http = client
             try:
+                assistant.open()
                 yield
             finally:
+                await assistant.close()
                 await supervisor.close()
 
     app = FastAPI(title="EHAI Workspace Manager", version="1", lifespan=lifespan)
@@ -206,6 +221,69 @@ def create_workspace_app(
 
     app.openapi = manager_openapi  # type: ignore[method-assign]
     folder_lock = asyncio.Lock()
+    binding_file = supervisor.root / "life-binding.json"
+
+    def life_binding_data() -> LifeBindingData:
+        try:
+            return LifeBindingData.model_validate_json(binding_file.read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            return LifeBindingData(binding=None)
+        except (OSError, ValueError) as error:
+            raise WorkspaceSupervisorError("Life binding could not be read") from error
+
+    @app.get("/api/v1/assistant", operation_id="getAssistant", response_model=AssistantResponse)
+    async def get_assistant() -> AssistantResponse:
+        return AssistantResponse(data=assistant.view())
+
+    @app.post(
+        "/api/v1/assistant/messages",
+        operation_id="sendAssistantMessage",
+        response_model=AssistantResponse,
+        status_code=202,
+        responses={409: {"model": ErrorResponse, "description": "Assistant unavailable or busy"}},
+    )
+    async def send_assistant_message(
+        body: SendAssistantMessage, request: Request
+    ) -> AssistantResponse:
+        reader = ManagerAssistantReader(
+            supervisor, request.app.state.workspace_http, life_binding_data
+        )
+        return AssistantResponse(data=await assistant.send(body.text, reader))
+
+    @app.post(
+        "/api/v1/assistant/reset",
+        operation_id="resetAssistant",
+        response_model=AssistantResponse,
+        responses={409: {"model": ErrorResponse, "description": "Assistant unavailable or busy"}},
+    )
+    async def reset_assistant() -> AssistantResponse:
+        return AssistantResponse(data=await assistant.reset())
+
+    @app.get(
+        "/api/v1/life-binding", operation_id="getLifeBinding", response_model=LifeBindingResponse
+    )
+    def get_life_binding() -> LifeBindingResponse:
+        return LifeBindingResponse(data=life_binding_data())
+
+    @app.put(
+        "/api/v1/life-binding", operation_id="setLifeBinding", response_model=LifeBindingResponse
+    )
+    async def set_life_binding(body: LifeBindingData) -> LifeBindingResponse:
+        if body.binding is not None:
+            await supervisor.get(body.binding.workspace_id)
+        try:
+            write_private_json(binding_file, body.model_dump(mode="json"))
+        except OSError as error:
+            raise WorkspaceSupervisorError("Life binding could not be saved") from error
+        return LifeBindingResponse(data=body)
+
+    @app.get("/api/v1/attention", operation_id="getAttention", response_model=AttentionResponse)
+    async def attention(request: Request) -> AttentionResponse:
+        return AttentionResponse(
+            data=await read_attention(
+                supervisor, request.app.state.workspace_http, life_binding_data().binding
+            )
+        )
 
     @app.exception_handler(SupervisorError)
     async def supervisor_error(request: Request, error: SupervisorError) -> JSONResponse:

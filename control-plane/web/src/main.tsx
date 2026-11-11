@@ -1,10 +1,14 @@
 import { StrictMode, useEffect, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
+import { Home } from "./pages/Home";
 import { Shell } from "./components/Shell";
+import { DecisionCard } from "./components/DecisionCard";
+import { INBOX_KIND } from "./lib/labels";
+import type { InboxKind } from "./lib/api";
 import { ToastProvider } from "./components/Toast";
 import { AppProvider } from "./lib/app";
-import { applyTheme, getPrefs, setPrefs, type Zone } from "./lib/prefs";
-import { Link, match, navigate, usePath } from "./lib/router";
+import { applyTheme, getPrefs, type Zone } from "./lib/prefs";
+import { Link, match, usePath } from "./lib/router";
 import { LifeAsk } from "./pages/life/LifeAsk";
 import { LifeCapture } from "./pages/life/LifeCapture";
 import { LifeRecord, LifeRecords } from "./pages/life/LifeRecords";
@@ -25,9 +29,16 @@ import "./styles/app.css";
 
 type Route = { readonly zone: Zone | null; readonly page: ReactNode; readonly title: string };
 
-function resolve(path: string): Route | "home" {
-  if (path === "/") return "home";
+function resolve(path: string): Route {
+  if (path === "/") return { zone: null, page: <Home />, title: "首页" };
   let p: Record<string, string> | null;
+  if ((p = match("/decisions/:ws/:kind/:request", path)) && Object.hasOwn(INBOX_KIND, p["kind"] as string))
+    return {
+      zone: null,
+      title: "待你决定",
+      page: <div className="content section"><h1 className="page-title">待你决定</h1><DecisionCard key={path}
+        target={{ workspaceId: p["ws"] as string, kind: p["kind"] as InboxKind, requestId: p["request"] as string }} /></div>,
+    };
   if (path === "/life") return { zone: "life", page: <LifeToday />, title: "今天" };
   if (path === "/life/tasks") return { zone: "life", page: <LifeTasks />, title: "待办" };
   if (path === "/life/capture") return { zone: "life", page: <LifeCapture />, title: "录入" };
@@ -95,26 +106,8 @@ function App() {
   const path = usePath();
   const route = resolve(path);
 
-  useEffect(() => {
-    // "/" opens the zone used last; the life zone is the default on first visit.
-    if (route === "home") navigate(getPrefs().zone === "work" ? "/work" : "/life", { replace: true });
-  }, [route]);
-
-  const zone = route === "home" ? null : route.zone;
-  useEffect(() => {
-    if (zone !== null && zone !== getPrefs().zone) setPrefs({ zone });
-  }, [zone]);
-
-  useEffect(() => {
-    if (route !== "home") document.title = `${route.title} · EHAI`;
-  }, [route]);
-
-  if (route === "home") return null;
-  return (
-    <Shell zone={route.zone ?? getPrefs().zone} path={path}>
-      {route.page}
-    </Shell>
-  );
+  useEffect(() => { document.title = `${route.title} · EHAI`; }, [route.title]);
+  return <Shell path={path}>{route.page}</Shell>;
 }
 
 applyTheme(getPrefs().theme);

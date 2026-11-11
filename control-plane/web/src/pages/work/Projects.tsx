@@ -1,3 +1,4 @@
+import { useLifeBinding } from "../../lib/life-binding";
 import { useState } from "react";
 import { InboxList } from "../../components/InboxList";
 import { InboxPanel, type InboxTarget } from "../../components/InboxPanel";
@@ -7,12 +8,11 @@ import { useApp, useQuery } from "../../lib/app";
 import { ago } from "../../lib/format";
 import { RUN_STATUS } from "../../lib/labels";
 import { byNewest, isLife, nodeProgress, projectRows } from "../../lib/overview";
-import { usePrefs } from "../../lib/prefs";
 import { Link } from "../../lib/router";
 
 export function ProjectsPage() {
   const { overview } = useApp();
-  const prefs = usePrefs();
+  const { binding } = useLifeBinding();
   const rows = projectRows(overview.data);
   return (
     <div className="content">
@@ -27,7 +27,7 @@ export function ProjectsPage() {
       <div className="list">
         {rows.map(({ workspaceId, detail }) => {
           const p = detail.project;
-          const life = isLife(prefs.life, workspaceId, p.project_id);
+          const life = isLife(binding, workspaceId, p.project_id);
           return (
             <Link
               key={workspaceId + p.project_id}

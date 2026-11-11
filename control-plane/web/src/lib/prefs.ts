@@ -1,8 +1,8 @@
 import { useSyncExternalStore } from "react";
 
 /**
- * Per-viewer conveniences only. The core has no zone tag yet, so which Project is "life"
- * is remembered in this browser; nothing here is business state.
+ * Per-viewer conveniences. The life field is only a legacy migration source;
+ * active life binding is owned by the workspace manager.
  */
 export type LifeBinding = { readonly workspaceId: string; readonly projectId: string };
 export type Zone = "life" | "work";

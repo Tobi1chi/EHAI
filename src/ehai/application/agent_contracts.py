@@ -172,6 +172,9 @@ class CancellationToken:
 
 
 ToolHandler = Callable[[dict[str, JsonValue], CancellationToken], Awaitable[JsonValue]]
+ToolRejectionHandler = Callable[
+    [dict[str, JsonValue], RecoverableToolError, CancellationToken], Awaitable[None]
+]
 
 
 class ToolExecutor:
@@ -179,13 +182,24 @@ class ToolExecutor:
 
     Arguments are checked against each Tool's input schema here, whatever harness or
     provider produced them, because model-side constrained sampling is not relied on.
+    Optional rejection handlers audit refused attempts; they cannot approve invalid
+    arguments or invoke the normal handler. Existing roles have no rejection handlers.
     """
 
-    def __init__(self, tool_set: ToolSet, handlers: Mapping[str, ToolHandler]) -> None:
+    def __init__(
+        self,
+        tool_set: ToolSet,
+        handlers: Mapping[str, ToolHandler],
+        *,
+        rejection_handlers: Mapping[str, ToolRejectionHandler] | None = None,
+    ) -> None:
         if set(handlers) != {item.name for item in tool_set.definitions}:
             raise ValueError("ToolExecutor handlers must exactly match the fixed ToolSet")
         self.tool_set = tool_set
         self._handlers = dict(handlers)
+        self._rejection_handlers = dict(rejection_handlers or {})
+        if not self._rejection_handlers.keys() <= self._handlers.keys():
+            raise ValueError("Rejection handlers must belong to the fixed ToolSet")
         self._validators = {
             item.name: _argument_validator(item.name, item.input_schema)
             for item in tool_set.definitions
@@ -198,7 +212,13 @@ class ToolExecutor:
         self.tool_set.require(call.name)
         cancellation.raise_if_cancelled()
         arguments = call.arguments
-        _check_arguments(self._validators[call.name], arguments)
+        try:
+            _check_arguments(self._validators[call.name], arguments)
+        except RecoverableToolError as error:
+            rejected = self._rejection_handlers.get(call.name)
+            if rejected is not None:
+                await rejected(arguments, error, cancellation)
+            raise
         result = await self._handlers[call.name](arguments, cancellation)
         cancellation.raise_if_cancelled()
         return json_loads(json_dumps(result))

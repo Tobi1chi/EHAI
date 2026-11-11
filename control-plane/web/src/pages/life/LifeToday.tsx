@@ -1,3 +1,4 @@
+import { useLifeBinding } from "../../lib/life-binding";
 import { useState } from "react";
 import { Icon } from "../../components/Icon";
 import { InboxList } from "../../components/InboxList";
@@ -7,7 +8,6 @@ import type { LifeTask, RoutineSchedulerStatus } from "../../lib/api";
 import { useApp } from "../../lib/app";
 import { ago, dueBucket, intervalText, longDate, when } from "../../lib/format";
 import { byNewest, inboxRows, isLife, zoneCounts } from "../../lib/overview";
-import { usePrefs } from "../../lib/prefs";
 import { Link, navigate } from "../../lib/router";
 import { LifeGate, type Life } from "./LifeGate";
 import { setDraft, sortByDue, TaskEditPanel, TaskRow, useLifeTasks, useRoutines, useScheduler } from "./data";
@@ -35,7 +35,7 @@ const WEEK_MS = 7 * 86400 * 1000;
 
 function Today({ life }: { life: Life }) {
   const { overview } = useApp();
-  const prefs = usePrefs();
+  const { binding } = useLifeBinding();
   const tasks = useLifeTasks(life);
   const routines = useRoutines(life);
   const scheduler = useScheduler(life);
@@ -45,10 +45,10 @@ function Today({ life }: { life: Life }) {
   const now = new Date();
 
   const inbox = byNewest(
-    inboxRows(overview.data).filter((row) => isLife(prefs.life, row.workspaceId, row.item.owner.project_id)),
+    inboxRows(overview.data).filter((row) => isLife(binding, row.workspaceId, row.item.owner.project_id)),
     (row) => row.item.created_at,
   );
-  const workCount = zoneCounts(overview.data, prefs.life).work;
+  const workCount = zoneCounts(overview.data, binding).work;
   const open = (tasks.data ?? []).filter((t) => t.status === "open");
   const today = sortByDue(open.filter((t) => ["overdue", "today"].includes(dueBucket(t.due_at, now))));
   const horizon = now.getTime() + WEEK_MS;

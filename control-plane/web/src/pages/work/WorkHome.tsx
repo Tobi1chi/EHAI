@@ -1,3 +1,4 @@
+import { useLifeBinding } from "../../lib/life-binding";
 import { useState } from "react";
 import { InboxList } from "../../components/InboxList";
 import { InboxPanel, type InboxTarget } from "../../components/InboxPanel";
@@ -8,7 +9,6 @@ import { useApp } from "../../lib/app";
 import { ago } from "../../lib/format";
 import { THREAD_PHASE, WORKSPACE_STATUS, phaseTone } from "../../lib/labels";
 import { byNewest, inboxRows, isLife } from "../../lib/overview";
-import { usePrefs } from "../../lib/prefs";
 import { Link } from "../../lib/router";
 import { threadPath, useThreads, workThreadRows } from "../../lib/threads";
 
@@ -35,16 +35,16 @@ function WorkspaceChips({ entries }: { entries: ReadonlyArray<WorkspaceOverviewE
 
 export function WorkHome() {
   const { overview } = useApp();
-  const prefs = usePrefs();
+  const { binding } = useLifeBinding();
   const [target, setTarget] = useState<InboxTarget | null>(null);
   const data = overview.data;
   const entries = data?.workspaces ?? [];
   const inbox = byNewest(
-    inboxRows(data).filter((row) => !isLife(prefs.life, row.workspaceId, row.item.owner.project_id)),
+    inboxRows(data).filter((row) => !isLife(binding, row.workspaceId, row.item.owner.project_id)),
     (row) => row.item.created_at,
   );
   const threads = useThreads();
-  const rows = workThreadRows(threads.data, prefs.life);
+  const rows = workThreadRows(threads.data, binding);
   const unavailable = entries.filter((e) => !e.available);
 
   return (

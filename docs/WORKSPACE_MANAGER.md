@@ -1,5 +1,7 @@
 # 多工作区后端
 
+> 用法 · 只写已实现的命令与契约；执行记录见 [records/workspace-manager](records/workspace-manager.md)。
+
 EHAI 可以通过一个本机管理入口托管多个 workspace。每个 workspace 有独立的核心进程、
 SQLite、Artifact 目录、Planner 配置和 Worker 容量；工作区内继续使用原来的 Run、Gate、
 便签与恢复机制。单工作区 `ehai-api` 入口继续可用。
@@ -13,12 +15,13 @@ uv run ehai init
 # 在本终端设置 init 中声明的凭证环境变量，然后：
 uv run ehai up
 uv run ehai add /absolute/path/to/repository
+# 已用 init --harness codex 配置 Codex 时，可按工作区覆盖：ehai add <路径> --harness pi
 uv run ehai status
 uv run ehai doctor
 uv run ehai down
 ```
 
-配置和非交互参数见 [安装与私有 Pi 配置](USAGE.md#安装与私有-pi-配置)。
+配置和非交互参数见 [安装与私有 Pi 配置](USAGE.md#安装与私有-harness-配置)。
 `EHAI_HOME` 默认 `~/.ehai`；管理数据在其 `manager/`，PID/本地控制令牌在 `manager.pid`，
 日志在 `manager.log`，子宿主日志在 `manager/workspaces/<id>/child.log`。
 PID 文件保留为上次启动记录，是否运行以令牌保护的管理器健康探测为准，不凭 PID 猜测或杀进程。
@@ -66,7 +69,7 @@ MCP 为 `get_local_engine`、`add_workspace_folder`，写入仍传 `request_json
 `status` 显示守护进程和各工作区的真实生命周期状态；离线时只列出登记信息并说明健康未知，返回 1。
 `doctor` 逐项检查配置、Node/Pi 版本与私有设置、终端/守护进程凭证变量存在性、
 管理器和工作区运行时健康；`--probe` 另经本机 Hub 启动一次 Pi 会话核对模型与思考级别（不调用模型，见
-[USAGE](USAGE.md#安装与私有-pi-配置)）；全部通过返回 0，检查失败返回 1，命令本身出错返回 2。
+[USAGE](USAGE.md#安装与私有-harness-配置)）；全部通过返回 0，检查失败返回 1，命令本身出错返回 2。
 
 `down` 通过私有本地控制接口逐个调用正常停止，再退出管理器；
 有活动执行、规划或写请求时返回冲突，须先完成或暂停相应任务；子进程停止超时仍沿用
@@ -156,7 +159,76 @@ uv run ehai --api-url http://127.0.0.1:8765 get-workspace-overview
 
 总览按 workspace 分组返回项目详情、有效成果和人工待办。不可用的工作区带明确错误，
 不展示成空项目或零待办；不同核心之间不是同一个数据库快照。
-所有命令、模型请求和结果只发送到明确选中的 workspace，不按对象 ID 猜测来源，不自动换宿主重试。
+
+管理器还提供跨工作区线程读取 `GET /api/v1/threads`，以及以下生活绑定与注意力队列接口：
+
+- `GET /api/v1/life-binding`（`getLifeBinding`）返回 `{data: {binding}}`；binding 为
+  `{workspace_id, project_id}` 或 null。`PUT /api/v1/life-binding`（`setLifeBinding`）接收
+  `{binding}` 并返回同样结构；字段必须完整，不接受额外字段，null 清除绑定。只检查工作区已登记，
+  不读取核心验证项目，因此核心停止时也能设置。绑定用私有 JSON 文件保存于管理器数据目录的
+  `life-binding.json`，不保存在业务核心中。
+- `GET /api/v1/attention`（`getAttention`）返回 `{data: AttentionData}`，包含读取时间
+  `observed_at`、`life_binding`、`needs_you`、`in_progress`、`done`、`done_truncated`、
+  `unavailable`、`notes` 与固定为 false 的 `consistent_across_workspaces`。
+  每项带源类型、工作区、项目、对象 ID、标题、核心状态、下一步、Run ID 和时间；与绑定的工作区和
+  项目均相符时标签为 life，否则为 work。每项还带 `decisions`：线程条目按创建时间从旧到新
+  列出该工作区核心 Inbox 中 owner.goal_id 属于此线程的所有 pending 请求，元素为
+  `{kind, request_id}`，包括 `plan_approval`；未归属线程的 Inbox 条目及生活待办为一个空列表。
+  线程需要注意、等待批准、暂停或失败时归入“需要你处理”，
+  规划、运行或尚未开始时归入“进行中”；未归属现有线程的未决待办单独归入“需要你处理”，不重复列出
+  已由线程承载的待办。仅绑定生活项目的待办参与聚合：过期未完成项需要处理，其余未完成项进行中，
+  已取消项不显示。完成的线程和生活待办只保留最近七天，合计最多二十项，超过时标记
+  `done_truncated`。需要处理按时间从旧到新，另两组从新到旧，空时间排最后。
+  未绑定或生活项目不存在时以简短英文 `notes` 说明；工作区读取失败则该工作区不返回条目，
+  在 `unavailable` 中保留工作区 ID、既有错误代码和说明，不影响其他工作区。聚合只读、不重试，
+  也不是跨核心一致快照。页面与其他管理器内调用者可复用同一队列计算。
+
+### 管理器只读助手
+
+助手只在带 `--local-home` 的管理器（`ehai up`）中可用，不进入任何工作区核心：
+
+- `GET /api/v1/assistant`（`getAssistant`）：返回 `{data: AssistantView}`，包含 `available`、
+  `unavailable_reason`、`harness`（pi/codex/null）、`model`、`busy`、`messages`。没有 local-home
+  时仍可读取，但 available=false 并说明原因；不会读取默认用户目录或启动模型。
+- `POST /api/v1/assistant/messages`（`sendAssistantMessage`）：请求 `{text}`，长度 1–4000，
+  不接受额外字段；先保存用户消息，再后台运行一轮，202 返回 busy=true 的同一视图。
+  一次只运行一轮；忙时或不可用时返回 409，不排队、不自动重发。
+- `POST /api/v1/assistant/reset`（`resetAssistant`）：清空已保存的对话并返回视图；忙时或不可用时
+  返回 409。清空对话不会删除审计轨迹。
+
+每条消息含 `message_id`、`role`、`text`、`refs`、`outcome`、`error`、`created_at`。
+用户消息的 outcome/error 为 null；助手结果为 reply、text_only 或 failed。失败附简短原因，
+不会自动重试。引用含 `kind`（thread/run/inbox/diff/life_task）、`workspace_id`、`object_id`、
+`inbox_kind`；后者由服务端填入，非 inbox 引用为 null。新 inbox 引用只接受回复时仍在核心
+`GET /api/v1/inbox` 中的未决项；已处理的项会提示模型修正。保存 kind 后，后续页面可用既有的
+`GET /api/v1/inbox/{kind}/{request_id}` 读取同一项，即使后来已处理。
+
+助手的五个工具为 read_attention、read_thread、read_run、read_life_tasks、reply：
+复用管理器注意力计算；读取线程及最新十五条时间线；读取 Run 状态、节点标题/状态和小型成果摘要；
+读取绑定生活项目的未完成待办及最近五条已完成待办；最后校验文字及最多八个实时引用并结束。
+没有生活绑定时明确返回无绑定。Run 摘要只含 commit、检查结论、has_diff 和可用的统计，不传大段成果文本。
+diff 引用要求核心成果的 diff_path 或 diff_artifact_ids 非空；管理器不读取核心本地路径。
+统计只通过最新一次 integration 的既有 HTTP diff 内容计算文件数、增加/删除行数，不把 diff 文本发给模型；
+尚未整合、最新整合无完整 diff 或 diff 被截断时明确报告统计不可用，不把部分统计当作完整结果。
+
+每轮重新读取本地 config.json：Codex 使用 codex-harness.json 及 config.codex 的模型/思考级别；
+Pi 经异步 Hub 解析 backend_document 并使用 config.model/reasoning_effort。
+经 HubRoleRunner 的 assistance 角色运行，超时 300 秒；每轮新轨迹会话，不恢复原生历史。
+最近十条对话的文字/引用及本地时间仅作为上下文。工作目录为空目录，工具均只读；
+Codex 原生沙箱只读，原生命令及改文件请求均拒绝，Pi 不开放内置工具。
+模型必须先读再回答，把状态译成人话，不能声称执行动作，只说明用户可点什么。
+reply 的文字限制为 1–2000 字符，不允许代码围栏、JSON、内部状态/动作代码名和标识符；
+校验失败作为可恢复工具错误交回模型在本轮修正，不由服务端改写。
+模型正常结束但未调用 reply 时，只采用本轮轨迹最后一条助手文字；通过相同文字规则才以
+text_only 保存且不带引用，否则记 failed 并说明回复格式不符。
+
+存储位于 `<local_home>/assistant/`：conversation.json 用私有 JSON 原子写入，trace.sqlite
+保存 Agent 轨迹，workspace/ 为空工作目录，state/ 保存 Hub runner 状态。
+重启发现最后一条用户消息尚无回答时，追加 failed（interrupted by restart），绝不重跑。
+每轮记录 outcome 日志。以上为接口实现，Codex/Pi 的真实模型回答与页面卡片验收仍由团队负责人执行；
+静态检查不证明模型工具调用成功。
+
+所有业务读取和结果只发送到明确选中的 workspace，不按对象 ID 猜测来源，不自动换宿主重试。
 各 workspace 的事件 consumer、offset、对象 ID 与业务幂等键都属于自己的核心。
 
 ## Planner 并发
@@ -215,108 +287,7 @@ uv run ehai-mcp --api-url http://127.0.0.1:8765
 使用空 stdin，保留需要 input_bytes 的 Git 输入，避免继承父进程监护管道而阻塞。
 管理入口限制退出时等待 HTTP 请求的时间，再进入子宿主清理；这不是整个清理过程固定 15 秒完成的保证。
 
-## 模块 B 验证记录（2026-10-22）
+## 执行记录
 
-macOS，仓库外临时目录 `/private/tmp/ehai-module-b-final-eaq033sd`，Node v25.8.1、Pi 1.3.0；
-使用有空基线 commit 的临时 Git 仓库 `Sample Repo`，没有模型调用。每步输出保存在该目录
-`transcript.jsonl`（无凭证值）。
+执行与验证记录已移到 [workspace-manager.md](records/workspace-manager.md)。
 
-| 步骤 | 输出摘要 | 退出码 |
-| --- | --- | --- |
-| init（全部参数） | 写 home/config.json、私有 Pi settings/models 与生成 backend；校验 Node/Pi | 0 |
-| up | 后台进程 ready，UI 为 `http://127.0.0.1:60576/ui/` | 0 |
-| status | 管理器 healthy | 0 |
-| add 临时 Git 仓库 | 自动 ID `sample-repo`，工作区 ready；默认三种权限列表为空 | 0 |
-| doctor | 配置、Node、Pi、管理器、工作区 runtime healthy；终端与守护进程均缺少故意未设置的 `EHAI_MODULE_B_MISSING_KEY` | 1 |
-| down | 正常停止，保留登记 | 0 |
-
-补充：离线 status 返回 1 并列出工作区健康未知；再次 up 显式恢复 `sample-repo: ready`；
-重复 up 保持同一 PID，只报告 already running；重复 add 仍为同一工作区 ready；
-重复 down 报告未运行并返回 0。UI 静态页 GET 返回 200（470 字节），未做浏览器交互验证。
-未遇到沙箱端口/后台进程限制。未验证真实模型、doctor 凭证齐全、交互确认、活动任务停止冲突，
-也未在 Windows/Linux 实跑；本记录不是产品 E2E，不扩展其场景。
-
-审查修正后，在新的 `/private/tmp/ehai-b-review.EUdpD6/home` 下复跑
-init → up → add 临时 Git 仓库 → status → down，全部退出 0；工作区为 `sample-repo: ready`。
-supervisor 已恢复原有停止行为，JSON 写入改用公开 `write_private_json`。
-Ruff check/format、mypy 默认平台及 win32、两条 import 契约全部通过，原产品 E2E 为
-1 passed（16.25 秒）。试跑时 lsof 记录管理器 PID 19520、工作区子进程 PID 19536；
-down 后两个 PID 均不存在、日志文件无进程持有、manager.lock 与 host.lock 均已释放。
-pgrep 因环境缺少 sysmond 无法列举进程，ps 也被沙箱拒绝，因此退出确认采用上述具体 PID、
-lsof 和锁检查；未据此宣称已检查系统上所有不相关进程。未保存新的试跑脚本。
-
-## 文件夹添加与整合分支后端验证（2026-10-22）
-
-macOS；临时目录 `/private/tmp/ehai-app-backend-7k2wqx15`；端口 50905（up）和 50906（手动管理器），
-Node v25.8.1、Pi 1.3.0。用户配置指定占位 openai/placeholder-model，凭证变量
-`EHAI_FOLDER_MISSING_KEY` 未设置，没有真实模型调用。下列命令在该临时目录执行，
-`repo` 指向本次源码目录；没有创建测试脚本或仓库内临时测试文件。
-
-```sh
-repo=/Users/tobiichieigetsu/Workspace/AI/EHAI-app
-trial=/private/tmp/ehai-app-backend-7k2wqx15
-cd "$trial"
-export EHAI_HOME="$trial/home"
-mkdir -p home 'one/Sample Repo' 'two/Sample Repo' 'three/Sample Repo' not-git
-git init -q 'one/Sample Repo'
-git init -q 'two/Sample Repo'
-git init -q 'three/Sample Repo'
-uv run --no-sync --project "$repo" ehai init --provider openai --model placeholder-model \
-  --credential-env EHAI_FOLDER_MISSING_KEY --worker-capacity 1 --planner-capacity 1 --port 50905 --yes
-uv run --no-sync --project "$repo" ehai up
-curl -sS -w '\nHTTP %{http_code}\n' http://127.0.0.1:50905/api/v1/local
-curl -sS -w '\nHTTP %{http_code}\n' -H 'Content-Type: application/json' \
-  -d '{"path":"/private/tmp/ehai-app-backend-7k2wqx15/one/Sample Repo"}' \
-  http://127.0.0.1:50905/api/v1/workspaces/from-folder
-curl -sS -w '\nHTTP %{http_code}\n' -H 'Content-Type: application/json' \
-  -d '{"path":"/private/tmp/ehai-app-backend-7k2wqx15/not-git"}' \
-  http://127.0.0.1:50905/api/v1/workspaces/from-folder
-```
-
-| 命令/请求 | 实际结果 |
-| --- | --- |
-| init；up | 均退出 0；私有配置生成；管理器 ready |
-| GET local | 200，data={available:true, home:"…/home", provider:"openai", model:"placeholder-model"} |
-| POST one/Sample Repo | 200，workspace_id=sample-repo，status=ready；权限三列表均空；无需初始 commit |
-| POST not-git | 422 invalid_workspace，`Workspace path must be a Git worktree root: …/not-git` |
-| 重复 POST one/Sample Repo（同上原命令） | 409 workspace_conflict，`Path is already registered as workspace_id=sample-repo` |
-| 同上 POST，分别把 path 换成 two/Sample Repo、three/Sample Repo | 各 200、ready，ID 分别 sample-repo-2、sample-repo-3 |
-| mkdir -p one/Sample Repo/subdir 后，同上 POST 该子目录 | 422，`Select the Git worktree root …/one/Sample Repo, rather than …/subdir` |
-| 同上 POST，path 换成 …/missing | 422，`Workspace path must be an existing directory: …/missing` |
-| ehai add one/Sample Repo（使用同一 home） | 退出 0，原 sample-repo: ready，CLI 同配置重加仍幂等 |
-| ehai --api-url http://127.0.0.1:50905 get-local-engine | 退出 0，显示同一可用 home/Provider/模型 |
-| ehai down | 退出 0，Manager stopped；保留登记 |
-
-手动管理器不传新参数（另一终端；不依赖 EHAI_HOME）：
-
-```sh
-uv run --no-sync --project "$repo" ehai-manager --data-dir "$trial/manual-manager" --port 50906
-curl -sS -w '\nHTTP %{http_code}\n' http://127.0.0.1:50906/api/v1/local
-curl -sS -w '\nHTTP %{http_code}\n' -H 'Content-Type: application/json' \
-  -d '{"path":"/private/tmp/ehai-app-backend-7k2wqx15/one/Sample Repo"}' \
-  http://127.0.0.1:50906/api/v1/workspaces/from-folder
-```
-
-GET 为 200，`{data:{available:false,home:null,provider:null,model:null}}`；POST 为 409，
-`Folder registration requires a manager started with ehai up`。最后 Ctrl+C 停止；日志确认
-application shutdown complete、server process finished，进程因 KeyboardInterrupt 退出 130。
-
-补充 MCP 协议检查：再次 up 显式恢复三工作区，使用安装入口 `ehai-mcp --api-url http://127.0.0.1:50905`
-连接 stdio ClientSession。工具列表包含 get_local_engine、add_workspace_folder、create_integration_branch；
-get_request_schema 能读取两个新写接口的封闭请求 Schema，get_local_engine 返回上述摘要，
-add_workspace_folder 重复已登记路径返回 isError=true 和原 409/已有 ID。然后 down 退出 0。
-首次检查误用 `-m ehai.interfaces.mcp_server`（该模块没有 `__main__` 启动入口），连接提前关闭；
-改用正式安装入口后通过，未改动 MCP 服务实现。未验证模型 Provider 接受或实际模型调用这些工具，
-也未通过 MCP 成功新增工作区或创建分支。
-
-核心分支能力由唯一产品 E2E 末尾验证：CLI create-integration-branch 创建 ehai/e2e，
-rev-parse 与整合 commit 一致；HTTP 同名重试 created=false；前后用户 HEAD、status --porcelain 一致；
-线程时间线只有一条 integration_branch_created，refs 的 run_id/integration_id/branch/commit 匹配。
-产品 E2E 使用真实 Pi 与脚本化 Provider，不验证真实模型，也不承载管理器 from-folder。
-本轮未验证前端、Windows/Linux 实跑、整合冲突或已有分支指向其他 commit 的运行路径。
-
-最终检查：Schema 生成、TS Client 生成与 npm build 均退出 0；Ruff check 通过，format --check
-为 261 files already formatted；mypy 默认平台和 win32 均为 198 source files 无问题；
-lint-imports 两条契约 kept；产品 E2E 为 1 passed（19.79 秒）；git diff --check 无输出。
-本轮无功能范围偏离：local 摘要沿用管理 API 的 data 封套，CLI add 保留原重复登记幂等语义，
-文件夹 API 按要求对重复路径返回 409。未 git commit，未改 uv.lock；前端和 desktop 的并行改动保留。

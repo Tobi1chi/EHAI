@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from typing import Protocol
 
 from ehai import JsonValue
-from ehai.hub.protocol import ResolvedHarness, StartSession, ToolResult
+from ehai.hub.protocol import NativeDecision, ResolvedHarness, StartSession, ToolResult
 
 
 @dataclass(frozen=True, slots=True)
@@ -25,10 +25,12 @@ class McpEndpoint:
 
 @dataclass(frozen=True, slots=True)
 class ToolBatch:
-    """One MCP call matched to its model message: its own key and every call that message made.
+    """One MCP call matched to native output, with the batch the protocol identifies.
 
     Keys are the harness's own call identities, in the order the model requested them, so
     the core can tell whether a finish tool came alone or last.
+    When the native protocol has no complete reply boundary, a layer reports only this
+    call and documents that the core cannot check siblings from the same reply.
     """
 
     key: str
@@ -66,6 +68,8 @@ class HarnessSession(Protocol):
 
     async def tool_result(self, result: ToolResult) -> None: ...
 
+    async def native_decision(self, action_id: str, decision: NativeDecision) -> None: ...
+
     async def cancel(self) -> None: ...
 
     async def close(self, *, abort: bool) -> None: ...
@@ -88,7 +92,7 @@ class HarnessAdapter(Protocol):
         ...
 
     async def inspect(self, settings: dict[str, JsonValue]) -> dict[str, JsonValue]:
-        """Check the installation without credentials or model requests."""
+        """Check without model requests; only the harness may read its credential store."""
         ...
 
     async def launch(self, request: StartSession, mcp: McpEndpoint) -> HarnessSession:
@@ -98,7 +102,7 @@ class HarnessAdapter(Protocol):
         (listing works; calls are refused until the prompt). Layers whose harness has no MCP
         support (such as Pi) ignore it and use their own bridge with the same semantics.
         A layer that uses it must emit ``assistant_message`` for each model message before
-        that message's tool calls run: MCP calls since the last one form one batch, which
-        the core needs to check that a finish tool came alone.
+        that message's MCP calls reach the core. Report a complete model-reply batch when
+        the protocol identifies it; otherwise report the single call and document the limit.
         """
         ...

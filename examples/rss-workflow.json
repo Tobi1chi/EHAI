@@ -1,0 +1,37 @@
+{
+  "name": "rss.review",
+  "description": "Fetch an allowed feed and ask a human to review its items; replace connector_id before saving.",
+  "expected_revision": null,
+  "inputs_schema": {
+    "type": "object",
+    "properties": {"feed_url": {"type": "string"}},
+    "required": ["feed_url"],
+    "additionalProperties": false
+  },
+  "start": "fetch",
+  "steps": [
+    {
+      "id": "fetch",
+      "type": "action",
+      "connector_id": "REPLACE_WITH_REGISTERED_RSS_CONNECTOR_ID",
+      "action": "feed.fetch",
+      "action_version": "1",
+      "inputs": {"feed_url": {"ref": "input.feed_url"}, "max_items": {"value": 50}},
+      "next": "review"
+    },
+    {
+      "id": "review",
+      "type": "human",
+      "question": "Have you reviewed these fetched feed items?",
+      "subject": {"items": {"ref": "steps.fetch.items"}},
+      "on_approve": "end",
+      "on_reject": "end"
+    },
+    {
+      "id": "end",
+      "type": "end",
+      "outcome": "review_finished",
+      "result": {"review": {"ref": "steps.review"}}
+    }
+  ]
+}

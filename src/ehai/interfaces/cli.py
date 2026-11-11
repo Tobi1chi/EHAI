@@ -356,6 +356,14 @@ def create_parser() -> argparse.ArgumentParser:
     register_backend_commands(commands)
 
     initialize = commands.add_parser("init", help="configure the local EHAI engine")
+    initialize.add_argument("--harness", choices=("pi", "codex"))
+    initialize.add_argument("--codex-executable")
+    initialize.add_argument("--codex-home")
+    initialize.add_argument("--codex-model")
+    initialize.add_argument(
+        "--codex-reasoning-effort",
+        choices=("default", "off", "minimal", "low", "medium", "high", "xhigh", "max"),
+    )
     initialize.add_argument("--provider")
     initialize.add_argument("--model")
     initialize.add_argument(
@@ -375,9 +383,10 @@ def create_parser() -> argparse.ArgumentParser:
     doctor.add_argument(
         "--probe",
         action="store_true",
-        help="start one Pi session through a local Hub to confirm the model settings (no prompt)",
+        help="Pi only: start one session through a local Hub to confirm settings (no prompt)",
     )
     add = commands.add_parser("add", help="register and start a workspace using local defaults")
+    add.add_argument("--harness", choices=("pi", "codex"))
     add.add_argument("path", type=Path, nargs="?", default=Path.cwd())
     add.add_argument("--workspace-id")
     add.add_argument("--allow-command", action="append", default=[], metavar="JSON_ARGV")
@@ -999,6 +1008,7 @@ def _dispatch_query(args: argparse.Namespace) -> JsonValue:
     queries = QueryService(
         read_session_factory=database.read_session,
         builtin_session_reader=SQLiteAgentTraceStore(database),
+        artifact_store=FilesystemArtifactStore(Path(args.artifacts)),
     )
     if args.command == "list-inbox":
         return public_json_value(

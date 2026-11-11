@@ -1,3 +1,4 @@
+import { useLifeBinding } from "../../lib/life-binding";
 import { useState } from "react";
 import { ErrorBlock, QueryView } from "../../components/Status";
 import { useToast } from "../../components/Toast";
@@ -5,7 +6,6 @@ import { core, type ConnectorCall, type ConnectorConnection } from "../../lib/ap
 import { useApp, useQuery } from "../../lib/app";
 import { ago, json, shortId } from "../../lib/format";
 import { isLife, projectRows } from "../../lib/overview";
-import { usePrefs } from "../../lib/prefs";
 import { useSubmission } from "../../lib/submit";
 
 type Row = {
@@ -51,15 +51,15 @@ function useAllConnectors() {
 }
 
 export function ConnectionsPage() {
-  const prefs = usePrefs();
+  const { binding } = useLifeBinding();
   const connectors = useAllConnectors();
   const [selected, setSelected] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
   const rows = connectors.data ?? [];
   const current = rows.find((r) => r.connector.connector_id === selected) ?? null;
   const groups = [
-    { title: "生活", rows: rows.filter((r) => isLife(prefs.life, r.workspaceId, r.projectId)) },
-    { title: "工作", rows: rows.filter((r) => !isLife(prefs.life, r.workspaceId, r.projectId)) },
+    { title: "生活", rows: rows.filter((r) => isLife(binding, r.workspaceId, r.projectId)) },
+    { title: "工作", rows: rows.filter((r) => !isLife(binding, r.workspaceId, r.projectId)) },
   ];
 
   return (

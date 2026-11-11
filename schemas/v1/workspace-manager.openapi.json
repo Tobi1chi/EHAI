@@ -5,6 +5,172 @@
     "version": "1"
   },
   "paths": {
+    "/api/v1/assistant": {
+      "get": {
+        "summary": "Get Assistant",
+        "operationId": "getAssistant",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AssistantResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/assistant/messages": {
+      "post": {
+        "summary": "Send Assistant Message",
+        "operationId": "sendAssistantMessage",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SendAssistantMessage"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AssistantResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Assistant unavailable or busy",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/assistant/reset": {
+      "post": {
+        "summary": "Reset Assistant",
+        "operationId": "resetAssistant",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AssistantResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Assistant unavailable or busy",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/life-binding": {
+      "get": {
+        "summary": "Get Life Binding",
+        "operationId": "getLifeBinding",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LifeBindingResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "summary": "Set Life Binding",
+        "operationId": "setLifeBinding",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LifeBindingData"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LifeBindingResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/attention": {
+      "get": {
+        "summary": "Attention",
+        "operationId": "getAttention",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AttentionResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/local": {
       "get": {
         "summary": "Local Engine",
@@ -398,6 +564,440 @@
         ],
         "title": "AddWorkspaceFolderRequest"
       },
+      "AssistantMessage": {
+        "properties": {
+          "message_id": {
+            "type": "string",
+            "title": "Message Id"
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "user",
+              "assistant"
+            ],
+            "title": "Role"
+          },
+          "text": {
+            "type": "string",
+            "title": "Text"
+          },
+          "refs": {
+            "items": {
+              "$ref": "#/components/schemas/AssistantRef"
+            },
+            "type": "array",
+            "title": "Refs"
+          },
+          "outcome": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "reply",
+                  "text_only",
+                  "failed"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Outcome"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "message_id",
+          "role",
+          "text",
+          "refs",
+          "outcome",
+          "error",
+          "created_at"
+        ],
+        "title": "AssistantMessage"
+      },
+      "AssistantRef": {
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "thread",
+              "run",
+              "inbox",
+              "diff",
+              "life_task"
+            ],
+            "title": "Kind"
+          },
+          "workspace_id": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Workspace Id"
+          },
+          "object_id": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Object Id"
+          },
+          "inbox_kind": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "intervention",
+                  "human_check",
+                  "note",
+                  "workflow_confirmation",
+                  "workflow_reconciliation",
+                  "plan_approval"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Inbox Kind"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "kind",
+          "workspace_id",
+          "object_id",
+          "inbox_kind"
+        ],
+        "title": "AssistantRef"
+      },
+      "AssistantResponse": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/AssistantView"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "AssistantResponse"
+      },
+      "AssistantView": {
+        "properties": {
+          "available": {
+            "type": "boolean",
+            "title": "Available"
+          },
+          "unavailable_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unavailable Reason"
+          },
+          "harness": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "pi",
+                  "codex"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Harness"
+          },
+          "model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model"
+          },
+          "busy": {
+            "type": "boolean",
+            "title": "Busy"
+          },
+          "messages": {
+            "items": {
+              "$ref": "#/components/schemas/AssistantMessage"
+            },
+            "type": "array",
+            "title": "Messages"
+          }
+        },
+        "type": "object",
+        "required": [
+          "available",
+          "unavailable_reason",
+          "harness",
+          "model",
+          "busy",
+          "messages"
+        ],
+        "title": "AssistantView"
+      },
+      "AttentionData": {
+        "properties": {
+          "observed_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Observed At"
+          },
+          "life_binding": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LifeBinding"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "needs_you": {
+            "items": {
+              "$ref": "#/components/schemas/AttentionItem"
+            },
+            "type": "array",
+            "title": "Needs You"
+          },
+          "in_progress": {
+            "items": {
+              "$ref": "#/components/schemas/AttentionItem"
+            },
+            "type": "array",
+            "title": "In Progress"
+          },
+          "done": {
+            "items": {
+              "$ref": "#/components/schemas/AttentionItem"
+            },
+            "type": "array",
+            "title": "Done"
+          },
+          "done_truncated": {
+            "type": "boolean",
+            "title": "Done Truncated"
+          },
+          "unavailable": {
+            "items": {
+              "$ref": "#/components/schemas/AttentionUnavailable"
+            },
+            "type": "array",
+            "title": "Unavailable"
+          },
+          "notes": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Notes"
+          },
+          "consistent_across_workspaces": {
+            "type": "boolean",
+            "const": false,
+            "title": "Consistent Across Workspaces",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "observed_at",
+          "life_binding",
+          "needs_you",
+          "in_progress",
+          "done",
+          "done_truncated",
+          "unavailable",
+          "notes"
+        ],
+        "title": "AttentionData"
+      },
+      "AttentionDecision": {
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "intervention",
+              "human_check",
+              "note",
+              "workflow_confirmation",
+              "workflow_reconciliation",
+              "plan_approval"
+            ],
+            "title": "Kind"
+          },
+          "request_id": {
+            "type": "string",
+            "title": "Request Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "kind",
+          "request_id"
+        ],
+        "title": "AttentionDecision"
+      },
+      "AttentionItem": {
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "thread",
+              "inbox",
+              "life_task"
+            ],
+            "title": "Kind"
+          },
+          "workspace_id": {
+            "type": "string",
+            "title": "Workspace Id"
+          },
+          "project_id": {
+            "type": "string",
+            "title": "Project Id"
+          },
+          "object_id": {
+            "type": "string",
+            "title": "Object Id"
+          },
+          "label": {
+            "type": "string",
+            "enum": [
+              "life",
+              "work"
+            ],
+            "title": "Label"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "state": {
+            "type": "string",
+            "title": "State"
+          },
+          "next_action": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Action"
+          },
+          "run_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Run Id"
+          },
+          "at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "At"
+          },
+          "decisions": {
+            "items": {
+              "$ref": "#/components/schemas/AttentionDecision"
+            },
+            "type": "array",
+            "title": "Decisions"
+          }
+        },
+        "type": "object",
+        "required": [
+          "kind",
+          "workspace_id",
+          "project_id",
+          "object_id",
+          "label",
+          "title",
+          "state",
+          "next_action",
+          "run_id",
+          "at"
+        ],
+        "title": "AttentionItem"
+      },
+      "AttentionResponse": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/AttentionData"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "AttentionResponse"
+      },
+      "AttentionUnavailable": {
+        "properties": {
+          "workspace_id": {
+            "type": "string",
+            "title": "Workspace Id"
+          },
+          "code": {
+            "type": "string",
+            "title": "Code"
+          },
+          "message": {
+            "type": "string",
+            "title": "Message"
+          }
+        },
+        "type": "object",
+        "required": [
+          "workspace_id",
+          "code",
+          "message"
+        ],
+        "title": "AttentionUnavailable"
+      },
       "ErrorDetail": {
         "properties": {
           "code": {
@@ -479,6 +1079,59 @@
           }
         ]
       },
+      "LifeBinding": {
+        "properties": {
+          "workspace_id": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9_-]{0,63}$",
+            "title": "Workspace Id"
+          },
+          "project_id": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Project Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "workspace_id",
+          "project_id"
+        ],
+        "title": "LifeBinding"
+      },
+      "LifeBindingData": {
+        "properties": {
+          "binding": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LifeBinding"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "binding"
+        ],
+        "title": "LifeBindingData"
+      },
+      "LifeBindingResponse": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/LifeBindingData"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "LifeBindingResponse"
+      },
       "LocalEngineData": {
         "properties": {
           "available": {
@@ -542,6 +1195,21 @@
       },
       "PublicRuntimeSettings": {
         "properties": {
+          "harness_kind": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "pi",
+                  "codex"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Harness Kind"
+          },
           "worker_kind": {
             "type": "string",
             "enum": [
@@ -705,6 +1373,21 @@
       },
       "RuntimeSettings": {
         "properties": {
+          "harness_kind": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "pi",
+                  "codex"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Harness Kind"
+          },
           "worker_kind": {
             "type": "string",
             "enum": [
@@ -814,7 +1497,8 @@
                 "type": "null"
               }
             ],
-            "title": "Pi Config Path"
+            "title": "Pi Config Path",
+            "description": "Private harness file for the selected kind; legacy field name."
           },
           "allowed_commands": {
             "items": {
@@ -897,6 +1581,22 @@
         "type": "object",
         "title": "RuntimeSettings",
         "description": "Fixed executable assembly; this profile never grants a Run execution authorization."
+      },
+      "SendAssistantMessage": {
+        "properties": {
+          "text": {
+            "type": "string",
+            "maxLength": 4000,
+            "minLength": 1,
+            "title": "Text"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "text"
+        ],
+        "title": "SendAssistantMessage"
       },
       "ValidationError": {
         "properties": {

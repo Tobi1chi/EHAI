@@ -21,7 +21,7 @@ EHAI（Enhanced Human-Agent Interface）是一个可本地部署的 Agent 规划
 - **多个工作区**：本机 Workspace Manager 托管独立核心，统一查询和路由；各工作区可配置自己的 Planner 与并发容量。见[多工作区用法](docs/WORKSPACE_MANAGER.md)。
 - **生活事务**：项目内录入/确认待办、完成状态管理，手动或定时回顾；不需要 Git 或模型调用。见[生活 Workflow](docs/WORKFLOWS.md)。
 - **外部 Connector 与实验**：独立进程经标准 HTTP 协议接入（Google Calendar 首版，真实账号未授权验证），
-  以及 Jev 双反馈环只读路由、固定 Pi 回退和向独立 Project 转交修改。见[Connector](docs/CONNECTOR_PROTOCOL.md)、[实验说明](docs/DUAL_FEEDBACK_EXPERIMENT.md)。
+  以及 Jev 双反馈环只读路由、固定 Pi 回退和向独立 Project 转交修改（双反馈环 11-05 起降为隐藏实验）。见[Connector](docs/CONNECTOR_PROTOCOL.md)、[实验说明](docs/DUAL_FEEDBACK_EXPERIMENT.md)。
 
 各项能力的验证程度见 [当前状态](docs/STATUS.md)。
 
@@ -71,7 +71,7 @@ $env:OPENAI_API_KEY = Read-Host '模型 API Key' -MaskInput
 `init` 从本仓库解析锁定的 Pi CLI，用 PATH 上的 Node 并校验版本，生成私有 Pi settings/models。
 已有配置会显示差异并要求确认，`--yes` 使用默认值并跳过确认。已有私有 Pi settings/models 保留。
 模型 ID 必须是所选 Provider 支持的值；推理强度默认 `high`，必须是该模型确切支持的级别，否则 Pi 会改用其他级别而 EHAI 拒绝启动会话；模型没有 high 档时用 `--reasoning-effort` 另选，或用 `default` 交给模型自己决定；自定义网关仍需配置私有 `pi/models.json`，见
-[安装与私有 Pi 配置](docs/USAGE.md#安装与私有-pi-配置)。
+[安装与私有 Pi 配置](docs/USAGE.md#安装与私有-harness-配置)。
 
 | 环境变量 | 含义 |
 | --- | --- |
@@ -132,7 +132,7 @@ C:/private/ehai/
 
 Provider 和模型 ID 必须是当前 Pi 配置实际支持的值。自定义模型的配置格式见安装后
 `agent-backends/pi/node_modules/@earendil-works/pi-coding-agent/docs/models.md`；
-EHAI 的配置说明见 [使用指南](docs/USAGE.md#安装与私有-pi-配置)。
+EHAI 的配置说明见 [使用指南](docs/USAGE.md#安装与私有-harness-配置)。
 
 在启动宿主的终端设置凭证。配套示例使用的环境变量为：
 
@@ -331,13 +331,13 @@ Web 工作台已实现，目前只有无模型验证。
 ## 文档与参与开发
 
 全部文档按角色索引在 [docs/README](docs/README.md)：使用者从 [使用指南](docs/USAGE.md) 开始，
-开发者从 [AGENTS](AGENTS.md) 与 [重构与推进计划](docs/REFACTOR_PLAN.md) 开始。
+开发者从 [AGENTS](AGENTS.md) 与 [开发与验收规则](docs/DEVELOPMENT_GUIDELINES.md) 开始。
 
 Python 核心位于 `src/ehai/`，TypeScript Client 位于 `control-plane/`。
 提交问题时，请提供脱敏的版本、入口命令、预期结果、实际结果和相关错误；
 不要附带 API Key、私有配置或未经清理的模型轨迹。
 
-常用检查（CI 会执行同样的命令，见 [重构与推进计划](docs/REFACTOR_PLAN.md)）：
+常用检查（CI 会执行同样的命令，见 [开发与验收规则](docs/DEVELOPMENT_GUIDELINES.md)）：
 
 ```powershell
 uv run ruff check .

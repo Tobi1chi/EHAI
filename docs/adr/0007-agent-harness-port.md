@@ -154,9 +154,41 @@ harness 不是沙箱。工作区隔离（EHAI 拥有的 Git worktree）、凭证
   取消、恢复、权限翻译与拒绝。结果在 [EVIDENCE](../EVIDENCE.md) 记一行。
 - 不建立永久多 harness 测试矩阵（AGENTS.md 规定）；如需放宽由用户决定。
 
+### 11. 保留原生工具的 harness（2026-11-07 补充）
+
+依据 2026-11-06 用户决定 X1（[Codex harness 设计](../CODEX_HARNESS_DESIGN.md#2-已定的决定2026-11-06用户)）：
+有的 harness 保留自己的原生 shell 与改文件工具，由 EHAI 按授权限制，而不是关闭。第 5 条
+`tools.native.restrictable` 的“按授权限制”一支由此落实；能关闭原生工具的 harness（Pi、Claude Code）不变。
+
+| 能力 | 含义 |
+| --- | --- |
+| `tools.native.kept` | 原生文件/shell 工具保持开启，由 harness 的沙箱和审批按授权限制 |
+| `tools.native.approval` | 需要审批的每个原生操作都经 Hub 交给核心逐项批准或拒绝 |
+
+声明 `tools.native.kept` 的 harness 必须同时声明 `tools.native.approval` 与 `tools.native.restrictable`，否则核心拒绝启动。对这类 harness：
+
+- **工具清单。** 核心不提供被原生工具替代的写工具（`workspace_write/patch/apply_patch/delete/move/mkdir`）与
+  `shell_*`，避免两套同类工具；读取工具（`workspace_list/search/read`）、精确 argv 的 `command`、`git` 与控制工具
+  （成果读取、网页与 MCP 提供者、skills、会话工具、`submit_handoff`、结束工具及各角色的规划/审查工具）照旧。
+  完成仍只认结束工具。（11-07 修订：最初也去掉读取、`command` 与 `git`，真实试用中被告知"不用 Shell"的 Worker
+  因此无法读取工作区而停下，见 [Codex 运行记录](../records/codex-harness.md)。）
+- **原生策略。** `StartSession` 带 `native_policy`：`sandbox` 为 `read-only`（角色不写工作区）或 `workspace-write`
+  （可写范围只有该 Attempt 的工作区），`network` 恒为 `false`。兼容层不能落实时拒绝启动（第 7 条），
+  不使用完全访问。
+- **逐项审批。** 兼容层把 harness 的审批请求转为 `native_action` 事件（命令、文件改动、权限提升或其他），
+  核心按该 Attempt 的执行授权决定并经 Hub 回传：
+  - 文件改动：角色可写工作区，且全部路径在工作区内、不在受保护路径中，才批准；
+  - 命令：工作目录在工作区内，且满足其一才批准：节点有可用 Shell；与某条 `allowed_commands` 逐词相同；
+    `git` 子命令属于已授予的 `git_permissions`；沙箱为 `read-only`；
+  - 权限提升（扩大可写范围、开网络等）与无法识别的请求：一律拒绝。授权外、需要用户决定的事走现有 Intervention，
+    不在审批里决定。
+- **轨迹。** 每个审批请求与决定、每个已执行的原生操作（含 harness 自行放行的只读命令，它们仍在沙箱内）
+  都由核心记入角色轨迹；Hub 只转交，不决定。
+- **成果。** 核心不再亲自执行这类角色的文件与 shell 操作，成果仍由核心按 Attempt 工作区与 Git 收集。
+
 ## 迁移顺序
 
-每步只改结构、保持行为，产品 E2E 全程通过；执行记录写在 [重构计划](../REFACTOR_PLAN.md)。
+每步只改结构、保持行为，产品 E2E 全程通过；执行记录写在 [records/refactor](../records/refactor.md)。
 
 1. 抽出共用部分：规划图结构离开 Codex 模块，脱敏函数改为中性名称（重构第二步，已完成）。
 2. 删除 Codex 后端与运行中 Worker 请求路径；保留历史记录可读与已授权配置指纹（重构第二步，已完成）。

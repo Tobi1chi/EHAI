@@ -1,0 +1,9 @@
+{
+  "kind": "codex",
+  "version": "app-server",
+  "settings": {
+    "executable": "/replace-with/absolute/path/to/codex",
+    "codex_home": "/replace-with/absolute/private/ehai/codex",
+    "environment_names": []
+  }
+}

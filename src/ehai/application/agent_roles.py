@@ -15,6 +15,7 @@ from ehai.application.agent_contracts import (
     ToolDefinition,
     ToolExecutor,
     ToolHandler,
+    ToolRejectionHandler,
     ToolSet,
 )
 from ehai.application.agent_trace import AgentTrace, AgentTraceEvent
@@ -49,6 +50,7 @@ class AgentRoleConfig:
     permissions: frozenset[str] = frozenset()
     context_builder: ContextBuilder = _identity_context
     final_tool_requires_only: bool = True
+    allow_native_commands: bool = True
 
     def __post_init__(self) -> None:
         if not isinstance(self.role, AgentRole):
@@ -67,8 +69,24 @@ class AgentRoleConfig:
             raise ValueError("finish_tool must belong to the Role Tool Profile")
         if not isinstance(self.final_tool_requires_only, bool):
             raise ValueError("final_tool_requires_only must be a boolean")
+        if not isinstance(self.allow_native_commands, bool):
+            raise ValueError("allow_native_commands must be a boolean")
         object.__setattr__(self, "tool_names", names)
         object.__setattr__(self, "permissions", frozenset(self.permissions))
+
+
+class NativeAuthorization(Protocol):
+    """Read-only access to the same authorization used by the host tool handlers."""
+
+    @property
+    def allow_workspace_write(self) -> bool: ...
+
+    @property
+    def has_shell(self) -> bool: ...
+
+    def allows_command(self, argv: tuple[str, ...]) -> bool: ...
+
+    def allows_git(self, argv: tuple[str, ...]) -> bool: ...
 
 
 class ToolRegistry:
@@ -78,12 +96,23 @@ class ToolRegistry:
         self,
         definitions: tuple[ToolDefinition, ...],
         handlers: Mapping[str, ToolHandler],
+        *,
+        native_authorization: NativeAuthorization | None = None,
+        rejection_handlers: Mapping[str, ToolRejectionHandler] | None = None,
     ) -> None:
         catalog = ToolSet(definitions)
         if set(handlers) != {definition.name for definition in catalog.definitions}:
             raise ValueError("ToolRegistry handlers must exactly match its definitions")
         self._definitions = {definition.name: definition for definition in catalog.definitions}
         self._handlers = dict(handlers)
+        self._rejection_handlers = dict(rejection_handlers or {})
+        if not self._rejection_handlers.keys() <= self._handlers.keys():
+            raise ValueError("Rejection handlers must belong to the ToolRegistry")
+        self._native_authorization = native_authorization
+
+    @property
+    def native_authorization(self) -> NativeAuthorization | None:
+        return self._native_authorization
 
     def freeze(self, config: AgentRoleConfig) -> tuple[ToolSet, ToolExecutor]:
         try:
@@ -95,7 +124,15 @@ class ToolRegistry:
             raise ValueError("Role finish_tool must be marked ends_turn")
         tool_set = ToolSet(definitions)
         handlers = {name: self._handlers[name] for name in config.tool_names}
-        return tool_set, ToolExecutor(tool_set, handlers)
+        return tool_set, ToolExecutor(
+            tool_set,
+            handlers,
+            rejection_handlers={
+                name: handler
+                for name, handler in self._rejection_handlers.items()
+                if name in config.tool_names
+            },
+        )
 
 
 @dataclass(frozen=True, slots=True)

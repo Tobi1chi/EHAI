@@ -171,6 +171,7 @@ def install_routine_scheduler(app: FastAPI, service: WorkflowService) -> None:
             while not stop.is_set():
                 try:
                     await asyncio.to_thread(service.tick)
+                    await service.agents.tick()
                 except Exception:
                     service.last_error = (
                         "Workflow tick failed; individual transactions remain atomic"
@@ -190,6 +191,7 @@ def install_routine_scheduler(app: FastAPI, service: WorkflowService) -> None:
         stop.set()
         if task is not None:
             await task
+        await service.agents.close()
 
     app.router.add_event_handler("startup", start)
     app.router.add_event_handler("shutdown", shutdown)
