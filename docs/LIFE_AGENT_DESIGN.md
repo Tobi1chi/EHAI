@@ -1,6 +1,6 @@
 # 阶段 ⑤：由 Agent 执行生活事务（设计）
 
-更新：2026-11-10。状态：**用户 11-10 批准**。本页是阶段 ⑤ 的目标设计，不代表已实现（见 [STATUS](STATUS.md)）。
+更新：2026-11-11。状态：**用户 11-10 批准**；M1–M3 同日实现，等用户验收（[阶段 ⑤ 记录](records/stage5-life-agent.md)）。本页是阶段 ⑤ 的目标设计，实现状态以 [STATUS](STATUS.md) 为准。
 依据：[ROADMAP 阶段 ⑤ 与推进规则](ROADMAP.md#阶段)、[PRODUCT_SCOPE 第 6 节](PRODUCT_SCOPE.md#6-生活待办流程与外部服务)
 （N12、E67、E68、E69、E74、E75，C7、S1）。授权与决定卡片沿用 [AUTHORIZATION_DESIGN](AUTHORIZATION_DESIGN.md)。
 

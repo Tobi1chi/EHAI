@@ -10,6 +10,7 @@
 | [stage1-long-task](stage1-long-task.md) | 阶段 ① 长任务试用：RSS Connector、过程调整、换 harness 接续 |
 | [stage2-assistant](stage2-assistant.md) | 阶段 ② 富元素助手与单一队列：经 EHAI 由 Codex 实现，Codex 与 Pi 上的验收 |
 | [stage4-authorization](stage4-authorization.md) | 阶段 ④ 统一授权与生活接入：决定视图、写授权绑定、Decisions 订阅摘要、决定卡片与通知 |
+| [stage5-life-agent](stage5-life-agent.md) | 阶段 ⑤ 由 Agent 执行生活事务：Agent 查询步骤、12306 Connector、出行示例与记录页启动流程 |
 | [codex-harness](codex-harness.md) | Codex 兼容层实现、无模型诊断、录制回放与验证限制 |
 | [planner-constraints](planner-constraints.md) | Planner 授权与验收约束的规划实验与验收 |
 | [process-outputs](process-outputs.md) | 过程调整读取已完成成果的验收 |

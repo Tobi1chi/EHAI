@@ -175,7 +175,8 @@ inputs_schema 声明 properties 时引用其中没有的输入，或引用不是
 核心宿主须配置 Worker 使用的 Hub harness、`agent_model` 与可选 `agent_reasoning_effort`
 （CLI 为 `--harness-config` / `--pi-config`、`--agent-model`、`--agent-reasoning-effort`）。
 未配置时步骤与 Run 失败，原因为 `Agent delegation is not configured on this host`。
-真实 Codex/Pi 查询验收仍由团队负责人执行；静态检查不证明模型已跑通。
+11-10 在 Codex（RSS `feed.fetch_many`、`rail.trip`）与 Pi DeepSeek（`rail.trip`）上经正常入口跑通，
+见 [阶段 ⑤ 记录](records/stage5-life-agent.md)；参数被拒、次数用尽与中断后重启只读代码核对，未实跑。
 
 字段如下（另有通用的 `type: "agent"`、`id`、`next`）：
 
@@ -409,7 +410,8 @@ uv run ehai --api-url http://127.0.0.1:8787 get-workflow-execution --workflow-ru
 中断的查询显示“已中断”。参数摘要使用车站名称、日期、车型与站序，不展示车次内部编号或席别编码。
 示例要求结果使用旅客可读的中文（如“至少 21 张”），不展示工具字段名或车站电报码。
 方案是查询时刻的信息，不保证余票或票价在购票时不变；
-真实 12306 数据在 Codex/Pi 上的页面验收与产品 E2E 由团队负责人另行执行，静态构建不证明真实查询成功。
+11-10 从记录页以北京→上海、11-20 07:00–10:00 在 Codex 与 Pi 上各跑通一次，三个方案与 12306 直查一致，
+见 [阶段 ⑤ 记录](records/stage5-life-agent.md#m3-出行示例与页面)。
 
 ## 执行记录
 

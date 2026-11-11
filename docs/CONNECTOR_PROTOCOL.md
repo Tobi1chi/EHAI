@@ -398,8 +398,8 @@ route get 使用位置参数 train_no、from、to，再加 `--date`（`catbus 12
 
 catbus 的这些 12306 查询免登录、只读；Connector 不登录、不下单、不付款，也不写入日历或待办。
 余票和价格是查询时信息，不是锁票或购票承诺，购票由用户本人在 12306 完成。
-本实现按设计中的 catbus 样本构造；真实 catbus/12306 验收由团队负责人通过正常入口执行，
-静态检查与 Schema 生成不代表已验证真实服务。
+11-10 经正常入口对真实 catbus 逐个调用五个动作，输出与 catbus 直查一致，未知车站与过期日期按 catbus 原因失败；
+catbus 超时、缺失 catbus 的 init 与截断上限未实跑，见 [阶段 ⑤ 记录](records/stage5-life-agent.md#m2-12306-connector)。
 
 ## 验证与实际边界
 
