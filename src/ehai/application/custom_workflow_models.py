@@ -97,6 +97,36 @@ class ActionStep(WorkflowModel):
     next: StepId
 
 
+class AgentTool(WorkflowModel):
+    connector_id: str
+    action: Annotated[str, StringConstraints(pattern=r"^[a-zA-Z0-9_.-]{1,100}$")]
+    action_version: Annotated[str, StringConstraints(min_length=1, max_length=300)]
+
+
+class AgentStep(WorkflowModel):
+    """Delegate one bounded, read-only query task outside a Git workspace."""
+
+    type: Literal["agent"]
+    id: StepId
+    instruction: Value
+    tools: list[AgentTool] = Field(min_length=1, max_length=10)
+    output_schema: dict[str, JsonValue]
+    max_tool_calls: int = Field(default=30, ge=1, le=100, strict=True)
+    timeout_seconds: int = Field(default=900, ge=60, le=3600, strict=True)
+    next: StepId
+
+    @model_validator(mode="after")
+    def unique_tools(self) -> AgentStep:
+        keys = [(tool.connector_id, tool.action) for tool in self.tools]
+        if len(keys) != len(set(keys)):
+            raise ValueError("Agent tools must be unique by connector_id and action")
+        if isinstance(self.instruction, LiteralValue) and not isinstance(
+            self.instruction.value, str
+        ):
+            raise ValueError("Agent instruction literal must be a string")
+        return self
+
+
 class ConditionCase(WorkflowModel):
     when: Condition
     next: StepId
@@ -166,7 +196,7 @@ class EndStep(WorkflowModel):
 
 
 Step = Annotated[
-    ActionStep | ConditionStep | HumanStep | WaitStep | EndStep,
+    ActionStep | AgentStep | ConditionStep | HumanStep | WaitStep | EndStep,
     Field(discriminator="type"),
 ]
 

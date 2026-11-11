@@ -67,6 +67,7 @@ from ehai.infrastructure.sqlite.routing import SQLiteRoutingStore
 from ehai.infrastructure.sqlite.workflows import SQLiteWorkflowStore
 from ehai.infrastructure.workers import PiAgentConnector, WorkerAdapterConnector
 from ehai.infrastructure.workers.code import CodeRuntimeConnector
+from ehai.infrastructure.workflow_agent import HubAgentDelegation
 from ehai.infrastructure.workspaces import WorkspaceManager
 from ehai.interfaces.agent_backends import resolve_planner_kind
 from ehai.interfaces.api import create_app
@@ -229,6 +230,19 @@ def create_local_app(
         ),
     )
     builtin_sessions = SQLiteAgentTraceStore(query_database)
+    if harness is not None and agent_model is not None and agent_model.strip():
+        workflows.agents.delegation = HubAgentDelegation(
+            HubRoleRunner(
+                builtin_sessions,
+                harness=harness,
+                state_root=(
+                    artifact_root.resolve() / "agent-step-state" if harness.kind == "pi" else None
+                ),
+            ),
+            artifact_root,
+            agent_model,
+            agent_reasoning_effort,
+        )
     session_mailbox = SessionMailbox(SQLiteSessionMailboxRepository(query_database))
     query_service = QueryService(
         read_session_factory=query_database.read_session,

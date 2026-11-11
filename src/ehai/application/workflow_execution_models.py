@@ -48,7 +48,7 @@ class WorkflowInvocationRecord(WorkflowModel):
     invocation_id: str
     workflow_run_id: str
     step_execution_id: str
-    kind: Literal["local", "connector"]
+    kind: Literal["local", "connector", "agent"]
     action: WorkflowContractRef
     status: Literal["prepared", "completed", "failed", "unknown"]
     idempotency_key: str
@@ -60,13 +60,15 @@ class WorkflowInvocationRecord(WorkflowModel):
     completed_at: datetime | None
     # The connector call that carries a connector invocation; its own record is the receipt.
     connector_call_id: str | None = None
+    # Per-attempt delegation audit; absent on existing invocation kinds.
+    agent: dict[str, JsonValue] | None = None
 
 
 class WorkflowWaitRecord(WorkflowModel):
     wait_id: str
     workflow_run_id: str
     step_execution_id: str
-    kind: Literal["human", "time", "event"]
+    kind: Literal["human", "time", "event", "agent"]
     status: Literal["waiting", "resolved"]
     condition: dict[str, JsonValue]
     resolution: dict[str, JsonValue] | None

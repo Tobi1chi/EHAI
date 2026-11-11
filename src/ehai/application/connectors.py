@@ -134,8 +134,21 @@ def queue_connector_call(
     *,
     authorize_write: bool,
     authorization: ConnectorAuthorization | None = None,
+    idempotency_key: str | None = None,
 ) -> ConnectorCall:
     """Store the call intent; the connector's own process claims it and performs the I/O."""
+    fingerprint = json_dumps(
+        {
+            "action": action_name,
+            "version": action_version,
+            "inputs": inputs,
+            "authorize_write": authorize_write,
+        }
+    )
+    if idempotency_key is not None:
+        old = _receipt(tx, "queue:" + connector_id, idempotency_key, fingerprint)
+        if old is not None:
+            return tx.call(str(old["call_id"]))[0]
     connection, _ = tx.connection(connector_id)
     action = next(
         (
@@ -168,6 +181,10 @@ def queue_connector_call(
     )
     tx.save_call(call, None, None)
     ConnectorService._call_event(tx, call)
+    if idempotency_key is not None:
+        _remember(
+            tx, "queue:" + connector_id, idempotency_key, fingerprint, call.model_dump(mode="json")
+        )
     return call
 
 

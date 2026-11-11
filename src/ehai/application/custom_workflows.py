@@ -29,6 +29,7 @@ from ehai.application.connectors import (
 from ehai.application.custom_workflow_models import (
     REF_PATTERN,
     ActionStep,
+    AgentStep,
     AllCondition,
     AnyCondition,
     CompareCondition,
@@ -116,6 +117,8 @@ def _step_refs(step: Step) -> list[str]:
     values: list[Value] = []
     if isinstance(step, ActionStep):
         values = list(step.inputs.values())
+    elif isinstance(step, AgentStep):
+        values = [step.instruction]
     elif isinstance(step, HumanStep):
         values = list(step.subject.values())
         if step.grant is not None and step.grant.limit is not None:
@@ -209,8 +212,55 @@ def validate_definition(
                 problems.append(f"step {node} reads end step {source}")
         if isinstance(step, ActionStep):
             _check_action(step, steps, connections, dominators, reachable, problems)
+        elif isinstance(step, AgentStep):
+            _check_agent(step, connections, problems)
     if problems:
         raise ValueError("Invalid workflow definition: " + "; ".join(problems))
+
+
+def agent_tool_name(action: str) -> str:
+    return re.sub(r"[^a-zA-Z0-9_]", "_", action)
+
+
+def _check_agent(
+    step: AgentStep,
+    connections: Mapping[str, ConnectorConnection],
+    problems: list[str],
+) -> None:
+    names = {"submit_result"}
+    try:
+        validate_connector_schema(step.output_schema)
+    except ValueError as error:
+        problems.append(f"step {step.id} output_schema: {error}")
+    for tool in step.tools:
+        name = agent_tool_name(tool.action)
+        if name in names:
+            problems.append(f"step {step.id} action {tool.action}: duplicate or reserved tool name")
+        names.add(name)
+        connection = connections.get(tool.connector_id)
+        action = (
+            None
+            if connection is None
+            else next(
+                (
+                    a
+                    for a in connection.manifest.actions
+                    if a.name == tool.action and a.version == tool.action_version
+                ),
+                None,
+            )
+        )
+        if action is None:
+            problems.append(
+                f"step {step.id} action {tool.action}: unregistered connector/action/version"
+            )
+            continue
+        if not action.read_only:
+            problems.append(f"step {step.id} action {tool.action}: agent tools must be read-only")
+        try:
+            validate_connector_schema(action.input_schema)
+        except ValueError as error:
+            problems.append(f"step {step.id} action {tool.action}: {error}")
 
 
 def _check_action(
@@ -506,6 +556,9 @@ class _Execution:
                 if isinstance(step, ActionStep):
                     self._start_action(step)
                     return
+                if isinstance(step, AgentStep):
+                    self._start_agent(step)
+                    return
                 if isinstance(step, HumanStep):
                     self._start_human(step)
                     return
@@ -516,6 +569,54 @@ class _Execution:
             except _StepError as error:
                 self._fail(step, None, str(error))
                 return
+
+    def _start_agent(self, step: AgentStep) -> None:
+        value = self._value(step.instruction)
+        instruction = value if isinstance(value, str) else json_dumps(value)
+        execution = self._new_step(step, "waiting", {"instruction": instruction}, None)
+        invocation = WorkflowInvocationRecord(
+            invocation_id=str(new_id()),
+            workflow_run_id=self.record.workflow_run_id,
+            step_execution_id=execution.step_execution_id,
+            kind="agent",
+            action=WorkflowContractRef(kind="action", name="agent", version="1"),
+            status="prepared",
+            idempotency_key=execution.step_execution_id,
+            inputs={"instruction": instruction},
+            output=None,
+            external_operation_ref=None,
+            error=None,
+            recorded_at=self.now,
+            completed_at=None,
+            agent={
+                "attempt": 1,
+                "harness": None,
+                "model": None,
+                "started_at": self.now.isoformat(),
+                "completed_at": None,
+                "tool_calls": [],
+            },
+        )
+        self.tx.save_execution_record("invocation", invocation.invocation_id, invocation)
+        wait = WorkflowWaitRecord(
+            wait_id=str(new_id()),
+            workflow_run_id=self.record.workflow_run_id,
+            step_execution_id=execution.step_execution_id,
+            kind="agent",
+            status="waiting",
+            condition={
+                "attempt": 1,
+                "started_at": self.now.isoformat(),
+                "timeout_seconds": step.timeout_seconds,
+                "max_tool_calls": step.max_tool_calls,
+                "dispatched": False,
+            },
+            resolution=None,
+            recorded_at=self.now,
+            resolved_at=None,
+        )
+        self.tx.save_execution_record("wait", wait.wait_id, wait)
+        self.record = self.record.model_copy(update={"status": "waiting"})
 
     def _start_action(self, step: ActionStep) -> None:
         inputs = self._values(step.inputs)
@@ -862,3 +963,165 @@ def decide_custom_run(
     execution = _Execution(tx, record, now)
     execution.decide(request)
     return execution.commit()
+
+
+def pending_agent(
+    tx: CustomWorkflowTransaction, run_id: str, now: datetime
+) -> tuple[AgentStep, WorkflowStepExecution, WorkflowWaitRecord, WorkflowInvocationRecord] | None:
+    record = tx.execution_record(run_id)
+    if record is None or record.status != "waiting" or not is_custom(record):
+        return None
+    engine = _Execution(tx, record, now)
+    execution = engine.waiting()
+    if execution is None:
+        return None
+    step = engine.steps[execution.node_id]
+    if not isinstance(step, AgentStep):
+        return None
+    wait = engine._wait(execution)
+    invocations = [
+        WorkflowInvocationRecord.model_validate(i)
+        for i in tx.execution_children("invocation", run_id)
+        if i["step_execution_id"] == execution.step_execution_id and i["kind"] == "agent"
+    ]
+    invocation = next(
+        i
+        for i in invocations
+        if i.agent is not None and i.agent.get("attempt") == wait.condition["attempt"]
+    )
+    return step, execution, wait, invocation
+
+
+def finish_agent(
+    tx: CustomWorkflowTransaction,
+    run_id: str,
+    invocation_id: str,
+    output: dict[str, JsonValue] | None,
+    error: str | None,
+    now: datetime,
+) -> None:
+    pending = pending_agent(tx, run_id, now)
+    if pending is None:
+        return
+    step, execution, wait, invocation = pending
+    if invocation.invocation_id != invocation_id or invocation.status != "prepared":
+        return
+    assert invocation.agent is not None
+    tx.save_execution_record(
+        "invocation",
+        invocation_id,
+        invocation.model_copy(
+            update={
+                "status": "completed" if error is None else "failed",
+                "output": output,
+                "error": error,
+                "completed_at": now,
+                "agent": {**invocation.agent, "completed_at": now.isoformat()},
+            }
+        ),
+    )
+    record = tx.execution_record(run_id)
+    assert record is not None
+    engine = _Execution(tx, record, now)
+    engine._resolve_wait(wait, {"attempt": wait.condition["attempt"], "error": error})
+    if error is not None:
+        engine._fail(step, execution, error)
+    else:
+        engine._finish_step(execution, "completed", output)
+        engine.enter(step.next)
+    engine.commit()
+
+
+def claim_agent(
+    tx: CustomWorkflowTransaction,
+    run_id: str,
+    harness: str | None,
+    model: str | None,
+    now: datetime,
+) -> tuple[AgentStep, WorkflowInvocationRecord] | None:
+    pending = pending_agent(tx, run_id, now)
+    if pending is None:
+        return None
+    step, _, wait, invocation = pending
+    if wait.condition.get("dispatched"):
+        if wait.condition["attempt"] == 2:
+            finish_agent(
+                tx, run_id, invocation.invocation_id, None, "Agent step interrupted twice", now
+            )
+            return None
+        tx.save_execution_record(
+            "invocation",
+            invocation.invocation_id,
+            invocation.model_copy(
+                update={
+                    "status": "failed",
+                    "error": "Agent step interrupted",
+                    "completed_at": now,
+                    "agent": {**(invocation.agent or {}), "completed_at": now.isoformat()},
+                }
+            ),
+        )
+        invocation = invocation.model_copy(
+            update={
+                "invocation_id": str(new_id()),
+                "idempotency_key": str(new_id()),
+                "recorded_at": now,
+                "agent": {"attempt": 2, "tool_calls": []},
+            }
+        )
+    attempt = (invocation.agent or {}).get("attempt", 1)
+    invocation = invocation.model_copy(
+        update={
+            "agent": {
+                **(invocation.agent or {}),
+                "harness": harness,
+                "model": model,
+                "started_at": now.isoformat(),
+                "completed_at": None,
+            }
+        }
+    )
+    tx.save_execution_record("invocation", invocation.invocation_id, invocation)
+    tx.save_execution_record(
+        "wait",
+        wait.wait_id,
+        wait.model_copy(
+            update={
+                "condition": {
+                    **wait.condition,
+                    "attempt": attempt,
+                    "dispatched": True,
+                    "started_at": now.isoformat(),
+                }
+            }
+        ),
+    )
+    record = tx.execution_record(run_id)
+    assert record is not None
+    _Execution(tx, record, now).commit()
+    return step, invocation
+
+
+def record_agent_call(
+    tx: CustomWorkflowTransaction,
+    run_id: str,
+    invocation_id: str,
+    calls: list[JsonValue],
+    now: datetime,
+) -> None:
+    pending = pending_agent(tx, run_id, now)
+    if pending is None or pending[3].invocation_id != invocation_id:
+        return
+    invocation = pending[3]
+    tx.save_execution_record(
+        "invocation",
+        invocation_id,
+        invocation.model_copy(
+            update={
+                "agent": {**(invocation.agent or {}), "tool_calls": calls},
+            }
+        ),
+    )
+    record = tx.execution_record(run_id)
+    assert record is not None
+    _Execution(tx, record, now).commit()

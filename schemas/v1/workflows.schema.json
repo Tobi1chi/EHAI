@@ -164,6 +164,183 @@
       "title": "ActionStep",
       "description": "Call a registered connector action and continue with its structured output.\n\nA write action needs exactly one authorization: ``approval_step`` names a human step\non every path to this one whose approval leads here, or ``standing_write`` records the\ndefiner's standing permission. Read-only actions take neither. A failed or unknown\nresult never continues on a business branch."
     },
+    "AgentStep_Input": {
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "agent",
+          "title": "Type"
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]{0,63}$",
+          "title": "Id"
+        },
+        "instruction": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RefValue"
+            },
+            {
+              "$ref": "#/$defs/LiteralValue_Input"
+            },
+            {
+              "$ref": "#/$defs/TemplateValue"
+            }
+          ],
+          "title": "Instruction"
+        },
+        "tools": {
+          "items": {
+            "$ref": "#/$defs/AgentTool"
+          },
+          "type": "array",
+          "maxItems": 10,
+          "minItems": 1,
+          "title": "Tools"
+        },
+        "output_schema": {
+          "additionalProperties": {
+            "$ref": "commands.schema.json#/$defs/JsonValue"
+          },
+          "type": "object",
+          "title": "Output Schema"
+        },
+        "max_tool_calls": {
+          "type": "integer",
+          "maximum": 100.0,
+          "minimum": 1.0,
+          "title": "Max Tool Calls",
+          "default": 30
+        },
+        "timeout_seconds": {
+          "type": "integer",
+          "maximum": 3600.0,
+          "minimum": 60.0,
+          "title": "Timeout Seconds",
+          "default": 900
+        },
+        "next": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]{0,63}$",
+          "title": "Next"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "type",
+        "id",
+        "instruction",
+        "tools",
+        "output_schema",
+        "next"
+      ],
+      "title": "AgentStep",
+      "description": "Delegate one bounded, read-only query task outside a Git workspace."
+    },
+    "AgentStep_Output": {
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "agent",
+          "title": "Type"
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]{0,63}$",
+          "title": "Id"
+        },
+        "instruction": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RefValue"
+            },
+            {
+              "$ref": "#/$defs/LiteralValue_Output"
+            },
+            {
+              "$ref": "#/$defs/TemplateValue"
+            }
+          ],
+          "title": "Instruction"
+        },
+        "tools": {
+          "items": {
+            "$ref": "#/$defs/AgentTool"
+          },
+          "type": "array",
+          "maxItems": 10,
+          "minItems": 1,
+          "title": "Tools"
+        },
+        "output_schema": {
+          "additionalProperties": {
+            "$ref": "commands.schema.json#/$defs/JsonValue"
+          },
+          "type": "object",
+          "title": "Output Schema"
+        },
+        "max_tool_calls": {
+          "type": "integer",
+          "maximum": 100.0,
+          "minimum": 1.0,
+          "title": "Max Tool Calls",
+          "default": 30
+        },
+        "timeout_seconds": {
+          "type": "integer",
+          "maximum": 3600.0,
+          "minimum": 60.0,
+          "title": "Timeout Seconds",
+          "default": 900
+        },
+        "next": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]{0,63}$",
+          "title": "Next"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "type",
+        "id",
+        "instruction",
+        "tools",
+        "output_schema",
+        "next"
+      ],
+      "title": "AgentStep",
+      "description": "Delegate one bounded, read-only query task outside a Git workspace."
+    },
+    "AgentTool": {
+      "properties": {
+        "connector_id": {
+          "type": "string",
+          "title": "Connector Id"
+        },
+        "action": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9_.-]{1,100}$",
+          "title": "Action"
+        },
+        "action_version": {
+          "type": "string",
+          "maxLength": 300,
+          "minLength": 1,
+          "title": "Action Version"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "connector_id",
+        "action",
+        "action_version"
+      ],
+      "title": "AgentTool"
+    },
     "AllCondition_Input": {
       "properties": {
         "op": {
@@ -1731,6 +1908,9 @@
                 "$ref": "#/$defs/ActionStep_Input"
               },
               {
+                "$ref": "#/$defs/AgentStep_Input"
+              },
+              {
                 "$ref": "#/$defs/ConditionStep_Input"
               },
               {
@@ -1747,6 +1927,7 @@
               "propertyName": "type",
               "mapping": {
                 "action": "#/components/schemas/ActionStep-Input",
+                "agent": "#/components/schemas/AgentStep-Input",
                 "condition": "#/components/schemas/ConditionStep-Input",
                 "end": "#/components/schemas/EndStep-Input",
                 "human": "#/components/schemas/HumanStep-Input",
@@ -2288,6 +2469,9 @@
                 "$ref": "#/$defs/ActionStep_Output"
               },
               {
+                "$ref": "#/$defs/AgentStep_Output"
+              },
+              {
                 "$ref": "#/$defs/ConditionStep_Output"
               },
               {
@@ -2304,6 +2488,7 @@
               "propertyName": "type",
               "mapping": {
                 "action": "#/components/schemas/ActionStep-Output",
+                "agent": "#/components/schemas/AgentStep-Output",
                 "condition": "#/components/schemas/ConditionStep-Output",
                 "end": "#/components/schemas/EndStep-Output",
                 "human": "#/components/schemas/HumanStep-Output",
@@ -2532,7 +2717,8 @@
           "type": "string",
           "enum": [
             "local",
-            "connector"
+            "connector",
+            "agent"
           ],
           "title": "Kind"
         },
@@ -2623,6 +2809,20 @@
             }
           ],
           "title": "Connector Call Id"
+        },
+        "agent": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "$ref": "commands.schema.json#/$defs/JsonValue"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Agent"
         }
       },
       "additionalProperties": false,
@@ -3077,7 +3277,8 @@
           "enum": [
             "human",
             "time",
-            "event"
+            "event",
+            "agent"
           ],
           "title": "Kind"
         },

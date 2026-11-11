@@ -15,6 +15,7 @@ from ehai.application.agent_contracts import (
     ToolDefinition,
     ToolExecutor,
     ToolHandler,
+    ToolRejectionHandler,
     ToolSet,
 )
 from ehai.application.agent_trace import AgentTrace, AgentTraceEvent
@@ -97,12 +98,16 @@ class ToolRegistry:
         handlers: Mapping[str, ToolHandler],
         *,
         native_authorization: NativeAuthorization | None = None,
+        rejection_handlers: Mapping[str, ToolRejectionHandler] | None = None,
     ) -> None:
         catalog = ToolSet(definitions)
         if set(handlers) != {definition.name for definition in catalog.definitions}:
             raise ValueError("ToolRegistry handlers must exactly match its definitions")
         self._definitions = {definition.name: definition for definition in catalog.definitions}
         self._handlers = dict(handlers)
+        self._rejection_handlers = dict(rejection_handlers or {})
+        if not self._rejection_handlers.keys() <= self._handlers.keys():
+            raise ValueError("Rejection handlers must belong to the ToolRegistry")
         self._native_authorization = native_authorization
 
     @property
@@ -119,7 +124,15 @@ class ToolRegistry:
             raise ValueError("Role finish_tool must be marked ends_turn")
         tool_set = ToolSet(definitions)
         handlers = {name: self._handlers[name] for name in config.tool_names}
-        return tool_set, ToolExecutor(tool_set, handlers)
+        return tool_set, ToolExecutor(
+            tool_set,
+            handlers,
+            rejection_handlers={
+                name: handler
+                for name, handler in self._rejection_handlers.items()
+                if name in config.tool_names
+            },
+        )
 
 
 @dataclass(frozen=True, slots=True)

@@ -1531,6 +1531,34 @@ export type ActionStep_Output = {
   readonly next: string;
 };
 
+export type AgentStep_Input = {
+  readonly type: "agent";
+  readonly id: string;
+  readonly instruction: RefValue | LiteralValue_Input | TemplateValue;
+  readonly tools: ReadonlyArray<AgentTool>;
+  readonly output_schema: Readonly<Record<string, JsonValue>>;
+  readonly max_tool_calls?: number;
+  readonly timeout_seconds?: number;
+  readonly next: string;
+};
+
+export type AgentStep_Output = {
+  readonly type: "agent";
+  readonly id: string;
+  readonly instruction: RefValue | LiteralValue_Output | TemplateValue;
+  readonly tools: ReadonlyArray<AgentTool>;
+  readonly output_schema: Readonly<Record<string, JsonValue>>;
+  readonly max_tool_calls?: number;
+  readonly timeout_seconds?: number;
+  readonly next: string;
+};
+
+export type AgentTool = {
+  readonly connector_id: string;
+  readonly action: string;
+  readonly action_version: string;
+};
+
 export type AllCondition_Input = {
   readonly op: "all";
   readonly conditions: ReadonlyArray<CompareCondition_Input | ExistsCondition | AllCondition_Input | AnyCondition_Input | NotCondition_Input>;
@@ -1748,7 +1776,7 @@ export type SaveWorkflowDefinitionRequest = {
   readonly description: string;
   readonly inputs_schema: Readonly<Record<string, JsonValue>>;
   readonly start: string;
-  readonly steps: ReadonlyArray<ActionStep_Input | ConditionStep_Input | HumanStep_Input | WaitStep_Input | EndStep_Input>;
+  readonly steps: ReadonlyArray<ActionStep_Input | AgentStep_Input | ConditionStep_Input | HumanStep_Input | WaitStep_Input | EndStep_Input>;
   readonly idempotency_key: string;
   readonly expected_revision: number | null;
 };
@@ -1837,7 +1865,7 @@ export type WorkflowDefinitionBody = {
   readonly description: string;
   readonly inputs_schema: Readonly<Record<string, JsonValue>>;
   readonly start: string;
-  readonly steps: ReadonlyArray<ActionStep_Output | ConditionStep_Output | HumanStep_Output | WaitStep_Output | EndStep_Output>;
+  readonly steps: ReadonlyArray<ActionStep_Output | AgentStep_Output | ConditionStep_Output | HumanStep_Output | WaitStep_Output | EndStep_Output>;
 };
 
 export type WorkflowDefinitionRevision = {
@@ -1877,7 +1905,7 @@ export type WorkflowInvocationRecord = {
   readonly invocation_id: string;
   readonly workflow_run_id: string;
   readonly step_execution_id: string;
-  readonly kind: "local" | "connector";
+  readonly kind: "local" | "connector" | "agent";
   readonly action: WorkflowContractRef;
   readonly status: "prepared" | "completed" | "failed" | "unknown";
   readonly idempotency_key: string;
@@ -1888,6 +1916,7 @@ export type WorkflowInvocationRecord = {
   readonly recorded_at: string;
   readonly completed_at: string | null;
   readonly connector_call_id?: string | null;
+  readonly agent?: Readonly<Record<string, JsonValue>> | null;
 };
 
 export type WorkflowResponse_LifeRoutine_ = {
@@ -1974,7 +2003,7 @@ export type WorkflowWaitRecord = {
   readonly wait_id: string;
   readonly workflow_run_id: string;
   readonly step_execution_id: string;
-  readonly kind: "human" | "time" | "event";
+  readonly kind: "human" | "time" | "event" | "agent";
   readonly status: "waiting" | "resolved";
   readonly condition: Readonly<Record<string, JsonValue>>;
   readonly resolution: Readonly<Record<string, JsonValue>> | null;

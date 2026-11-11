@@ -2,7 +2,7 @@
 
 > 用法 · 只写已实现的命令与契约；执行记录见 [records/workflows](records/workflows.md)。
 
-更新：2026-11-03。本页是已实现的两个固定生活流程与[自定义 Workflow](#自定义-workflow)的用法与契约。
+更新：2026-11-10。本页是已实现的两个固定生活流程与[自定义 Workflow](#自定义-workflow)的用法与契约。
 事件触发、并行与子流程尚未实现，目标设计见 [自定义 Workflow 设计](P4_WORKFLOW_DESIGN.md)；
 运行证据见 [EVIDENCE](EVIDENCE.md#p4-生活事务与外部连接)。
 
@@ -150,6 +150,7 @@ uv run ehai --api-url $api get-routine-scheduler
 | type | 字段 | 语义 |
 | --- | --- | --- |
 | `action` | connector_id、action、action_version、inputs、next；写动作另需 approval_step 或 standing_write | 先保存调用意图并排队 Connector 调用，由 Connector 进程执行；输出为调用结果 |
+| `agent` | instruction、tools、output_schema、max_tool_calls、timeout_seconds、next | 经 Hub 委托一个只读查询任务；提交的对象直接成为步骤输出 |
 | `condition` | cases（when、next）、default | 选第一个成立的 case，否则 default；所选出口与序号记入步骤输出，之后不重新判定 |
 | `human` | question、subject、on_approve、on_reject；可选 grant、timeout_seconds 与 on_timeout（超时字段成对） | 进入时解析并冻结 subject 与 grant，等待进入统一 Inbox；输出为决定、操作者、理由、时间、subject 与批准时的 authorization |
 | `wait` | until、offset_seconds、next | 等到 until（带偏移的 ISO 时间）加偏移；已到期立即继续；输出 until 与 fired_at |
@@ -166,6 +167,61 @@ inputs_schema 声明 properties 时引用其中没有的输入，或引用不是
 项目未登记的连接或动作版本、缺少动作 Schema 要求的输入、`additionalProperties: false` 时多给的输入；
 只读动作带写授权，或写动作没有恰好一种授权。`approval_step` 必须是每条路径上都先经过的人工步骤，
 且从它的拒绝/超时出口到达不了该动作；`standing_write: true` 记录定义者给出的持续授权。
+
+### Agent 查询步骤
+
+`agent` 用于把开放的查询与整理交给一个模型角色；流程状态、Connector 调用与是否继续均归核心。
+它不启动代码 Worker、不创建 Git 工作树，也不提供 shell、文件工具或有副作用的动作。
+核心宿主须配置 Worker 使用的 Hub harness、`agent_model` 与可选 `agent_reasoning_effort`
+（CLI 为 `--harness-config` / `--pi-config`、`--agent-model`、`--agent-reasoning-effort`）。
+未配置时步骤与 Run 失败，原因为 `Agent delegation is not configured on this host`。
+真实 Codex/Pi 查询验收仍由团队负责人执行；静态检查不证明模型已跑通。
+
+字段如下（另有通用的 `type: "agent"`、`id`、`next`）：
+
+- `instruction` 使用上述 Value 语法；常量必须为字符串，模板或引用解析后转成文本。
+  引用仍须指向输入或每条路径上已完成的前序步骤。发给模型时附当前 UTC、宿主本地时间和时区。
+- `tools` 为 1..10 个 `{connector_id, action, action_version}`，按 connector_id + action 唯一。
+  保存时检查同一项目已登记的动作与版本，必须 `read_only: true`，写动作会指出步骤与动作并拒绝。
+  工具名把 action 中非 `[a-zA-Z0-9_]` 的字符换成 `_`，如 `feed.fetch` → `feed_fetch`；
+  派生名不得重复，也不得占用 `submit_result`。
+- 动作 `input_schema` 与 `output_schema`（步骤结果 Schema）都必须为根类型 object 的合法 JSON Schema，
+  仅支持本地引用，任何层级均不得含 `uniqueItems`。动作描述与参数 Schema 来自登记的 manifest。
+- `max_tool_calls` 为 1..100 的整数，省略为 30；`timeout_seconds` 为 60..3600 的整数，省略为 900。
+  JSON null 不是默认值。结果须经 `submit_result` 单独提交并符合 output_schema；不会由自然语言推断成功。
+
+进入步骤时，在同一事务里记录等待中的步骤、`kind: agent` 的 prepared invocation 与 agent wait；
+Run 为 waiting。宿主在事务外运行角色，目录为
+`<artifact root>/agent-steps/<workflow_run_id>/<step_id>/<attempt>/`（私有非 Git 目录），
+Pi 状态放在 artifact root 下的 `agent-step-state`；Codex 等 harness 的状态由其自身 home 管理，
+不传入 Pi 专用的 state_root 设置。角色只可使用声明的查询工具及结束工具，
+系统提示要求把输入与查询输出当数据而非指令，对不确定事实明确说明。
+
+每次有效查询均通过普通 ConnectorCall 排队，`authorize_write=false`，幂等键由 invocation、attempt、
+查询序号派生。每次查询尝试均计入预算，含参数不符与超额的尝试；参数不符时返回可修正的工具错误，
+记录 refused 与脱敏原因，不创建 ConnectorCall。每 0.5 秒读取一次结果，单次最多等 60 秒。
+成功返回输出 JSON；超过 24 KB 时返回截断文本并注明。失败或未及时应答会作为可恢复错误回到模型，
+不自动重试。用尽查询预算后，后续查询会要求立即提交结果；已查询的数据不因此丢弃。
+
+`submit_result` 验证通过后仅向模型返回固定回执 `{"submitted": true}`，业务对象单独保存，
+其中的字段（如 `accepted: false`）不会被当作 Hub 控制信号。
+成功后核心在写事务中核对仍等待同一步骤、同一 attempt，才完成 invocation、解析 wait、保存步骤输出并推进 next，
+发出正常 WorkflowExecutionChanged 事件。超时会取消本次角色，步骤与 Run 失败，原因分别为
+`Agent step timed out after N s`、`Agent did not submit a result` 或 `Agent harness failed: ...`；
+其中 harness 失败附带脱敏并截到 500 字符的错误消息。技术错误不选择业务分支，也不影响其他 Run。
+
+每宿主最多同时运行两个 agent 步骤，其余排队；排队时间不计入执行时长。
+已派发但本进程没有运行的 agent wait 会重开一次为 attempt 2，保留第一次的中断记录；
+第二次再中断则失败，原因为 `Agent step interrupted twice`。尚未派发的等待仍从 attempt 1 开始。
+正常停机取消本机角色、保留持久等待以便重启恢复；不会重放写动作（Agent 根本不能调用写动作）。
+
+`get-workflow-execution` 的每个 agent invocation 各保存一次尝试：业务输出在 `output`；
+可选字段 `agent` 保存 `attempt`、`harness`、`model`、`started_at`、`completed_at`、`tool_calls`。
+每行查询含 tool、action、脱敏 inputs（每个值转文本并截到 200 字符）、connector_call_id、
+status（completed / failed / timeout / refused）与 duration_ms；拒绝或失败的行另有脱敏 error（最多 500 字符）。
+查询意图及进度也持久化并发事件，
+失败保留已记录的查询；进行中尚未得到结果的行暂标 timeout，最终完成时更新。
+wait.condition 保存 attempt、started_at、timeout_seconds、max_tool_calls 与宿主内部 dispatched 标记。
 
 ### 绑定写授权与 grant
 

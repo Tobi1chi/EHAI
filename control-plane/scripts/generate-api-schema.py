@@ -353,6 +353,8 @@ workflow_names = {
     "SaveWorkflowDefinitionRequest",
     "StartCustomWorkflowRequest",
     "ActionStep",
+    "AgentStep",
+    "AgentTool",
     "ConditionStep",
     "ConditionCase",
     "HumanStep",
