@@ -347,6 +347,60 @@ counts（total、kept、failed）和 usage（input_tokens、output_tokens）。�
 走通，见 [阶段 ④ 记录](records/stage4-authorization.md#m3-decisions-订阅摘要)；替身路径未运行。
 每日多源摘要的完整配置见 [WORKFLOWS](WORKFLOWS.md#每日订阅摘要)。
 
+## 12306 Rail Connector（catbus）
+
+独立只读进程 `ehai-rail` 使用同一桥接接口、进程锁和 pending/回执恢复机制。
+先安装本机 catbus、启动 EHAI API 并创建生活 Project，再登记连接：
+
+```sh
+uv run ehai-rail init --api-url http://127.0.0.1:8787 --project-id <项目UUID> --state-dir /private/ehai-rail
+# 不在 PATH 时，在 init 上加 --catbus /absolute/path/to/catbus
+uv run ehai-rail run --state-dir /private/ehai-rail
+# 只处理一轮领取：
+uv run ehai-rail run --state-dir /private/ehai-rail --once
+```
+
+init 默认以 `shutil.which('catbus')` 查找程序，将绝对路径以 `catbus_path` 固定在登记配置中；
+先执行 `catbus version -o json`，找不到程序、不能运行或没有返回 `ok: true` 时明确失败，不登记连接。
+state-dir 应在仓库外，按宿主私有文件管理并保留用于恢复；已有登记不能直接换 manifest 或程序路径。
+
+连接类型为 `rail_12306`、版本 `1`，以下五个动作均为只读、版本 `1`。输入对象拒绝额外字段，
+所有列出的输入均必填（`via` 可为 null）。日期格式为 `YYYY-MM-DD`；站名参数支持 catbus 接受的站名、
+电报码、拼音或城市（1..40 字符）。车型为空数组表示全部。
+
+| 动作 | 输入 | 输出与截断 |
+| --- | --- | --- |
+| `rail.stations.search` | `keyword`：1..40 字符 | `stations: [{name, code, city}]` 最多 20 条，`truncated` |
+| `rail.tickets.search` | `from`、`to`、`date`、`train_types`：0..10 个单字符大写字母、`available_only`：布尔 | `trains` 最多 60 条，`total` 为 catbus 返回总数，`truncated` |
+| `rail.tickets.price` | `train_no`、`from_no`、`to_no`、`seat_types`：非空字符串、`date` | `train_no`、`date`、`prices: [{class, price_cny}]` |
+| `rail.transfers.search` | `from`、`to`、`date`、`via`：站名或 null、`limit`：整数 1..20 | `plans` 最多 20 条，`truncated` |
+| `rail.route.get` | `train_no`：非空字符串、`from`、`to`、`date` | `stops: [{no, station, arrive, depart, stopover}]`；`----` 转为 null |
+
+精确输入/输出 Schema 可经 get-connector 查询，所有对象关闭额外字段，均不含 `uniqueItems`。
+`Train` 包含 `train`（如 G531）、`train_no`、`from/to: {name, code, no}`、`date`、
+`depart`、`arrive`、`duration`、`bookable`、`seats`、`seat_types` 和可为 null 的 `url`。
+中转方案包含 `via`、`kind`、`same_station`、`depart`、`arrive`、`duration_minutes`、`wait`、`legs`；
+每段包含 `train`、`train_no`、`from/to`（名称）、`depart`、`arrive`、`duration` 和 `seats`。
+
+每个席别为 `{class, remaining, remaining_at_least, price_cny}`，余票数字原样保留（包括 0）；
+catbus 的 `{min: N}` 转为 `remaining: N, remaining_at_least: true`；缺少余票项为 null、false。
+票价取 CNY amount，缺少时为 null。保留 catbus 的车次、方案、席别与价格顺序，不重排或重试。
+
+查询以 argv 数组调用程序，不经 shell：`catbus 12306 <resource> <action> ... -q -o json`。
+station search 使用 keyword；ticket search 使用 from/to 和 `--date`，按输入加 `--type G,D`、`--available`；
+ticket price 使用 train_no、`--from-no`、`--to-no`、`--seat-types`、`--date`；
+transfer search 使用 from/to、`--date`、可选 `--via` 和 `--limit`；
+route get 使用位置参数 train_no、from、to，再加 `--date`（`catbus 12306 route get <train_no> <from> <to> --date <date> -q -o json`）。
+每次调用超时 30 秒，进程内上次调用结束后至少间隔 0.5 秒才启动下一次。
+`ok: false` 即 failed，使用 `error.message`（最多 200 字符，例如“找不到车站：不存在的站”）；
+超时、非零退出、无效 JSON 或不符合输出契约的数据也返回 failed，原因使用简短英文，不自动重试。
+桥接恢复时，已有结果只重投；尚无结果的只读意图可重新查询，不承诺与上一次余票相同。
+
+catbus 的这些 12306 查询免登录、只读；Connector 不登录、不下单、不付款，也不写入日历或待办。
+余票和价格是查询时信息，不是锁票或购票承诺，购票由用户本人在 12306 完成。
+本实现按设计中的 catbus 样本构造；真实 catbus/12306 验收由团队负责人通过正常入口执行，
+静态检查与 Schema 生成不代表已验证真实服务。
+
 ## 验证与实际边界
 
 用户本机尚无 Google OAuth 配置，本轮只做代码与本地协议试用，不访问真实 Google 账号。
